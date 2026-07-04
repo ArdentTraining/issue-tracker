@@ -1,0 +1,3143 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="UTF-8" />
+<script>
+  // Apply the saved theme before the page paints, so there's no flash of the
+  // wrong colours. Default is "auto", which follows the browser's setting.
+  try {
+    var t = localStorage.getItem("ait_theme");
+    document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : "auto");
+  } catch (e) {}
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ardent Issue Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐞</text></svg>" />
+<style>
+  :root {
+    --bg: #0c2146;          /* derived deep blue from #163a70 */
+    --surface: #163a70;     /* given */
+    --surface-2: #1e478a;   /* derived */
+    --line: #2c5596;        /* derived */
+    --accent: #5e72eb;      /* given */
+    --text: #e9effb;
+    --muted: #9badd0;
+    --high: #ff9190;        /* given */
+    --medium: #fec195;      /* given */
+    --low: #46c08a;         /* kept green so "low/resolved" still reads as safe */
+    --course: #797ef6;      /* given */
+    --tech: #54bcd6;        /* derived teal, kept distinct from the course indigo */
+    --radius: 10px;
+  }
+  /* Light theme. The brand colours stay; only the surfaces and text flip so it
+     stays recognisably Ardent. The priority/status badges use fixed light fills
+     with dark text, so they read fine on either theme without overrides. */
+  :root[data-theme="light"] {
+    --bg: #eef2f9;          /* app background, soft blue-grey */
+    --surface: #ffffff;     /* cards */
+    --surface-2: #e2e8f5;   /* raised / active controls */
+    --line: #d2dbec;        /* borders */
+    --accent: #4257d6;      /* darker indigo so white text on it stays readable */
+    --text: #16233f;        /* deep navy text */
+    --muted: #5a6b88;
+    --high: #ff9190;
+    --medium: #fec195;
+    --low: #46c08a;
+    --course: #5b62e8;
+    --tech: #2f9fbb;
+  }
+  /* Auto follows the browser. When the browser asks for light, apply the same
+     light palette to the auto setting. Auto + dark falls through to the default
+     dark :root above, so it needs nothing extra here. */
+  @media (prefers-color-scheme: light) {
+    :root[data-theme="auto"] {
+      --bg: #eef2f9;
+      --surface: #ffffff;
+      --surface-2: #e2e8f5;
+      --line: #d2dbec;
+      --accent: #4257d6;
+      --text: #16233f;
+      --muted: #5a6b88;
+      --high: #ff9190;
+      --medium: #fec195;
+      --low: #46c08a;
+      --course: #5b62e8;
+      --tech: #2f9fbb;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+  }
+  a { color: var(--accent); }
+  button {
+    font-family: inherit; font-size: 14px; cursor: pointer;
+    border: none; border-radius: 8px; padding: 9px 16px;
+    background: var(--surface-2); color: var(--text);
+  }
+  button:hover { filter: brightness(1.12); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #fff; font-weight: 600; }
+  button.ghost { background: transparent; border: 1px solid var(--line); }
+  input, select, textarea {
+    font-family: inherit; font-size: 14px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 10px; width: 100%;
+  }
+  textarea { resize: vertical; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+  .field { margin-bottom: 12px; }
+
+  header.topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px; background: var(--surface);
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10;
+  }
+  .brand { font-weight: 700; letter-spacing: 0.2px; }
+  .brand small { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 12px; }
+  .switcher { display: flex; gap: 4px; background: var(--bg); padding: 4px; border-radius: 10px; }
+  .switcher button { background: transparent; padding: 7px 14px; color: var(--muted); }
+  .switcher button.active { background: var(--surface-2); color: var(--text); }
+  .themebtn { white-space: nowrap; padding: 7px 12px; }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px;
+  }
+  .card h2 { margin: 0 0 14px; font-size: 16px; }
+  .card h3 { margin: 18px 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .two-col { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 18px; align-items: start; }
+  @media (max-width: 860px) { .two-col { grid-template-columns: 1fr; } }
+
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+
+  /* segmented control (category + admin area) */
+  .seg { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
+  .seg button { background: transparent; color: var(--muted); padding: 8px 14px; }
+  .seg button.active { background: var(--surface-2); color: var(--text); }
+  .seg button.active.course { box-shadow: inset 0 -2px 0 var(--course); color: #fff; }
+  .seg button.active.tech { box-shadow: inset 0 -2px 0 var(--tech); color: #fff; }
+
+  /* badges */
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pri { padding: 5px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .pri-high { background: var(--high); color: #5c1413; }
+  .pri-medium { background: var(--medium); color: #1a1300; }
+  .pri-low { background: var(--low); color: #06210f; }
+  .st { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  .st-open { color: #cdd9e6; }
+  .st-in_progress { color: var(--accent); border-color: var(--accent); }
+  .st-with_dev { color: var(--tech); border-color: var(--tech); }
+  .st-dev_fixed { color: var(--course); border-color: var(--course); }
+  .st-resolved_tbc { color: var(--medium); border-color: var(--medium); }
+  .st-resolved { color: var(--low); border-color: var(--low); }
+  .type-badge { background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
+  .cat { border: 1px solid var(--line); }
+  .cat-course_error { color: var(--course); border-color: var(--course); }
+  .cat-tech_issue { color: var(--tech); border-color: var(--tech); }
+  .cat-internal { color: var(--accent); border-color: var(--accent); }
+  /* fix vs improvement (feature request) */
+  .kind { border: 1px solid var(--line); }
+  .kind-fix { color: var(--muted); }
+  .kind-improvement { color: var(--medium); border-color: var(--medium); background: rgba(254,193,149,0.12); }
+  .seg button.active.improvement { box-shadow: inset 0 -2px 0 var(--medium); color: var(--text); }
+
+  .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .thumbs .thumb { position: relative; width: 76px; height: 76px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+  .thumbs .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .thumbs .thumb .x { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.6); color: #fff; border-radius: 50%; width: 18px; height: 18px; line-height: 18px; text-align: center; font-size: 12px; cursor: pointer; }
+
+  .sub-item {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px; cursor: pointer; background: var(--bg);
+  }
+  .sub-item:hover { border-color: var(--accent); }
+  .sub-item .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 5px; }
+  .sub-item .date { color: var(--muted); font-size: 12px; }
+  .sub-item .summary { font-size: 14px; }
+  .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--accent); }
+
+  /* admin */
+  .area-toggle { margin-bottom: 16px; }
+  .summary-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 16px; }
+  @media (max-width: 640px) { .summary-row { grid-template-columns: 1fr; } }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .stat .n { font-size: 30px; font-weight: 700; }
+  .stat .l { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  /* breakdown matrix */
+  .matrix { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .matrix th, .matrix td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .matrix thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .matrix tbody th { text-align: left; color: var(--text); font-weight: 500; }
+  .matrix col.kcol-improvement { background: rgba(254,193,149,0.06); }
+  .matrix td.tot, .matrix tr.tot td, .matrix tr.tot th, .matrix th.tot { font-weight: 700; }
+  .matrix tr.tot { background: rgba(94,114,235,0.07); }
+  .matrix tbody tr:hover { background: rgba(94,114,235,0.04); }
+  .stat.alert .n { color: var(--high); }
+
+  .filterbar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
+  @media (max-width: 860px) { .filterbar { grid-template-columns: 1fr 1fr; } }
+
+  .issue-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px; margin-bottom: 10px; cursor: pointer;
+  }
+  .issue-card:hover { border-color: var(--accent); }
+  .issue-card .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .issue-card .who { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .issue-card .sum { font-size: 15px; }
+
+  /* kanban board */
+  .kanban { display: flex; gap: 10px; align-items: flex-start; overflow-x: auto; padding-bottom: 12px; }
+  .kcol {
+    flex: 1 0 220px; min-width: 220px; background: rgba(255,255,255,0.02);
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; min-height: 120px;
+  }
+  .kcol.kdragover { border-color: var(--accent); background: rgba(240,165,0,0.06); }
+  .kcol-h { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); margin-bottom: 10px; }
+  .kcard {
+    background: var(--surface); border: 1px solid var(--line); border-left-width: 3px;
+    border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; font-size: 13px;
+  }
+  .kcard:hover { border-color: var(--accent); }
+  .kcard.kpri-high { border-left-color: var(--high); }
+  .kcard.kpri-medium { border-left-color: var(--medium); }
+  .kcard.kpri-low { border-left-color: var(--low); }
+  .kcard .ktop { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+  .kcard .ksum { line-height: 1.35; }
+
+  /* detail overlay */
+  /* ---- mobile: one column, thumb-sized controls, no sideways squeeze ---- */
+  @media (max-width: 700px) {
+    header.topbar { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+    .brand { font-size: 15px; }
+    .brand small { display: none; }
+    header.topbar > div { flex-wrap: wrap; gap: 8px; width: 100%; }
+    .switcher { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+    .switcher button { padding: 7px 10px; font-size: 13px; white-space: nowrap; }
+    .wrap { padding: 12px; }
+    .row { flex-direction: column; gap: 0; }
+    .seg { display: flex; flex-wrap: wrap; }
+    .seg button { flex: 1 1 auto; padding: 8px 10px; font-size: 13px; }
+    .area-toggle { flex-direction: column; align-items: stretch; }
+    /* 16px stops iOS zooming the page every time an input is tapped */
+    input, select, textarea, button { font-size: 16px; }
+    .kv { grid-template-columns: 96px 1fr; font-size: 13px; }
+    .drawer { width: 100vw; max-width: 100vw; padding: 16px; }
+    .filterbar { grid-template-columns: 1fr; gap: 8px; }
+    .summary-row { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .stat .n { font-size: 20px; }
+    .stat .l { font-size: 11px; }
+    .kcol { flex: 0 0 82vw; min-width: 82vw; } /* one column per swipe on the board */
+    .fab { bottom: 12px; right: 12px; padding: 10px 14px; }
+    .issue-card { padding: 12px; }
+    .issue-card .who { flex-basis: 100%; margin-left: 0; }
+    .modal { padding: 14px; }
+  }
+
+  .overlay { position: fixed; inset: 0; background: rgba(5,10,18,0.65); display: none; z-index: 50; }
+  .overlay.show { display: block; }
+  .drawer {
+    position: absolute; top: 0; right: 0; height: 100%; width: 560px; max-width: 94vw;
+    background: var(--surface); border-left: 1px solid var(--line); overflow-y: auto; padding: 20px;
+  }
+  .drawer .close { position: absolute; top: 14px; right: 16px; background: transparent; font-size: 20px; color: var(--muted); padding: 4px 8px; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 4px 0 14px; font-size: 14px; }
+  .kv .k { color: var(--muted); }
+  .batch { background: rgba(94,114,235,0.12); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin: 12px 0; }
+  .suggest { background: rgba(70,192,138,0.10); border: 1px solid var(--low); border-radius: 8px; padding: 12px; margin: 0 0 12px; }
+  .suggest .h { font-weight: 600; margin-bottom: 4px; color: var(--low); }
+  .tshoot { background: rgba(94,114,235,0.10); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin: 0 0 12px; }
+  .tshoot .h { font-weight: 600; margin-bottom: 4px; color: var(--accent); }
+  .tshoot ol { margin: 6px 0 0; padding-left: 20px; }
+  .tshoot li { margin-bottom: 4px; }
+  .existing { background: rgba(221,139,0,0.10); border: 1px solid var(--medium); border-radius: 8px; padding: 12px; margin: 0 0 12px; }
+  .existing .h { font-weight: 600; margin-bottom: 4px; color: var(--medium); }
+  .exrow { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer; background: var(--bg); }
+  .exrow:hover { border-color: var(--medium); }
+  .exrow.sel { border-color: var(--medium); background: rgba(221,139,0,0.10); }
+  /* pre-dev troubleshooting checklist */
+  .checklist { background: rgba(94,114,235,0.08); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin: 0 0 12px; }
+  .checklist .h { font-weight: 600; margin-bottom: 2px; color: var(--accent); }
+  .clGroup { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 10px 0 4px; }
+  .clRow { display: flex; align-items: center; gap: 10px; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .clRow:last-child { border-bottom: none; }
+  .clLabel { font-size: 13px; line-height: 1.3; flex: 1; }
+  .clRow.done .clLabel { color: var(--muted); text-decoration: line-through; }
+  .clRow.na .clLabel { color: var(--muted); }
+  .clBtns { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .clBtn { background: var(--bg); color: var(--muted); border: none; border-left: 1px solid var(--line); padding: 4px 9px; font-size: 12px; cursor: pointer; width: auto; }
+  .clBtn:first-child { border-left: none; }
+  .clBtn.on.clBtn--done { background: var(--low); color: #fff; }
+  .clBtn.on.clBtn--na { background: var(--surface-2); color: var(--text); }
+  .clBtn.on.clBtn--todo { background: var(--medium); color: #fff; }
+  .students { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .students .s { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .students .s:last-child { border-bottom: none; }
+
+  /* trend */
+  .bar-row { display: grid; grid-template-columns: 150px 1fr 40px; gap: 10px; align-items: center; margin-bottom: 6px; font-size: 13px; }
+  .bar { height: 16px; background: var(--accent); border-radius: 4px; min-width: 2px; }
+  .bar.alt { background: var(--surface-2); }
+  .weekbars { display: flex; align-items: flex-end; gap: 4px; height: 110px; padding-top: 8px; }
+  .weekbars .wb { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
+  .weekbars .wb span { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; font-size: 9px; color: var(--muted); }
+  .flag { background: rgba(255,145,144,0.14); border: 1px solid var(--high); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--line); padding: 12px 18px; border-radius: 10px; z-index: 100; display: none; }
+  .toast.show { display: block; }
+  .fab { position: fixed; bottom: 20px; right: 20px; z-index: 60; background: var(--accent); color: #fff; font-weight: 600; border-radius: 999px; padding: 11px 18px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: none; }
+
+  /* duplicate confirm modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(5,10,18,0.7); display: none; z-index: 80; align-items: center; justify-content: center; }
+  .modal-bg.show { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px; width: 460px; max-width: 92vw; }
+  .modal h3 { margin: 0 0 6px; font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--text); }
+  .modal .match { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
+  .modal .match .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+  .modal .btns { display: flex; gap: 10px; margin-top: 8px; }
+  .modal .btns > * { flex: 1; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .permrow { display: flex; flex-wrap: wrap; gap: 4px 0; }
+  .permrow label { display: inline-flex; align-items: center; margin-right: 14px; }
+  .permrow input { width: auto; margin-right: 5px; vertical-align: -1px; }
+  .hidden { display: none !important; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Ardent Issue Tracker <small>course issue log</small></div>
+  <div style="display:flex;align-items:center;gap:14px;">
+    <div class="switcher">
+      <button id="tabInstructor" class="active" onclick="setView('instructor')">Log an issue</button>
+      <button id="tabAdmin" onclick="setView('admin')">Track</button>
+      <button id="tabAnalytics" onclick="setView('analytics')">Analytics</button>
+      <button id="tabDev" onclick="setView('dev')">Developers</button>
+      <button id="tabCourse" onclick="setView('course')">Course fixes</button>
+      <button id="tabUsers" onclick="setView('users')">Admin</button>
+    </div>
+    <button class="ghost small themebtn" id="themeBtn" onclick="cycleTheme()" title="Switch theme">Theme</button>
+    <div class="small muted" id="userbox" style="display:none;white-space:nowrap;">
+      <span id="whoami"></span>
+      <button class="ghost small" style="padding:4px 10px;margin-left:6px;" onclick="doLogout()">Log out</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== INSTRUCTOR VIEW ===================== -->
+<div id="instructorView" class="wrap">
+  <div class="two-col">
+    <!-- INPUT PANEL -->
+    <div class="card">
+      <h2>Log a new issue</h2>
+
+      <div class="field">
+        <label>Logging as</label>
+        <div id="instructorName" style="padding:9px 0;">—</div>
+      </div>
+
+      <div class="field hidden" id="field_mode">
+        <label>What is this report?</label>
+        <div class="seg" id="modeSeg">
+          <button type="button" id="mode_student" class="active" onclick="setFormMode('student')">Student support</button>
+          <button type="button" id="mode_internal" onclick="setFormMode('internal')">Internal task / bug</button>
+        </div>
+        <div class="small muted" id="modeHint" style="margin-top:4px;"></div>
+      </div>
+
+      <div class="field">
+        <label>Paste report</label>
+        <textarea id="rawText" rows="6" placeholder="Paste the email, chat message, or your own notes here."></textarea>
+      </div>
+
+      <div class="field">
+        <label>Attach screenshots</label>
+        <input type="file" id="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple onchange="onFilesPicked(event)" />
+        <div class="small muted" style="margin-top:4px;">Up to 5 images, 5 MB each. JPG, PNG, GIF, or WebP.</div>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
+
+      <div class="field">
+        <button class="primary" id="extractBtn" onclick="runExtract()">Extract</button>
+        <span id="extractStatus" class="small muted" style="margin-left:8px;"></span>
+      </div>
+
+      <div id="existingPanel" class="existing hidden"></div>
+      <div id="suggestPanel" class="suggest hidden"></div>
+      <div id="splitPanel" class="suggest hidden"></div>
+      <div id="troubleshootPanel" class="tshoot hidden"></div>
+
+      <h3>Extracted details</h3>
+      <div class="field" id="field_category">
+        <label>Category (auto-detected, change if wrong)</label>
+        <select id="f_category" onchange="onCategoryChange()">
+          <option value="course_error">Course error — wrong or confusing lesson content</option>
+          <option value="tech_issue">Tech issue — login, access, progress, formatting, or anything not about lesson content</option>
+        </select>
+        <div class="small muted" style="margin-top:4px;">Tech issues don't need a lesson: login, account, progress, and formatting problems all go here, and the course fields can stay blank.</div>
+      </div>
+      <div class="field" id="field_section">
+        <label>Part of the platform</label>
+        <select id="f_section">
+          <option value="">—</option>
+          <option value="website">Website</option>
+          <option value="instructor_portal">Instructor portal</option>
+          <option value="partner_portal">Partner portal</option>
+          <option value="course_player">Course player</option>
+          <option value="app">App</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field" id="field_reqkind">
+        <label>Type of report (auto-detected, change if wrong)</label>
+        <div class="seg" id="reqKindSeg">
+          <button type="button" id="rk_fix" class="active" onclick="setRequestKind('fix')">Fix</button>
+          <button type="button" id="rk_improvement" onclick="setRequestKind('improvement')">Improvement</button>
+        </div>
+        <div class="small muted" id="reqKindHint" style="margin-top:4px;"></div>
+      </div>
+      <div class="row" id="field_student_row">
+        <div class="field"><label>Student name</label><input id="f_student_name" autocomplete="off" /></div>
+        <div class="field"><label>Student contact</label><input id="f_student_contact" autocomplete="off" /></div>
+      </div>
+      <div class="field" id="field_device"><label>Device / OS / browser (student's setup)</label><input id="f_device_info" placeholder="e.g. iPad, iOS 17, Safari" autocomplete="off" /></div>
+      <div class="field" id="field_media">
+        <label>Which part of the lesson? (auto-detected, change if wrong)</label>
+        <select id="f_media_kind">
+          <option value="">—</option>
+          <option value="video">Video / animation</option>
+          <option value="text">Text / diagram / quiz</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field" id="field_impact">
+        <label>Impact of this improvement</label>
+        <select id="f_impact">
+          <option value="">—</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+      <div class="field" id="field_double_checked">
+        <label style="display:inline;color:var(--text);"><input type="checkbox" id="f_double_checked" style="width:auto;margin-right:6px;vertical-align:-1px;" />I've double-checked this myself, not just taken the student's word for it</label>
+      </div>
+      <div class="row" id="field_course_row">
+        <div class="field">
+          <label>Course</label>
+          <select id="f_course">
+            <option value="">—</option>
+            <option>Essential Navigation</option>
+            <option>Day Skipper</option>
+            <option>Yachtmaster</option>
+            <option>Fast Track</option>
+            <option>SRC</option>
+            <option>PPR</option>
+          </select>
+        </div>
+        <div class="field"><label>Lesson code</label><input id="f_lesson_code" placeholder="e.g. DS.09.04" autocomplete="off" /></div>
+      </div>
+      <div class="row" id="field_module_row">
+        <div class="field"><label>Module</label><input id="f_module" autocomplete="off" /></div>
+        <div class="field"><label>Lesson</label><input id="f_lesson" autocomplete="off" /></div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Issue type</label>
+          <select id="f_issue_type">
+            <option value="bug">bug</option>
+            <option value="content_error">content_error</option>
+            <option value="student_confusion">student_confusion</option>
+            <option value="access_problem">access_problem</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Priority</label>
+          <select id="f_priority">
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+      <div class="field"><label>Summary</label><textarea id="f_summary" rows="2"></textarea></div>
+      <div class="field"><label>Priority reason</label><input id="f_priority_reason" name="ait-priority-note" autocomplete="off" /></div>
+
+      <div id="checklistPanel" class="checklist hidden"></div>
+
+      <div class="row" style="margin-top:6px;">
+        <button class="primary" id="submitBtn" onclick="submitIssue()">Submit issue</button>
+        <button class="ghost" id="resetBtn" onclick="resetForm()">Clear / new</button>
+        <button class="ghost" id="deleteBtn" onclick="deleteFromForm()" style="display:none;color:var(--high);">Delete</button>
+      </div>
+      <div id="editingNote" class="small muted hidden" style="margin-top:8px;"></div>
+    </div>
+
+    <!-- PREVIOUS SUBMISSIONS -->
+    <div class="card">
+      <h2>Your previous submissions</h2>
+      <div id="prevList"><p class="muted small">Loading your submissions…</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== ADMIN VIEW ===================== -->
+<div id="adminView" class="wrap hidden">
+  <div class="area-toggle" style="display:flex;gap:10px;flex-wrap:wrap;">
+    <div class="seg" id="areaSeg">
+      <button type="button" id="area_all" class="active" onclick="setArea('all')">All</button>
+      <button type="button" id="area_course" onclick="setArea('course_error')">Course errors</button>
+      <button type="button" id="area_tech" onclick="setArea('tech_issue')">Tech issues</button>
+      <button type="button" id="area_internal" onclick="setArea('internal')">Internal</button>
+    </div>
+    <div class="seg" id="reqFilterSeg">
+      <button type="button" id="rf_all" class="active" onclick="setReqFilter('all')">All</button>
+      <button type="button" id="rf_fix" onclick="setReqFilter('fix')">Fixes</button>
+      <button type="button" id="rf_improvement" onclick="setReqFilter('improvement')">Improvements</button>
+    </div>
+    <div class="seg" id="trackViewSeg">
+      <button type="button" id="tv_list" class="active" onclick="setTrackView('list')">List</button>
+      <button type="button" id="tv_board" onclick="setTrackView('board')">Board</button>
+    </div>
+  </div>
+
+  <div class="summary-row">
+    <div class="stat"><div class="n" id="statOpen">–</div><div class="l">Open issues</div></div>
+    <div class="stat alert"><div class="n" id="statHigh">–</div><div class="l">High priority (open)</div></div>
+    <div class="stat"><div class="n" id="statResolved">–</div><div class="l">Resolved this month</div></div>
+  </div>
+
+  <div class="filterbar">
+    <select id="flt_status" onchange="renderAdmin()">
+      <option value="">All statuses</option>
+      <option value="open">Open</option>
+      <option value="in_progress">In progress</option>
+      <option value="with_dev">With developers</option>
+      <option value="dev_fixed">Fixed by dev</option>
+      <option value="resolved_tbc">Resolved – TBC</option>
+      <option value="resolved">Resolved</option>
+    </select>
+    <select id="flt_priority" onchange="renderAdmin()">
+      <option value="">All priorities</option>
+      <option value="high">High</option>
+      <option value="medium">Medium</option>
+      <option value="low">Low</option>
+    </select>
+    <select id="flt_type" onchange="renderAdmin()">
+      <option value="">All types</option>
+      <option value="bug">bug</option>
+      <option value="content_error">content_error</option>
+      <option value="student_confusion">student_confusion</option>
+      <option value="access_problem">access_problem</option>
+      <option value="other">other</option>
+      <option value="feature_request">feature_request (internal)</option>
+      <option value="content_copy">content_copy (internal)</option>
+      <option value="infrastructure">infrastructure (internal)</option>
+      <option value="administrative">administrative (internal)</option>
+    </select>
+    <select id="flt_course" onchange="renderAdmin()">
+      <option value="">All courses</option>
+      <option>Essential Navigation</option>
+      <option>Day Skipper</option>
+      <option>Yachtmaster</option>
+      <option>Fast Track</option>
+      <option>SRC</option>
+      <option>PPR</option>
+    </select>
+    <input id="flt_search" placeholder="Search lesson code / keyword" oninput="renderAdmin()" />
+  </div>
+
+  <div id="filterClear" class="small hidden" style="margin-bottom:10px;">
+    <span class="muted">Filtered to <span class="code" id="filterClearCode"></span>.</span>
+    <button class="ghost small" style="padding:3px 10px;margin-left:8px;" onclick="clearLessonFilter()">Clear</button>
+  </div>
+
+  <div id="adminList"></div>
+</div>
+
+<!-- ===================== ANALYTICS VIEW (real admins only) ===================== -->
+<div id="analyticsView" class="wrap hidden">
+  <div class="area-toggle">
+    <div class="seg" id="anaSeg">
+      <button type="button" id="ana_all" class="active" onclick="setAnaArea('all')">All</button>
+      <button type="button" id="ana_course" onclick="setAnaArea('course_error')">Course errors</button>
+      <button type="button" id="ana_tech" onclick="setAnaArea('tech_issue')">Tech issues</button>
+      <button type="button" id="ana_internal" onclick="setAnaArea('internal')">Internal</button>
+    </div>
+  </div>
+  <div class="summary-row">
+    <div class="stat"><div class="n" id="anaOpen">–</div><div class="l">Open issues</div></div>
+    <div class="stat alert"><div class="n" id="anaHigh">–</div><div class="l">High priority (open)</div></div>
+    <div class="stat"><div class="n" id="anaResolved">–</div><div class="l">Resolved this month</div></div>
+  </div>
+  <div class="card" style="margin-bottom:16px;">
+    <h3 style="margin-top:0;">Breakdown: fixes vs improvements</h3>
+    <div class="seg" id="statMetricSeg" style="margin-bottom:12px;flex-wrap:wrap;">
+      <button type="button" id="sm_open" class="active" onclick="setStatMetric('open')">Open</button>
+      <button type="button" id="sm_high" onclick="setStatMetric('high')">High priority (open)</button>
+      <button type="button" id="sm_resolved" onclick="setStatMetric('resolved')">Resolved this month</button>
+      <button type="button" id="sm_total" onclick="setStatMetric('total')">All-time total</button>
+    </div>
+    <div id="statMatrix"></div>
+    <div class="small muted" style="margin-top:8px;">Full split across every area, whatever the filter above is set to.</div>
+  </div>
+  <div class="card">
+    <div id="reviewFlags"></div>
+    <h3>Lessons by open issues</h3>
+    <div id="trendLessons"></div>
+    <h3>New issues per week (last 12 weeks)</h3>
+    <div class="weekbars" id="trendWeeks" style="margin-bottom:24px;"></div>
+    <h3>Issue type breakdown</h3>
+    <div id="trendTypes"></div>
+    <h3>By part of the platform</h3>
+    <div id="trendSections"></div>
+  </div>
+</div>
+
+<!-- ===================== DEVELOPER VIEW ===================== -->
+<div id="devView" class="wrap hidden">
+  <div class="summary-row">
+    <div class="stat"><div class="n" id="devStatQueue">–</div><div class="l">In the dev queue</div></div>
+    <div class="stat"><div class="n" id="devStatFixed">–</div><div class="l">Fixed, awaiting admin</div></div>
+    <div class="stat"><div class="n" id="devStatAvg">–</div><div class="l">Average time to fix</div></div>
+  </div>
+  <div class="area-toggle">
+    <div class="seg" id="devSeg">
+      <button type="button" id="dev_todo" class="active" onclick="setDevFilter('todo')">To do</button>
+      <button type="button" id="dev_fixed" onclick="setDevFilter('fixed')">Fixed</button>
+      <button type="button" id="dev_all" onclick="setDevFilter('all')">All</button>
+    </div>
+  </div>
+  <div id="devList"></div>
+</div>
+
+<!-- ===================== COURSE FIXES VIEW ===================== -->
+<div id="courseView" class="wrap hidden">
+  <div class="summary-row">
+    <div class="stat"><div class="n" id="courseStatQueue">–</div><div class="l">In the course-fix queue</div></div>
+    <div class="stat"><div class="n" id="courseStatFixed">–</div><div class="l">Fixed, awaiting admin</div></div>
+    <div class="stat"><div class="n" id="courseStatAvg">–</div><div class="l">Average time to fix</div></div>
+  </div>
+  <div class="area-toggle">
+    <div class="seg" id="courseSeg">
+      <button type="button" id="course_todo" class="active" onclick="setCourseFilter('todo')">To do</button>
+      <button type="button" id="course_fixed" onclick="setCourseFilter('fixed')">Fixed</button>
+      <button type="button" id="course_all" onclick="setCourseFilter('all')">All</button>
+    </div>
+  </div>
+  <div id="courseList"></div>
+</div>
+
+<!-- ===================== USERS VIEW (manage people) ===================== -->
+<div id="usersView" class="wrap hidden">
+  <div class="area-toggle">
+    <div class="seg" id="usersSeg" style="flex-wrap:wrap;">
+      <button type="button" id="us_people" onclick="setUsersSection('people')">People</button>
+      <button type="button" id="us_feedback" onclick="setUsersSection('feedback')">Feedback</button>
+      <button type="button" id="us_playbook" onclick="setUsersSection('playbook')">Playbook</button>
+    </div>
+  </div>
+
+  <div id="usec_people" class="hidden">
+  <div class="card">
+    <h2>Invite a person</h2>
+    <div class="row">
+      <div class="field"><label>Email</label><input id="invEmail" placeholder="name@ardent-training.com"></div>
+      <div class="field"><label>Name</label><input id="invName" placeholder="First name"></div>
+    </div>
+    <div class="field"><label>Quick preset</label>
+      <div class="seg" style="flex-wrap:wrap;">
+        <button type="button" onclick="invitePreset('instructor')">Instructor</button>
+        <button type="button" onclick="invitePreset('admin')">Admin</button>
+        <button type="button" onclick="invitePreset('dev')">Developer</button>
+        <button type="button" onclick="invitePreset('course')">Course dev</button>
+      </div>
+    </div>
+    <div class="field"><label>Pages they can see</label>
+      <div class="permrow">
+        <label class="small"><input type="checkbox" id="inv_log"> Log</label>
+        <label class="small"><input type="checkbox" id="inv_manage"> Admin</label>
+        <label class="small"><input type="checkbox" id="inv_analytics"> Analytics</label>
+        <label class="small"><input type="checkbox" id="inv_dev"> Developers</label>
+        <label class="small"><input type="checkbox" id="inv_course"> Course fixes</label>
+        <label class="small"><input type="checkbox" id="inv_users"> Manage users</label>
+      </div>
+    </div>
+    <button class="primary" onclick="doInvite()">Send invite</button>
+    <div id="inviteResult" class="hidden" style="margin-top:10px;">
+      <div class="small muted">Invite link (also emailed if APP_URL is set). Copy it if you need to send it manually:</div>
+      <input id="inviteLink" readonly style="margin-top:4px;">
+    </div>
+  </div>
+
+  <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">People</h3>
+  <div id="usersList"></div>
+  </div>
+
+  <div id="usec_feedback" class="hidden">
+  <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">Feedback on the tracker</h3>
+  <div id="feedbackList"></div>
+  </div>
+
+  <div id="usec_playbook" class="hidden">
+  <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">Suggested playbook updates</h3>
+  <div id="playbookSuggestions"></div>
+
+  <div class="card" style="margin-top:18px;">
+    <h2>Troubleshooting playbook</h2>
+    <p class="small muted">The rulebook the AI uses to suggest steps to instructors. Edit it directly here, or approve the suggestions above to add to it.</p>
+    <div class="field"><textarea id="playbookText" rows="16" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;"></textarea></div>
+    <button class="primary" onclick="savePlaybook()">Save playbook</button>
+  </div>
+  </div>
+</div>
+
+<!-- DETAIL DRAWER -->
+<div class="overlay" id="overlay" onclick="if(event.target===this) closeDetail()">
+  <div class="drawer" id="drawer"></div>
+</div>
+
+<!-- AUTH SCREEN: login + set-password (invite) -->
+<div class="modal-bg" id="authScreen">
+  <div class="modal">
+    <div id="authLogin">
+      <h3>Ardent Issue Tracker</h3>
+      <p class="small muted">Sign in with your email and password.</p>
+      <div class="field"><label>Email</label><input id="loginEmail" type="email" placeholder="you@ardent-training.com" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div class="field"><label>Password</label><input id="loginPass" type="password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div class="btns"><button class="primary" onclick="doLogin()">Sign in</button></div>
+      <div id="loginMsg" class="small muted" style="margin-top:6px;"></div>
+    </div>
+    <div id="authInvite" class="hidden">
+      <h3>Set up your account</h3>
+      <p class="small muted">Choose a password for <strong id="inviteWho"></strong>.</p>
+      <div class="field"><label>New password (8+ characters)</label><input id="invitePass" type="password"></div>
+      <div class="field"><label>Confirm password</label><input id="invitePass2" type="password" onkeydown="if(event.key==='Enter')doAcceptInvite()"></div>
+      <div class="btns"><button class="primary" onclick="doAcceptInvite()">Create account</button></div>
+      <div id="inviteMsg" class="small muted" style="margin-top:6px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- STUDENT EMAIL POPUP -->
+<div class="modal-bg" id="emailModal">
+  <div class="modal">
+    <h3>Student email</h3>
+    <p class="small muted" id="emailModalLead">We couldn't find the student's email in the message. Add it so we can log and contact them, for example to tell them when it's fixed.</p>
+    <div class="field"><input id="emailModalInput" type="email" placeholder="student@example.com" onkeydown="if(event.key==='Enter')saveStudentEmail()"></div>
+    <div class="btns"><button class="primary" onclick="saveStudentEmail()">Save</button><button class="ghost" id="emailSkipBtn" onclick="skipEmail()">Skip for now</button></div>
+    <div style="margin-top:8px;"><button class="ghost small" style="padding:4px 10px;" onclick="noStudentInvolved()">No student involved — this is a portal / internal problem</button></div>
+    <div id="emailModalMsg" class="small muted" style="margin-top:6px;"></div>
+  </div>
+</div>
+
+<!-- THINGS-TO-TRY POPUP -->
+<div class="modal-bg" id="tshootModal">
+  <div class="modal" style="max-width:540px;">
+    <h3>Things to try with the student</h3>
+    <p class="small muted">Work through these with the student. Please still submit this so we keep a record, it will update the existing issue if there is one.</p>
+    <div id="tshootModalBody"></div>
+    <div class="btns" style="margin-top:12px;"><button class="primary" onclick="ackTroubleshoot()">Got it, I'll try these and submit</button></div>
+  </div>
+</div>
+
+<!-- FEEDBACK on the tracker -->
+<button id="fbBtn" class="fab" onclick="openFeedback()">Feedback</button>
+<div class="modal-bg" id="feedbackModal">
+  <div class="modal" style="width:520px;max-width:94vw;">
+    <h3>Suggest an improvement</h3>
+    <p class="small muted">Found a bug, or got an idea to improve this tracker? Tell us. Add a screenshot if it helps.</p>
+    <div class="field"><textarea id="fbMessage" rows="4" placeholder="Describe the bug or improvement…"></textarea></div>
+    <div class="field"><label>Screenshots (optional, up to 5)</label>
+      <input type="file" id="fbFileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple onchange="onFbFilesPicked(event)">
+      <div class="thumbs" id="fbThumbs"></div>
+    </div>
+    <div id="fbContextNote" class="small muted" style="margin-bottom:8px;"></div>
+    <div class="btns"><button class="primary" id="fbSendBtn" onclick="submitFeedback()">Send</button><button class="ghost" onclick="closeFeedback()">Cancel</button></div>
+    <div id="fbMsg" class="small muted" style="margin-top:6px;"></div>
+  </div>
+</div>
+
+<!-- LOADING OVERLAY (while fetching things-to-try) -->
+<div class="modal-bg" id="loadingOverlay">
+  <div class="modal" style="text-align:center;width:auto;min-width:240px;">
+    <span class="spinner" style="width:26px;height:26px;border-width:3px;"></span>
+    <div style="margin-top:12px;" id="loadingMsg">Checking what to try next…</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================ CONFIG ============================
+var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxROZipuieRjz8BBW7tjR5tvbidB_oLwbDup2PHfD0-KUka4u6oQLlUNrjJT21O783qdg/exec";
+var APP_URL = window.location.href; // used in the Slack link; updated once hosted
+
+var PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
+var CATEGORY_LABEL = { course_error: "Course error", tech_issue: "Tech issue", internal: "Internal" };
+var SECTION_LABEL = { website: "Website", instructor_portal: "Instructor portal", partner_portal: "Partner portal", course_player: "Course player", app: "App", other: "Other" };
+function sectionBadge(s) {
+  if (!s) return "";
+  return '<span class="badge type-badge">' + esc(SECTION_LABEL[s] || s) + "</span>";
+}
+var MAX_IMAGES = 5;
+var MAX_IMAGE_MB = 5;
+
+// ============================ STATE ============================
+var state = {
+  view: "instructor",
+  instructors: [],
+  issues: [],
+  selectedInstructor: "",
+  category: "course_error",   // form category
+  editingId: null,
+  attachedImages: [],
+  detailId: null,
+  area: "all",                // admin area filter
+  token: "",                  // session token for this login
+  user: null,                 // logged-in user { email, name, perms }
+  perms: {},                  // current user's permission flags
+  suggestedFix: "",           // last AI-suggested fix, for the TBC tick-box
+  devFilter: "todo",          // developers view: todo / fixed / all
+  courseFilter: "todo",       // course fixes view: todo / fixed / all
+  anaArea: "all",             // analytics view area filter
+  troubleshootSteps: null,    // current "things to try" list
+  troubleshootAck: false,     // has the instructor dismissed the popup?
+  existingMatches: null,      // open issues the same student already has
+  updateTargetId: null,       // if set, submit adds an update to this issue
+  fbImages: [],               // screenshots attached to a feedback message
+  checklist: {},              // pre-dev troubleshooting checklist on the form (item id -> done|na|todo)
+  requestKind: "fix",         // form: "fix" (bug/error) or "improvement" (feature request)
+  reqFilter: "all",           // Track filter: all | fix | improvement
+  statMetric: "open",         // Analytics breakdown metric: open | high | resolved | total
+  assignees: [],              // people an issue can be assigned to (name/email + course/dev flags)
+  formMode: "student",        // "student" (support report) or "internal" (admin-only internal task/bug)
+  noStudent: false,           // instructor confirmed there is no student for this issue, so no email is chased
+  subIssues: null,            // AI-detected separate problems in one report: [{summary, issue_type}]
+  splitMode: false,           // instructor ticked "log these as separate issues"
+  trackView: "list"           // Track tab: "list" or "board" (kanban)
+};
+
+// Issue type options per form mode. Internal tasks get their own vocabulary;
+// student reports keep the original set.
+var ISSUE_TYPES_STUDENT = ["bug", "content_error", "student_confusion", "access_problem", "other"];
+var ISSUE_TYPES_INTERNAL = ["bug", "feature_request", "content_copy", "infrastructure", "administrative"];
+
+// The pre-developer troubleshooting checklist for tech issues. Order and ids
+// must match CHECKLIST_ITEMS in the Apps Script so the AI pre-fill lines up.
+var CHECKLIST = [
+  { id: "confirm_error",          group: "Identify and record", label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)" },
+  { id: "noted_device",           group: "Identify and record", label: "Noted device make, model, OS version, and browser or app" },
+  { id: "right_place",            group: "Account and login",   label: "Logging in via the right place (correct partner portal vs ardent-training.com)" },
+  { id: "email_correct",          group: "Account and login",   label: "Email spelled correctly, and it's the one they registered with" },
+  { id: "password_reset",         group: "Account and login",   label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' },
+  { id: "social_signin_password", group: "Account and login",   label: 'Social sign-in: created a password via "organisation → forgot password"' },
+  { id: "logout_login",           group: "Standard fixes",      label: "Logged out and back in" },
+  { id: "restart_device",         group: "Standard fixes",      label: "Restarted the device (or closed and reopened the app/browser)" },
+  { id: "clear_cache",            group: "Standard fixes",      label: "Cleared cache / tried an incognito or private window" },
+  { id: "app_updated",            group: "Standard fixes",      label: "Checked the app is up to date" },
+  { id: "different_browser",      group: "Standard fixes",      label: "Tried a different browser" },
+  { id: "different_device",       group: "Standard fixes",      label: "Tried a different device" },
+  { id: "different_network",      group: "Standard fixes",      label: "Tried a different network (mobile data, hotspot, or another wifi)" },
+  { id: "vpn_adblock",            group: "Standard fixes",      label: "Turned off any VPN, ad blocker, or content/parental filter" },
+  { id: "storage_space",          group: "Standard fixes",      label: "Checked there's free storage on the device (download/save problems)" }
+];
+
+// Parse the saved checklist map off an issue row.
+function checklistMapOf(issue) {
+  try { return issue && issue.checklist_json ? JSON.parse(issue.checklist_json) : {}; }
+  catch (e) { return {}; }
+}
+// "9 of 15 cleared" style progress (done or na both count as cleared).
+function checklistCleared(map) {
+  var n = 0;
+  CHECKLIST.forEach(function (it) { var s = map[it.id]; if (s === "done" || s === "na") n++; });
+  return n;
+}
+function clBtn(val, label, cur, handler, arg, itemId) {
+  var on = (cur || "todo") === val ? " on" : "";
+  return '<button type="button" class="clBtn clBtn--' + val + on + '" onclick="' +
+    handler + "('" + arg + "','" + itemId + "','" + val + "')\">" + label + "</button>";
+}
+// Build the grouped checklist body. handler(arg, itemId, val) is called on click.
+function checklistBody(map, handler, arg) {
+  var last = null, html = "";
+  CHECKLIST.forEach(function (it) {
+    if (it.group !== last) { html += '<div class="clGroup">' + esc(it.group) + "</div>"; last = it.group; }
+    var cur = map[it.id] || "todo";
+    html += '<div class="clRow ' + cur + '">' +
+      '<div class="clLabel">' + esc(it.label) + "</div>" +
+      '<div class="clBtns">' +
+        clBtn("done", "Tried", cur, handler, arg, it.id) +
+        clBtn("na", "N/A", cur, handler, arg, it.id) +
+        clBtn("todo", "Not yet", cur, handler, arg, it.id) +
+      "</div></div>";
+  });
+  return html;
+}
+
+// ---- checklist on the submit form ----
+function renderFormChecklist() {
+  var panel = $("checklistPanel");
+  if (!panel) return;
+  if (state.category !== "tech_issue" || state.requestKind === "improvement") {
+    panel.classList.add("hidden"); panel.innerHTML = ""; return;
+  }
+  var map = state.checklist || {};
+  var cleared = checklistCleared(map);
+  panel.innerHTML =
+    '<div class="h">Before the developers: troubleshooting checklist</div>' +
+    '<div class="small muted" style="margin-bottom:2px;">Pre-filled from the conversation. Mark anything that does not apply as N/A. ' +
+      cleared + " of " + CHECKLIST.length + " cleared.</div>" +
+    checklistBody(map, "setFormChecklist", "");
+  panel.classList.remove("hidden");
+}
+function setFormChecklist(_arg, itemId, val) {
+  if (!state.checklist) state.checklist = {};
+  state.checklist[itemId] = val;
+  renderFormChecklist();
+}
+
+// ============================ BACKEND ============================
+function getToken() { return state.token || (localGet("ait_token") || ""); }
+function setToken(t) { state.token = t; localSet("ait_token", t); }
+function clearToken() { state.token = ""; localDel("ait_token"); }
+function apiGet(action) {
+  return fetch(APPS_SCRIPT_URL + "?action=" + encodeURIComponent(action) + "&token=" + encodeURIComponent(getToken()))
+    .then(function (r) { return r.json(); }).then(gateCheck);
+}
+function apiPost(payload) {
+  payload.token = getToken();
+  return fetch(APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload)
+  }).then(function (r) { return r.json(); }).then(gateCheck);
+}
+// If the backend rejects the session, drop it and show the login screen.
+function gateCheck(res) {
+  if (res && res.ok === false && res.error === "unauthorized") { clearToken(); showLogin(); }
+  return res;
+}
+function localGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function localSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+// ---- theme: auto (follow browser) / light / dark ----
+function currentTheme() {
+  var t = localGet("ait_theme");
+  return (t === "light" || t === "dark") ? t : "auto";
+}
+function applyTheme(mode) {
+  document.documentElement.setAttribute("data-theme", mode);
+  if (mode === "auto") { try { localStorage.removeItem("ait_theme"); } catch (e) {} }
+  else localSet("ait_theme", mode);
+  updateThemeBtn();
+}
+function cycleTheme() {
+  var order = ["auto", "light", "dark"];
+  var next = order[(order.indexOf(currentTheme()) + 1) % order.length];
+  applyTheme(next);
+}
+function updateThemeBtn() {
+  var btn = $("themeBtn");
+  if (!btn) return;
+  var mode = currentTheme();
+  var label = { auto: "Auto", light: "Light", dark: "Dark" }[mode];
+  var glyph = { auto: "◐", light: "☀", dark: "☾" }[mode];
+  btn.textContent = glyph + " " + label;
+  btn.title = "Theme: " + label + " (tap to change)";
+}
+function localDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+// ============================ HELPERS ============================
+function $(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  });
+}
+function fmtDate(iso) {
+  if (!iso) return "";
+  var d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+function isEmail(s) { return /\S+@\S+\.\S+/.test(String(s || "").trim()); }
+function fmtDuration(ms) {
+  if (ms == null || isNaN(ms) || ms < 0) return "–";
+  var mins = Math.round(ms / 60000);
+  if (mins < 60) return mins + "m";
+  var hrs = Math.floor(mins / 60), rm = mins % 60;
+  if (hrs < 24) return hrs + "h" + (rm ? " " + rm + "m" : "");
+  var days = Math.floor(hrs / 24), rh = hrs % 24;
+  return days + "d" + (rh ? " " + rh + "h" : "");
+}
+function priBadge(p) {
+  p = (p || "").toLowerCase();
+  var label = p ? p.charAt(0).toUpperCase() + p.slice(1) : "—";
+  return '<span class="badge pri pri-' + (p || "low") + '">' + label + "</span>";
+}
+var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", resolved_tbc: "resolved – TBC", resolved: "resolved" };
+function statusBadge(s) {
+  s = (s || "open").toLowerCase();
+  return '<span class="badge st st-' + s + '">' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + "</span>";
+}
+function typeBadge(t) {
+  if (!t) return "";
+  return '<span class="badge type-badge">' + esc(t) + "</span>";
+}
+function catBadge(c) {
+  c = (c || "course_error").toLowerCase();
+  return '<span class="badge cat cat-' + c + '">' + (CATEGORY_LABEL[c] || c) + "</span>";
+}
+function kindOf(issue) {
+  return String((issue && issue.request_kind) || "fix").toLowerCase() === "improvement" ? "improvement" : "fix";
+}
+function reqBadge(kind) {
+  kind = kind === "improvement" ? "improvement" : "fix";
+  return '<span class="badge kind kind-' + kind + '">' + (kind === "improvement" ? "Improvement" : "Fix") + "</span>";
+}
+function toast(msg) {
+  var t = $("toast"); t.textContent = msg; t.classList.add("show");
+  setTimeout(function () { t.classList.remove("show"); }, 3200);
+}
+function isOpen(issue) {
+  // Anything not yet finished: open, in progress, with developers, or fixed by
+  // a dev but not yet verified/resolved by an admin.
+  var s = (issue.status || "open").toLowerCase();
+  return s !== "resolved" && s !== "resolved_tbc";
+}
+// Is this issue mine? The primary logger, or a contributor via a merged report.
+function isMine(i) {
+  var me = (state.selectedInstructor || "").trim().toLowerCase();
+  if (!me) return false;
+  if ((i.instructor_name || "").trim().toLowerCase() === me) return true;
+  var reps = parseReports(i);
+  for (var r = 0; r < reps.length; r++) {
+    if ((reps[r].instructor_name || "").trim().toLowerCase() === me) return true;
+  }
+  return false;
+}
+function catOf(i) { return (i.category || "course_error").toLowerCase(); }
+
+// ============================ INIT ============================
+function init() {
+  updateThemeBtn();
+  updateAdaptiveFields();
+  var params = new URLSearchParams(window.location.search);
+  var invite = params.get("invite");
+  if (invite) { startInvite(invite); return; }
+  if (getToken()) {
+    apiGet("me").then(function (res) {
+      if (res && res.ok && res.user) onAuthed(res.user);
+      else showLogin();
+    }).catch(function () { showLogin(); });
+  } else {
+    showLogin();
+  }
+}
+
+function onAuthed(user) {
+  $("authScreen").classList.remove("show");
+  applyPerms(user);
+  loadIssues();
+  loadAssignees();
+}
+
+// People an issue can be assigned to (those who can work a fix queue). Loaded
+// once so the assign dropdowns on the queues can be built instantly.
+function loadAssignees() {
+  var p = state.perms || {};
+  if (!(p.dev || p.course || p.manage || p.log)) return;
+  apiGet("getAssignees").then(function (res) {
+    if (res && res.ok && res.assignees) state.assignees = res.assignees;
+  }).catch(function () {});
+}
+function assigneesForQueue(cat) {
+  var key = cat === "course_error" ? "course" : "dev";
+  return (state.assignees || []).filter(function (a) { return a[key]; });
+}
+function assignOptionsHtml(issue) {
+  var cur = issue.assignee || "";
+  var people = assigneesForQueue(catOf(issue));
+  var opts = '<option value="">Unassigned</option>' + people.map(function (a) {
+    return '<option value="' + esc(a.name) + '"' + (a.name === cur ? " selected" : "") + ">" + esc(a.name) + "</option>";
+  }).join("");
+  // Keep showing a current assignee even if they've since lost queue access.
+  if (cur && people.every(function (a) { return a.name !== cur; })) {
+    opts += '<option value="' + esc(cur) + '" selected>' + esc(cur) + "</option>";
+  }
+  return opts;
+}
+function assignFromDetail(id) {
+  var sel = $("assignSelect");
+  if (!sel) return;
+  var who = sel.value;
+  apiPost({ action: "assignIssue", issue_id: id, assignee: who }).then(function (res) {
+    if (!res || !res.ok) { toast("Assign failed: " + ((res && res.error) || "unknown")); return; }
+    var iss = state.issues.filter(function (i) { return i.issue_id === id; })[0];
+    if (iss) iss.assignee = who;
+    toast(who ? ("Assigned to " + who + ".") : "Unassigned.");
+    if (state.view === "course") renderCourse();
+    else if (state.view === "dev") renderDev();
+    else if (state.view === "admin") renderAdmin();
+  }).catch(function (e) { toast("Assign error."); console.error(e); });
+}
+function mediaLabel(m) {
+  return m === "video" ? "Video / animation" : m === "text" ? "Text / diagram / quiz" : m === "other" ? "Other" : "";
+}
+function isTrue(v) { return v === true || v === "true" || v === "TRUE"; }
+
+// Show only the pages this user has permission for, and land them on the first.
+function applyPerms(user) {
+  state.user = user;
+  state.perms = (user && user.perms) || {};
+  var p = state.perms;
+  $("tabInstructor").style.display = p.log ? "" : "none";
+  $("tabAdmin").style.display = p.manage ? "" : "none";
+  $("tabAnalytics").style.display = p.analytics ? "" : "none";
+  $("tabDev").style.display = p.dev ? "" : "none";
+  $("tabCourse").style.display = p.course ? "" : "none";
+  $("tabUsers").style.display = p.users ? "" : "none";
+
+  // The Internal task toggle is only for full admins; everyone else just sees
+  // the normal student-support form with no toggle at all.
+  if ($("field_mode")) $("field_mode").classList.toggle("hidden", !p.users);
+
+  var name = (user && (user.name || user.email)) || "";
+  state.selectedInstructor = name;
+  if ($("instructorName")) $("instructorName").textContent = name;
+  $("whoami").textContent = name;
+  $("userbox").style.display = "";
+  $("fbBtn").style.display = "inline-block";
+
+  var order = [["log", "instructor"], ["manage", "admin"], ["analytics", "analytics"], ["dev", "dev"], ["course", "course"], ["users", "users"]];
+  var first = "instructor";
+  for (var i = 0; i < order.length; i++) { if (p[order[i][0]]) { first = order[i][1]; break; } }
+  setView(first);
+  renderPrev(); // issues may still be loading, but the name is known now
+}
+
+function loadIssues(isRetry) {
+  return apiGet("getIssues").then(function (res) {
+    if (!res || !res.ok) {
+      console.warn("getIssues failed", res);
+      // A silent failure used to leave stale content sitting on the page (an
+      // empty "previous submissions" box, for one). Retry once, then say so.
+      if (!isRetry) { setTimeout(function () { loadIssues(true); }, 2000); return; }
+      var box = $("prevList");
+      if (box) box.innerHTML = '<p class="muted small">Could not load your submissions. ' +
+        '<a href="#" onclick="loadIssues();return false;" style="color:var(--accent);">Try again</a></p>';
+      return;
+    }
+    state.issues = res.issues || [];
+    state._issuesLoaded = true;
+    renderPrev();
+    if (state.view === "admin") renderAdmin();
+    else if (state.view === "analytics") renderAnalytics();
+    else if (state.view === "dev") renderDev();
+    else if (state.view === "course") renderCourse();
+  }).catch(function (e) { console.error(e); });
+}
+
+// ============================ VIEW SWITCH ============================
+function setView(v) {
+  state.view = v;
+  $("tabInstructor").classList.toggle("active", v === "instructor");
+  $("tabAdmin").classList.toggle("active", v === "admin");
+  $("tabAnalytics").classList.toggle("active", v === "analytics");
+  $("tabDev").classList.toggle("active", v === "dev");
+  $("tabCourse").classList.toggle("active", v === "course");
+  $("tabUsers").classList.toggle("active", v === "users");
+  $("instructorView").classList.toggle("hidden", v !== "instructor");
+  $("adminView").classList.toggle("hidden", v !== "admin");
+  $("analyticsView").classList.toggle("hidden", v !== "analytics");
+  $("devView").classList.toggle("hidden", v !== "dev");
+  $("courseView").classList.toggle("hidden", v !== "course");
+  $("usersView").classList.toggle("hidden", v !== "users");
+  if (v === "admin") renderAdmin();
+  if (v === "analytics") renderAnalytics();
+  if (v === "dev") renderDev();
+  if (v === "course") renderCourse();
+  if (v === "users") renderUsers();
+}
+
+// ============================ INSTRUCTOR: FORM ============================
+function setCategory(cat) {
+  state.category = cat;
+  if ($("f_category")) $("f_category").value = cat;
+  updateAdaptiveFields();
+}
+
+// Student support vs Internal task. Internal is only offered to admins (the
+// "users" permission, i.e. Edd/Charly/Charlie) and is for our own systems:
+// portals, website, infrastructure. No student fields, no email chasing, no
+// troubleshooting checklist.
+function canLogInternal() { return !!(state.perms && state.perms.users); }
+function setFormMode(mode) {
+  mode = mode === "internal" && canLogInternal() ? "internal" : "student";
+  state.formMode = mode;
+  var isInternal = mode === "internal";
+  $("mode_student").className = isInternal ? "" : "active";
+  $("mode_internal").className = isInternal ? "active" : "";
+  var hint = $("modeHint");
+  if (hint) hint.textContent = isInternal
+    ? "An internal job for the team: portals, website, infrastructure, or admin. Not tied to a student."
+    : "";
+  if (isInternal) {
+    state.category = "internal";
+    // Internal work isn't something to troubleshoot with a student.
+    hideTroubleshoot();
+    hideSuggestion();
+  } else {
+    state.category = $("f_category") ? $("f_category").value : "course_error";
+  }
+  renderIssueTypeOptions();
+  renderFormChecklist();
+  updateAdaptiveFields();
+}
+function renderIssueTypeOptions() {
+  var sel = $("f_issue_type");
+  if (!sel) return;
+  var current = sel.value;
+  var opts = state.formMode === "internal" ? ISSUE_TYPES_INTERNAL : ISSUE_TYPES_STUDENT;
+  sel.innerHTML = opts.map(function (t) { return '<option value="' + t + '">' + t + '</option>'; }).join("");
+  sel.value = opts.indexOf(current) > -1 ? current : opts[0];
+}
+function onCategoryChange() {
+  state.category = $("f_category").value;
+  renderFormChecklist(); // hides itself for course errors, shows for tech
+  updateAdaptiveFields();
+}
+
+// Fix vs Improvement (feature request). An improvement is a calmer backlog item:
+// no troubleshooting checklist, no "things to try", no high-priority Slack, and
+// it doesn't auto-route to a fix team. Applies to both categories.
+function setRequestKind(kind) {
+  state.requestKind = kind === "improvement" ? "improvement" : "fix";
+  renderRequestKind();
+  if (state.requestKind === "improvement") {
+    // Drop the bug-only helpers, an improvement isn't something to troubleshoot.
+    hideTroubleshoot();
+    hideSuggestion();
+  }
+  renderFormChecklist();
+}
+function renderRequestKind() {
+  var fix = $("rk_fix"), imp = $("rk_improvement");
+  if (fix) fix.className = state.requestKind === "fix" ? "active" : "";
+  if (imp) imp.className = state.requestKind === "improvement" ? "active improvement" : "";
+  var hint = $("reqKindHint");
+  if (hint) hint.textContent = state.requestKind === "improvement"
+    ? "Logged as a backlog idea: no troubleshooting steps, no alert, it just sits for the team to review."
+    : "";
+  updateAdaptiveFields();
+}
+
+// Show only the fields that fit the current category and kind, so the form stays
+// short for the instructor. Tech gets the device field; course gets which-part
+// and the double-checked tick; improvements get an impact rating.
+function showField(id, show) {
+  var el = $(id);
+  if (el) el.classList.toggle("hidden", !show);
+}
+function updateAdaptiveFields() {
+  var isInternal = state.formMode === "internal";
+  var isCourse = !isInternal && state.category === "course_error";
+  var isImprovement = state.requestKind === "improvement";
+  // Internal tasks are about our systems, not a student's problem, so all the
+  // student-facing fields go away and the section picker does the locating.
+  showField("field_category", !isInternal);
+  showField("field_reqkind", !isInternal);
+  showField("field_student_row", !isInternal);
+  showField("field_course_row", !isInternal);
+  showField("field_module_row", !isInternal);
+  showField("field_device", !isInternal && !isCourse);  // tech only
+  showField("field_media", isCourse);                   // course only
+  showField("field_double_checked", isCourse);          // course only
+  showField("field_impact", !isInternal && isImprovement); // improvements (either category)
+  // Section is most useful for tech and internal problems; course errors are
+  // located by their lesson code instead.
+  showField("field_section", !isCourse);
+}
+
+function onFilesPicked(ev) {
+  var files = Array.prototype.slice.call(ev.target.files || []);
+  var room = MAX_IMAGES - state.attachedImages.length;
+  files.forEach(function (file) {
+    if (room <= 0) { toast("Up to " + MAX_IMAGES + " images."); return; }
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+      toast(file.name + " is over " + MAX_IMAGE_MB + " MB, skipped.");
+      return;
+    }
+    room--; // count this one now so a multi-file pick can't exceed the limit
+    var reader = new FileReader();
+    reader.onload = function () {
+      state.attachedImages.push({ name: file.name, dataUrl: reader.result, mimeType: file.type, uploaded: false });
+      renderThumbs();
+    };
+    reader.readAsDataURL(file);
+  });
+  ev.target.value = "";
+}
+
+function renderThumbs() {
+  $("thumbs").innerHTML = state.attachedImages.map(function (img, i) {
+    var src = img.uploaded ? img.url : img.dataUrl;
+    return '<div class="thumb"><img src="' + esc(src) + '" />' +
+      '<div class="x" onclick="removeImage(' + i + ')">&times;</div></div>';
+  }).join("");
+}
+function removeImage(i) { state.attachedImages.splice(i, 1); renderThumbs(); }
+
+function setField(id, val) { $(id).value = (val == null ? "" : val); }
+function getField(id) { return $(id).value.trim(); }
+
+function runExtract() {
+  var raw = getField("rawText");
+  if (!raw) { toast("Paste some text first."); return; }
+  var btn = $("extractBtn");
+  btn.disabled = true;
+  $("extractStatus").innerHTML = '<span class="spinner"></span> reading…';
+  apiPost({ action: "extract", raw_text: raw }).then(function (res) {
+    btn.disabled = false;
+    if (!res || !res.ok) {
+      $("extractStatus").textContent = "Extraction failed: " + ((res && res.error) || "unknown");
+      return;
+    }
+    var f = res.fields || {};
+    $("extractStatus").textContent = "";
+    if (f.category === "tech_issue" || f.category === "course_error") setCategory(f.category);
+    setRequestKind(f.request_kind === "improvement" ? "improvement" : "fix");
+    // If this reads as an internal problem (portal, admin tools) and this user
+    // is allowed to log internal tasks, flip the form over automatically. They
+    // can flip it back if the AI has misread it.
+    if (f.likely_internal === true && canLogInternal() && !state.editingId) {
+      setFormMode("internal");
+      $("extractStatus").textContent = "This looks like an internal issue, so I've set the form to Internal. Flip it back if that's wrong.";
+    } else if (state.formMode === "internal" && f.likely_internal === false) {
+      setFormMode("student");
+    }
+    setField("f_student_name", f.student_name);
+    setField("f_student_contact", f.student_contact);
+    setField("f_device_info", f.device_info);
+    setField("f_section", f.section || "");
+    setField("f_course", f.course || "");
+    setField("f_module", f.module);
+    setField("f_lesson", f.lesson);
+    setField("f_lesson_code", f.lesson_code);
+    if (f.issue_type) setField("f_issue_type", f.issue_type);
+    setField("f_summary", f.summary);
+    if (f.priority) setField("f_priority", String(f.priority).toLowerCase());
+    setField("f_priority_reason", f.priority_reason);
+    setField("f_media_kind", f.media_kind || "");
+    setField("f_impact", f.impact || "");
+    if ($("f_double_checked")) $("f_double_checked").checked = false;
+    updateAdaptiveFields();
+    // One report can hide two independent problems; offer to log them apart so
+    // each gets its own fix and its own trail.
+    showSplitSuggestion(f.sub_issues);
+    if (!$("extractStatus").textContent) $("extractStatus").textContent = "Done. Check the fields and edit anything that is off.";
+    // Ask for the student's email if we couldn't find one. Required for tech
+    // fixes, encouraged (skippable) for course errors. Improvements are an idea,
+    // often not tied to a student, and internal tasks never have one, so we
+    // don't chase an email for those.
+    if (state.formMode !== "internal" && state.requestKind !== "improvement" && !isEmail(getField("f_student_contact"))) {
+      showEmailModal();
+    } else {
+      afterExtractReady();
+    }
+  }).catch(function (e) {
+    btn.disabled = false;
+    $("extractStatus").textContent = "Extraction error. See console.";
+    console.error(e);
+  });
+}
+
+// Look back at issues we've already resolved in this area, and if the new one
+// matches a known fix, surface it to the instructor.
+function gatherResolvedCandidates(cat) {
+  return state.issues.filter(function (i) {
+    return (i.status || "").toLowerCase() === "resolved" && i.resolution_note && catOf(i) === cat;
+  }).sort(function (a, b) {
+    return new Date(b.resolved_at || b.updated_at || 0) - new Date(a.resolved_at || a.updated_at || 0);
+  }).slice(0, 20).map(function (i) {
+    return { summary: i.summary || "", resolution_note: i.resolution_note || "", lesson_code: i.lesson_code || "", issue_type: i.issue_type || "" };
+  });
+}
+
+function requestSuggestion() {
+  hideSuggestion();
+  var cat = state.category;
+  var candidates = gatherResolvedCandidates(cat);
+  if (!candidates.length) return;
+  var newIssue = {
+    summary: getField("f_summary"),
+    raw_text: getField("rawText"),
+    category: cat,
+    lesson_code: getField("f_lesson_code")
+  };
+  apiPost({ action: "suggestFix", new_issue: newIssue, candidates: candidates }).then(function (res) {
+    if (res && res.ok && res.found && res.fix) showSuggestion(res.fix, res.based_on);
+  }).catch(function (e) { console.error(e); });
+}
+
+function showSuggestion(fix, basedOn) {
+  state.suggestedFix = fix;
+  $("suggestPanel").innerHTML =
+    '<div class="h">Suggested fix from a past issue</div>' +
+    '<div>' + esc(fix) + '</div>' +
+    (basedOn ? '<div class="small muted" style="margin-top:6px;">Based on: ' + esc(basedOn) + '</div>' : '') +
+    '<div class="small" style="margin-top:8px;">Still submit this so we can track how many people hit it.</div>' +
+    '<label style="display:block;margin-top:6px;font-size:13px;color:var(--text);">' +
+      '<input type="checkbox" id="tbcApplied" style="width:auto;margin-right:6px;vertical-align:-1px;">' +
+      'I\'ve given the student this fix — mark Resolved (TBC)</label>' +
+    '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="hideSuggestion()">Dismiss</button>';
+  $("suggestPanel").classList.remove("hidden");
+}
+function hideSuggestion() {
+  $("suggestPanel").classList.add("hidden");
+  $("suggestPanel").innerHTML = "";
+  state.suggestedFix = "";
+}
+
+// Playbook-based "things to try", only for tech issues.
+function showLoading(msg) {
+  if (msg) $("loadingMsg").textContent = msg;
+  $("loadingOverlay").classList.add("show");
+}
+function hideLoading() { $("loadingOverlay").classList.remove("show"); }
+
+function requestTroubleshoot() {
+  hideTroubleshoot();
+  if (state.category !== "tech_issue") return;
+  var raw = getField("rawText");
+  if (!raw) return;
+  var payload = { action: "troubleshoot", raw_text: raw };
+  var target = (state.existingMatches || []).filter(function (m) { return m.issue_id === state.updateTargetId; })[0];
+  if (target && target.raw_text) payload.existing_history = target.raw_text;
+  showLoading("Checking what to try with the student…");
+  apiPost(payload).then(function (res) {
+    hideLoading();
+    if (res && res.ok) {
+      // AI pre-fills the pre-dev checklist from the conversation; instructor adjusts.
+      state.checklist = (res.checklist && typeof res.checklist === "object") ? res.checklist : {};
+      renderFormChecklist();
+    }
+    if (res && res.ok && res.found && res.steps && res.steps.length) {
+      showTroubleshoot(res.steps, res.escalate, res.note);
+    }
+  }).catch(function (e) { hideLoading(); console.error(e); });
+}
+
+// ---- post-extract flow: email, existing-issue detection ----
+function afterExtractReady() {
+  detectExistingIssue();
+  // The known-fix suggestion and the troubleshooting steps are bug-only. An
+  // improvement is a feature request, so there's nothing to fix or try.
+  if (state.requestKind !== "improvement") {
+    requestSuggestion();
+    requestTroubleshoot();
+  }
+}
+function showEmailModal() {
+  $("emailModalInput").value = getField("f_student_contact") || "";
+  $("emailModalMsg").textContent = "";
+  $("emailModal").classList.add("show");
+  setTimeout(function () { if ($("emailModalInput")) $("emailModalInput").focus(); }, 50);
+}
+function saveStudentEmail() {
+  var v = $("emailModalInput").value.trim();
+  if (!isEmail(v)) { $("emailModalMsg").textContent = "Enter a valid email address."; return; }
+  setField("f_student_contact", v);
+  $("emailModal").classList.remove("show");
+  afterExtractReady();
+}
+function skipEmail() {
+  $("emailModal").classList.remove("show");
+  afterExtractReady();
+}
+// This report isn't about a student at all (a portal bug, say), so stop
+// chasing an email for it: remember that for this form and carry on.
+function noStudentInvolved() {
+  state.noStudent = true;
+  $("emailModal").classList.remove("show");
+  afterExtractReady();
+}
+
+// ---- one report, several problems: offer to log them separately ----
+function showSplitSuggestion(subIssues) {
+  hideSplitSuggestion();
+  if (!subIssues || !subIssues.length || subIssues.length < 2) return;
+  if (state.editingId || state.updateTargetId) return; // only for brand-new reports
+  state.subIssues = subIssues;
+  $("splitPanel").innerHTML =
+    '<div class="h">This looks like ' + subIssues.length + ' separate issues</div>' +
+    '<div class="small" style="margin-bottom:6px;">Each would be fixed independently, so logging them apart keeps the trails clean. The same pasted text and screenshots go on every one.</div>' +
+    subIssues.map(function (s, i) {
+      return '<div style="margin:4px 0;">' + (i + 1) + '. ' + esc(s.summary || "") +
+        (s.issue_type ? ' <span class="badge type-badge">' + esc(s.issue_type) + '</span>' : '') + '</div>';
+    }).join("") +
+    '<label style="display:block;margin-top:8px;font-size:13px;color:var(--text);">' +
+      '<input type="checkbox" id="splitTick" style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="state.splitMode=this.checked;">' +
+      'Log these as ' + subIssues.length + ' separate issues when I submit</label>' +
+    '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="hideSplitSuggestion()">Dismiss</button>';
+  $("splitPanel").classList.remove("hidden");
+}
+function hideSplitSuggestion() {
+  $("splitPanel").classList.add("hidden");
+  $("splitPanel").innerHTML = "";
+  state.subIssues = null;
+  state.splitMode = false;
+}
+function findOpenIssuesByEmail(email) {
+  email = String(email || "").trim().toLowerCase();
+  if (!email) return [];
+  return state.issues.filter(function (i) {
+    if (!isOpen(i)) return false;
+    if ((i.student_contact || "").trim().toLowerCase() === email) return true;
+    var reps = parseReports(i);
+    for (var r = 0; r < reps.length; r++) {
+      if ((reps[r].student_contact || "").trim().toLowerCase() === email) return true;
+    }
+    return false;
+  }).sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
+}
+function detectExistingIssue() {
+  hideExisting();
+  if (state.editingId) return;
+  var matches = findOpenIssuesByEmail(getField("f_student_contact"));
+  if (!matches.length) return;
+  state.existingMatches = matches;
+  state.updateTargetId = matches[0].issue_id; // default to the most recent
+  showExisting(matches);
+  highlightChosen();
+  if (matches.length > 1) recommendUpdateTarget(matches);
+}
+function showExisting(matches) {
+  var multi = matches.length > 1;
+  var html = '<div class="h">This student already has ' + (multi ? matches.length + ' open issues' : 'an open issue') + '</div>' +
+    '<div class="small" style="margin-bottom:6px;">' + (multi
+      ? 'Pick which one this is an update to (check the details to see if it is the same problem), or log it as new.'
+      : 'Check it is the same problem, then add this as an update to keep it in one entry, or log it as new.') + '</div>' +
+    matches.map(function (m) {
+      return '<div class="exrow" data-id="' + esc(m.issue_id) + '" onclick="chooseExisting(\'' + esc(m.issue_id) + '\')">' +
+        '<div>' + priBadge(m.priority) + ' ' + statusBadge(m.status) +
+          (m.lesson_code ? ' <span class="code">' + esc(m.lesson_code) + '</span>' : '') +
+          ' <span class="recTag small" style="display:none;color:var(--medium);font-weight:600;">recommended</span></div>' +
+        '<div style="margin-top:4px;">' + esc(m.summary || "(no summary)") + '</div>' +
+        '<div class="small muted" style="margin-top:2px;">logged ' + fmtDate(m.submitted_at) +
+          (fmtDate(m.updated_at) && fmtDate(m.updated_at) !== fmtDate(m.submitted_at) ? ', last update ' + fmtDate(m.updated_at) : '') + '</div>' +
+      '</div>';
+    }).join("") +
+    '<button class="ghost small" id="newModeBtn" onclick="chooseExisting(null)">Log as a new issue instead</button>';
+  $("existingPanel").innerHTML = html;
+  $("existingPanel").classList.remove("hidden");
+}
+function chooseExisting(id) {
+  state.updateTargetId = id || null;
+  highlightChosen();
+}
+function highlightChosen() {
+  var rows = document.querySelectorAll('#existingPanel .exrow');
+  Array.prototype.forEach.call(rows, function (r) {
+    r.classList.toggle("sel", r.getAttribute("data-id") === state.updateTargetId);
+  });
+  if ($("newModeBtn")) $("newModeBtn").className = state.updateTargetId ? "ghost small" : "primary small";
+  $("submitBtn").textContent = state.updateTargetId ? "Add update" : "Submit issue";
+}
+function recommendUpdateTarget(matches) {
+  var cands = matches.map(function (m) { return { id: m.issue_id, summary: m.summary || "", lesson_code: m.lesson_code || "" }; });
+  apiPost({ action: "matchUpdate", raw_text: getField("rawText"), candidates: cands }).then(function (res) {
+    if (res && res.ok && res.match_id) {
+      state.updateTargetId = res.match_id;
+      highlightChosen();
+      var row = document.querySelector('#existingPanel .exrow[data-id="' + res.match_id + '"]');
+      if (row) { var t = row.querySelector(".recTag"); if (t) t.style.display = ""; }
+    }
+  }).catch(function (e) { console.error(e); });
+}
+function hideExisting() {
+  $("existingPanel").classList.add("hidden");
+  $("existingPanel").innerHTML = "";
+  state.existingMatches = null;
+  state.updateTargetId = null;
+}
+function showTroubleshoot(steps, escalate, note) {
+  state.troubleshootSteps = steps;
+  state.troubleshootAck = false;
+  var inner =
+    (escalate ? '<div class="small" style="color:var(--high);font-weight:600;margin-bottom:4px;">' + esc(note || "Escalate this to Edd or Stu now.") + '</div>' : '') +
+    '<ol>' + steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol>' +
+    (note && !escalate ? '<div class="small muted" style="margin-top:6px;">' + esc(note) + '</div>' : '');
+  // Inline reminder that stays on the form for reference.
+  $("troubleshootPanel").innerHTML = '<div class="h">Things to try with the student</div>' + inner +
+    '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="openTroubleshootModal()">Show again</button>';
+  $("troubleshootPanel").classList.remove("hidden");
+  // And the popup, which must be dismissed before the issue can be submitted.
+  $("tshootModalBody").innerHTML = '<div class="tshoot" style="border:none;background:transparent;padding:0;margin:0;">' + inner + '</div>';
+  $("tshootModal").classList.add("show");
+}
+function openTroubleshootModal() {
+  if (state.troubleshootSteps) $("tshootModal").classList.add("show");
+}
+function ackTroubleshoot() {
+  state.troubleshootAck = true;
+  $("tshootModal").classList.remove("show");
+}
+function hideTroubleshoot() {
+  $("troubleshootPanel").classList.add("hidden");
+  $("troubleshootPanel").innerHTML = "";
+  $("tshootModal").classList.remove("show");
+  state.troubleshootSteps = null;
+  state.troubleshootAck = false;
+}
+
+function collectForm() {
+  var isInternal = state.formMode === "internal";
+  return {
+    instructor_name: state.selectedInstructor,
+    category: isInternal ? "internal" : state.category,
+    // Internal feature requests are backlog items, same as improvements.
+    request_kind: isInternal
+      ? (getField("f_issue_type") === "feature_request" ? "improvement" : "fix")
+      : state.requestKind,
+    raw_text: getField("rawText"),
+    student_name: isInternal ? "" : getField("f_student_name"),
+    student_contact: isInternal ? "" : getField("f_student_contact"),
+    device_info: isInternal ? "" : getField("f_device_info"),
+    course: isInternal ? "" : getField("f_course"),
+    module: isInternal ? "" : getField("f_module"),
+    lesson: isInternal ? "" : getField("f_lesson"),
+    lesson_code: isInternal ? "" : getField("f_lesson_code"),
+    issue_type: getField("f_issue_type"),
+    summary: getField("f_summary"),
+    priority: getField("f_priority"),
+    priority_reason: getField("f_priority_reason"),
+    section: getField("f_section"),
+    media_kind: state.category === "course_error" ? getField("f_media_kind") : "",
+    double_checked: state.category === "course_error" && $("f_double_checked") ? $("f_double_checked").checked : false,
+    impact: state.requestKind === "improvement" && !isInternal ? getField("f_impact") : ""
+  };
+}
+
+// After the issue row is safely saved, push the screenshots up and attach
+// them to the saved issue(s). Slow or broken uploads can no longer block or
+// lose the issue itself, and failures are said out loud instead of swallowed.
+function uploadImagesInBackground(issueIds) {
+  issueIds = (issueIds || []).filter(Boolean);
+  var images = state.attachedImages; // our own reference; the form resets to a fresh array
+  if (!images.length || !issueIds.length) return;
+  var pending = images.filter(function (im) { return !im.uploaded; });
+  if (!pending.length) return;
+  toast("Uploading " + pending.length + " screenshot" + (pending.length > 1 ? "s" : "") + " in the background…");
+  var lastError = "";
+  Promise.all(pending.map(function (im) {
+    return apiPost({ action: "uploadImage", filename: im.name, mimeType: im.mimeType, base64: im.dataUrl })
+      .then(function (res) {
+        if (res && res.ok) { im.uploaded = true; im.url = res.url; }
+        else if (res && res.error) lastError = res.error;
+      })
+      .catch(function (e) { lastError = String(e); });
+  })).then(function () {
+    var urls = pending.filter(function (im) { return im.uploaded; }).map(function (im) { return im.url; });
+    var failed = pending.length - urls.length;
+    if (urls.length) {
+      Promise.all(issueIds.map(function (id) {
+        return apiPost({ action: "attachImages", issue_id: id, image_urls: urls });
+      })).then(function (results) {
+        var bad = results.filter(function (r) { return !r || !r.ok; })[0];
+        if (!bad) { toast("Screenshot" + (urls.length > 1 ? "s" : "") + " attached."); loadIssues(); }
+        else toast("Screenshots uploaded but could not be attached: " + ((bad && bad.error) || "unknown"));
+      }).catch(function () { toast("Screenshots uploaded but could not be attached."); });
+    }
+    if (failed) {
+      toast("Heads up: " + failed + " screenshot" + (failed > 1 ? "s" : "") + " failed to upload. The issue is saved without " + (failed > 1 ? "them" : "it") + ".");
+      if (lastError) console.error("Image upload failed:", lastError);
+    }
+  });
+}
+
+function submitIssue() {
+  if (!state.selectedInstructor) { toast("Pick your name first."); return; }
+  var isInternal = state.formMode === "internal";
+  // Tech fixes should have a student email so we can tell them when it's
+  // fixed. But not everything has a student: internal tasks never do, and the
+  // instructor can say "no student involved" on the email popup for portal
+  // problems they've spotted themselves.
+  if (!isInternal && !state.noStudent && state.category === "tech_issue" && state.requestKind !== "improvement" && !state.editingId && !isEmail(getField("f_student_contact"))) {
+    toast("Add the student's email first."); showEmailModal(); return;
+  }
+  // Make the instructor see the "things to try" popup before they can submit.
+  if (!isInternal && state.troubleshootSteps && !state.troubleshootAck) { openTroubleshootModal(); return; }
+  var btn = $("submitBtn");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> saving…';
+  var wasTbc = false, wasUpdate = false;
+  // The pre-dev checklist only applies to tech fixes, not improvements or
+  // internal tasks.
+  var checklistJson = (!isInternal && state.category === "tech_issue" && state.requestKind !== "improvement")
+    ? JSON.stringify(state.checklist || {}) : null;
+  var updateTarget = state.updateTargetId;
+  // The issue row saves FIRST, then screenshots upload in the background and
+  // attach themselves. A slow or failed upload used to hang the whole submit
+  // for a minute or more and could lose the report; now it can't.
+  var alreadyUploaded = state.attachedImages.filter(function (im) { return im.uploaded; }).map(function (im) { return im.url; });
+  var subIssues = (state.splitMode && state.subIssues && state.subIssues.length > 1 && !state.editingId && !updateTarget)
+    ? state.subIssues : null;
+
+  var data = collectForm();
+  data.image_urls = alreadyUploaded;
+  if (state.troubleshootSteps && state.troubleshootSteps.length) data.recommended_steps = state.troubleshootSteps;
+  if (checklistJson) data.checklist_json = checklistJson;
+
+  var request;
+  if (state.editingId) {
+    data.action = "updateIssue"; data.issue_id = state.editingId;
+    delete data.instructor_name; // keep the original logger on edits
+    request = apiPost(data);
+  } else if (updateTarget) {
+    // This conversation is a follow-up on the student's existing open issue,
+    // so add it as an update to that one entry.
+    data.action = "addUpdate"; data.issue_id = updateTarget; data.app_url = APP_URL; wasUpdate = true;
+    request = apiPost(data);
+  } else if (subIssues) {
+    // One report, several problems: log one issue per problem, sharing the
+    // pasted text and screenshots, each with its own summary and type.
+    request = subIssues.reduce(function (chain, sub) {
+      return chain.then(function (acc) {
+        var d = collectForm();
+        d.image_urls = alreadyUploaded;
+        if (checklistJson) d.checklist_json = checklistJson;
+        d.action = "addIssue"; d.app_url = APP_URL;
+        d.summary = sub.summary || d.summary;
+        if (sub.issue_type) d.issue_type = sub.issue_type;
+        return apiPost(d).then(function (r) { acc.push(r); return acc; });
+      });
+    }, Promise.resolve([])).then(function (results) {
+      var firstBad = null;
+      results.forEach(function (r) { if (!firstBad && (!r || !r.ok)) firstBad = r || { ok: false, error: "unknown" }; });
+      if (firstBad) return firstBad;
+      return { ok: true, split: results.length, issue_ids: results.map(function (r) { return r.issue && r.issue.issue_id; }) };
+    });
+  } else {
+    data.action = "addIssue"; data.app_url = APP_URL;
+    // If the instructor ticked "I've given the student this fix", log it as
+    // Resolved - TBC with that fix saved.
+    var tbcEl = $("tbcApplied");
+    if (tbcEl && tbcEl.checked && state.suggestedFix) {
+      data.tbc = true; data.resolution_note = state.suggestedFix; wasTbc = true;
+    }
+    request = apiPost(data);
+  }
+
+  request.then(function (res) {
+    btn.disabled = false; btn.textContent = state.editingId ? "Update issue" : "Submit issue";
+    if (!res || !res.ok) { toast("Save failed: " + ((res && res.error) || "unknown")); return; }
+    // When this was an update to an existing issue, carry the checklist over too
+    // (addUpdate doesn't take it directly, so save it separately).
+    if (wasUpdate && checklistJson && updateTarget) {
+      apiPost({ action: "saveChecklist", issue_id: updateTarget, checklist_json: checklistJson }).catch(function () {});
+    }
+    if (wasUpdate) toast("Update added to the existing issue.");
+    else if (res.split) toast("Logged as " + res.split + " separate issues.");
+    else if (res.merged) toast("Already reported — added to the existing one (now " + (res.report_count || "") + " reports)." + (wasTbc ? " Marked Resolved – TBC." : ""));
+    else toast(wasTbc ? "Logged as Resolved – TBC." : (state.editingId ? "Issue updated." : "Issue logged."));
+    // Work out where any pending screenshots belong, then let them upload in
+    // the background: the save itself is already done.
+    var targetIds = state.editingId ? [state.editingId]
+      : wasUpdate ? [updateTarget]
+      : res.issue_ids ? res.issue_ids
+      : (res.issue && res.issue.issue_id) ? [res.issue.issue_id] : [];
+    uploadImagesInBackground(targetIds);
+    resetForm();
+    loadIssues();
+  }).catch(function (e) {
+    btn.disabled = false; btn.textContent = "Submit issue";
+    toast("Save error. See console."); console.error(e);
+  });
+}
+
+function resetForm() {
+  state.editingId = null;
+  state.attachedImages = [];
+  state.checklist = {};
+  state.requestKind = "fix";
+  state.noStudent = false;
+  setFormMode("student");
+  renderRequestKind();
+  renderFormChecklist();
+  ["rawText","f_student_name","f_student_contact","f_device_info","f_module","f_lesson","f_lesson_code","f_summary","f_priority_reason"]
+    .forEach(function (id) { $(id).value = ""; });
+  $("f_course").value = "";
+  $("f_section").value = "";
+  $("f_issue_type").value = "bug";
+  $("f_priority").value = "medium";
+  setCategory("course_error");
+  $("extractStatus").textContent = "";
+  hideSuggestion();
+  hideSplitSuggestion();
+  hideTroubleshoot();
+  hideExisting();
+  renderThumbs();
+  $("editingNote").classList.add("hidden");
+  $("submitBtn").textContent = "Submit issue";
+  $("deleteBtn").style.display = "none";
+}
+
+function loadIntoForm(issue) {
+  setView("instructor");
+  state.editingId = issue.issue_id;
+  // Re-open internal tasks in internal mode; everything else in student mode.
+  setFormMode(catOf(issue) === "internal" ? "internal" : "student");
+  if (catOf(issue) !== "internal") setCategory(catOf(issue));
+  state.requestKind = kindOf(issue);
+  renderRequestKind();
+  setField("rawText", issue.raw_text);
+  setField("f_student_name", issue.student_name);
+  setField("f_student_contact", issue.student_contact);
+  setField("f_device_info", issue.device_info);
+  setField("f_course", issue.course || "");
+  setField("f_module", issue.module);
+  setField("f_lesson", issue.lesson);
+  setField("f_lesson_code", issue.lesson_code);
+  renderIssueTypeOptions();
+  setField("f_issue_type", issue.issue_type || (state.formMode === "internal" ? "bug" : "other"));
+  setField("f_summary", issue.summary);
+  setField("f_priority", (issue.priority || "medium").toLowerCase());
+  setField("f_priority_reason", issue.priority_reason);
+  setField("f_section", issue.section || "");
+  setField("f_media_kind", issue.media_kind || "");
+  setField("f_impact", issue.impact || "");
+  if ($("f_double_checked")) $("f_double_checked").checked = (issue.double_checked === true || issue.double_checked === "true" || issue.double_checked === "TRUE");
+  updateAdaptiveFields();
+  state.checklist = checklistMapOf(issue);
+  renderFormChecklist();
+  state.attachedImages = parseImageUrls(issue.image_urls).map(function (u) {
+    return { url: u, uploaded: true, name: "image" };
+  });
+  renderThumbs();
+  $("editingNote").classList.remove("hidden");
+  $("editingNote").textContent = "Editing an existing submission. Saving updates this issue, it will not create a new one. Changing the category moves it to the other sheet.";
+  $("submitBtn").textContent = "Update issue";
+  $("deleteBtn").style.display = "";
+  renderPrev();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function parseImageUrls(v) {
+  if (!v) return [];
+  return String(v).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+// Each issue can hold several reports (the same bug hit by several students).
+function parseReports(issue) {
+  if (!issue.reports_json) return [];
+  try { var arr = JSON.parse(issue.reports_json); return Array.isArray(arr) ? arr : []; }
+  catch (e) { return []; }
+}
+function reportCount(issue) {
+  var n = parseInt(issue.report_count, 10);
+  if (n && n > 0) return n;
+  var reps = parseReports(issue);
+  return reps.length || 1;
+}
+
+// ============================ INSTRUCTOR: PREVIOUS ============================
+function renderPrev() {
+  var box = $("prevList");
+  if (!state.selectedInstructor) {
+    box.innerHTML = '<p class="muted small">Log in to see your past issues.</p>';
+    return;
+  }
+  if (!state._issuesLoaded) {
+    box.innerHTML = '<p class="muted small">Loading your submissions…</p>';
+    return;
+  }
+  var mine = state.issues.filter(isMine)
+    .sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
+  if (!mine.length) { box.innerHTML = '<p class="muted small">No issues logged yet under this name.</p>'; return; }
+  box.innerHTML = mine.map(function (i) {
+    return '<div class="sub-item" onclick="openIssueById(\'' + esc(i.issue_id) + '\', true)">' +
+      '<div class="meta">' +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + typeBadge(i.issue_type) +
+        '<span class="date">' + fmtDate(i.submitted_at) + '</span>' +
+        (i.lesson_code ? ' <span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+      '</div>' +
+      '<div class="summary">' + esc(i.summary || "(no summary)") + '</div>' +
+    '</div>';
+  }).join("");
+}
+
+function openIssueById(id, intoForm) {
+  var issue = state.issues.filter(function (i) { return i.issue_id === id; })[0];
+  if (!issue) return;
+  if (intoForm) loadIntoForm(issue);
+  else openDetail(issue);
+}
+
+// ============================ ADMIN: DASHBOARD ============================
+function setArea(a) {
+  state.area = a;
+  $("area_all").classList.toggle("active", a === "all");
+  $("area_course").classList.toggle("active", a === "course_error");
+  $("area_course").classList.toggle("course", a === "course_error");
+  $("area_tech").classList.toggle("active", a === "tech_issue");
+  $("area_tech").classList.toggle("tech", a === "tech_issue");
+  $("area_internal").classList.toggle("active", a === "internal");
+  renderAdmin();
+}
+
+// List vs kanban board in the Track tab. The board gives the whole pipeline
+// at a glance, one column per stage, without clicking through the filters.
+function setTrackView(v) {
+  state.trackView = v === "board" ? "board" : "list";
+  $("tv_list").className = state.trackView === "list" ? "active" : "";
+  $("tv_board").className = state.trackView === "board" ? "active" : "";
+  renderAdmin();
+}
+
+// Filter by fix vs improvement. With area = All and this set to Improvements,
+// you get every improvement request across course and tech in one list.
+function setReqFilter(k) {
+  state.reqFilter = k;
+  $("rf_all").className = k === "all" ? "active" : "";
+  $("rf_fix").className = k === "fix" ? "active" : "";
+  $("rf_improvement").className = k === "improvement" ? "active improvement" : "";
+  renderAdmin();
+}
+
+function areaBase() {
+  var base = state.area === "all" ? state.issues
+    : state.issues.filter(function (i) { return catOf(i) === state.area; });
+  if (state.reqFilter && state.reqFilter !== "all") {
+    base = base.filter(function (i) { return kindOf(i) === state.reqFilter; });
+  }
+  return base;
+}
+
+function renderAdmin() {
+  var base = areaBase();
+
+  var openIssues = base.filter(isOpen);
+  $("statOpen").textContent = openIssues.length;
+  $("statHigh").textContent = openIssues.filter(function (i) { return (i.priority || "").toLowerCase() === "high"; }).length;
+
+  var now = new Date();
+  $("statResolved").textContent = base.filter(function (i) {
+    if (!i.resolved_at) return false;
+    var d = new Date(i.resolved_at);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }).length;
+
+  var fs = $("flt_status").value, fp = $("flt_priority").value, ft = $("flt_type").value,
+      fc = $("flt_course").value, fq = $("flt_search").value.trim().toLowerCase();
+
+  var list = base.filter(function (i) {
+    if (fs && (i.status || "open").toLowerCase() !== fs) return false;
+    if (fp && (i.priority || "").toLowerCase() !== fp) return false;
+    if (ft && i.issue_type !== ft) return false;
+    if (fc && i.course !== fc) return false;
+    if (fq) {
+      var hay = ((i.lesson_code || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
+                 " " + (i.lesson || "") + " " + (i.module || "") + " " + (i.device_info || "") +
+                 " " + (i.resolution_note || "") + " " + (i.student_contact || "")).toLowerCase();
+      if (hay.indexOf(fq) === -1) return false;
+    }
+    return true;
+  });
+
+  list.sort(function (a, b) {
+    var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()];
+    var pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
+    if (pa !== pb) return pa - pb;
+    var ca = reportCount(a), cb = reportCount(b);
+    if (ca !== cb) return cb - ca;
+    return new Date(b.submitted_at) - new Date(a.submitted_at);
+  });
+
+  if (state.trackView === "board") {
+    $("adminList").innerHTML = kanbanHtml(list);
+    return;
+  }
+
+  $("adminList").innerHTML = list.length ? list.map(function (i) {
+    var imgs = parseImageUrls(i.image_urls).length;
+    return '<div class="issue-card" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
+      '<div class="top">' +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) +
+        (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
+        (i.lesson_code ? '<span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+        (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
+        (i.assignee ? '<span class="badge type-badge">→ ' + esc(i.assignee) + '</span>' : '') +
+        '<span class="who">' + esc(i.instructor_name) + ' · ' + fmtDate(i.submitted_at) + '</span>' +
+      '</div>' +
+      '<div class="sum">' + esc(i.summary || "(no summary)") + '</div>' +
+    '</div>';
+  }).join("") : '<p class="muted">No issues match these filters.</p>';
+}
+
+// ---- kanban board: one column per stage ----
+var KANBAN_COLS = [
+  { key: "open",         label: "Open" },
+  { key: "in_progress",  label: "In progress" },
+  { key: "with_dev",     label: "With devs / course team" },
+  { key: "dev_fixed",    label: "Fixed, awaiting check" },
+  { key: "resolved_tbc", label: "Resolved – TBC" },
+  { key: "resolved",     label: "Resolved" }
+];
+function kanbanHtml(list) {
+  var byCol = {};
+  KANBAN_COLS.forEach(function (c) { byCol[c.key] = []; });
+  list.forEach(function (i) {
+    var s = (i.status || "open").toLowerCase();
+    (byCol[s] || byCol.open).push(i);
+  });
+  return '<div class="kanban">' + KANBAN_COLS.map(function (c) {
+    var items = byCol[c.key];
+    return '<div class="kcol" data-status="' + c.key + '" ondragover="kanbanOver(event)" ondragleave="kanbanLeave(event)" ondrop="kanbanDrop(event)">' +
+      '<div class="kcol-h">' + c.label + ' <span class="muted">' + items.length + '</span></div>' +
+      items.map(function (i) {
+        return '<div class="kcard kpri-' + ((i.priority || "low").toLowerCase()) + '" draggable="true" ' +
+          'ondragstart="kanbanDrag(event, \'' + esc(i.issue_id) + '\')" ' +
+          'onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
+          '<div class="ktop">' + priBadge(i.priority) + catBadge(i.category) + sectionBadge(i.section) +
+            (i.lesson_code ? '<span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+            (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') + '</div>' +
+          '<div class="ksum">' + esc(i.summary || "(no summary)") + '</div>' +
+          '<div class="small muted" style="margin-top:4px;">' + esc(i.instructor_name || "") + ' · ' + fmtDate(i.submitted_at) +
+            (i.assignee ? ' · → ' + esc(i.assignee) : '') + '</div>' +
+        '</div>';
+      }).join("") +
+    '</div>';
+  }).join("") + '</div>';
+}
+function kanbanDrag(ev, id) {
+  ev.dataTransfer.setData("text/plain", id);
+  ev.dataTransfer.effectAllowed = "move";
+}
+function kanbanOver(ev) {
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = "move";
+  var col = ev.currentTarget; if (col) col.classList.add("kdragover");
+}
+function kanbanLeave(ev) {
+  var col = ev.currentTarget; if (col) col.classList.remove("kdragover");
+}
+function kanbanDrop(ev) {
+  ev.preventDefault();
+  var col = ev.currentTarget;
+  col.classList.remove("kdragover");
+  var id = ev.dataTransfer.getData("text/plain");
+  var status = col.getAttribute("data-status");
+  if (!id || !status) return;
+  var issue = state.issues.filter(function (i) { return i.issue_id === id; })[0];
+  if (!issue || (issue.status || "open").toLowerCase() === status) return;
+  // Optimistic move so the board feels instant, then save; put it back if the
+  // save fails so the board never lies about what's stored.
+  var oldStatus = issue.status;
+  issue.status = status;
+  renderAdmin();
+  apiPost({ action: "updateIssue", issue_id: id, status: status }).then(function (res) {
+    if (!res || !res.ok) {
+      issue.status = oldStatus;
+      renderAdmin();
+      toast("Could not move it: " + ((res && res.error) || "unknown"));
+    } else {
+      loadIssues();
+    }
+  }).catch(function (e) {
+    issue.status = oldStatus;
+    renderAdmin();
+    toast("Could not move it. See console."); console.error(e);
+  });
+}
+
+function clearLessonFilter() {
+  $("flt_search").value = "";
+  $("filterClear").classList.add("hidden");
+  renderAdmin();
+}
+
+// ---- pre-dev checklist inside a detail drawer (Track + Developers) ----
+function detailChecklistHtml(issue) {
+  if (catOf(issue) !== "tech_issue") return "";
+  var map = checklistMapOf(issue);
+  var cleared = checklistCleared(map);
+  return '<h3>Troubleshooting checklist</h3>' +
+    '<div class="checklist" style="margin:0 0 12px;">' +
+      '<div class="small muted" style="margin-bottom:2px;">What has been ruled out before this reaches the developers. ' +
+        cleared + " of " + CHECKLIST.length + " cleared.</div>" +
+      checklistBody(map, "setDetailChecklist", issue.issue_id) +
+    "</div>";
+}
+// Toggle one checklist item from a detail drawer: update locally, re-render the
+// open drawer, and save in the background.
+function setDetailChecklist(issueId, itemId, val) {
+  var issue = state.issues.filter(function (i) { return i.issue_id === issueId; })[0];
+  if (!issue) return;
+  var map = checklistMapOf(issue);
+  map[itemId] = val;
+  issue.checklist_json = JSON.stringify(map);
+  if (state.detailKind === "dev") openDevDetail(issueId);
+  else openDetail(issue);
+  apiPost({ action: "saveChecklist", issue_id: issueId, checklist_json: issue.checklist_json })
+    .then(function (res) { if (!res || !res.ok) toast("Checklist save failed."); })
+    .catch(function (e) { console.error(e); });
+}
+
+// ============================ ADMIN: DETAIL DRAWER ============================
+function openDetail(issue) {
+  state.detailId = issue.issue_id;
+  state.detailKind = "admin";
+  var sameLesson = issue.lesson_code
+    ? state.issues.filter(function (i) { return i.lesson_code === issue.lesson_code; })
+    : [issue];
+  var otherOpen = sameLesson.filter(function (i) { return i.issue_id !== issue.issue_id && isOpen(i); });
+
+  var students = {};
+  function addStudent(name, contact) {
+    if (!name && !contact) return;
+    var key = (name || "") + "|" + (contact || "");
+    students[key] = { name: name || "(no name)", contact: contact || "" };
+  }
+  // Every report rolled into this issue (same bug, different students).
+  parseReports(issue).forEach(function (rep) { addStudent(rep.student_name, rep.student_contact); });
+  // The issue's own fields, for older rows that predate the reports list.
+  addStudent(issue.student_name, issue.student_contact);
+  // Anyone logged separately on the same lesson code.
+  sameLesson.forEach(function (i) { addStudent(i.student_name, i.student_contact); });
+  var studentArr = Object.keys(students).map(function (k) { return students[k]; });
+  var images = parseImageUrls(issue.image_urls);
+
+  var html = '<button class="close" onclick="closeDetail()">&times;</button>' +
+    '<h2>' + esc(issue.summary || "Issue") + '</h2>' +
+    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(issue.category) + " " + reqBadge(kindOf(issue)) +
+      (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
+      (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
+
+  if (otherOpen.length) {
+    html += '<div class="batch"><strong>' + otherOpen.length + ' other open issue' +
+      (otherOpen.length > 1 ? 's' : '') + ' on this lesson (' + esc(issue.lesson_code) + ')</strong>' +
+      '<div class="small" style="margin:4px 0 8px;">Fix them together.</div>' +
+      '<button class="ghost small" style="padding:4px 10px;" onclick="viewAllOnLesson(\'' + esc(issue.lesson_code) + '\')">View all on this lesson</button></div>';
+  }
+
+  // Affected students up top for quick reference.
+  html += '<h3>Affected students' + (studentArr.length ? ' (' + studentArr.length + ')' : '') + '</h3>';
+  if (studentArr.length) {
+    html += '<div class="students">' + studentArr.map(function (s) {
+      return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") + '</span></div>';
+    }).join("") + '</div>' +
+    '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>';
+  } else {
+    html += '<p class="muted small">No student contacts recorded.</p>';
+  }
+
+  html += '<div class="kv">' +
+    kv("Submitted by", issue.instructor_name) +
+    kv("Logged", fmtDate(issue.submitted_at)) +
+    kv("Assigned to", issue.assignee) +
+    kv("Course", issue.course) +
+    kv("Module", issue.module) +
+    kv("Lesson", issue.lesson) +
+    kv("Type", issue.issue_type) +
+    kv("Part of platform", issue.section ? (SECTION_LABEL[issue.section] || issue.section) : "") +
+    (catOf(issue) === "tech_issue" ? kv("Device / OS / browser", issue.device_info) : "") +
+    (catOf(issue) === "course_error" ? kv("Which part", mediaLabel(issue.media_kind)) : "") +
+    (catOf(issue) === "course_error" ? kv("Double-checked", isTrue(issue.double_checked) ? "Yes" : "No") : "") +
+    (kindOf(issue) === "improvement" ? kv("Impact", issue.impact) : "") +
+    (catOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "—") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
+    kv("Priority reason", issue.priority_reason) +
+  '</div>';
+
+  // Handoff section: developers for tech issues, the course team for course errors.
+  if (catOf(issue) === "tech_issue" || catOf(issue) === "course_error") {
+    var isCourseIssue = catOf(issue) === "course_error";
+    var whoTeam = isCourseIssue ? "course team" : "developers";
+    html += '<h3>' + (isCourseIssue ? "Course fixes" : "Developers") + '</h3>';
+    if (!issue.dev_passed_at) {
+      html += '<div class="small muted" style="margin-bottom:6px;">Not passed to the ' + whoTeam + ' yet.</div>' +
+        ((state.perms && state.perms.users) ? '<button class="ghost small" style="padding:5px 12px;" onclick="adminPassToDev(\'' + esc(issue.issue_id) + '\')">Pass to ' + whoTeam + '</button>' : '');
+    } else {
+      html += '<div class="kv">' +
+        kv("Passed", fmtDate(issue.dev_passed_at)) +
+        (issue.dev_fixed_at ? kv("Fixed", fmtDate(issue.dev_fixed_at)) : "") +
+        (issue.dev_fixed_at
+          ? kv("Time to fix", fmtDuration(new Date(issue.dev_fixed_at) - new Date(issue.dev_passed_at)))
+          : kv("Time open", fmtDuration(Date.now() - new Date(issue.dev_passed_at)) + " so far")) +
+        (issue.dev_notes ? kv("Fix notes", issue.dev_notes) : "") +
+      '</div>';
+      if ((issue.status || "").toLowerCase() === "dev_fixed") {
+        html += '<div class="batch" style="background:rgba(70,192,138,0.10);border-color:var(--low);">' +
+          (isCourseIssue ? "The course team" : "The developer") +
+          ' has fixed this. Verify it, resolve it below, and contact the affected students.</div>';
+      }
+    }
+  }
+
+  // Pre-dev troubleshooting checklist (tech issues only).
+  html += detailChecklistHtml(issue);
+
+  var reps = parseReports(issue);
+
+  // Steps the troubleshooting helper suggested at submission (most recent set).
+  var recSteps = null;
+  for (var ri = reps.length - 1; ri >= 0; ri--) {
+    if (reps[ri].recommended_steps && reps[ri].recommended_steps.length) { recSteps = reps[ri].recommended_steps; break; }
+  }
+  if (recSteps && recSteps.length) {
+    html += '<h3>Steps suggested at submission</h3>' +
+      '<div class="tshoot" style="margin:0 0 12px;"><ol>' +
+      recSteps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol></div>';
+  }
+
+  html += '<h3>Post an update</h3>' +
+    '<div class="field"><textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
+    '<button class="ghost small" style="margin-bottom:6px;padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button>';
+
+  html += '<h3>Update status</h3>' +
+    '<div class="field"><select id="d_status" onchange="onStatusChange()">' +
+      ['open','in_progress','with_dev','dev_fixed','resolved_tbc','resolved'].map(function (s) {
+        var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
+        return '<option value="' + s + '"' + sel + '>' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + '</option>';
+      }).join("") +
+    '</select></div>' +
+    '<div class="field' + (/^resolved/.test((issue.status || "").toLowerCase()) ? '' : ' hidden') + '" id="d_resnote_wrap">' +
+      '<label>Resolution note</label><textarea id="d_resolution_note" rows="3">' + esc(issue.resolution_note || "") + '</textarea>' +
+    '</div>' +
+    (String(issue.status).toLowerCase() === "resolved_tbc"
+      ? '<div class="small muted" style="margin-bottom:6px;">Awaiting confirmation. Auto-resolves after 7 days with no further reports.</div>' +
+        '<button class="ghost small" style="margin-bottom:10px;padding:5px 12px;" onclick="reopenIssue(\'' + esc(issue.issue_id) + '\')">Mark still happening (reopen)</button>'
+      : '') +
+    (issue.resolved_at ? '<div class="small muted" style="margin-bottom:10px;">Resolved at ' + fmtDate(issue.resolved_at) + '</div>' : '');
+
+  html += '<div class="field" style="margin-top:14px;"><label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
+    (String(issue.notified_students) === "true" ? " checked" : "") + '> Students notified</label></div>';
+
+  // Full reports/updates text and screenshots, kept at the bottom for reference.
+  if (reps.length) {
+    html += '<h3>Reports &amp; updates (' + reps.length + ')</h3>';
+    reps.forEach(function (rp, i) {
+      var meta = (rp.kind === "update" ? "Update" : "Report") +
+        (rp.instructor_name ? " · " + esc(rp.instructor_name) : "") +
+        (rp.date ? " · " + fmtDate(rp.date) : "") +
+        (rp.student_contact ? " · " + esc(rp.student_contact) : "");
+      var head = esc(rp.summary || rp.student_name || ("Entry " + (i + 1)));
+      html += '<details' + (i === reps.length - 1 ? " open" : "") + ' style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-bottom:6px;background:var(--bg);">' +
+        '<summary style="cursor:pointer;">' + head + ' <span class="small muted">(' + meta + ')</span></summary>' +
+        '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px;">' + esc(rp.raw_text || rp.summary || "") + '</div>' +
+      '</details>';
+    });
+  } else if (issue.raw_text) {
+    html += '<h3>Report</h3><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' + esc(issue.raw_text) + '</div>';
+  }
+  html += '<div class="row" style="margin:4px 0 10px;">' +
+    (reportCount(issue) > 1 ? '<button class="ghost small" onclick="splitIssueAction(\'' + esc(issue.issue_id) + '\')">Split apart</button>' : '') +
+    '<button class="ghost small" onclick="openLinkPicker(\'' + esc(issue.issue_id) + '\')">Link into another report</button>' +
+  '</div>' +
+  '<div id="linkPicker" class="hidden" style="margin-bottom:10px;"></div>';
+  if (images.length) {
+    html += '<h3>Screenshots</h3><div class="thumbs">' + images.map(function (u) {
+      return '<a class="thumb" href="' + esc(u) + '" target="_blank"><img src="' + esc(u) + '" /></a>';
+    }).join("") + '</div>';
+  }
+
+  html += '<div class="row" style="margin-top:10px;">' +
+    '<button class="primary" onclick="saveDetail()">Save changes</button>' +
+    '<button class="ghost" onclick="editInForm(\'' + esc(issue.issue_id) + '\')">Open in form</button>' +
+    (canDelete(issue) ? '<button class="ghost" style="color:var(--high);" onclick="deleteIssueAction(\'' + esc(issue.issue_id) + '\')">Delete</button>' : '') +
+  '</div>';
+
+  $("drawer").innerHTML = html;
+  $("overlay").classList.add("show");
+
+  state._copyContacts = studentArr.filter(function (s) { return s.contact; })
+    .map(function (s) { return s.name + ": " + s.contact; }).join("\n");
+}
+
+function kv(k, v) { return '<div class="k">' + esc(k) + '</div><div>' + (v ? esc(v) : "—") + '</div>'; }
+function onStatusChange() {
+  // Show the resolution note for both Resolved and Resolved - TBC.
+  $("d_resnote_wrap").classList.toggle("hidden", $("d_status").value.indexOf("resolved") !== 0);
+}
+function closeDetail() { $("overlay").classList.remove("show"); state.detailId = null; }
+
+function saveDetail() {
+  var status = $("d_status").value;
+  var note = $("d_resolution_note") ? $("d_resolution_note").value.trim() : "";
+  // Make sure we capture how it was fixed when fully resolving.
+  if (status === "resolved" && !note) { toast("Add a resolution note before resolving."); return; }
+  apiPost({
+    action: "updateIssue",
+    issue_id: state.detailId,
+    status: status,
+    resolution_note: note,
+    notified_students: $("d_notified").checked
+  }).then(function (res) {
+    if (!res || !res.ok) { toast("Update failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Issue updated.");
+    closeDetail();
+    loadIssues();
+  }).catch(function (e) { toast("Update error. See console."); console.error(e); });
+}
+
+function reopenIssue(id) {
+  apiPost({ action: "updateIssue", issue_id: id, status: "open" }).then(function (res) {
+    if (!res || !res.ok) { toast("Reopen failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Reopened.");
+    closeDetail();
+    loadIssues();
+  }).catch(function (e) { toast("Reopen error. See console."); console.error(e); });
+}
+
+function copyContacts() {
+  var text = state._copyContacts || "";
+  if (!text) { toast("No contacts to copy."); return; }
+  navigator.clipboard.writeText(text).then(function () { toast("Contacts copied."); },
+    function () { toast("Copy failed — select manually."); });
+}
+
+function viewAllOnLesson(code) {
+  closeDetail();
+  setView("admin");
+  setArea("all");
+  $("flt_status").value = "";
+  $("flt_search").value = code;
+  $("filterClear").classList.remove("hidden");
+  $("filterClearCode").textContent = code;
+  renderAdmin();
+}
+
+function editInForm(id) { closeDetail(); openIssueById(id, true); }
+
+function deleteIssueAction(id) {
+  if (!window.confirm("Delete this issue permanently? This cannot be undone.")) return;
+  apiPost({ action: "deleteIssue", issue_id: id }).then(function (res) {
+    if (!res || !res.ok) { toast("Delete failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Issue deleted.");
+    closeDetail();
+    if (state.editingId === id) resetForm();
+    loadIssues();
+  }).catch(function (e) { toast("Delete error. See console."); console.error(e); });
+}
+function deleteFromForm() { if (state.editingId) deleteIssueAction(state.editingId); }
+
+function canDelete(issue) {
+  if (state.perms && state.perms.users) return true; // full admins
+  var me = state.user && state.user.name;
+  return !!(me && issue.instructor_name && String(issue.instructor_name).trim().toLowerCase() === String(me).trim().toLowerCase());
+}
+
+// Manually link this issue into another open one in the same area.
+function openLinkPicker(id) {
+  var issue = state.issues.filter(function (i) { return i.issue_id === id; })[0];
+  if (!issue) return;
+  var cat = catOf(issue);
+  var others = state.issues.filter(function (i) { return i.issue_id !== id && isOpen(i) && catOf(i) === cat; })
+    .sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
+  if (!others.length) { toast("No other open issues in this area to link to."); return; }
+  var opts = others.map(function (o) {
+    return '<option value="' + esc(o.issue_id) + '">' + esc((o.lesson_code ? o.lesson_code + " · " : "") + (o.summary || "(no summary)")) + '</option>';
+  }).join("");
+  $("linkPicker").innerHTML = '<div class="small muted" style="margin-bottom:4px;">Merge this report into:</div>' +
+    '<div class="row"><select id="linkTarget">' + opts + '</select>' +
+    '<button class="primary small" onclick="doLink(\'' + esc(id) + '\')">Link</button></div>';
+  $("linkPicker").classList.remove("hidden");
+}
+function doLink(sourceId) {
+  var targetId = $("linkTarget") ? $("linkTarget").value : "";
+  if (!targetId) return;
+  if (!window.confirm("Merge this report into the selected one? They become a single entry, and this one goes away.")) return;
+  apiPost({ action: "linkIssues", source_id: sourceId, target_id: targetId }).then(function (res) {
+    if (!res || !res.ok) { toast("Link failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Reports linked.");
+    closeDetail(); loadIssues();
+  }).catch(function (e) { toast("Link error. See console."); console.error(e); });
+}
+
+// Paste a new conversation onto an existing issue from the Track detail: extract
+// the latest read of priority/device, then append it as an update.
+function postUpdateFromDetail(id) {
+  var raw = $("d_update_text") ? $("d_update_text").value.trim() : "";
+  if (!raw) { toast("Paste the new conversation first."); return; }
+  toast("Reading…");
+  apiPost({ action: "extract", raw_text: raw }).then(function (res) {
+    var f = (res && res.ok && res.fields) ? res.fields : {};
+    return apiPost({
+      action: "addUpdate", issue_id: id, raw_text: raw,
+      device_info: f.device_info || "", priority: f.priority || "",
+      priority_reason: f.priority_reason || "", app_url: APP_URL
+    });
+  }).then(function (res) {
+    if (!res || !res.ok) { toast("Update failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Update added.");
+    closeDetail(); loadIssues();
+  }).catch(function (e) { toast("Update error. See console."); console.error(e); });
+}
+
+function splitIssueAction(id) {
+  if (!window.confirm("Split this back into separate issues, one per report? This undoes the grouping.")) return;
+  apiPost({ action: "splitIssue", issue_id: id }).then(function (res) {
+    if (!res || !res.ok) { toast("Split failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Split into " + res.split_into + " separate issues.");
+    closeDetail();
+    loadIssues();
+  }).catch(function (e) { toast("Split error. See console."); console.error(e); });
+}
+
+// ============================ ANALYTICS (admins only) ============================
+function setAnaArea(a) {
+  state.anaArea = a;
+  $("ana_all").classList.toggle("active", a === "all");
+  $("ana_course").classList.toggle("active", a === "course_error");
+  $("ana_tech").classList.toggle("active", a === "tech_issue");
+  $("ana_internal").classList.toggle("active", a === "internal");
+  renderAnalytics();
+}
+
+// ---- breakdown matrix: fixes / improvements / all, by course / tech / both ----
+function statSubset(area, kind) {
+  return state.issues.filter(function (i) {
+    if (area !== "all" && catOf(i) !== area) return false;
+    if (kind !== "all" && kindOf(i) !== kind) return false;
+    return true;
+  });
+}
+function statMetricCount(arr, metric) {
+  if (metric === "high") return arr.filter(function (i) { return isOpen(i) && (i.priority || "").toLowerCase() === "high"; }).length;
+  if (metric === "resolved") {
+    var n = new Date();
+    return arr.filter(function (i) {
+      if (!i.resolved_at) return false;
+      var d = new Date(i.resolved_at);
+      return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear();
+    }).length;
+  }
+  if (metric === "total") return arr.length;
+  return arr.filter(isOpen).length; // open (default)
+}
+var STAT_METRICS = ["open", "high", "resolved", "total"];
+function setStatMetric(m) { state.statMetric = m; renderStatMatrix(); }
+function renderStatMatrix() {
+  var box = $("statMatrix");
+  if (!box) return;
+  var metric = state.statMetric || "open";
+  var areas = [["course_error", "Course errors"], ["tech_issue", "Tech issues"], ["internal", "Internal"], ["all", "All areas"]];
+  var kinds = [["fix", "Fixes"], ["improvement", "Improvements"], ["all", "All"]];
+
+  var head = "<tr><th></th>" + kinds.map(function (k) {
+    return '<th class="' + (k[0] === "all" ? "tot" : "") + '">' + k[1] + "</th>";
+  }).join("") + "</tr>";
+
+  var body = areas.map(function (a) {
+    var cells = kinds.map(function (k) {
+      var v = statMetricCount(statSubset(a[0], k[0]), metric);
+      var isTot = a[0] === "all" || k[0] === "all";
+      return "<td" + (isTot ? ' class="tot"' : "") + ">" + v + "</td>";
+    }).join("");
+    return "<tr" + (a[0] === "all" ? ' class="tot"' : "") + "><th>" + a[1] + "</th>" + cells + "</tr>";
+  }).join("");
+
+  var cols = '<colgroup><col><col class="kcol-fix"><col class="kcol-improvement"><col class="kcol-all"></colgroup>';
+  box.innerHTML = '<table class="matrix">' + cols + "<thead>" + head + "</thead><tbody>" + body + "</tbody></table>";
+
+  STAT_METRICS.forEach(function (m) {
+    var b = $("sm_" + m);
+    if (b) b.className = metric === m ? "active" : "";
+  });
+}
+
+function renderAnalytics() {
+  renderStatMatrix();
+  var base = state.anaArea === "all"
+    ? state.issues
+    : state.issues.filter(function (i) { return catOf(i) === state.anaArea; });
+  var openIssues = base.filter(isOpen);
+
+  // headline stats for this area
+  $("anaOpen").textContent = openIssues.length;
+  $("anaHigh").textContent = openIssues.filter(function (i) { return (i.priority || "").toLowerCase() === "high"; }).length;
+  var nowS = new Date();
+  $("anaResolved").textContent = base.filter(function (i) {
+    if (!i.resolved_at) return false;
+    var d = new Date(i.resolved_at);
+    return d.getMonth() === nowS.getMonth() && d.getFullYear() === nowS.getFullYear();
+  }).length;
+
+  var byLesson = {};
+  openIssues.forEach(function (i) {
+    var code = i.lesson_code || "(no code)";
+    byLesson[code] = (byLesson[code] || 0) + 1;
+  });
+  var lessons = Object.keys(byLesson).map(function (c) { return { code: c, n: byLesson[c] }; })
+    .sort(function (a, b) { return b.n - a.n; });
+  var maxL = lessons.length ? lessons[0].n : 1;
+
+  var flags = lessons.filter(function (l) { return l.n >= 3 && l.code !== "(no code)"; });
+  $("reviewFlags").innerHTML = flags.map(function (l) {
+    return '<div class="flag"><span class="code">' + esc(l.code) + '</span> has ' + l.n +
+      ' open issues. Consider a content review.</div>';
+  }).join("");
+
+  $("trendLessons").innerHTML = lessons.length ? lessons.slice(0, 12).map(function (l) {
+    return '<div class="bar-row"><div class="code">' + esc(l.code) + '</div>' +
+      '<div class="bar" style="width:' + Math.max(2, (l.n / maxL) * 100) + '%;"></div>' +
+      '<div>' + l.n + '</div></div>';
+  }).join("") : '<p class="muted small">No open issues.</p>';
+
+  var msWeek = 7 * 24 * 3600 * 1000;
+  var now = new Date();
+  var startOfThisWeek = new Date(now); startOfThisWeek.setHours(0,0,0,0);
+  startOfThisWeek.setDate(startOfThisWeek.getDate() - ((startOfThisWeek.getDay() + 6) % 7));
+  var weeks = [];
+  for (var w = 11; w >= 0; w--) {
+    var start = new Date(startOfThisWeek.getTime() - w * msWeek);
+    var end = new Date(start.getTime() + msWeek);
+    var count = base.filter(function (i) {
+      var d = new Date(i.submitted_at);
+      return d >= start && d < end;
+    }).length;
+    weeks.push({ label: start.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }), count: count });
+  }
+  var maxW = Math.max.apply(null, weeks.map(function (x) { return x.count; }).concat([1]));
+  $("trendWeeks").innerHTML = weeks.map(function (x) {
+    return '<div class="wb" style="height:' + Math.max(2, (x.count / maxW) * 100) + '%;" title="' +
+      x.label + ': ' + x.count + '"><span>' + x.count + '</span></div>';
+  }).join("");
+
+  var byType = {};
+  base.forEach(function (i) { var t = i.issue_type || "other"; byType[t] = (byType[t] || 0) + 1; });
+  var types = Object.keys(byType).map(function (t) { return { t: t, n: byType[t] }; })
+    .sort(function (a, b) { return b.n - a.n; });
+  var maxT = types.length ? types[0].n : 1;
+  $("trendTypes").innerHTML = types.length ? types.map(function (x) {
+    return '<div class="bar-row"><div>' + esc(x.t) + '</div>' +
+      '<div class="bar alt" style="width:' + Math.max(2, (x.n / maxT) * 100) + '%;"></div>' +
+      '<div>' + x.n + '</div></div>';
+  }).join("") : '<p class="muted small">No issues yet.</p>';
+
+  // Where in the platform the trouble lives (website, portals, player, app).
+  // Course errors are located by lesson code instead, so most arrive blank;
+  // only count issues that actually carry a section.
+  var bySection = {};
+  base.forEach(function (i) { if (i.section) bySection[i.section] = (bySection[i.section] || 0) + 1; });
+  var sections = Object.keys(bySection).map(function (s) { return { s: s, n: bySection[s] }; })
+    .sort(function (a, b) { return b.n - a.n; });
+  var maxS = sections.length ? sections[0].n : 1;
+  $("trendSections").innerHTML = sections.length ? sections.map(function (x) {
+    return '<div class="bar-row"><div>' + esc(SECTION_LABEL[x.s] || x.s) + '</div>' +
+      '<div class="bar" style="width:' + Math.max(2, (x.n / maxS) * 100) + '%;"></div>' +
+      '<div>' + x.n + '</div></div>';
+  }).join("") : '<p class="muted small">Nothing with a platform section yet.</p>';
+}
+
+// ============================ DEVELOPER VIEW ============================
+function devQueue(cats) {
+  // cats can be one category or a list: the Developers queue carries both tech
+  // issues and internal tasks, since both land on the same people to fix.
+  if (!Array.isArray(cats)) cats = [cats];
+  return state.issues.filter(function (i) { return i.dev_passed_at && cats.indexOf(catOf(i)) > -1; });
+}
+
+// Shared renderer for both the Developers queue (tech) and the Course fixes
+// queue (course), since the workflow is identical, only the category differs.
+function renderQueue(cat, ids, filterVal) {
+  var all = devQueue(cat);
+  $(ids.queue).textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "with_dev"; }).length;
+  $(ids.fixed).textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "dev_fixed"; }).length;
+
+  var durations = all.filter(function (i) { return i.dev_passed_at && i.dev_fixed_at; })
+    .map(function (i) { return new Date(i.dev_fixed_at) - new Date(i.dev_passed_at); })
+    .filter(function (d) { return d >= 0; });
+  var avg = durations.length ? durations.reduce(function (a, b) { return a + b; }, 0) / durations.length : null;
+  $(ids.avg).textContent = avg == null ? "–" : fmtDuration(avg);
+
+  var list = all.filter(function (i) {
+    var s = (i.status || "").toLowerCase();
+    if (filterVal === "todo") return s === "with_dev";
+    if (filterVal === "fixed") return s === "dev_fixed";
+    return s === "with_dev" || s === "dev_fixed";
+  });
+  list.sort(function (a, b) {
+    var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
+    if (pa !== pb) return pa - pb;
+    return new Date(a.dev_passed_at) - new Date(b.dev_passed_at); // oldest waiting first
+  });
+
+  $(ids.list).innerHTML = list.length ? list.map(function (i) {
+    var imgs = parseImageUrls(i.image_urls).length;
+    var age = i.dev_passed_at ? fmtDuration(Date.now() - new Date(i.dev_passed_at)) : "";
+    return '<div class="issue-card" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
+      '<div class="top">' +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) +
+        (i.lesson_code ? '<span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+        (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') +
+        (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
+        (i.assignee ? '<span class="badge type-badge">→ ' + esc(i.assignee) + '</span>' : '') +
+        '<span class="who">by ' + esc(i.instructor_name || "—") + ' · passed ' + fmtDate(i.dev_passed_at) + ' · ' + age + ' ago</span>' +
+      '</div>' +
+      '<div class="sum">' + esc(i.summary || "(no summary)") + '</div>' +
+    '</div>';
+  }).join("") : '<p class="muted">Nothing here.</p>';
+}
+
+function renderDev() {
+  renderQueue(["tech_issue", "internal"], { queue: "devStatQueue", fixed: "devStatFixed", avg: "devStatAvg", list: "devList" }, state.devFilter);
+}
+function renderCourse() {
+  renderQueue("course_error", { queue: "courseStatQueue", fixed: "courseStatFixed", avg: "courseStatAvg", list: "courseList" }, state.courseFilter);
+}
+
+function setDevFilter(f) {
+  state.devFilter = f;
+  $("dev_todo").classList.toggle("active", f === "todo");
+  $("dev_fixed").classList.toggle("active", f === "fixed");
+  $("dev_all").classList.toggle("active", f === "all");
+  renderDev();
+}
+function setCourseFilter(f) {
+  state.courseFilter = f;
+  $("course_todo").classList.toggle("active", f === "todo");
+  $("course_fixed").classList.toggle("active", f === "fixed");
+  $("course_all").classList.toggle("active", f === "all");
+  renderCourse();
+}
+
+function openDevDetail(id) {
+  var issue = state.issues.filter(function (i) { return i.issue_id === id; })[0];
+  if (!issue) return;
+  state.detailId = id;
+  state.detailKind = "dev";
+  var images = parseImageUrls(issue.image_urls);
+  var isFixed = (issue.status || "").toLowerCase() === "dev_fixed";
+  var timeOpen = issue.dev_passed_at
+    ? (issue.dev_fixed_at
+        ? fmtDuration(new Date(issue.dev_fixed_at) - new Date(issue.dev_passed_at))
+        : fmtDuration(Date.now() - new Date(issue.dev_passed_at)) + " so far")
+    : "—";
+
+  var html = '<button class="close" onclick="closeDetail()">&times;</button>' +
+    '<h2>' + esc(issue.summary || "Issue") + '</h2>' +
+    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + reqBadge(kindOf(issue)) +
+      (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
+    '<div class="kv">' +
+      kv("Submitted by", issue.instructor_name) +
+      kv("Passed to " + (catOf(issue) === "course_error" ? "course team" : "devs"), fmtDate(issue.dev_passed_at)) +
+      kv("Time open", timeOpen) +
+      kv("Reports", String(reportCount(issue))) +
+      (catOf(issue) === "tech_issue" ? kv("Device / OS / browser", issue.device_info) : "") +
+      (catOf(issue) === "course_error" ? kv("Which part", mediaLabel(issue.media_kind)) : "") +
+      (catOf(issue) === "course_error" ? kv("Double-checked", isTrue(issue.double_checked) ? "Yes" : "No") : "") +
+      (kindOf(issue) === "improvement" ? kv("Impact", issue.impact) : "") +
+      kv("Course", issue.course) +
+      kv("Module", issue.module) +
+      kv("Lesson", issue.lesson) +
+    '</div>';
+
+  // Who's on it. Assign to a person with this queue's access.
+  html += '<h3>Assigned to</h3>' +
+    '<div class="field"><select id="assignSelect" onchange="assignFromDetail(\'' + esc(issue.issue_id) + '\')">' +
+      assignOptionsHtml(issue) + '</select></div>';
+
+  // Student details, so developers can reproduce account-specific problems and
+  // test against the affected account.
+  var devStudents = {};
+  function addDevStudent(n, c) {
+    if (!n && !c) return;
+    devStudents[(n || "") + "|" + (c || "")] = { name: n || "(no name)", contact: c || "" };
+  }
+  parseReports(issue).forEach(function (rp) { addDevStudent(rp.student_name, rp.student_contact); });
+  addDevStudent(issue.student_name, issue.student_contact);
+  var devStudentArr = Object.keys(devStudents).map(function (k) { return devStudents[k]; });
+  if (devStudentArr.length) {
+    html += '<h3>Affected students' + (catOf(issue) === "tech_issue" ? ' (test accounts)' : '') + '</h3>' +
+      '<div class="students">' + devStudentArr.map(function (s) {
+        return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") + '</span></div>';
+      }).join("") + '</div>' +
+      '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>';
+    state._copyContacts = devStudentArr.filter(function (s) { return s.contact; })
+      .map(function (s) { return s.name + ": " + s.contact; }).join("\n");
+  } else {
+    state._copyContacts = "";
+  }
+
+  if (issue.raw_text) {
+    html += '<h3>Report</h3><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' +
+      esc(issue.raw_text) + '</div>';
+  }
+  if (images.length) {
+    html += '<h3>Screenshots</h3><div class="thumbs">' + images.map(function (u) {
+      return '<a class="thumb" href="' + esc(u) + '" target="_blank"><img src="' + esc(u) + '" /></a>';
+    }).join("") + '</div>';
+  }
+
+  // What the team already ruled out before it reached the developers.
+  html += detailChecklistHtml(issue);
+
+  html += '<h3>Developer notes</h3><div class="field">' +
+    '<textarea id="dev_notes" rows="3" placeholder="Cause and fix...">' + esc(issue.dev_notes || "") + '</textarea></div>';
+
+  if (isFixed) {
+    html += '<div class="small muted" style="margin-bottom:8px;">Marked fixed ' + fmtDate(issue.dev_fixed_at) +
+      '. Waiting on an admin to verify, resolve, and contact the students.</div>' +
+      '<div class="row"><button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
+  } else {
+    html += '<div class="row">' +
+      '<button class="primary" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
+      '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
+  }
+
+  $("drawer").innerHTML = html;
+  $("overlay").classList.add("show");
+}
+
+function devMarkFixed(id) {
+  var notes = $("dev_notes") ? $("dev_notes").value : "";
+  apiPost({ action: "markDevFixed", issue_id: id, dev_notes: notes, app_url: APP_URL }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Marked fixed. Admins notified.");
+    closeDetail(); loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+
+function devSaveNotes(id) {
+  var notes = $("dev_notes") ? $("dev_notes").value : "";
+  apiPost({ action: "saveDevNotes", issue_id: id, dev_notes: notes }).then(function (res) {
+    if (!res || !res.ok) { toast("Save failed."); return; }
+    toast("Notes saved."); loadIssues();
+  }).catch(function (e) { toast("Save error."); console.error(e); });
+}
+
+function adminPassToDev(id) {
+  apiPost({ action: "passToDev", issue_id: id }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Passed to developers.");
+    closeDetail(); loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+
+// ============================ AUTH ============================
+function showLogin() {
+  setAuthMode("login");
+  $("authScreen").classList.add("show");
+  $("fbBtn").style.display = "none";
+  setTimeout(function () { if ($("loginEmail")) $("loginEmail").focus(); }, 50);
+}
+function setAuthMode(mode) {
+  $("authLogin").classList.toggle("hidden", mode !== "login");
+  $("authInvite").classList.toggle("hidden", mode !== "invite");
+}
+function doLogin() {
+  var email = $("loginEmail").value.trim();
+  var pw = $("loginPass").value;
+  if (!email || !pw) { $("loginMsg").textContent = "Enter your email and password."; return; }
+  $("loginMsg").textContent = "Signing in…";
+  apiPost({ action: "login", email: email, password: pw }).then(function (res) {
+    if (!res || !res.ok) { $("loginMsg").textContent = (res && res.error) || "Login failed."; return; }
+    setToken(res.token);
+    $("loginMsg").textContent = "";
+    onAuthed(res.user);
+  }).catch(function (e) { $("loginMsg").textContent = "Login error. See console."; console.error(e); });
+}
+function startInvite(token) {
+  state._inviteToken = token;
+  fetch(APPS_SCRIPT_URL + "?action=getInvite&token=" + encodeURIComponent(token))
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      if (!res || !res.ok) {
+        // A used or expired invite (often a bookmarked invite link). Clean the
+        // URL so the next load goes through the normal login path, and if this
+        // browser already has a live session, just carry on into the app.
+        if (window.history && window.history.replaceState) window.history.replaceState({}, "", window.location.pathname);
+        if (getToken()) {
+          apiGet("me").then(function (me) {
+            if (me && me.ok && me.user) onAuthed(me.user);
+            else { showLogin(); $("loginMsg").textContent = (res && res.error) || "That invite link is not valid."; }
+          }).catch(function () { showLogin(); });
+          return;
+        }
+        showLogin();
+        $("loginMsg").textContent = (res && res.error) || "That invite link is not valid.";
+        return;
+      }
+      $("inviteWho").textContent = res.email;
+      setAuthMode("invite");
+      $("authScreen").classList.add("show");
+      setTimeout(function () { if ($("invitePass")) $("invitePass").focus(); }, 50);
+    })
+    .catch(function () { showLogin(); });
+}
+function doAcceptInvite() {
+  var pw = $("invitePass").value, pw2 = $("invitePass2").value;
+  if (pw.length < 8) { $("inviteMsg").textContent = "Password must be at least 8 characters."; return; }
+  if (pw !== pw2) { $("inviteMsg").textContent = "Passwords do not match."; return; }
+  $("inviteMsg").textContent = "Setting up…";
+  apiPost({ action: "acceptInvite", invite: state._inviteToken, password: pw }).then(function (res) {
+    if (!res || !res.ok) { $("inviteMsg").textContent = (res && res.error) || "Could not set up the account."; return; }
+    setToken(res.token);
+    if (window.history && window.history.replaceState) window.history.replaceState({}, "", window.location.pathname);
+    onAuthed(res.user);
+  }).catch(function (e) { $("inviteMsg").textContent = "Setup error. See console."; console.error(e); });
+}
+function doLogout() {
+  apiPost({ action: "logout" }).catch(function () {});
+  clearToken();
+  state.user = null; state.perms = {};
+  $("userbox").style.display = "none";
+  showLogin();
+}
+
+// ============================ USERS (manage people) ============================
+var PERM_LABELS = [
+  { k: "log", label: "Log" },
+  { k: "manage", label: "Track" },
+  { k: "analytics", label: "Analytics" },
+  { k: "dev", label: "Developers" },
+  { k: "course", label: "Course fixes" },
+  { k: "users", label: "Admin" }
+];
+
+function invitePreset(kind) {
+  var presets = {
+    instructor: { log: true, manage: true },
+    admin: { log: true, manage: true, analytics: true, dev: true, course: true, users: true },
+    dev: { dev: true },
+    course: { course: true }
+  };
+  var p = presets[kind] || {};
+  PERM_LABELS.forEach(function (x) { var el = $("inv_" + x.k); if (el) el.checked = !!p[x.k]; });
+}
+function doInvite() {
+  var email = $("invEmail").value.trim(), name = $("invName").value.trim();
+  if (!email) { toast("Enter an email."); return; }
+  var perms = {}; PERM_LABELS.forEach(function (x) { perms[x.k] = $("inv_" + x.k).checked; });
+  apiPost({ action: "inviteUser", email: email, name: name, perms: perms }).then(function (res) {
+    if (!res || !res.ok) { toast("Invite failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Invited " + email + ".");
+    $("invEmail").value = ""; $("invName").value = "";
+    PERM_LABELS.forEach(function (x) { var el = $("inv_" + x.k); if (el) el.checked = false; });
+    if (res.invite_url) showInviteLink(res.invite_url);
+    renderUsers();
+  }).catch(function (e) { toast("Invite error."); console.error(e); });
+}
+function showInviteLink(url) {
+  $("inviteResult").classList.remove("hidden");
+  $("inviteLink").value = url;
+}
+function renderUsers() {
+  setUsersSection(state.usersSection || localGet("ait_users_section") || "feedback");
+  apiGet("listUsers").then(function (res) {
+    if (!res || !res.ok) { $("usersList").innerHTML = '<p class="muted">Could not load users.</p>'; return; }
+    state._users = res.users || [];
+    $("usersList").innerHTML = state._users.length ? state._users.map(userRowHtml).join("") : '<p class="muted">No users yet.</p>';
+  }).catch(function (e) { console.error(e); });
+  loadPlaybook();
+  loadSuggestions();
+  renderFeedback();
+}
+
+// The Admin page is sub-tabbed (People / Invite / Feedback / Playbook) so
+// nobody has to scroll through the whole user list to reach the feedback. The
+// last-used section is remembered.
+function setUsersSection(s) {
+  var sections = ["people", "feedback", "playbook"];
+  if (s === "invite") s = "people"; // invite now lives at the top of People
+  if (sections.indexOf(s) < 0) s = "feedback";
+  state.usersSection = s;
+  localSet("ait_users_section", s);
+  sections.forEach(function (k) {
+    var body = $("usec_" + k); if (body) body.classList.toggle("hidden", k !== s);
+    var btn = $("us_" + k); if (btn) btn.className = k === s ? "active" : "";
+  });
+}
+
+function loadPlaybook() {
+  apiGet("getPlaybook").then(function (res) {
+    if (res && res.ok) $("playbookText").value = res.playbook || "";
+  }).catch(function (e) { console.error(e); });
+}
+function savePlaybook() {
+  apiPost({ action: "savePlaybook", playbook: $("playbookText").value }).then(function (res) {
+    if (!res || !res.ok) { toast("Save failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Playbook saved.");
+  }).catch(function (e) { toast("Save error."); console.error(e); });
+}
+function loadSuggestions() {
+  apiGet("listPlaybookSuggestions").then(function (res) {
+    if (!res || !res.ok) { $("playbookSuggestions").innerHTML = ""; return; }
+    var s = res.suggestions || [];
+    $("playbookSuggestions").innerHTML = s.length ? s.map(suggestionRowHtml).join("") :
+      '<p class="muted small">Nothing waiting. As tech issues get resolved, the AI will propose playbook additions here for you to approve.</p>';
+  }).catch(function (e) { console.error(e); });
+}
+function suggestionRowHtml(s) {
+  return '<div class="card" style="margin-bottom:8px;border-color:var(--accent);">' +
+    '<div class="small muted" style="margin-bottom:4px;">From a resolved issue: ' + esc(s.summary || "") + (s.section ? ' · ' + esc(s.section) : '') + '</div>' +
+    '<div style="margin-bottom:8px;"><strong>Suggested addition:</strong> ' + esc(s.suggestion || "") + '</div>' +
+    '<div class="row">' +
+      '<button class="primary small" onclick="resolveSuggestion(\'' + esc(s.id) + '\', true)">Approve and add</button>' +
+      '<button class="ghost small" onclick="resolveSuggestion(\'' + esc(s.id) + '\', false)">Reject</button>' +
+    '</div>' +
+  '</div>';
+}
+function resolveSuggestion(id, approve) {
+  apiPost({ action: "resolvePlaybookSuggestion", id: id, approve: approve }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast(approve ? "Added to the playbook." : "Suggestion dismissed.");
+    loadSuggestions();
+    if (approve) loadPlaybook();
+  }).catch(function (e) { toast("Error."); console.error(e); });
+}
+function userRowHtml(u) {
+  return '<div class="card" style="margin-bottom:10px;">' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">' +
+      '<strong>' + esc(u.name || "(no name)") + '</strong>' +
+      '<span class="muted small">' + esc(u.email) + '</span>' +
+      '<span class="badge st">' + esc(u.status || "") + '</span>' +
+    '</div>' +
+    '<div class="permrow">' + PERM_LABELS.map(function (p) {
+      return '<label class="small"><input type="checkbox" data-email="' + esc(u.email) + '" data-perm="' + p.k + '"' +
+        (u.perms && u.perms[p.k] ? " checked" : "") + '> ' + p.label + '</label>';
+    }).join("") + '</div>' +
+    '<div class="row" style="margin-top:8px;">' +
+      '<button class="ghost small" onclick="saveUserPerms(\'' + esc(u.email) + '\')">Save access</button>' +
+      '<button class="ghost small" onclick="resendInvite(\'' + esc(u.email) + '\')">Resend invite</button>' +
+      (String(u.status).toLowerCase() === "disabled"
+        ? '<button class="ghost small" onclick="setUserDisabled(\'' + esc(u.email) + '\', false)">Enable</button>'
+        : '<button class="ghost small" onclick="setUserDisabled(\'' + esc(u.email) + '\', true)">Disable</button>') +
+    '</div>' +
+  '</div>';
+}
+function collectPerms(email) {
+  var perms = {};
+  var boxes = document.querySelectorAll('input[data-email="' + email + '"]');
+  Array.prototype.forEach.call(boxes, function (b) { perms[b.getAttribute("data-perm")] = b.checked; });
+  return perms;
+}
+function saveUserPerms(email) {
+  apiPost({ action: "updateUser", email: email, perms: collectPerms(email) }).then(function (res) {
+    if (!res || !res.ok) { toast("Save failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Access saved.");
+  }).catch(function (e) { toast("Save error."); console.error(e); });
+}
+function resendInvite(email) {
+  apiPost({ action: "updateUser", email: email, resend: true }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Invite re-sent.");
+    if (res.invite_url) showInviteLink(res.invite_url);
+    renderUsers();
+  }).catch(function (e) { toast("Error."); console.error(e); });
+}
+function setUserDisabled(email, dis) {
+  var payload = { action: "updateUser", email: email };
+  if (dis) payload.disable = true; else payload.enable = true;
+  apiPost(payload).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast(dis ? "Disabled." : "Enabled.");
+    renderUsers();
+  }).catch(function (e) { toast("Error."); console.error(e); });
+}
+
+// ============================ FEEDBACK ON THE TRACKER ============================
+// Snapshot of exactly where the Feedback button was pressed, taken at the
+// moment it's pressed, so every report carries its own crime scene: which
+// page, which issue was open, what the filters were, what screen and browser.
+function captureFeedbackContext() {
+  var ctx = {
+    view: state.view,
+    url: window.location.href,
+    viewport: window.innerWidth + "x" + window.innerHeight,
+    scroll_y: Math.round(window.scrollY || 0),
+    user_agent: navigator.userAgent,
+    captured_at: new Date().toISOString()
+  };
+  // What's open on top of the page right now.
+  if (state.detailId) { ctx.open_issue_id = state.detailId; ctx.open_issue_kind = state.detailKind || ""; }
+  var modals = [];
+  ["emailModal", "tshootModal"].forEach(function (id) {
+    var el = $(id); if (el && el.classList.contains("show")) modals.push(id);
+  });
+  if (modals.length) ctx.open_modals = modals.join(",");
+  // Page-specific state, only where it says something useful.
+  if (state.view === "instructor") {
+    ctx.form_mode = state.formMode;
+    ctx.form_category = state.category;
+    if (state.editingId) ctx.editing_issue_id = state.editingId;
+    if (getField("rawText")) ctx.form_has_text = true;
+    if (state.attachedImages.length) ctx.form_images = state.attachedImages.length;
+  }
+  if (state.view === "admin") {
+    ctx.track_view = state.trackView;
+    ctx.area = state.area;
+    ctx.req_filter = state.reqFilter;
+    var filters = {};
+    [["flt_status", "status"], ["flt_priority", "priority"], ["flt_type", "type"], ["flt_course", "course"], ["flt_search", "search"]].forEach(function (p) {
+      var el = $(p[0]); if (el && el.value) filters[p[1]] = el.value;
+    });
+    if (Object.keys(filters).length) ctx.filters = filters;
+  }
+  if (state.view === "dev") ctx.dev_filter = state.devFilter;
+  if (state.view === "course") ctx.course_filter = state.courseFilter;
+  if (state.view === "analytics") { ctx.area = state.anaArea; ctx.metric = state.statMetric; }
+  return ctx;
+}
+// A one-line human version for showing in the modal and the admin list.
+function describeContext(ctx) {
+  if (!ctx || !ctx.view) return "";
+  var names = { instructor: "Log an issue", admin: "Track", analytics: "Analytics", dev: "Developers", course: "Course fixes", users: "Admin" };
+  var bits = [names[ctx.view] || ctx.view];
+  if (ctx.view === "admin" && ctx.track_view === "board") bits.push("board view");
+  if (ctx.area && ctx.area !== "all") bits.push(CATEGORY_LABEL[ctx.area] || ctx.area);
+  if (ctx.form_mode === "internal") bits.push("internal form");
+  if (ctx.editing_issue_id) bits.push("editing an issue");
+  if (ctx.open_issue_id) bits.push("issue detail open");
+  if (ctx.filters) bits.push("filters on");
+  return bits.join(" · ");
+}
+
+function openFeedback() {
+  $("fbMessage").value = "";
+  $("fbMsg").textContent = "";
+  state.fbImages = [];
+  state.fbContext = captureFeedbackContext();
+  $("fbContextNote").textContent = "This report will include where you are: " + describeContext(state.fbContext);
+  renderFbThumbs();
+  $("feedbackModal").classList.add("show");
+}
+function closeFeedback() { $("feedbackModal").classList.remove("show"); }
+
+function onFbFilesPicked(ev) {
+  var files = Array.prototype.slice.call(ev.target.files || []);
+  var room = MAX_IMAGES - state.fbImages.length;
+  files.forEach(function (file) {
+    if (room <= 0) { toast("Up to " + MAX_IMAGES + " images."); return; }
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024) { toast(file.name + " is over " + MAX_IMAGE_MB + " MB, skipped."); return; }
+    room--;
+    var reader = new FileReader();
+    reader.onload = function () {
+      state.fbImages.push({ name: file.name, dataUrl: reader.result, mimeType: file.type, uploaded: false });
+      renderFbThumbs();
+    };
+    reader.readAsDataURL(file);
+  });
+  ev.target.value = "";
+}
+function renderFbThumbs() {
+  $("fbThumbs").innerHTML = state.fbImages.map(function (img, i) {
+    var src = img.uploaded ? img.url : img.dataUrl;
+    return '<div class="thumb"><img src="' + esc(src) + '" /><div class="x" onclick="removeFbImage(' + i + ')">&times;</div></div>';
+  }).join("");
+}
+function removeFbImage(i) { state.fbImages.splice(i, 1); renderFbThumbs(); }
+
+function submitFeedback() {
+  var msg = $("fbMessage").value.trim();
+  if (!msg && !state.fbImages.length) { $("fbMsg").textContent = "Add a message first."; return; }
+  // Guard against double-clicks: one press, one report.
+  var sendBtn = $("fbSendBtn");
+  if (sendBtn.disabled) return;
+  sendBtn.disabled = true;
+  $("fbMsg").textContent = "Sending…";
+  var pending = state.fbImages.filter(function (im) { return !im.uploaded; });
+  var uploadError = "";
+  Promise.all(pending.map(function (im) {
+    return apiPost({ action: "uploadImage", filename: im.name, mimeType: im.mimeType, base64: im.dataUrl })
+      .then(function (res) {
+        if (res && res.ok) { im.uploaded = true; im.url = res.url; }
+        else if (res && res.error) uploadError = res.error;
+      })
+      .catch(function (e) { uploadError = String(e); });
+  })).then(function () {
+    var urls = state.fbImages.filter(function (im) { return im.uploaded; }).map(function (im) { return im.url; });
+    return apiPost({ action: "addFeedback", message: msg, image_urls: urls, context: JSON.stringify(state.fbContext || {}) });
+  }).then(function (res) {
+    sendBtn.disabled = false;
+    if (!res || !res.ok) { $("fbMsg").textContent = (res && res.error) || "Could not send."; return; }
+    closeFeedback();
+    var lost = state.fbImages.filter(function (im) { return !im.uploaded; }).length;
+    if (lost) toast("Feedback sent, but " + lost + " screenshot" + (lost > 1 ? "s" : "") + " failed to upload." + (uploadError ? " (" + uploadError + ")" : ""));
+    else toast("Thanks, your feedback was sent.");
+  }).catch(function (e) { sendBtn.disabled = false; $("fbMsg").textContent = "Send error. See console."; console.error(e); });
+}
+
+function renderFeedback() {
+  apiGet("getFeedback").then(function (res) {
+    if (!res || !res.ok) { $("feedbackList").innerHTML = ""; return; }
+    var list = res.feedback || [];
+    $("feedbackList").innerHTML = list.length ? list.map(feedbackRowHtml).join("") : '<p class="muted small">No feedback yet.</p>';
+    // Show how much is waiting right on the sub-tab button.
+    var open = list.filter(function (f) { return String(f.status || "new").toLowerCase() !== "done"; }).length;
+    if ($("us_feedback")) $("us_feedback").textContent = open ? "Feedback (" + open + ")" : "Feedback";
+  }).catch(function (e) { console.error(e); });
+}
+function feedbackRowHtml(f) {
+  var imgs = parseImageUrls(f.image_urls);
+  // Three states: reported (new) -> needs_testing (built, awaiting a check) ->
+  // done (confirmed fixed). Anything can be reopened.
+  var status = String(f.status || "new").toLowerCase();
+  var done = status === "done";
+  var testing = status === "needs_testing";
+  var chip = done ? ' · <span style="color:var(--low);">fixed</span>'
+    : testing ? ' · <span style="color:var(--medium);">needs testing</span>'
+    : ' · <span class="muted">reported</span>';
+  var ctx = null;
+  try { ctx = f.context ? JSON.parse(f.context) : null; } catch (e) { ctx = null; }
+  var ctxLine = ctx ? describeContext(ctx) : "";
+  var ctxDetail = ctx ? Object.keys(ctx).map(function (k) {
+    return k + ": " + (typeof ctx[k] === "object" ? JSON.stringify(ctx[k]) : ctx[k]);
+  }).join("\n") : "";
+  var buttons = done
+    ? '<button class="ghost small" onclick="markFeedback(\'' + esc(f.id) + '\', \'new\')">Reopen</button>'
+    : testing
+      ? '<button class="ghost small" onclick="markFeedback(\'' + esc(f.id) + '\', \'done\')">Confirm fixed</button>' +
+        '<button class="ghost small" onclick="markFeedback(\'' + esc(f.id) + '\', \'new\')">Reopen</button>'
+      : '<button class="ghost small" onclick="markFeedback(\'' + esc(f.id) + '\', \'needs_testing\')">Needs testing</button>' +
+        '<button class="ghost small" onclick="markFeedback(\'' + esc(f.id) + '\', \'done\')">Mark fixed</button>';
+  return '<div class="card" style="margin-bottom:8px;' + (done ? "opacity:0.6;" : "") + '">' +
+    '<div class="small muted" style="margin-bottom:4px;">' + esc(f.user_name || f.user_email || "someone") + ' · ' + fmtDate(f.created_at) + chip + '</div>' +
+    (ctxLine ? '<div class="small" style="margin-bottom:6px;color:var(--muted);" title="' + esc(ctxDetail) + '">From: ' + esc(ctxLine) + '</div>' : '') +
+    '<div style="white-space:pre-wrap;">' + esc(f.message || "") + '</div>' +
+    (imgs.length ? '<div class="thumbs" style="margin-top:8px;">' + imgs.map(function (u) {
+      return '<a class="thumb" href="' + esc(u) + '" target="_blank"><img src="' + esc(u) + '" /></a>';
+    }).join("") + '</div>' : '') +
+    '<div class="row" style="margin-top:8px;">' + buttons +
+      '<button class="ghost small" style="color:var(--high);margin-left:auto;" onclick="deleteFeedback(\'' + esc(f.id) + '\')">Delete</button>' +
+    '</div>' +
+  '</div>';
+}
+function deleteFeedback(id) {
+  if (!confirm("Delete this feedback for good? There's no undo.")) return;
+  apiPost({ action: "deleteFeedback", id: id }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Feedback deleted.");
+    renderFeedback();
+  }).catch(function (e) { toast("Error."); console.error(e); });
+}
+function markFeedback(id, status) {
+  apiPost({ action: "updateFeedback", id: id, status: status }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    renderFeedback();
+  }).catch(function (e) { toast("Error."); console.error(e); });
+}
+
+// ============================ GO ============================
+init();
+</script>
+</body>
+</html>
