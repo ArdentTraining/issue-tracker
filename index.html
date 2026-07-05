@@ -12,7 +12,7 @@
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Ardent Issue Tracker</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐞</text></svg>" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%230F1B2D%22/><g stroke=%22%23F0A500%22 stroke-width=%224%22 stroke-linecap=%22round%22><line x1=%2242%22 y1=%2220%22 x2=%2236%22 y2=%2210%22/><line x1=%2258%22 y1=%2220%22 x2=%2264%22 y2=%2210%22/><line x1=%2230%22 y1=%2248%22 x2=%2216%22 y2=%2242%22/><line x1=%2230%22 y1=%2258%22 x2=%2214%22 y2=%2262%22/><line x1=%2270%22 y1=%2248%22 x2=%2284%22 y2=%2242%22/><line x1=%2270%22 y1=%2258%22 x2=%2286%22 y2=%2262%22/></g><ellipse cx=%2250%22 cy=%2256%22 rx=%2220%22 ry=%2226%22 fill=%22%23F0A500%22/><circle cx=%2250%22 cy=%2230%22 r=%2212%22 fill=%22%23F0A500%22/><line x1=%2250%22 y1=%2234%22 x2=%2250%22 y2=%2280%22 stroke=%22%230F1B2D%22 stroke-width=%223%22/></svg>" />
 <style>
   :root {
     --bg: #0c2146;          /* derived deep blue from #163a70 */
@@ -319,6 +319,10 @@
 </style>
 </head>
 <body>
+<div id="bootLoader" style="position:fixed;inset:0;z-index:10000;background:#0F1B2D;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#E8EDF2;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;">
+  <div style="font-weight:700;font-size:18px;letter-spacing:0.02em;">Ardent Issue Tracker</div>
+  <div class="spinner" style="width:30px;height:30px;border-width:3px;border-color:rgba(240,165,0,0.3);border-top-color:#F0A500;"></div>
+</div>
 
 <header class="topbar">
   <div class="brand">Ardent Issue Tracker <small>course issue log</small></div>
@@ -383,6 +387,7 @@
       <div id="resolutionPanel" class="suggest hidden"></div>
       <div id="troubleshootPanel" class="tshoot hidden"></div>
 
+      <div id="detailsSection" class="hidden">
       <h3>Extracted details</h3>
       <div class="field" id="field_category">
         <label>Category (auto-detected, change if wrong)</label>
@@ -488,6 +493,7 @@
         <button class="ghost" id="deleteBtn" onclick="deleteFromForm()" style="display:none;color:var(--high);">Delete</button>
       </div>
       <div id="editingNote" class="small muted hidden" style="margin-top:8px;"></div>
+      </div><!-- /detailsSection -->
     </div>
 
     <!-- PREVIOUS SUBMISSIONS -->
@@ -527,6 +533,7 @@
   <div class="filterbar">
     <select id="flt_status" onchange="renderAdmin()">
       <option value="">All statuses</option>
+      <option value="needs_action">Needs action (not resolved)</option>
       <option value="open">Open</option>
       <option value="in_progress">In progress</option>
       <option value="with_dev">With developers</option>
@@ -1056,7 +1063,13 @@ function init() {
   }
 }
 
+function hideBoot() { var b = $("bootLoader"); if (b) b.style.display = "none"; }
+// The extracted-details fields stay hidden until there's something to show:
+// after an extract, when editing an existing issue, or in manual internal mode.
+function showDetails() { var d = $("detailsSection"); if (d) d.classList.remove("hidden"); }
+function hideDetails() { var d = $("detailsSection"); if (d) d.classList.add("hidden"); }
 function onAuthed(user) {
+  hideBoot();
   $("authScreen").classList.remove("show");
   applyPerms(user);
   loadIssues();
@@ -1197,6 +1210,9 @@ function setFormMode(mode) {
   mode = mode === "internal" && canLogInternal() ? "internal" : "student";
   state.formMode = mode;
   var isInternal = mode === "internal";
+  // Internal tasks are usually typed straight in rather than extracted, so show
+  // the fields as soon as internal mode is chosen.
+  if (isInternal) showDetails();
   $("mode_student").className = isInternal ? "" : "active";
   $("mode_internal").className = isInternal ? "active" : "";
   var hint = $("modeHint");
@@ -1320,6 +1336,9 @@ function runExtract() {
   $("extractStatus").innerHTML = '<span class="spinner"></span> reading…';
   apiPost({ action: "extract", raw_text: raw }).then(function (res) {
     btn.disabled = false;
+    // Reveal the fields now the extract has run (even on failure, so the
+    // instructor can still fill them in by hand).
+    showDetails();
     if (!res || !res.ok) {
       $("extractStatus").textContent = "Extraction failed: " + ((res && res.error) || "unknown");
       return;
@@ -1465,8 +1484,11 @@ function requestTroubleshoot() {
 function afterExtractReady() {
   detectExistingIssue();
   // The known-fix suggestion and the troubleshooting steps are bug-only. An
-  // improvement is a feature request, so there's nothing to fix or try.
-  if (state.requestKind !== "improvement") {
+  // improvement is a feature request, so there's nothing to fix or try. And if
+  // the conversation was already sorted out in the chat, there's nothing left to
+  // try with the student either, so don't offer steps for a solved problem.
+  var alreadyResolved = state.resolution && (state.resolution.status === "resolved" || state.resolution.status === "tbc");
+  if (state.requestKind !== "improvement" && !alreadyResolved) {
     requestSuggestion();
     requestTroubleshoot();
   }
@@ -1943,6 +1965,7 @@ function resetForm() {
   hideResolutionSuggestion();
   hideTroubleshoot();
   hideExisting();
+  hideDetails();
   renderThumbs();
   $("editingNote").classList.add("hidden");
   $("submitBtn").textContent = "Submit issue";
@@ -1951,6 +1974,7 @@ function resetForm() {
 
 function loadIntoForm(issue) {
   setView("instructor");
+  showDetails();
   state.editingId = issue.issue_id;
   // Re-open internal tasks in internal mode; everything else in student mode.
   setFormMode(catOf(issue) === "internal" ? "internal" : "student");
@@ -2098,7 +2122,13 @@ function renderAdmin() {
       fc = $("flt_course").value, fq = $("flt_search").value.trim().toLowerCase();
 
   var list = base.filter(function (i) {
-    if (fs && (i.status || "open").toLowerCase() !== fs) return false;
+    if (fs) {
+      var st = (i.status || "open").toLowerCase();
+      // "needs_action" is the catch-all for anything still open: everything that
+      // is not resolved or parked as resolved-TBC.
+      if (fs === "needs_action") { if (st === "resolved" || st === "resolved_tbc") return false; }
+      else if (st !== fs) return false;
+    }
     if (fp && (i.priority || "").toLowerCase() !== fp) return false;
     if (ft && i.issue_type !== ft) return false;
     if (fc && i.course !== fc) return false;
@@ -2360,11 +2390,18 @@ function openDetail(issue) {
     '<div class="field"><textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
     '<button class="ghost small" style="margin-bottom:6px;padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button>';
 
-  html += '<h3>Update status</h3>' +
+  html += '<h3>Update status &amp; priority</h3>' +
     '<div class="field"><select id="d_status" onchange="onStatusChange()">' +
       ['open','in_progress','with_dev','dev_fixed','resolved_tbc','resolved'].map(function (s) {
         var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
         return '<option value="' + s + '"' + sel + '>' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + '</option>';
+      }).join("") +
+    '</select></div>' +
+    '<label class="small" style="display:block;margin:-2px 0 2px;color:var(--muted);">Priority</label>' +
+    '<div class="field"><select id="d_priority">' +
+      ['high','medium','low'].map(function (p) {
+        var sel = (issue.priority || "").toLowerCase() === p ? " selected" : "";
+        return '<option value="' + p + '"' + sel + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
       }).join("") +
     '</select></div>' +
     '<div class="field' + (/^resolved/.test((issue.status || "").toLowerCase()) ? '' : ' hidden') + '" id="d_resnote_wrap">' +
@@ -2432,13 +2469,15 @@ function saveDetail() {
   var note = $("d_resolution_note") ? $("d_resolution_note").value.trim() : "";
   // Make sure we capture how it was fixed when fully resolving.
   if (status === "resolved" && !note) { toast("Add a resolution note before resolving."); return; }
-  apiPost({
+  var payload = {
     action: "updateIssue",
     issue_id: state.detailId,
     status: status,
     resolution_note: note,
     notified_students: $("d_notified").checked
-  }).then(function (res) {
+  };
+  if ($("d_priority")) payload.priority = $("d_priority").value;
+  apiPost(payload).then(function (res) {
     if (!res || !res.ok) { toast("Update failed: " + ((res && res.error) || "unknown")); return; }
     toast("Issue updated.");
     closeDetail();
@@ -2883,6 +2922,7 @@ function adminPassToDev(id) {
 
 // ============================ AUTH ============================
 function showLogin() {
+  hideBoot();
   setAuthMode("login");
   $("authScreen").classList.add("show");
   $("fbBtn").style.display = "none";
@@ -2905,6 +2945,7 @@ function doLogin() {
   }).catch(function (e) { $("loginMsg").textContent = "Login error. See console."; console.error(e); });
 }
 function startInvite(token) {
+  hideBoot();
   state._inviteToken = token;
   fetch(APPS_SCRIPT_URL + "?action=getInvite&token=" + encodeURIComponent(token))
     .then(function (r) { return r.json(); })
