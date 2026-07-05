@@ -234,7 +234,7 @@
     /* 16px stops iOS zooming the page every time an input is tapped */
     input, select, textarea, button { font-size: 16px; }
     .kv { grid-template-columns: 96px 1fr; font-size: 13px; }
-    .drawer { width: 100vw; max-width: 100vw; padding: 16px; }
+    .drawer { padding: 16px; }
     .filterbar { grid-template-columns: 1fr; gap: 8px; }
     .summary-row { grid-template-columns: repeat(3, 1fr); gap: 8px; }
     .stat .n { font-size: 20px; }
@@ -248,9 +248,19 @@
 
   .overlay { position: fixed; inset: 0; background: rgba(5,10,18,0.65); display: none; z-index: 50; }
   .overlay.show { display: block; }
+  /* Mobile-first defaults (full width, one column). The mobile media block sits
+     earlier in this file, so the desktop sizing has to live in a min-width query
+     placed AFTER these base rules, or it would win on phones too. */
   .drawer {
-    position: absolute; top: 0; right: 0; height: 100%; width: 560px; max-width: 94vw;
+    position: absolute; top: 0; right: 0; height: 100%; width: 100%; max-width: 100vw;
     background: var(--surface); border-left: 1px solid var(--line); overflow-y: auto; padding: 20px;
+  }
+  .detail-cols { display: grid; grid-template-columns: 1fr; gap: 22px; align-items: start; }
+  .detail-side { }
+  @media (min-width: 761px) {
+    .drawer { width: min(1080px, 68vw); max-width: 96vw; }
+    .detail-cols { grid-template-columns: minmax(0, 1fr) 320px; }
+    .detail-side { position: sticky; top: 0; }
   }
   .drawer .close { position: absolute; top: 14px; right: 16px; background: transparent; font-size: 20px; color: var(--muted); padding: 4px 8px; }
   .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 4px 0 14px; font-size: 14px; }
@@ -338,6 +348,7 @@
     <button class="ghost small themebtn" id="themeBtn" onclick="cycleTheme()" title="Switch theme">Theme</button>
     <div class="small muted" id="userbox" style="display:none;white-space:nowrap;">
       <span id="whoami"></span>
+      <button class="ghost small" style="padding:4px 10px;margin-left:6px;" onclick="openChangePassword()">Change password</button>
       <button class="ghost small" style="padding:4px 10px;margin-left:6px;" onclick="doLogout()">Log out</button>
     </div>
   </div>
@@ -731,6 +742,14 @@
       <div class="field"><label>Password</label><input id="loginPass" type="password" onkeydown="if(event.key==='Enter')doLogin()"></div>
       <div class="btns"><button class="primary" onclick="doLogin()">Sign in</button></div>
       <div id="loginMsg" class="small muted" style="margin-top:6px;"></div>
+      <div class="small" style="margin-top:10px;"><a href="#" onclick="setAuthMode('reset');setTimeout(function(){if($('resetEmail'))$('resetEmail').focus();},50);return false;" style="color:var(--accent);text-decoration:none;">Forgot your password?</a></div>
+    </div>
+    <div id="authReset" class="hidden">
+      <h3>Reset your password</h3>
+      <p class="small muted">Enter your email and we'll send you a link to set a new password. The link expires in an hour.</p>
+      <div class="field"><label>Email</label><input id="resetEmail" type="email" placeholder="you@ardent-training.com" onkeydown="if(event.key==='Enter')doRequestReset()"></div>
+      <div class="btns"><button class="primary" onclick="doRequestReset()">Send reset link</button><button class="ghost" onclick="setAuthMode('login')">Back to sign in</button></div>
+      <div id="resetMsg" class="small muted" style="margin-top:6px;"></div>
     </div>
     <div id="authInvite" class="hidden">
       <h3>Set up your account</h3>
@@ -740,6 +759,18 @@
       <div class="btns"><button class="primary" onclick="doAcceptInvite()">Create account</button></div>
       <div id="inviteMsg" class="small muted" style="margin-top:6px;"></div>
     </div>
+  </div>
+</div>
+
+<!-- CHANGE PASSWORD -->
+<div class="modal-bg" id="changePwModal">
+  <div class="modal">
+    <h3>Change password</h3>
+    <div class="field"><label>Current password</label><input id="cpCurrent" type="password"></div>
+    <div class="field"><label>New password (8+ characters)</label><input id="cpNew" type="password"></div>
+    <div class="field"><label>Confirm new password</label><input id="cpNew2" type="password" onkeydown="if(event.key==='Enter')doChangePassword()"></div>
+    <div class="btns"><button class="primary" onclick="doChangePassword()">Update password</button><button class="ghost" onclick="closeChangePassword()">Cancel</button></div>
+    <div id="cpMsg" class="small muted" style="margin-top:6px;"></div>
   </div>
 </div>
 
@@ -2310,6 +2341,12 @@ function openDetail(issue) {
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
 
+  // Two columns on desktop: reference/read info on the left (this main column),
+  // the resolve/act controls collected on the right (sideCol). Stacks to one
+  // column on mobile via CSS.
+  var sideCol = '';
+  html += '<div class="detail-cols"><div class="detail-main">';
+
   if (otherOpen.length) {
     html += '<div class="batch"><strong>' + otherOpen.length + ' other open issue' +
       (otherOpen.length > 1 ? 's' : '') + ' on this lesson (' + esc(issue.lesson_code) + ')</strong>' +
@@ -2386,11 +2423,11 @@ function openDetail(issue) {
       recSteps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol></div>';
   }
 
-  html += '<h3>Post an update</h3>' +
+  sideCol += '<h3>Post an update</h3>' +
     '<div class="field"><textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
     '<button class="ghost small" style="margin-bottom:6px;padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button>';
 
-  html += '<h3>Update status &amp; priority</h3>' +
+  sideCol += '<h3>Update status &amp; priority</h3>' +
     '<div class="field"><select id="d_status" onchange="onStatusChange()">' +
       ['open','in_progress','with_dev','dev_fixed','resolved_tbc','resolved'].map(function (s) {
         var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
@@ -2413,7 +2450,7 @@ function openDetail(issue) {
       : '') +
     (issue.resolved_at ? '<div class="small muted" style="margin-bottom:10px;">Resolved at ' + fmtDate(issue.resolved_at) + '</div>' : '');
 
-  html += '<div class="field" style="margin-top:14px;"><label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
+  sideCol += '<div class="field" style="margin-top:14px;"><label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
     (String(issue.notified_students) === "true" ? " checked" : "") + '> Students notified</label></div>';
 
   // Full reports/updates text and screenshots, kept at the bottom for reference.
@@ -2444,11 +2481,14 @@ function openDetail(issue) {
     }).join("") + '</div>';
   }
 
-  html += '<div class="row" style="margin-top:10px;">' +
+  sideCol += '<div class="row" style="margin-top:10px;">' +
     '<button class="primary" onclick="saveDetail()">Save changes</button>' +
     '<button class="ghost" onclick="editInForm(\'' + esc(issue.issue_id) + '\')">Open in form</button>' +
     (canDelete(issue) ? '<button class="ghost" style="color:var(--high);" onclick="deleteIssueAction(\'' + esc(issue.issue_id) + '\')">Delete</button>' : '') +
   '</div>';
+
+  // Close the left column, drop in the collected right-hand action column, close both.
+  html += '</div><div class="detail-side">' + sideCol + '</div></div>';
 
   $("drawer").innerHTML = html;
   $("overlay").classList.add("show");
@@ -2931,6 +2971,34 @@ function showLogin() {
 function setAuthMode(mode) {
   $("authLogin").classList.toggle("hidden", mode !== "login");
   $("authInvite").classList.toggle("hidden", mode !== "invite");
+  if ($("authReset")) $("authReset").classList.toggle("hidden", mode !== "reset");
+}
+function doRequestReset() {
+  var email = $("resetEmail").value.trim();
+  if (!email) { $("resetMsg").textContent = "Enter your email first."; return; }
+  $("resetMsg").textContent = "Sending…";
+  // Neutral message either way so we never reveal which emails have accounts.
+  var done = function () { $("resetMsg").textContent = "If that email is registered, we've sent a reset link. Check your inbox (and your spam folder)."; };
+  apiPost({ action: "requestPasswordReset", email: email }).then(done).catch(done);
+}
+function openChangePassword() {
+  ["cpCurrent","cpNew","cpNew2"].forEach(function (id) { if ($(id)) $(id).value = ""; });
+  $("cpMsg").textContent = "";
+  $("changePwModal").classList.add("show");
+  setTimeout(function () { if ($("cpCurrent")) $("cpCurrent").focus(); }, 50);
+}
+function closeChangePassword() { $("changePwModal").classList.remove("show"); }
+function doChangePassword() {
+  var cur = $("cpCurrent").value, nw = $("cpNew").value, nw2 = $("cpNew2").value;
+  if (!cur || !nw) { $("cpMsg").textContent = "Fill in your current and new password."; return; }
+  if (nw.length < 8) { $("cpMsg").textContent = "New password must be at least 8 characters."; return; }
+  if (nw !== nw2) { $("cpMsg").textContent = "The new passwords don't match."; return; }
+  $("cpMsg").textContent = "Saving…";
+  apiPost({ action: "changePassword", current_password: cur, new_password: nw }).then(function (res) {
+    if (!res || !res.ok) { $("cpMsg").textContent = (res && res.error) || "Couldn't change the password."; return; }
+    $("cpMsg").textContent = "Password updated.";
+    setTimeout(closeChangePassword, 900);
+  }).catch(function () { $("cpMsg").textContent = "Error. See console."; });
 }
 function doLogin() {
   var email = $("loginEmail").value.trim();
@@ -3108,6 +3176,7 @@ function userRowHtml(u) {
     '<div class="row" style="margin-top:8px;">' +
       '<button class="ghost small" onclick="saveUserPerms(\'' + esc(u.email) + '\')">Save access</button>' +
       '<button class="ghost small" onclick="resendInvite(\'' + esc(u.email) + '\')">Resend invite</button>' +
+      '<button class="ghost small" onclick="resetUserLink(\'' + esc(u.email) + '\')">Reset password</button>' +
       (String(u.status).toLowerCase() === "disabled"
         ? '<button class="ghost small" onclick="setUserDisabled(\'' + esc(u.email) + '\', false)">Enable</button>'
         : '<button class="ghost small" onclick="setUserDisabled(\'' + esc(u.email) + '\', true)">Disable</button>') +
@@ -3132,6 +3201,16 @@ function resendInvite(email) {
     toast("Invite re-sent.");
     if (res.invite_url) showInviteLink(res.invite_url);
     renderUsers();
+  }).catch(function (e) { toast("Error."); console.error(e); });
+}
+// Admin fallback for someone who forgot their password and can't use the
+// self-service email: generate a fresh reset link (also emailed) and show it so
+// the admin can pass it on directly.
+function resetUserLink(email) {
+  apiPost({ action: "adminResetLink", email: email }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Reset link generated and emailed.");
+    if (res.link) showInviteLink(res.link);
   }).catch(function (e) { toast("Error."); console.error(e); });
 }
 function setUserDisabled(email, dis) {
