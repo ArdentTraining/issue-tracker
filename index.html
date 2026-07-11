@@ -144,6 +144,11 @@
   .st-resolved_tbc { color: var(--medium); border-color: var(--medium); }
   .st-resolved { color: var(--low); border-color: var(--low); }
   .st-past { color: var(--muted); border-color: var(--line); opacity: .85; }
+  /* Long summaries are capped at four lines on cards so a full board or list
+     scans quickly; the full text lives in the detail drawer. */
+  .clamp4 { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .ktitle { font-weight: 600; margin-top: 5px; font-size: .92em; }
+  .ktitle + .ksum { color: var(--muted); font-size: .88em; margin-top: 2px; }
   .type-badge { background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
   .cat { border: 1px solid var(--line); }
   .cat-course_error { color: var(--course); border-color: var(--course); }
@@ -501,6 +506,12 @@
 
       <div id="checklistPanel" class="checklist hidden"></div>
 
+      <div class="field">
+        <label>Where did this end up? (optional)</label>
+        <textarea id="f_outcome" rows="2" placeholder="e.g. Could not fix over chat, raised with the devs; student has a workaround for now."></textarea>
+        <div class="small muted" style="margin-top:4px;">For anything that happened after the pasted conversation. It's saved into the issue's record.</div>
+      </div>
+
       <div class="row" style="margin-top:6px;">
         <button class="primary" id="submitBtn" onclick="submitIssue()">Submit issue</button>
         <button class="ghost" id="resetBtn" onclick="resetForm()">Clear / new</button>
@@ -547,9 +558,9 @@
   <div class="filterbar">
     <select id="flt_status" onchange="renderAdmin()">
       <option value="">All statuses</option>
-      <option value="needs_action">Needs action (not resolved)</option>
-      <option value="open">Open</option>
-      <option value="in_progress">In progress</option>
+      <option value="needs_action">Needs action (anything unresolved)</option>
+      <option value="open">Open (waiting for triage)</option>
+      <option value="in_progress">In progress (being worked on)</option>
       <option value="with_dev">With developers</option>
       <option value="dev_fixed">Fixed by dev</option>
       <option value="resolved_tbc">Resolved – TBC</option>
@@ -662,6 +673,12 @@
       <button type="button" id="course_todo" class="active" onclick="setCourseFilter('todo')">To do</button>
       <button type="button" id="course_fixed" onclick="setCourseFilter('fixed')">Fixed</button>
       <button type="button" id="course_all" onclick="setCourseFilter('all')">All</button>
+    </div>
+    <div class="seg" style="margin-left:8px;" title="What the reference points at — a lesson slide, a knowledge check (.K), or a module assessment (.M)">
+      <button type="button" id="cref_all" class="active" onclick="setCourseRefFilter('all')">All refs</button>
+      <button type="button" id="cref_lesson" onclick="setCourseRefFilter('lesson')">Lessons</button>
+      <button type="button" id="cref_kc" onclick="setCourseRefFilter('kc')">Knowledge checks</button>
+      <button type="button" id="cref_ma" onclick="setCourseRefFilter('ma')">Module assessments</button>
     </div>
   </div>
   <div id="courseList"></div>
@@ -876,7 +893,11 @@ var state = {
   noStudent: false,           // instructor confirmed there is no student for this issue, so no email is chased
   subIssues: null,            // AI-detected separate problems in one report: [{summary, issue_type}]
   splitMode: false,           // instructor ticked "log these as separate issues"
-  trackView: "list"           // Track tab: "list" or "board" (kanban)
+  trackView: "list",          // Track tab: "list" or "board" (kanban)
+  prevShown: 5,               // "Your previous submissions": how many are visible (Show more raises it)
+  adminShown: 20,             // Track list: how many cards are visible (Show more raises it)
+  _adminFilterSig: "",        // last-seen filter combination; a change resets adminShown
+  courseRefFilter: "all"      // Course fixes: all | lesson | kc | ma (from the code suffix: .K / .M)
 };
 
 // Issue type options per form mode. Internal tasks get their own vocabulary;
@@ -1067,6 +1088,39 @@ function toast(msg) {
   var t = $("toast"); t.textContent = msg; t.classList.add("show");
   setTimeout(function () { t.classList.remove("show"); }, 3200);
 }
+// The full slide/question reference when the lesson field holds a code (e.g.
+// "EN.06.03.09" or "DS.10.19.09.2.M") rather than a lesson title. Imported
+// issues and AI-extracted ones both store the code string there when they have
+// one; a title like "Tidal Streams" is left alone.
+function refOf(i) {
+  var l = String((i && i.lesson) || "").trim();
+  return /^(EN|DS|YM|FT)[\s.]*\d/i.test(l) ? l : "";
+}
+// What the reference points at, read from the code's suffix: .K is a knowledge
+// check, .M a module assessment, anything else a lesson slide.
+function refType(i) {
+  var s = refOf(i) || String((i && i.lesson_code) || "");
+  if (!s) return "";
+  if (/\.\s*K\.?$/i.test(s)) return "kc";
+  if (/\.\s*M\.?$/i.test(s)) return "ma";
+  return "lesson";
+}
+function refBadge(i) {
+  var t = refType(i);
+  if (t === "kc") return '<span class="badge type-badge">KC</span>';
+  if (t === "ma") return '<span class="badge type-badge">MA</span>';
+  return "";
+}
+// A short bold title for cards: the first clause of the summary, so a full
+// board can be scanned with a couple of words per issue.
+function cardTitle(i) {
+  var s = String((i && i.summary) || "").trim();
+  if (!s) return "(no summary)";
+  var firstStop = s.search(/[.!?]\s/);
+  var t = firstStop > 0 && firstStop < 70 ? s.slice(0, firstStop) : s;
+  if (t.length > 70) t = t.slice(0, 70).replace(/\s+\S*$/, "") + "…";
+  return t;
+}
 function isOpen(issue) {
   // Anything not yet finished: open, in progress, with developers, or fixed by
   // a dev but not yet verified/resolved by an admin.
@@ -1250,9 +1304,9 @@ function setFormMode(mode) {
   mode = mode === "internal" && canLogInternal() ? "internal" : "student";
   state.formMode = mode;
   var isInternal = mode === "internal";
-  // Internal tasks are usually typed straight in rather than extracted, so show
-  // the fields as soon as internal mode is chosen.
-  if (isInternal) showDetails();
+  // Nothing shows below the Extract button until an extraction has run (or an
+  // existing issue is loaded for editing) — the same in both modes, so the form
+  // stays short and nobody fills fields the AI would have filled for them.
   $("mode_student").className = isInternal ? "" : "active";
   $("mode_internal").className = isInternal ? "active" : "";
   var hint = $("modeHint");
@@ -1755,7 +1809,11 @@ function collectForm() {
     request_kind: isInternal
       ? (getField("f_issue_type") === "feature_request" ? "improvement" : "fix")
       : state.requestKind,
-    raw_text: getField("rawText"),
+    // Anything typed in the outcome box travels with the original text, so the
+    // "where we got to" part of a live issue is never lost.
+    raw_text: getField("rawText") + (getField("f_outcome")
+      ? "\n\n--- Outcome noted by " + (state.selectedInstructor || "instructor") + " ---\n" + getField("f_outcome")
+      : ""),
     student_name: isInternal ? "" : getField("f_student_name"),
     student_contact: isInternal ? "" : getField("f_student_contact"),
     device_info: isInternal ? "" : getField("f_device_info"),
@@ -1991,7 +2049,7 @@ function resetForm() {
   setFormMode("student");
   renderRequestKind();
   renderFormChecklist();
-  ["rawText","f_student_name","f_student_contact","f_device_info","f_module","f_lesson","f_lesson_code","f_summary","f_priority_reason"]
+  ["rawText","f_student_name","f_student_contact","f_device_info","f_module","f_lesson","f_lesson_code","f_summary","f_priority_reason","f_outcome"]
     .forEach(function (id) { $(id).value = ""; });
   $("f_course").value = "";
   $("f_section").value = "";
@@ -2085,16 +2143,23 @@ function renderPrev() {
   var mine = state.issues.filter(isMine)
     .sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
   if (!mine.length) { box.innerHTML = '<p class="muted small">No issues logged yet under this name.</p>'; return; }
-  box.innerHTML = mine.map(function (i) {
+  // Keep the list short: the most recent few, with the rest behind Show more —
+  // with the imported history in the sheet this would otherwise run to hundreds.
+  var shown = mine.slice(0, state.prevShown);
+  box.innerHTML = shown.map(function (i) {
     return '<div class="sub-item" onclick="openIssueById(\'' + esc(i.issue_id) + '\', true)">' +
       '<div class="meta">' +
         priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + typeBadge(i.issue_type) +
         '<span class="date">' + fmtDate(i.submitted_at) + '</span>' +
-        (i.lesson_code ? ' <span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+        (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
       '</div>' +
       '<div class="summary">' + esc(i.summary || "(no summary)") + '</div>' +
     '</div>';
-  }).join("");
+  }).join("") + (mine.length > shown.length
+    ? '<div class="row" style="margin-top:8px;">' +
+        '<button class="ghost small" onclick="state.prevShown += 15; renderPrev();">Show more (' + (mine.length - shown.length) + ' hidden)</button>' +
+      '</div>'
+    : "");
 }
 
 function openIssueById(id, intoForm) {
@@ -2161,6 +2226,10 @@ function renderAdmin() {
   var fs = $("flt_status").value, fp = $("flt_priority").value, ft = $("flt_type").value,
       fc = $("flt_course").value, fq = $("flt_search").value.trim().toLowerCase();
 
+  // Any change of filters, area, or view starts the paging again from the top.
+  var sig = [fs, fp, ft, fc, fq, state.area, state.reqFilter, state.trackView].join("|");
+  if (sig !== state._adminFilterSig) { state._adminFilterSig = sig; state.adminShown = 20; }
+
   var list = base.filter(function (i) {
     if (fs) {
       var st = (i.status || "open").toLowerCase();
@@ -2195,20 +2264,31 @@ function renderAdmin() {
     return;
   }
 
-  $("adminList").innerHTML = list.length ? list.map(function (i) {
+  // Render the top of the pile only; Show more extends it. With the imported
+  // history this list can run to hundreds, which made the page crawl.
+  var visible = list.slice(0, state.adminShown);
+  var moreBar = list.length > visible.length
+    ? '<div class="row" style="margin:10px 0;">' +
+        '<button class="ghost small" onclick="state.adminShown += 50; renderAdmin();">Show 50 more</button>' +
+        '<button class="ghost small" onclick="state.adminShown = 100000; renderAdmin();">Show all (' + list.length + ')</button>' +
+        '<span class="small muted" style="align-self:center;">Showing ' + visible.length + ' of ' + list.length + '</span>' +
+      '</div>'
+    : "";
+
+  $("adminList").innerHTML = list.length ? visible.map(function (i) {
     var imgs = parseImageUrls(i.image_urls).length;
     return '<div class="issue-card" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
-        (i.lesson_code ? '<span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+        (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
         (i.assignee ? '<span class="badge type-badge">→ ' + esc(i.assignee) + '</span>' : '') +
         '<span class="who">' + esc(i.instructor_name) + ' · ' + fmtDate(i.submitted_at) + '</span>' +
       '</div>' +
-      '<div class="sum">' + esc(i.summary || "(no summary)") + '</div>' +
+      '<div class="sum clamp4">' + esc(i.summary || "(no summary)") + '</div>' +
     '</div>';
-  }).join("") : '<p class="muted">No issues match these filters.</p>';
+  }).join("") + moreBar : '<p class="muted">No issues match these filters.</p>';
 }
 
 // ---- kanban board: one column per stage ----
@@ -2235,10 +2315,11 @@ function kanbanHtml(list) {
         return '<div class="kcard kpri-' + ((i.priority || "low").toLowerCase()) + '" draggable="true" ' +
           'ondragstart="kanbanDrag(event, \'' + esc(i.issue_id) + '\')" ' +
           'onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
-          '<div class="ktop">' + priBadge(i.priority) + catBadge(i.category) + sectionBadge(i.section) +
-            (i.lesson_code ? '<span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+          '<div class="ktop">' + priBadge(i.priority) + catBadge(i.category) + sectionBadge(i.section) + refBadge(i) +
+            (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
             (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') + '</div>' +
-          '<div class="ksum">' + esc(i.summary || "(no summary)") + '</div>' +
+          '<div class="ktitle">' + esc(cardTitle(i)) + '</div>' +
+          '<div class="ksum clamp4">' + esc(i.summary || "") + '</div>' +
           '<div class="small muted" style="margin-top:4px;">' + esc(i.instructor_name || "") + ' · ' + fmtDate(i.submitted_at) +
             (i.assignee ? ' · → ' + esc(i.assignee) : '') + '</div>' +
         '</div>';
@@ -2812,6 +2893,10 @@ function renderQueue(cat, ids, filterVal) {
     if (filterVal === "fixed") return s === "dev_fixed";
     return s === "with_dev" || s === "dev_fixed";
   });
+  // Course fixes only: narrow to lessons / knowledge checks / module assessments.
+  if (cat === "course_error" && state.courseRefFilter && state.courseRefFilter !== "all") {
+    list = list.filter(function (i) { return refType(i) === state.courseRefFilter; });
+  }
   list.sort(function (a, b) {
     var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
     if (pa !== pb) return pa - pb;
@@ -2823,8 +2908,8 @@ function renderQueue(cat, ids, filterVal) {
     var age = i.dev_passed_at ? fmtDuration(Date.now() - new Date(i.dev_passed_at)) : "";
     return '<div class="issue-card" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) +
-        (i.lesson_code ? '<span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) +
+        (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
         (i.assignee ? '<span class="badge type-badge">→ ' + esc(i.assignee) + '</span>' : '') +
@@ -2854,6 +2939,16 @@ function setCourseFilter(f) {
   $("course_todo").classList.toggle("active", f === "todo");
   $("course_fixed").classList.toggle("active", f === "fixed");
   $("course_all").classList.toggle("active", f === "all");
+  renderCourse();
+}
+// Filter the course fixes queue by what the reference points at: lesson slides,
+// knowledge checks (codes ending .K), or module assessments (codes ending .M).
+function setCourseRefFilter(f) {
+  state.courseRefFilter = f;
+  ["all", "lesson", "kc", "ma"].forEach(function (k) {
+    var el = $("cref_" + k);
+    if (el) el.classList.toggle("active", f === k);
+  });
   renderCourse();
 }
 
