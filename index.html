@@ -143,6 +143,7 @@
   .st-dev_fixed { color: var(--course); border-color: var(--course); }
   .st-resolved_tbc { color: var(--medium); border-color: var(--medium); }
   .st-resolved { color: var(--low); border-color: var(--low); }
+  .st-past { color: var(--muted); border-color: var(--line); opacity: .85; }
   .type-badge { background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
   .cat { border: 1px solid var(--line); }
   .cat-course_error { color: var(--course); border-color: var(--course); }
@@ -553,6 +554,7 @@
       <option value="dev_fixed">Fixed by dev</option>
       <option value="resolved_tbc">Resolved – TBC</option>
       <option value="resolved">Resolved</option>
+      <option value="past">Past (imported)</option>
     </select>
     <select id="flt_priority" onchange="renderAdmin()">
       <option value="">All priorities</option>
@@ -962,8 +964,10 @@ function getToken() { return state.token || (localGet("ait_token") || ""); }
 function setToken(t) { state.token = t; localSet("ait_token", t); }
 function clearToken() { state.token = ""; localDel("ait_token"); }
 function apiGet(action) {
-  return fetch(APPS_SCRIPT_URL + "?action=" + encodeURIComponent(action) + "&token=" + encodeURIComponent(getToken()))
-    .then(function (r) { return r.json(); }).then(gateCheck);
+  // Reads go over POST so the session token travels in the body, not the URL.
+  // A token in a URL ends up in browser history and any logs along the way;
+  // a token in the body does not.
+  return apiPost({ action: action });
 }
 function apiPost(payload) {
   payload.token = getToken();
@@ -1011,8 +1015,11 @@ function localDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
 // ============================ HELPERS ============================
 function $(id) { return document.getElementById(id); }
 function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  // Escapes single quotes too, because some values end up inside
+  // single-quoted strings in onclick attributes (e.g. lesson codes), and a
+  // stray ' there would let pasted text break out and run as script.
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
 }
 function fmtDate(iso) {
@@ -1036,7 +1043,7 @@ function priBadge(p) {
   var label = p ? p.charAt(0).toUpperCase() + p.slice(1) : "—";
   return '<span class="badge pri pri-' + (p || "low") + '">' + label + "</span>";
 }
-var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", resolved_tbc: "resolved – TBC", resolved: "resolved" };
+var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", resolved_tbc: "resolved – TBC", resolved: "resolved", past: "past" };
 function statusBadge(s) {
   s = (s || "open").toLowerCase();
   return '<span class="badge st st-' + s + '">' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + "</span>";
@@ -1064,7 +1071,7 @@ function isOpen(issue) {
   // Anything not yet finished: open, in progress, with developers, or fixed by
   // a dev but not yet verified/resolved by an admin.
   var s = (issue.status || "open").toLowerCase();
-  return s !== "resolved" && s !== "resolved_tbc";
+  return s !== "resolved" && s !== "resolved_tbc" && s !== "past";
 }
 // Is this issue mine? The primary logger, or a contributor via a merged report.
 function isMine(i) {
@@ -2159,7 +2166,7 @@ function renderAdmin() {
       var st = (i.status || "open").toLowerCase();
       // "needs_action" is the catch-all for anything still open: everything that
       // is not resolved or parked as resolved-TBC.
-      if (fs === "needs_action") { if (st === "resolved" || st === "resolved_tbc") return false; }
+      if (fs === "needs_action") { if (st === "resolved" || st === "resolved_tbc" || st === "past") return false; }
       else if (st !== fs) return false;
     }
     if (fp && (i.priority || "").toLowerCase() !== fp) return false;
@@ -2431,7 +2438,7 @@ function openDetail(issue) {
 
   sideCol += '<h3>Update status &amp; priority</h3>' +
     '<div class="field"><select id="d_status" onchange="onStatusChange()">' +
-      ['open','in_progress','with_dev','dev_fixed','resolved_tbc','resolved'].map(function (s) {
+      ['open','in_progress','with_dev','dev_fixed','resolved_tbc','resolved','past'].map(function (s) {
         var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
         return '<option value="' + s + '"' + sel + '>' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + '</option>';
       }).join("") +
@@ -2443,7 +2450,7 @@ function openDetail(issue) {
         return '<option value="' + p + '"' + sel + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
       }).join("") +
     '</select></div>' +
-    '<div class="field' + (/^resolved/.test((issue.status || "").toLowerCase()) ? '' : ' hidden') + '" id="d_resnote_wrap">' +
+    '<div class="field' + (/^(resolved|past)/.test((issue.status || "").toLowerCase()) ? '' : ' hidden') + '" id="d_resnote_wrap">' +
       '<label>Resolution note</label><textarea id="d_resolution_note" rows="3">' + esc(issue.resolution_note || "") + '</textarea>' +
     '</div>' +
     (String(issue.status).toLowerCase() === "resolved_tbc"
@@ -2501,8 +2508,9 @@ function openDetail(issue) {
 
 function kv(k, v) { return '<div class="k">' + esc(k) + '</div><div>' + (v ? esc(v) : "—") + '</div>'; }
 function onStatusChange() {
-  // Show the resolution note for both Resolved and Resolved - TBC.
-  $("d_resnote_wrap").classList.toggle("hidden", $("d_status").value.indexOf("resolved") !== 0);
+  // Show the resolution note for Resolved, Resolved - TBC, and Past.
+  var sv = $("d_status").value;
+  $("d_resnote_wrap").classList.toggle("hidden", sv.indexOf("resolved") !== 0 && sv !== "past");
 }
 function closeDetail() { $("overlay").classList.remove("show"); state.detailId = null; }
 
@@ -3412,4 +3420,3 @@ init();
 </script>
 </body>
 </html>
-
