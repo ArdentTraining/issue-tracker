@@ -621,6 +621,15 @@
     <div class="stat"><div class="n" id="anaResolved">–</div><div class="l">Resolved this month</div></div>
   </div>
   <div class="card" style="margin-bottom:16px;">
+    <h3 style="margin-top:0;">Ask about our issues</h3>
+    <div class="row">
+      <input id="askQ" placeholder="e.g. How many times has the resources page gone down?" style="flex:1;min-width:200px;" onkeydown="if(event.key==='Enter')runAskIssues()" />
+      <button class="primary" id="askBtn" onclick="runAskIssues()">Ask</button>
+    </div>
+    <div class="small muted" style="margin-top:6px;">Answers come from the logged issues (including imported history), so counts are only as good as what was logged.</div>
+    <div id="askOut" class="small" style="margin-top:10px;white-space:pre-wrap;"></div>
+  </div>
+  <div class="card" style="margin-bottom:16px;">
     <h3 style="margin-top:0;">Breakdown: fixes vs improvements</h3>
     <div class="seg" id="statMetricSeg" style="margin-bottom:12px;flex-wrap:wrap;">
       <button type="button" id="sm_open" class="active" onclick="setStatMetric('open')">Open</button>
@@ -1087,6 +1096,44 @@ function reqBadge(kind) {
 function toast(msg) {
   var t = $("toast"); t.textContent = msg; t.classList.add("show");
   setTimeout(function () { t.classList.remove("show"); }, 3200);
+}
+// Module titles per course, so a bare code like DS.10.19.09.2.M can be turned
+// into "Day Skipper / IRPCS / Lesson 19" on screen even when the module and
+// lesson fields were never filled in. Mirrors the structure in the Apps Script.
+var COURSE_NAMES = { EN: "Essential Navigation", DS: "Day Skipper", YM: "Yachtmaster", FT: "Fast Track" };
+var MODULE_TITLES = {
+  EN: { 1:"Welcome Aboard",2:"Cynthia's Boat",3:"Safety at Sea",4:"Understanding a Passage Plan",5:"Checking the Weather",6:"Leaving the Harbour",7:"Setting Course",8:"What Can We See?",9:"The Groats",10:"Going with the Flow",11:"Avoiding Collision",12:"Communicating with Other Vessels",13:"Approaching St Anthony's",14:"A Picnic at Anchor",15:"Returning Home",16:"Debrief" },
+  DS: { 1:"Welcome To Ardent Training",2:"Nautical Terms",3:"Introduction to Navigation",4:"Navigation Instruments",5:"Position Fixing",6:"Ropework",7:"Tidal Heights",8:"Anchorwork",9:"Tidal Streams",10:"IRPCS",11:"Meteorology",12:"Safety",13:"Pilotage",14:"Passage Planning",15:"Marine Environment",16:"Final Exam",17:"Final Exam (assessment)" },
+  YM: { 1:"Welcome",2:"Navigation Instruments",3:"Tidal Heights",4:"Tidal Streams",5:"Position Fixing and Chartwork",6:"Meteorology",7:"IRPCS",8:"Pilotage",9:"Safety",10:"Passage Planning",11:"Marine Environment",12:"Exams",13:"Chartwork and IRPCS (exam)",14:"Appraisal",15:"Passage Making" },
+  FT: { 1:"Welcome",2:"Foundations of Navigation",3:"Navigation Instruments",4:"Position Fixing",5:"Tidal Heights",6:"Anchorwork",7:"Ropework",8:"Tidal Streams",9:"Chartwork",10:"Meteorology",11:"IRPCS",12:"Pilotage",13:"Safety",14:"Passage Planning",15:"Marine Environment",16:"Exams",17:"Final Part 1",18:"Appraisal",19:"Final Part 2" }
+};
+// Pull course prefix, module number, and lesson number out of any code-ish
+// reference, wherever it lives (lesson or lesson_code, full or trimmed).
+function parseRefParts(i) {
+  var s = String((i && i.lesson) || "") + " " + String((i && i.lesson_code) || "");
+  var m = s.match(/\b(EN|DS|YM|FT)[\s.]*?(\d{1,2})(?:[\s.]+(\d{1,3}))?/i);
+  if (!m) return null;
+  return { pfx: m[1].toUpperCase(), mod: parseInt(m[2], 10), les: m[3] ? parseInt(m[3], 10) : null };
+}
+// Display values for the detail drawers: use what was saved, and when a field
+// is blank derive it from the code, so old and imported rows read properly.
+function dispCourse(i) {
+  if (i.course) return i.course;
+  var p = parseRefParts(i);
+  return p ? (COURSE_NAMES[p.pfx] || "") : "";
+}
+function dispModule(i) {
+  if (i.module) return i.module;
+  var p = parseRefParts(i);
+  return p ? ((MODULE_TITLES[p.pfx] || {})[p.mod] || "Module " + p.mod) : "";
+}
+function dispLesson(i) {
+  // A lesson title typed or extracted stays as it is; a code gets translated.
+  if (i.lesson && !refOf(i)) return i.lesson;
+  var p = parseRefParts(i);
+  if (!p || p.les == null) return "";
+  var t = refType(i);
+  return "Lesson " + p.les + (t === "kc" ? " — knowledge check" : t === "ma" ? " — module assessment" : "");
 }
 // The full slide/question reference when the lesson field holds a code (e.g.
 // "EN.06.03.09" or "DS.10.19.09.2.M") rather than a lesson title. Imported
@@ -2459,9 +2506,9 @@ function openDetail(issue) {
     kv("Submitted by", issue.instructor_name) +
     kv("Logged", fmtDate(issue.submitted_at)) +
     kv("Assigned to", issue.assignee) +
-    kv("Course", issue.course) +
-    kv("Module", issue.module) +
-    kv("Lesson", issue.lesson) +
+    kv("Course", dispCourse(issue)) +
+    kv("Module", dispModule(issue)) +
+    kv("Lesson", dispLesson(issue)) +
     kv("Type", issue.issue_type) +
     kv("Part of platform", issue.section ? (SECTION_LABEL[issue.section] || issue.section) : "") +
     (catOf(issue) === "tech_issue" ? kv("Device / OS / browser", issue.device_info) : "") +
@@ -2782,6 +2829,24 @@ function renderStatMatrix() {
   });
 }
 
+// Ask the AI a free-text question about everything in the log ("how many times
+// has the resources page gone down?"). The heavy lifting happens server-side,
+// where the whole issue list and the API key live.
+function runAskIssues() {
+  var q = $("askQ").value.trim();
+  if (!q) { $("askQ").focus(); return; }
+  var btn = $("askBtn"), out = $("askOut");
+  btn.disabled = true; btn.textContent = "Thinking…";
+  out.textContent = "Reading through " + state.issues.length + " logged issues…";
+  apiPost({ action: "askIssues", question: q }).then(function (res) {
+    btn.disabled = false; btn.textContent = "Ask";
+    out.textContent = res && res.ok ? res.answer : ("Couldn't get an answer: " + ((res && res.error) || "unknown error"));
+  }).catch(function (e) {
+    btn.disabled = false; btn.textContent = "Ask";
+    out.textContent = "Couldn't get an answer: " + e;
+  });
+}
+
 function renderAnalytics() {
   renderStatMatrix();
   var base = state.anaArea === "all"
@@ -2978,9 +3043,9 @@ function openDevDetail(id) {
       (catOf(issue) === "course_error" ? kv("Which part", mediaLabel(issue.media_kind)) : "") +
       (catOf(issue) === "course_error" ? kv("Double-checked", isTrue(issue.double_checked) ? "Yes" : "No") : "") +
       (kindOf(issue) === "improvement" ? kv("Impact", issue.impact) : "") +
-      kv("Course", issue.course) +
-      kv("Module", issue.module) +
-      kv("Lesson", issue.lesson) +
+      kv("Course", dispCourse(issue)) +
+      kv("Module", dispModule(issue)) +
+      kv("Lesson", dispLesson(issue)) +
     '</div>';
 
   // Who's on it. Assign to a person with this queue's access.
