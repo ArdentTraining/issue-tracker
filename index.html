@@ -674,22 +674,10 @@
 <div id="courseView" class="wrap hidden">
   <div class="summary-row">
     <div class="stat"><div class="n" id="courseStatQueue">–</div><div class="l">In the course-fix queue</div></div>
-    <div class="stat"><div class="n" id="courseStatFixed">–</div><div class="l">Fixed, awaiting admin</div></div>
+    <div class="stat"><div class="n" id="courseStatFixed">–</div><div class="l">Fixed / done</div></div>
     <div class="stat"><div class="n" id="courseStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
-  <div class="area-toggle">
-    <div class="seg" id="courseSeg">
-      <button type="button" id="course_todo" class="active" onclick="setCourseFilter('todo')">To do</button>
-      <button type="button" id="course_fixed" onclick="setCourseFilter('fixed')">Fixed</button>
-      <button type="button" id="course_all" onclick="setCourseFilter('all')">All</button>
-    </div>
-    <div class="seg" style="margin-left:8px;" title="What the reference points at — a lesson slide, a knowledge check (.K), or a module assessment (.M)">
-      <button type="button" id="cref_all" class="active" onclick="setCourseRefFilter('all')">All refs</button>
-      <button type="button" id="cref_lesson" onclick="setCourseRefFilter('lesson')">Lessons</button>
-      <button type="button" id="cref_kc" onclick="setCourseRefFilter('kc')">Knowledge checks</button>
-      <button type="button" id="cref_ma" onclick="setCourseRefFilter('ma')">Module assessments</button>
-    </div>
-  </div>
+  <div class="area-toggle" id="courseFilters" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
   <div id="courseList"></div>
 </div>
 
@@ -906,7 +894,15 @@ var state = {
   prevShown: 5,               // "Your previous submissions": how many are visible (Show more raises it)
   adminShown: 20,             // Track list: how many cards are visible (Show more raises it)
   _adminFilterSig: "",        // last-seen filter combination; a change resets adminShown
-  courseRefFilter: "all"      // Course fixes: all | lesson | kc | ma (from the code suffix: .K / .M)
+  courseRefFilter: "all",     // legacy field, kept for the feedback context snapshot
+  // Course fixes filter bar. Default view is priority-sorted and unfiltered; each
+  // of these is a dropdown the person narrows down with.
+  courseCourse: "all",        // selected course, or "all"
+  courseModule: "all",        // selected module title, or "all"
+  courseLesson: "all",        // selected lesson code, or "all"
+  courseType: "all",          // all | lesson | kc | ma (from the code suffix .K / .M)
+  coursePart: "all",          // all | text | video | other (which part of the lesson)
+  courseAssignee: "all"       // all | unassigned | <person's name>
 };
 
 // Issue type options per form mode. Internal tasks get their own vocabulary;
@@ -2996,7 +2992,9 @@ function courseQueueAll() {
   return state.issues.filter(function (i) {
     if (catOf(i) !== "course_error") return false;
     var s = (i.status || "").toLowerCase();
-    return s === "open" || s === "with_dev" || s === "dev_fixed";
+    // "resolved" is included so completed fixes (incl. the imported "done"
+    // backlog) show under the Fixed / done view. To do stays open + with_dev.
+    return s === "open" || s === "with_dev" || s === "dev_fixed" || s === "resolved";
   });
 }
 
@@ -3014,69 +3012,119 @@ function courseIsTodo(status) {
 function courseCardHtml(i) {
   var ref = refOf(i) || i.lesson_code || "";
   var reps = reportCount(i);
-  var fixed = (i.status || "").toLowerCase() === "dev_fixed";
+  var st = (i.status || "").toLowerCase();
+  var done = st === "dev_fixed" || st === "resolved";
+  var part = String(i.media_kind || "").toLowerCase();
+  var partBadge = part === "video" ? '<span class="badge type-badge">Video</span>'
+    : part === "text" ? '<span class="badge type-badge">Text</span>' : "";
   return '<div class="issue-card" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
     '<div class="top">' +
-      priBadge(i.priority) + (fixed ? statusBadge(i.status) : "") + refBadge(i) +
-      (ref ? '<span class="code">' + esc(ref) + '</span>' : '') +
+      priBadge(i.priority) +
       (reps > 1 ? '<span class="badge type-badge">×' + reps + ' reports</span>' : '') +
+      (done ? statusBadge(i.status) : "") +
+      refBadge(i) +
+      (ref ? '<span class="code">' + esc(ref) + '</span>' : '') +
+      partBadge +
+      (i.assignee ? '<span class="badge type-badge">&rarr; ' + esc(i.assignee) + '</span>' : '') +
     '</div>' +
     '<div class="sum">' + esc(i.summary || "(no summary)") + '</div>' +
   '</div>';
 }
 
-// Display order for the course groups; anything unrecognised sorts to the end.
-var COURSE_GROUP_ORDER = ["Essential Navigation", "Day Skipper", "Yachtmaster", "Fast Track", "SRC", "PPR"];
+// Unique, sorted, non-empty values pulled off a set of issues.
+function courseUniq(pool, fn) {
+  var seen = {};
+  pool.forEach(function (i) { var v = fn(i); if (v) seen[v] = 1; });
+  return Object.keys(seen).sort();
+}
 
 function renderCourse() {
-  var all = courseQueueAll();
-  $("courseStatQueue").textContent = all.filter(function (i) { return courseIsTodo(i.status); }).length;
-  $("courseStatFixed").textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "dev_fixed"; }).length;
+  var pool = courseQueueAll();
 
-  var durations = all.filter(function (i) { return i.dev_passed_at && i.dev_fixed_at; })
+  // Stats. "To do" is what still needs doing; "Fixed / done" is everything
+  // completed (marked fixed and awaiting verify, plus fully resolved).
+  var isDone = function (s) { s = (s || "").toLowerCase(); return s === "dev_fixed" || s === "resolved"; };
+  $("courseStatQueue").textContent = pool.filter(function (i) { return courseIsTodo(i.status); }).length;
+  $("courseStatFixed").textContent = pool.filter(function (i) { return isDone(i.status); }).length;
+  var durations = pool.filter(function (i) { return i.dev_passed_at && i.dev_fixed_at; })
     .map(function (i) { return new Date(i.dev_fixed_at) - new Date(i.dev_passed_at); })
     .filter(function (d) { return d >= 0; });
   var avg = durations.length ? durations.reduce(function (a, b) { return a + b; }, 0) / durations.length : null;
   $("courseStatAvg").textContent = avg == null ? "–" : fmtDuration(avg);
 
-  var f = state.courseFilter;
-  var list = all.filter(function (i) {
+  // Status view first (To do / Fixed / All), then the dropdown filters narrow it.
+  var statusPool = pool.filter(function (i) {
     var s = (i.status || "").toLowerCase();
-    if (f === "todo") return courseIsTodo(s);
-    if (f === "fixed") return s === "dev_fixed";
-    return true; // all
+    if (state.courseFilter === "todo") return courseIsTodo(s);
+    if (state.courseFilter === "fixed") return isDone(s);
+    return true;
   });
-  // Narrow to lessons / knowledge checks (.K) / module assessments (.M).
-  if (state.courseRefFilter && state.courseRefFilter !== "all") {
-    list = list.filter(function (i) { return refType(i) === state.courseRefFilter; });
-  }
 
-  if (!list.length) { $("courseList").innerHTML = '<p class="muted">Nothing here.</p>'; return; }
+  renderCourseFilters(statusPool);
 
-  // Group by course, then within each course sort by lesson/slide reference,
-  // then by priority so the urgent ones sit at the top of each slide.
-  var groups = {};
-  list.forEach(function (i) {
-    var c = dispCourse(i) || "Unassigned course";
-    (groups[c] = groups[c] || []).push(i);
+  var list = statusPool.filter(function (i) {
+    if (state.courseCourse !== "all" && (dispCourse(i) || "Unassigned course") !== state.courseCourse) return false;
+    if (state.courseModule !== "all" && (dispModule(i) || "") !== state.courseModule) return false;
+    if (state.courseLesson !== "all" && String(i.lesson_code || "") !== state.courseLesson) return false;
+    if (state.courseType !== "all" && refType(i) !== state.courseType) return false;
+    if (state.coursePart !== "all" && String(i.media_kind || "other").toLowerCase() !== state.coursePart) return false;
+    if (state.courseAssignee !== "all") {
+      var a = String(i.assignee || "").trim();
+      if (state.courseAssignee === "unassigned") { if (a) return false; }
+      else if (a !== state.courseAssignee) return false;
+    }
+    return true;
   });
-  var courseNames = Object.keys(groups).sort(function (a, b) {
-    var ia = COURSE_GROUP_ORDER.indexOf(a), ib = COURSE_GROUP_ORDER.indexOf(b);
-    if (ia < 0) ia = 99; if (ib < 0) ib = 99;
-    return ia - ib || a.localeCompare(b);
-  });
-  var refKey = function (i) { return String(refOf(i) || i.lesson_code || "~~~"); }; // no code sorts last
 
-  $("courseList").innerHTML = courseNames.map(function (cName) {
-    var items = groups[cName].slice().sort(function (a, b) {
-      var ra = refKey(a), rb = refKey(b);
-      if (ra !== rb) return ra < rb ? -1 : 1;
-      return PRIORITY_RANK[(a.priority || "low").toLowerCase()] - PRIORITY_RANK[(b.priority || "low").toLowerCase()];
-    });
-    return '<div style="margin:20px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;font-weight:600;">' +
-        esc(cName) + ' <span class="muted">· ' + items.length + '</span></div>' +
-      items.map(courseCardHtml).join("");
-  }).join("");
+  // Default order: priority first, then lesson/slide, then newest activity.
+  list.sort(function (a, b) {
+    var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
+    if (pa !== pb) return pa - pb;
+    var ra = String(refOf(a) || a.lesson_code || "~~~"), rb = String(refOf(b) || b.lesson_code || "~~~");
+    if (ra !== rb) return ra < rb ? -1 : 1;
+    return new Date(b.updated_at || b.submitted_at || 0) - new Date(a.updated_at || a.submitted_at || 0);
+  });
+
+  $("courseList").innerHTML = list.length
+    ? '<div class="small muted" style="margin:4px 0 10px;">' + list.length + ' fix' + (list.length === 1 ? "" : "es") + ' shown</div>' +
+      list.map(courseCardHtml).join("")
+    : '<p class="muted">Nothing here.</p>';
+}
+
+// Build the dropdown filter bar from whatever is in the current status view.
+// Course drives Module, Module drives Lesson (a stale selection falls back to
+// "all" so the cascade can't strand the list on an empty combination).
+function renderCourseFilters(statusPool) {
+  var courses = courseUniq(statusPool, function (i) { return dispCourse(i) || "Unassigned course"; });
+  var forModules = statusPool.filter(function (i) { return state.courseCourse === "all" || (dispCourse(i) || "Unassigned course") === state.courseCourse; });
+  var modules = courseUniq(forModules, function (i) { return dispModule(i) || ""; });
+  var forLessons = forModules.filter(function (i) { return state.courseModule === "all" || (dispModule(i) || "") === state.courseModule; });
+  var lessons = courseUniq(forLessons, function (i) { return String(i.lesson_code || ""); });
+  var assignees = courseUniq(statusPool, function (i) { return String(i.assignee || "").trim(); });
+
+  if (state.courseCourse !== "all" && courses.indexOf(state.courseCourse) < 0) state.courseCourse = "all";
+  if (state.courseModule !== "all" && modules.indexOf(state.courseModule) < 0) state.courseModule = "all";
+  if (state.courseLesson !== "all" && lessons.indexOf(state.courseLesson) < 0) state.courseLesson = "all";
+
+  var drop = function (key, onchange, options) {
+    var cur = key === "status" ? state.courseFilter : state[key];
+    var opts = options.map(function (o) {
+      return '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>';
+    }).join("");
+    return '<select onchange="' + onchange + '" style="min-width:120px;padding:7px 8px;">' + opts + '</select>';
+  };
+  var listOpts = function (label, values, extra) {
+    return [["all", label + ": all"]].concat(extra || []).concat(values.map(function (v) { return [v, v]; }));
+  };
+
+  $("courseFilters").innerHTML =
+    drop("status", "setCourseFilter(this.value)", [["todo", "To do"], ["fixed", "Fixed / done"], ["all", "All"]]) +
+    drop("courseCourse", "setCourseSel('courseCourse', this.value)", listOpts("Course", courses)) +
+    drop("courseModule", "setCourseSel('courseModule', this.value)", listOpts("Module", modules)) +
+    drop("courseLesson", "setCourseSel('courseLesson', this.value)", listOpts("Lesson", lessons)) +
+    drop("courseType", "setCourseSel('courseType', this.value)", [["all", "Type: all"], ["lesson", "Lessons"], ["kc", "Knowledge checks"], ["ma", "Module assessments"]]) +
+    drop("coursePart", "setCourseSel('coursePart', this.value)", [["all", "Part: all"], ["text", "Text"], ["video", "Video"], ["other", "Other"]]) +
+    drop("courseAssignee", "setCourseSel('courseAssignee', this.value)", listOpts("Assignee", assignees, [["unassigned", "Unassigned"]]));
 }
 
 function setDevFilter(f) {
@@ -3088,20 +3136,20 @@ function setDevFilter(f) {
 }
 function setCourseFilter(f) {
   state.courseFilter = f;
-  $("course_todo").classList.toggle("active", f === "todo");
-  $("course_fixed").classList.toggle("active", f === "fixed");
-  $("course_all").classList.toggle("active", f === "all");
   renderCourse();
 }
-// Filter the course fixes queue by what the reference points at: lesson slides,
-// knowledge checks (codes ending .K), or module assessments (codes ending .M).
-function setCourseRefFilter(f) {
-  state.courseRefFilter = f;
-  ["all", "lesson", "kc", "ma"].forEach(function (k) {
-    var el = $("cref_" + k);
-    if (el) el.classList.toggle("active", f === k);
-  });
+// Set one of the Course Fixes dropdown filters. Course cascades to Module and
+// Module to Lesson, so changing an upper level clears the ones below it.
+function setCourseSel(key, value) {
+  state[key] = value;
+  if (key === "courseCourse") { state.courseModule = "all"; state.courseLesson = "all"; }
+  if (key === "courseModule") { state.courseLesson = "all"; }
   renderCourse();
+}
+// Placeholder: message the person who logged an issue to ask for more detail.
+// Ardent Crew wiring is still to come, so for now it just says so.
+function requestMoreInfo(id) {
+  toast("Request more info — feature still in construction.");
 }
 
 function openDevDetail(id) {
@@ -3181,14 +3229,20 @@ function openDevDetail(id) {
   html += '<h3>Developer notes</h3><div class="field">' +
     '<textarea id="dev_notes" rows="3" placeholder="Cause and fix...">' + esc(issue.dev_notes || "") + '</textarea></div>';
 
-  if (isFixed) {
-    html += '<div class="small muted" style="margin-bottom:8px;">Marked fixed ' + fmtDate(issue.dev_fixed_at) +
-      '. Waiting on an admin to verify, resolve, and contact the students.</div>' +
-      '<div class="row"><button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
+  var detStatus = (issue.status || "").toLowerCase();
+  var detDone = detStatus === "dev_fixed" || detStatus === "resolved";
+  var moreInfoBtn = '<button class="ghost" onclick="requestMoreInfo(\'' + esc(issue.issue_id) + '\')">Request more info</button>';
+  if (detDone) {
+    html += '<div class="small muted" style="margin-bottom:8px;">' +
+      (detStatus === "resolved"
+        ? 'Resolved ' + fmtDate(issue.resolved_at || issue.dev_fixed_at) + '.'
+        : 'Marked fixed ' + fmtDate(issue.dev_fixed_at) + '. Waiting on an admin to verify, resolve, and contact the students.') +
+      '</div>' +
+      '<div class="row"><button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button>' + moreInfoBtn + '</div>';
   } else {
     html += '<div class="row">' +
       '<button class="primary" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
-      '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
+      '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button>' + moreInfoBtn + '</div>';
   }
 
   $("drawer").innerHTML = html;
