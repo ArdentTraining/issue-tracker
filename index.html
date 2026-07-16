@@ -3005,6 +3005,20 @@ function courseIsTodo(status) {
   return s === "open" || s === "with_dev";
 }
 
+// The course a fix belongs to, for grouping and filtering. Uses the stored
+// course when there is one; otherwise infers it from a real lesson/slide code
+// (e.g. DS.09.04 -> Day Skipper). Anything with no course and no code — the
+// platform-wide bits like Discussions, Live Chat, exams — is "General / all
+// courses", since those genuinely aren't tied to a single course.
+var COURSE_BY_PREFIX = { EN: "Essential Navigation", DS: "Day Skipper", YM: "Yachtmaster", FT: "Fast Track" };
+function courseOf(i) {
+  if (i.course) return i.course;
+  var ref = String(refOf(i) || i.lesson_code || i.lesson || "");
+  var m = ref.match(/\b(EN|DS|YM|FT)[\s.]*\d/i); // needs a digit after the prefix, so a stray "DS" in prose doesn't match
+  if (m) return COURSE_BY_PREFIX[m[1].toUpperCase()];
+  return "General / all courses";
+}
+
 // One compact card, stripped to what Edd needs at a glance: priority, the
 // reference (with a KC/MA tag), how many reports rolled into it, and the fix
 // itself. Everything else (who reported it, the full thread) sits behind the
@@ -3063,7 +3077,7 @@ function renderCourse() {
   renderCourseFilters(statusPool);
 
   var list = statusPool.filter(function (i) {
-    if (state.courseCourse !== "all" && (dispCourse(i) || "Unassigned course") !== state.courseCourse) return false;
+    if (state.courseCourse !== "all" && (courseOf(i)) !== state.courseCourse) return false;
     if (state.courseModule !== "all" && (dispModule(i) || "") !== state.courseModule) return false;
     if (state.courseLesson !== "all" && String(i.lesson_code || "") !== state.courseLesson) return false;
     if (state.courseType !== "all" && refType(i) !== state.courseType) return false;
@@ -3095,8 +3109,8 @@ function renderCourse() {
 // Course drives Module, Module drives Lesson (a stale selection falls back to
 // "all" so the cascade can't strand the list on an empty combination).
 function renderCourseFilters(statusPool) {
-  var courses = courseUniq(statusPool, function (i) { return dispCourse(i) || "Unassigned course"; });
-  var forModules = statusPool.filter(function (i) { return state.courseCourse === "all" || (dispCourse(i) || "Unassigned course") === state.courseCourse; });
+  var courses = courseUniq(statusPool, function (i) { return courseOf(i); });
+  var forModules = statusPool.filter(function (i) { return state.courseCourse === "all" || (courseOf(i)) === state.courseCourse; });
   var modules = courseUniq(forModules, function (i) { return dispModule(i) || ""; });
   var forLessons = forModules.filter(function (i) { return state.courseModule === "all" || (dispModule(i) || "") === state.courseModule; });
   var lessons = courseUniq(forLessons, function (i) { return String(i.lesson_code || ""); });
