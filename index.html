@@ -2988,8 +2988,95 @@ function renderQueue(cat, ids, filterVal) {
 function renderDev() {
   renderQueue(["tech_issue", "internal"], { queue: "devStatQueue", fixed: "devStatFixed", avg: "devStatAvg", list: "devList" }, state.devFilter);
 }
+// Every course fix that still needs doing or is awaiting verification. Unlike
+// the Developers queue this is NOT gated on dev_passed_at, so imported "open"
+// course errors (never auto-routed) come through too — every reported course
+// fix lands here for Edd to work.
+function courseQueueAll() {
+  return state.issues.filter(function (i) {
+    if (catOf(i) !== "course_error") return false;
+    var s = (i.status || "").toLowerCase();
+    return s === "open" || s === "with_dev" || s === "dev_fixed";
+  });
+}
+
+// A course fix still to do: reported (open) or passed to the course team
+// (with_dev). "dev_fixed" means done and awaiting a verify/resolve.
+function courseIsTodo(status) {
+  var s = (status || "").toLowerCase();
+  return s === "open" || s === "with_dev";
+}
+
+// One compact card, stripped to what Edd needs at a glance: priority, the
+// reference (with a KC/MA tag), how many reports rolled into it, and the fix
+// itself. Everything else (who reported it, the full thread) sits behind the
+// click, in the detail drawer.
+function courseCardHtml(i) {
+  var ref = refOf(i) || i.lesson_code || "";
+  var reps = reportCount(i);
+  var fixed = (i.status || "").toLowerCase() === "dev_fixed";
+  return '<div class="issue-card" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
+    '<div class="top">' +
+      priBadge(i.priority) + (fixed ? statusBadge(i.status) : "") + refBadge(i) +
+      (ref ? '<span class="code">' + esc(ref) + '</span>' : '') +
+      (reps > 1 ? '<span class="badge type-badge">×' + reps + ' reports</span>' : '') +
+    '</div>' +
+    '<div class="sum">' + esc(i.summary || "(no summary)") + '</div>' +
+  '</div>';
+}
+
+// Display order for the course groups; anything unrecognised sorts to the end.
+var COURSE_GROUP_ORDER = ["Essential Navigation", "Day Skipper", "Yachtmaster", "Fast Track", "SRC", "PPR"];
+
 function renderCourse() {
-  renderQueue("course_error", { queue: "courseStatQueue", fixed: "courseStatFixed", avg: "courseStatAvg", list: "courseList" }, state.courseFilter);
+  var all = courseQueueAll();
+  $("courseStatQueue").textContent = all.filter(function (i) { return courseIsTodo(i.status); }).length;
+  $("courseStatFixed").textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "dev_fixed"; }).length;
+
+  var durations = all.filter(function (i) { return i.dev_passed_at && i.dev_fixed_at; })
+    .map(function (i) { return new Date(i.dev_fixed_at) - new Date(i.dev_passed_at); })
+    .filter(function (d) { return d >= 0; });
+  var avg = durations.length ? durations.reduce(function (a, b) { return a + b; }, 0) / durations.length : null;
+  $("courseStatAvg").textContent = avg == null ? "–" : fmtDuration(avg);
+
+  var f = state.courseFilter;
+  var list = all.filter(function (i) {
+    var s = (i.status || "").toLowerCase();
+    if (f === "todo") return courseIsTodo(s);
+    if (f === "fixed") return s === "dev_fixed";
+    return true; // all
+  });
+  // Narrow to lessons / knowledge checks (.K) / module assessments (.M).
+  if (state.courseRefFilter && state.courseRefFilter !== "all") {
+    list = list.filter(function (i) { return refType(i) === state.courseRefFilter; });
+  }
+
+  if (!list.length) { $("courseList").innerHTML = '<p class="muted">Nothing here.</p>'; return; }
+
+  // Group by course, then within each course sort by lesson/slide reference,
+  // then by priority so the urgent ones sit at the top of each slide.
+  var groups = {};
+  list.forEach(function (i) {
+    var c = dispCourse(i) || "Unassigned course";
+    (groups[c] = groups[c] || []).push(i);
+  });
+  var courseNames = Object.keys(groups).sort(function (a, b) {
+    var ia = COURSE_GROUP_ORDER.indexOf(a), ib = COURSE_GROUP_ORDER.indexOf(b);
+    if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+    return ia - ib || a.localeCompare(b);
+  });
+  var refKey = function (i) { return String(refOf(i) || i.lesson_code || "~~~"); }; // no code sorts last
+
+  $("courseList").innerHTML = courseNames.map(function (cName) {
+    var items = groups[cName].slice().sort(function (a, b) {
+      var ra = refKey(a), rb = refKey(b);
+      if (ra !== rb) return ra < rb ? -1 : 1;
+      return PRIORITY_RANK[(a.priority || "low").toLowerCase()] - PRIORITY_RANK[(b.priority || "low").toLowerCase()];
+    });
+    return '<div style="margin:20px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;font-weight:600;">' +
+        esc(cName) + ' <span class="muted">· ' + items.length + '</span></div>' +
+      items.map(courseCardHtml).join("");
+  }).join("");
 }
 
 function setDevFilter(f) {
@@ -3024,10 +3111,13 @@ function openDevDetail(id) {
   state.detailKind = "dev";
   var images = parseImageUrls(issue.image_urls);
   var isFixed = (issue.status || "").toLowerCase() === "dev_fixed";
-  var timeOpen = issue.dev_passed_at
+  // Open course fixes imported from the old sheets were never "passed" anywhere,
+  // so fall back to when they were first reported for the clock.
+  var startedAt = issue.dev_passed_at || issue.submitted_at;
+  var timeOpen = startedAt
     ? (issue.dev_fixed_at
-        ? fmtDuration(new Date(issue.dev_fixed_at) - new Date(issue.dev_passed_at))
-        : fmtDuration(Date.now() - new Date(issue.dev_passed_at)) + " so far")
+        ? fmtDuration(new Date(issue.dev_fixed_at) - new Date(startedAt))
+        : fmtDuration(Date.now() - new Date(startedAt)) + " so far")
     : "—";
 
   var html = '<button class="close" onclick="closeDetail()">&times;</button>' +
@@ -3036,7 +3126,7 @@ function openDevDetail(id) {
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
     '<div class="kv">' +
       kv("Submitted by", issue.instructor_name) +
-      kv("Passed to " + (catOf(issue) === "course_error" ? "course team" : "devs"), fmtDate(issue.dev_passed_at)) +
+      kv(issue.dev_passed_at ? ("Passed to " + (catOf(issue) === "course_error" ? "course team" : "devs")) : "Reported", fmtDate(issue.dev_passed_at || issue.submitted_at)) +
       kv("Time open", timeOpen) +
       kv("Reports", String(reportCount(issue))) +
       (catOf(issue) === "tech_issue" ? kv("Device / OS / browser", issue.device_info) : "") +
