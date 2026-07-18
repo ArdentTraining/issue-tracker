@@ -319,6 +319,19 @@
   .toast.show { display: block; }
   .fab { position: fixed; bottom: 20px; right: 20px; z-index: 60; background: var(--accent); color: #fff; font-weight: 600; border-radius: 999px; padding: 11px 18px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: none; }
 
+  /* Course fixes filter dropdowns: a single wrapping row, not a stack */
+  #courseFilters { display: flex; }
+  #courseFilters select { width: auto; }
+
+  /* Submit row sticks to the bottom of the viewport while the (long) details
+     section is scrolled, so nobody misses that the form ends in a button. */
+  .submit-row { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0; z-index: 5; box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.45); }
+
+  /* Actions tab: one card per thing an instructor needs to do */
+  .action-card { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
+  .action-card h4 { margin: 0 0 6px; font-size: 14px; }
+  .action-empty { color: var(--muted); font-size: 13px; margin: 4px 0 14px; }
+
   /* view-as bar: super-admin testing tool, bottom-left so it stays clear of the Feedback fab */
   .viewas-bar { position: fixed; bottom: 20px; left: 20px; z-index: 60; display: none; align-items: center; gap: 8px; background: var(--surface); border: 1px solid rgba(232,237,242,0.15); border-radius: 999px; padding: 7px 14px; font-size: 12.5px; color: var(--muted); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
   .viewas-bar.show { display: flex; }
@@ -355,6 +368,7 @@
   <div style="display:flex;align-items:center;gap:14px;">
     <div class="switcher">
       <button id="tabInstructor" class="active" onclick="setView('instructor')">Log an issue</button>
+      <button id="tabActions" onclick="setView('actions')">Actions</button>
       <button id="tabAdmin" onclick="setView('admin')">Track</button>
       <button id="tabAnalytics" onclick="setView('analytics')">Analytics</button>
       <button id="tabDev" onclick="setView('dev')">Developers</button>
@@ -409,8 +423,11 @@
       </div>
 
       <div id="existingPanel" class="existing hidden"></div>
-      <div id="suggestPanel" class="suggest hidden"></div>
-      <div id="splitPanel" class="suggest hidden"></div>
+      <!-- The suggested-fix and multi-issue boxes open as popups now (a mini
+           wizard after extraction, so they can't be scrolled past). These two
+           lines are the persistent reminder of what was chosen. -->
+      <div id="suggestNote" class="small muted hidden" style="margin-bottom:8px;"></div>
+      <div id="splitNote" class="small muted hidden" style="margin-bottom:8px;"></div>
       <div id="resolutionPanel" class="suggest hidden"></div>
       <div id="troubleshootPanel" class="tshoot hidden"></div>
 
@@ -447,6 +464,12 @@
       <div class="row" id="field_student_row">
         <div class="field"><label>Student name</label><input id="f_student_name" autocomplete="off" /></div>
         <div class="field"><label>Student contact</label><input id="f_student_contact" autocomplete="off" /></div>
+      </div>
+      <div class="field" id="field_platform"><label>Where does the bug show?</label>
+        <div class="row" style="gap:16px;align-items:center;">
+          <label style="font-size:13px;color:var(--text);"><input type="checkbox" id="f_plat_browser" style="width:auto;margin-right:6px;vertical-align:-1px;"> Browser</label>
+          <label style="font-size:13px;color:var(--text);"><input type="checkbox" id="f_plat_app" style="width:auto;margin-right:6px;vertical-align:-1px;"> App</label>
+        </div>
       </div>
       <div class="field" id="field_device"><label>Device / OS / browser (student's setup)</label><input id="f_device_info" placeholder="e.g. iPad, iOS 17, Safari" autocomplete="off" /></div>
       <div class="field" id="field_media">
@@ -517,10 +540,12 @@
       <div class="field">
         <label>Where did this end up? (optional)</label>
         <textarea id="f_outcome" rows="2" placeholder="e.g. Could not fix over chat, raised with the devs; student has a workaround for now."></textarea>
-        <div class="small muted" style="margin-top:4px;">For anything that happened after the pasted conversation. It's saved into the issue's record.</div>
+        <div class="small muted" style="margin-top:4px;">For anything that happened after the pasted conversation. It's saved into the issue's record.
+          <button type="button" class="ghost small" id="outcomeSuggestBtn" style="padding:3px 10px;margin-left:6px;" onclick="useOutcomeSuggestion()">Use suggested text</button>
+        </div>
       </div>
 
-      <div class="row" style="margin-top:6px;">
+      <div class="row submit-row" style="margin-top:6px;">
         <button class="primary" id="submitBtn" onclick="submitIssue()">Submit issue</button>
         <button class="ghost" id="resetBtn" onclick="resetForm()">Clear / new</button>
         <button class="ghost" id="deleteBtn" onclick="deleteFromForm()" style="display:none;color:var(--high);">Delete</button>
@@ -535,6 +560,13 @@
       <div id="prevList"><p class="muted small">Loading your submissions…</p></div>
     </div>
   </div>
+</div>
+
+<!-- ===================== ACTIONS VIEW (instructor to-dos) ===================== -->
+<div id="actionsView" class="wrap hidden">
+  <h2 style="margin-top:0;">Your actions</h2>
+  <p class="small muted" style="margin-top:-6px;">Just the things waiting on you. Everything else lives in Track and your previous submissions.</p>
+  <div id="actionsList"></div>
 </div>
 
 <!-- ===================== ADMIN VIEW ===================== -->
@@ -816,6 +848,31 @@
     <div class="btns"><button class="primary" onclick="saveStudentEmail()">Save</button><button class="ghost" id="emailSkipBtn" onclick="skipEmail()">Skip for now</button></div>
     <div style="margin-top:8px;"><button class="ghost small" style="padding:4px 10px;" onclick="noStudentInvolved()">No student involved — this is a portal / internal problem</button></div>
     <div id="emailModalMsg" class="small muted" style="margin-top:6px;"></div>
+  </div>
+</div>
+
+<!-- SUGGESTED FIX / MULTI-ISSUE SPLIT (wizard popups after extraction) -->
+<div class="modal-bg" id="suggestModal">
+  <div class="modal" style="max-width:540px;">
+    <div id="suggestPanel" class="suggest" style="margin:0;"></div>
+  </div>
+</div>
+<div class="modal-bg" id="splitModal">
+  <div class="modal" style="max-width:540px;">
+    <div id="splitPanel" class="suggest" style="margin:0;"></div>
+  </div>
+</div>
+
+<!-- RESOLVED-TBC DOUBLE-CHECK POPUP -->
+<div class="modal-bg" id="recheckModal">
+  <div class="modal" style="max-width:520px;">
+    <h3>Was that a one-off?</h3>
+    <p class="small muted">The student's got a workaround, but we don't know yet whether the underlying problem hits everyone. Did you get a chance to double-check it yourself?</p>
+    <div class="btns" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <button class="ghost" onclick="recheckChoice('oneoff')">Checked — it's a one-off, leave as Resolved – TBC</button>
+      <button class="ghost" onclick="recheckChoice('fault')">Checked — it affects everyone, reopen as a fault</button>
+      <button class="primary" onclick="recheckChoice('later')">Can't check right now — remind me on Slack tomorrow</button>
+    </div>
   </div>
 </div>
 
@@ -1147,6 +1204,14 @@ var MODULE_TITLES = {
   YM: { 1:"Welcome",2:"Navigation Instruments",3:"Tidal Heights",4:"Tidal Streams",5:"Position Fixing and Chartwork",6:"Meteorology",7:"IRPCS",8:"Pilotage",9:"Safety",10:"Passage Planning",11:"Marine Environment",12:"Exams",13:"Chartwork and IRPCS (exam)",14:"Appraisal",15:"Passage Making" },
   FT: { 1:"Welcome",2:"Foundations of Navigation",3:"Navigation Instruments",4:"Position Fixing",5:"Tidal Heights",6:"Anchorwork",7:"Ropework",8:"Tidal Streams",9:"Chartwork",10:"Meteorology",11:"IRPCS",12:"Pilotage",13:"Safety",14:"Passage Planning",15:"Marine Environment",16:"Exams",17:"Final Part 1",18:"Appraisal",19:"Final Part 2" }
 };
+// Every lesson title per course/module/lesson, generated from Edd's Course
+// Structures spreadsheet (18 Jul 2026), so "DS.08.02" can read as
+// "DS.08.02 - Anchoring Equipment" wherever a lesson is shown.
+var LESSON_TITLES = {"EN":{"1":{"1":"Course Player and Features","2":"Welcome to Ardent Training","3":"Your Student Pack","4":"What to expect from your EN course","5":"A day out with Cynthia"},"2":{"1":"Cynthia's Boat","2":"On Deck","3":"Below Decks","4":"Cynthia's Boat - Twilight","5":"Knowledge Check"},"3":{"1":"Safety at Sea","2":"Safety Briefing","3":"Personal Care","4":"Lifejackets","5":"Emergency Procedures","6":"Engine Checks","7":"Cynthia's Safety Brief","8":"Knowledge Check"},"4":{"1":"Understanding a Passage Plan","2":"Why we need a Passage Plan","3":"Passage Plan Structure","4":"Cynthia's Passage Plan","5":"Knowledge Check"},"5":{"1":"Checking the Weather","2":"Weather Terms","3":"Weather Foecasts","4":"Cynthia's Weather Forecast","5":"Knowledge Check"},"6":{"1":"Leaving the Harbour","2":"IALA Bouyage and Lateral Marks","3":"Cardinal Buoys","4":"Other Buoys","5":"Cynthia's Departure","6":"Knowledge Check"},"7":{"1":"Setting Course","2":"Direction & Relative Directions","3":"Compasses","4":"Logbook","5":"Knots","6":"Cynthia's Logbook","7":"Knowledge Check"},"8":{"1":"What Can We See","2":"Charts","3":"Latitude and Longitude","4":"Plotting Latitude and Longitude","5":"What is GNSS","6":"Chartplotters","7":"What can Cynthia See","8":"Knowledge Check"},"9":{"1":"The Groats","2":"GNSS","3":"Direction","4":"Distance","5":"Position fixing","6":"Range and Bearing","7":"Cynthia Fixes Our Position","8":"Knowledge Check"},"10":{"1":"Going with the Flow","2":"What are Tidal Streams","3":"Using a Tidal Stream Atlas","4":"Effects of Tidal Streams","5":"Cynthia's Tides","6":"Knowledge Check"},"11":{"1":"Avoiding Colision","2":"COLREGS","3":"Risk of Colision","4":"Give Way and Stand On","5":"Day Shapes","6":"Cynthia Avoiding Collision","7":"Knowledge Check"},"12":{"1":"Communicating With Other Vessels","2":"VHF Radio","3":"Shore Contact","4":"Cynthia and the VHF Call","5":"Knowledge Check"},"13":{"1":"Approaching St Anthony's","2":"Choosing an Anchorage","3":"Leading Lines","4":"Visual Techniques","5":"Pilotage Plan","6":"Cynthia's Choice","7":"Knowledge Check"},"14":{"1":"A Picnic at Anchor","2":"Tidal Heights","3":"Springs and Neaps","4":"How to Anchor","5":"At Anchor","6":"Cynthia's Tides","7":"Knowledge Check"},"15":{"1":"Returning Home","2":"What to expect","3":"Your turn to help Cynthia on your own"},"16":{"1":"Debrief","2":"Congratulations","3":"The Next Step","4":"Day Skipper Theory","5":"Goodbye"}},"DS":{"1":{"1":"Welcome to Ardent Training","2":"Who are the RYA","3":"What To Expect","4":"Opening your student pack and setting up a suitable learning environment"},"2":{"1":"Nautical Terminology","2":"Relative Direction","3":"Knowledge Check","4":"On Deck","5":"Below the Waterline","6":"Knowledge Check","7":"Below Decks","8":"Vessel Particulars","9":"Knowledge Check","10":"Module Assessment","11":"Module Summary"},"3":{"1":"Navigation","2":"Charts","3":"Knowledge Check","4":"Aids to Navigation - Part 1, Lights","5":"Knowledge Check","6":"Aids to Navigation - Part 2, Buoyage","7":"Knowledge Check","8":"Lat and Long","9":"Knowledge Check","10":"Direction","11":"Measuring Bearings","12":"Knowledge Check","13":"Distance","14":"Measuring Distance on a Chart","15":"Knowledge Check","16":"Giving Position as a Range and Bearing","17":"Knowledge Check","18":"Module Assessment","19":"Module Summary"},"4":{"1":"Intro","2":"Compasses","3":"Knowledge Check","4":"Transducers","5":"GNSS","6":"Chartplotters","7":"Knowledge Check","8":"Radar","9":"Knowledge Check","10":"VHF","11":"AIS","12":"Knowledge Check","13":"Log Book","14":"Apps","15":"Knowledge Check","16":"Module Assessment","17":"Module Summary"},"5":{"1":"Position Fixing","2":"GNSS-Derived Positions","3":"Knowledge Check","4":"Bearings","5":"Knowledge Check","6":"Ranges","7":"Knowledge Check","8":"Mixing Methods","9":"Knowledge Check","10":"Module Assessment","11":"Module Summary"},"6":{"1":"Ropework","2":"Properties of Ropes","3":"Knots","4":"Knowledge Check","5":"Module Assessment","6":"Module Summary"},"7":{"1":"Tidal Heights","2":"The Theory of Tides","3":"Tidal Terminology","4":"Knowledge Check","5":"Tide Tables","6":"Knowledge Check","7":"Tidal Curves","8":"Knowledge Check","9":"Clearances","10":"Knowledge Check","11":"Module Assessment","12":"Module Summary"},"8":{"1":"Anchorwork","2":"Anchoring Equipment","3":"Knowledge Check","4":"Choosing an Anchorage","5":"At Anchor","6":"Knowledge Check","7":"Module Assessment","8":"Module Summary"},"9":{"1":"Tidal Streams","2":"Finding Tidal Stream Information","3":"Knowledge Check","4":"Applying Tidal Streams","5":"Knowledge Check","6":"EP","7":"Knowledge Check","8":"Course Shaping","9":"Knowledge Check","10":"Course to Steer","11":"Knowledge Check","12":"Module Assessment","13":"Module Summary"},"10":{"1":"IRPCS","2":"Lights, Shapes and Sound Signals","3":"Knowledge Check","4":"Vessel Identification - Part 1","5":"Knowledge Check","6":"Vessel Identification - Part 2","7":"Knowledge Check","8":"Vessel Identification - Part 3","9":"Knowledge Check","10":"Vessel Identification - Part 4","11":"Knowledge Check","12":"Risk of Collision","13":"Give-way and Stand-on","14":"Knowledge Check","15":"TSS and Narrow Channels","16":"Signalling","17":"Restricted Visibility","18":"Knowledge Check","19":"Module Assessment","20":"Module Summary"},"11":{"1":"Meteorology","2":"Pressure Systems","3":"Knowledge Check","4":"Land and Sea Breezes","5":"Fog","6":"Knowledge Check","7":"Forecasts","8":"Knowledge Check","9":"Module Assessment","10":"Module Summary"},"12":{"1":"Safety","2":"Personal Care","3":"Lifejackets","4":"Knowledge Check","5":"MOB","6":"MOB Equipment","7":"Knowledge Check","8":"Vessel Safety","9":"Stability","10":"Fire","11":"Knowledge Check","12":"Distress Signals","13":"Knowledge Check","14":"Helicopter Rescue","15":"Abandon Ship","16":"Safety Brief","17":"Knowledge Check","18":"Module Assessment","19":"Module Summary"},"13":{"1":"Pilotage","2":"Researching pilotage","3":"Pilotage Techniques","4":"Knowledge Check","5":"Route","6":"Using our Plan","7":"Knowledge Check","8":"Module Assessment","9":"Module Summary"},"14":{"1":"Passage Planning","2":"How to Use a Passage Plan","3":"Objectives","4":"Constraints","5":"Knowledge Check","6":"Route","7":"Safety Considerations","8":"The Example","9":"Knowledge Check","10":"Module Assessment","11":"Module Summary"},"15":{"1":"Marine Environment","2":"Marine Pollution and Prevention","3":"Wildlife and Habitat Protection","4":"Knowledge Check","5":"Module Assessment","6":"Module Summary"},"16":{"1":"What to Expect","2":"Common Mistakes","3":"Mock"},"17":{"1":"Final Exam","2":"Well done!"}},"YM":{"1":{"1":"Course Player and Features","2":"Welcome To Ardent Training","3":"Who Are The RYA","4":"What to Expect From Your Yachtmaster Theory","5":"Opening Your Student Pack"},"2":{"1":"Navigation Instruments","2":"Compasses","3":"Transducers","4":"Knowledge Check","5":"GNSS","6":"Chartplotters/Apps","7":"Knowledge Check","8":"Radar","9":"Logbook","10":"Knowledge Check","11":"Module Assessment","12":"Module Summary"},"3":{"1":"Tidal Heights","2":"Tidal Theory","3":"Tidal Terminology","4":"Knowledge Check","5":"Tide Tables","6":"Tidal Curves","7":"Knowledge Check","8":"Secondary Ports","9":"Knowledge Check","10":"Tidal Clearances","11":"Knowledge Check","12":"Module Assessment","13":"Module Summary"},"4":{"1":"Tidal Streams","2":"Sources of Tidal Stream Information","3":"Tidal Stream Atlas","4":"Computation of Rates","5":"Knowledge Check","6":"Tidal Diamonds and Ladders","7":"Other Tidal Considerations","8":"Knowledge Check","9":"Module Assessment","10":"Module Summary"},"5":{"1":"Position Fixing and Chartwork","2":"Aids to Nav - Lights","3":"Aids to Nav - Buoys","4":"Knowledge Check","5":"Range & Bearing","6":"Transits","7":"Accuracy","8":"Knowledge Check","9":"EP","10":"Running Fix","11":"Knowledge Check","12":"CTS","13":"Knowledge Check","14":"Module Assessment","15":"Module Summary"},"6":{"1":"Meteorology","2":"Pressure Systems","3":"Fronts within a depression","4":"Knowledge Check","5":"Weather Forecasts","6":"Effects of the land on the wind","7":"Knowledge Check","8":"Fog","9":"Monitoring Weather at Sea","10":"Knowledge Check","11":"Module Assessment","12":"Module Summary"},"7":{"1":"IRPCS","2":"Lights, Shapes & Sounds","3":"Knowledge Check","4":"Vessel Identification Part 1","5":"Vessel Identification Part 2","6":"Knowledge Check","7":"Vessel Identification Part 3","8":"Vessel Identification Part 4","9":"Knowledge Check","10":"Risk of Collision","11":"Give-way and Stand-on","12":"Knowledge Check","13":"TSS and Narrow Channels","14":"Signalling","15":"Restricted Visibility","16":"Knowledge Check","17":"Module Assessment","18":"Module Summary"},"8":{"1":"Pilotage","2":"Sources of Information","3":"Knowledge Check","4":"Techniques","5":"Night Pilotage & Blind Navigation","6":"Knowledge Check","7":"Route","8":"Layout","9":"Knowledge Check","10":"More Examples","11":"Module Assessment","12":"Module Summary"},"9":{"1":"Safety","2":"Lifejackets","3":"Knowledge Check","4":"Fire","5":"Stability","6":"Adverse Weather","7":"Knowledge Check","8":"Distress Signals","9":"Helicopter Rescue","10":"Knowledge Check","11":"Abandon Ship","12":"Knowledge Check","13":"Module Assessment","14":"Module Summary"},"10":{"1":"Passage Planning","2":"Appraisal","3":"Planning","4":"Knowledge Check","5":"Execution","6":"Monitoring","7":"Knowledge Check","8":"Example","9":"Module Assessment","10":"Module Summary"},"11":{"1":"Marine Environment","2":"Marine Pollution and Prevention","3":"Wildlife and Habitat Protection","4":"Knowledge Check","5":"Module Assessment","6":"Module Summary"},"12":{"1":"What to Expect","2":"Common Mistakes","3":"Mock"},"13":{"1":"Chartwork and IRPCS"},"14":{"1":"Appraisal"},"15":{"1":"Passage Making","2":"Well Done"}},"FT":{"1":{"1":"Course Player and Features","2":"Welcome To Ardent Training","3":"Who Are The RYA","4":"What to Expect","5":"Your Student Pack"},"2":{"1":"Navigation","2":"Charts","3":"Knowledge Check","4":"Aids to Navigation - Part 1, Lights","5":"Knowledge Check","6":"Aids to Navigation - Part 2, Buoyage","7":"Knowledge Check","8":"Latitude and Longitude","9":"Knowledge Check","10":"Direction","11":"Distance","12":"Knowledge Check","13":"Module Assessment","14":"Module Summary"},"3":{"1":"Navigation Instruments","2":"Compasses","3":"Knowledge Check","4":"Transducers","5":"GNSS","6":"Chartplotters/Apps","7":"Knowledge Check","8":"Radar","9":"VHF Radio, AIS, and Logbook","10":"Knowledge Check","11":"Module Assessment","12":"Module Summary"},"4":{"1":"Position Fixing","2":"Range and Bearing","3":"Knowledge Check","4":"Transits","5":"Three-Point Fixes","6":"Knowledge Check","7":"Accuracy","8":"Module Assessment","9":"Module Summary"},"5":{"1":"Tidal Heights","2":"Tidal Theory","3":"Tidal Terminology","4":"Knowledge Check","5":"Tide Tables","6":"Tidal Curves","7":"Knowledge Check","8":"Secondary Ports","9":"Knowledge Check","10":"Tidal Clearances","11":"Knowledge Check","12":"Module Assessment","13":"Module Summary"},"6":{"1":"Anchorwork","2":"Anchoring Equipment","3":"Knowledge Check","4":"Choosing an Anchorage","5":"At Anchor","6":"Knowledge Check","7":"Module Assessment","8":"Module Summary"},"7":{"1":"Ropework","2":"Properties of Ropes","3":"Knots","4":"Knowledge Check","5":"Module Assessment","6":"Module Summary"},"8":{"1":"Tidal Streams","2":"Sources of Tidal Stream Information","3":"Tidal Stream Atlas","4":"Computation of Rates","5":"Knowledge Check","6":"Tidal Diamonds and Ladders","7":"Other Tidal Considerations","8":"Knowledge Check","9":"Module Assessment","10":"Module Summary"},"9":{"1":"Chartwork","2":"EP","3":"Knowledge Check","4":"Running Fix","5":"Knowledge Check","6":"CTS","7":"Knowledge Check","8":"Module Assessment","9":"Module Summary"},"10":{"1":"Meteorology","2":"Pressure Systems","3":"Fronts Within a Depression","4":"Knowledge Check","5":"Weather Forecasts","6":"Effects of the Land on the Wind","7":"Knowledge Check","8":"Fog","9":"Monitoring Weather At Sea","10":"Knowledge Check","11":"Module Assessment","12":"Module Summary"},"11":{"1":"IRPCS","2":"Lghts and Shapes","3":"Knowledge Check","4":"Vessel Identification Part 1","5":"Knowledge Check","6":"Vessel Identification Part 2","7":"Knowledge Check","8":"Vessel Identification Part 3","9":"Knowledge Check","10":"Vessel Identification Part 4","11":"Knowledge Check","12":"Risk of Collision","13":"Give-way and Stand-on","14":"Knowledge Check","15":"TSS and Narrow Channels","16":"Signalling","17":"Restricted Visibility","18":"Knowledge Check","19":"Module Assessment","20":"Module Summary"},"12":{"1":"Pilotage","2":"Sources of Information","3":"Knowledge Check","4":"Techniques","5":"Blind Navigation + night","6":"Knowledge Check","7":"Route","8":"Layout","9":"Knowledge Check","10":"More Examples","11":"Module Assessment","12":"Module Summary"},"13":{"1":"Safety","2":"Lifejackets","3":"Knowledge Check","4":"MOB","5":"MOB Equipment","6":"Knowledge Check","7":"Fire","8":"Stability","9":"Knowledge Check","10":"Adverse Weahter","11":"Knowledge Check","12":"Distress Signals","13":"Knowledge Check","14":"Helicopter Rescue","15":"Abandon Ship","16":"Safety Brief","17":"Knowledge Check","18":"Module Assessment","19":"Module Summary"},"14":{"1":"Passage Planning","2":"Appraisal","3":"Planning","4":"Knowledge Check","5":"Execution","6":"Monitoring","7":"Knowledge Check","8":"Example","9":"Module Assessment","10":"Module Summary"},"15":{"1":"Marine Environment","2":"Marine Pollution and Prevention","3":"Wildlife and Habitat Protection","4":"Knowledge Check","5":"Module Assessment","6":"Module Summary"},"16":{"1":"What to Expect","2":"Common Mistakes","3":"Mock"},"17":{"1":"Chartwork and IRPCS"},"18":{"1":"Appraisal"},"19":{"1":"Passage Making","2":"Well Done"}}};
+function lessonTitleFor(pfx, mod, les) {
+  return ((LESSON_TITLES[pfx] || {})[String(mod)] || {})[String(les)] || "";
+}
+
 // Pull course prefix, module number, and lesson number out of any code-ish
 // reference, wherever it lives (lesson or lesson_code, full or trimmed).
 function parseRefParts(i) {
@@ -1168,12 +1233,17 @@ function dispModule(i) {
   return p ? ((MODULE_TITLES[p.pfx] || {})[p.mod] || "Module " + p.mod) : "";
 }
 function dispLesson(i) {
-  // A lesson title typed or extracted stays as it is; a code gets translated.
+  // A lesson title typed or extracted stays as it is; a code gets translated
+  // into "DS.08.02 - Anchoring Equipment" using the full structure above.
   if (i.lesson && !refOf(i)) return i.lesson;
   var p = parseRefParts(i);
   if (!p || p.les == null) return "";
+  var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+  var code = p.pfx + "." + pad(p.mod) + "." + pad(p.les);
+  var title = lessonTitleFor(p.pfx, p.mod, p.les);
+  if (title) return code + " - " + title;
   var t = refType(i);
-  return "Lesson " + p.les + (t === "kc" ? " — knowledge check" : t === "ma" ? " — module assessment" : "");
+  return code + (t === "kc" ? " - Knowledge Check" : t === "ma" ? " - Module Assessment" : " - Lesson " + p.les);
 }
 // The full slide/question reference when the lesson field holds a code (e.g.
 // "EN.06.03.09" or "DS.10.19.09.2.M") rather than a lesson title. Imported
@@ -1196,6 +1266,14 @@ function refBadge(i) {
   var t = refType(i);
   if (t === "kc") return '<span class="badge type-badge">KC</span>';
   if (t === "ma") return '<span class="badge type-badge">MA</span>';
+  return "";
+}
+// Where the bug shows (the tick boxes on the form): browser, app, or both.
+function platformBadge(i) {
+  var p = String((i && i.platform) || "").toLowerCase();
+  if (p === "browser") return ' <span class="badge type-badge">Browser</span>';
+  if (p === "app") return ' <span class="badge type-badge">App</span>';
+  if (p === "both") return ' <span class="badge type-badge">Browser + App</span>';
   return "";
 }
 // A short bold title for cards: the first clause of the summary, so a full
@@ -1340,6 +1418,7 @@ function applyPerms(user) {
   state.perms = (user && user.perms) || {};
   var p = state.perms;
   $("tabInstructor").style.display = p.log ? "" : "none";
+  $("tabActions").style.display = p.log ? "" : "none";
   $("tabAdmin").style.display = p.manage ? "" : "none";
   $("tabAnalytics").style.display = p.analytics ? "" : "none";
   $("tabDev").style.display = p.dev ? "" : "none";
@@ -1380,28 +1459,172 @@ function loadIssues(isRetry) {
     state.issues = res.issues || [];
     state._issuesLoaded = true;
     renderPrev();
+    updateActionsTabCount();
+    if (state.view === "actions") renderActions();
     if (state.view === "admin") renderAdmin();
     else if (state.view === "analytics") renderAnalytics();
     else if (state.view === "dev") renderDev();
     else if (state.view === "course") renderCourse();
+    openDeepLinkedIssue();
   }).catch(function (e) { console.error(e); });
+}
+
+// ============================ ACTIONS (instructor to-dos) ============================
+// Track is busy and daunting for instructors, so this tab shows ONLY the
+// things waiting on the logged-in instructor: questions to answer, students to
+// tell about fixes, workarounds to double-check, and long-open issues whose
+// students deserve a "still on it" note. Everything else stays in Track.
+var ACTIONS_LONG_OPEN_DAYS = 14;
+var ACTIONS_TBC_FOLLOWUP_DAYS = 3;
+
+function myActionItems() {
+  var me = String(state.selectedInstructor || "").toLowerCase();
+  var showAll = !!(state.perms && state.perms.users); // admins see everyone's, labelled
+  var mine = function (i) { return showAll || String(i.instructor_name || "").toLowerCase() === me; };
+  var now = Date.now(), day = 24 * 60 * 60 * 1000;
+  var out = { questions: [], notify: [], followups: [], longOpen: [] };
+  (state.issues || []).forEach(function (i) {
+    if (!mine(i)) return;
+    var st = String(i.status || "open").toLowerCase();
+    if (i.dev_query_at && i.dev_query_target === "instructor") out.questions.push(i);
+    if ((st === "dev_fixed" || st === "resolved") && !isTrue(i.notified_students) &&
+        (i.student_contact || i.student_name)) out.notify.push(i);
+    if (st === "resolved_tbc" && (now - new Date(i.updated_at || i.submitted_at)) > ACTIONS_TBC_FOLLOWUP_DAYS * day) out.followups.push(i);
+    if ((st === "open" || st === "in_progress" || st === "with_dev") &&
+        (now - new Date(i.submitted_at)) > ACTIONS_LONG_OPEN_DAYS * day &&
+        (i.student_contact || i.student_name)) out.longOpen.push(i);
+  });
+  return out;
+}
+function updateActionsTabCount() {
+  var t = $("tabActions");
+  if (!t || t.style.display === "none") return;
+  var a = myActionItems();
+  var n = a.questions.length + a.notify.length + a.followups.length;
+  t.textContent = n ? "Actions (" + n + ")" : "Actions";
+}
+function actionCardTop(i) {
+  return '<div style="margin-bottom:4px;">' + priBadge(i.priority) + " " + statusBadge(i.status) +
+    (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
+    ((state.perms && state.perms.users && i.instructor_name) ? ' <span class="badge type-badge">' + esc(i.instructor_name) + '</span>' : '') +
+    '</div>';
+}
+function renderActions() {
+  var a = myActionItems();
+  var html = "";
+
+  html += '<h3>Questions for you</h3>';
+  html += a.questions.length ? a.questions.map(function (i) {
+    return '<div class="action-card">' + actionCardTop(i) +
+      '<h4>' + esc(i.dev_query_by || "The team") + ' asks:</h4>' +
+      '<div class="small" style="margin-bottom:8px;">' + esc(i.dev_query || "") + '</div>' +
+      '<div class="small muted" style="margin-bottom:6px;">On: ' + esc(cardTitle(i)) + '</div>' +
+      '<textarea id="act_reply_' + esc(i.issue_id) + '" rows="2" placeholder="Your reply..." style="width:100%;margin-bottom:6px;"></textarea>' +
+      '<button class="primary small" style="padding:5px 12px;" onclick="actionsAnswer(\'' + esc(i.issue_id) + '\')">Send reply</button>' +
+    '</div>';
+  }).join("") : '<div class="action-empty">Nothing waiting. Lovely.</div>';
+
+  html += '<h3>Students to tell about a fix</h3>';
+  html += a.notify.length ? a.notify.map(function (i) {
+    return '<div class="action-card">' + actionCardTop(i) +
+      '<h4>' + esc(cardTitle(i)) + '</h4>' +
+      '<div class="small" style="margin-bottom:4px;">' + esc(i.student_name || "Student") + (i.student_contact ? ' — ' + esc(i.student_contact) : '') + '</div>' +
+      (i.dev_notes || i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Fix: ' + esc(i.dev_notes || i.resolution_note) + '</div>' : '') +
+      '<div class="row">' +
+        (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+        '<button class="primary small" style="padding:5px 12px;" onclick="actionsMarkNotified(\'' + esc(i.issue_id) + '\')">Done — student told</button>' +
+      '</div>' +
+    '</div>';
+  }).join("") : '<div class="action-empty">No fixes waiting to be passed on.</div>';
+
+  html += '<h3>Workarounds to double-check</h3>';
+  html += a.followups.length ? a.followups.map(function (i) {
+    return '<div class="action-card">' + actionCardTop(i) +
+      '<h4>' + esc(cardTitle(i)) + '</h4>' +
+      (i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Workaround: ' + esc(i.resolution_note) + '</div>' : '') +
+      '<div class="small" style="margin-bottom:6px;">Did that sort it for good, or is it hiding a fault everyone hits?</div>' +
+      '<div class="row">' +
+        '<button class="ghost small" style="padding:5px 12px;" onclick="actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">All good — resolve</button>' +
+        '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Still broken — reopen</button>' +
+      '</div>' +
+    '</div>';
+  }).join("") : '<div class="action-empty">No workarounds waiting on a check.</div>';
+
+  html += '<h3>Open a while — worth a reassuring update</h3>';
+  html += a.longOpen.length ? a.longOpen.map(function (i) {
+    var days = Math.floor((Date.now() - new Date(i.submitted_at)) / (24 * 60 * 60 * 1000));
+    return '<div class="action-card" style="border-left-color:var(--line);">' + actionCardTop(i) +
+      '<h4>' + esc(cardTitle(i)) + '</h4>' +
+      '<div class="small" style="margin-bottom:6px;">Open ' + days + ' days. A quick "we\'re still on this" to ' +
+        esc(i.student_name || "the student") + ' goes a long way.</div>' +
+      '<div class="row">' +
+        (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+      '</div>' +
+    '</div>';
+  }).join("") : '<div class="action-empty">Nothing lingering.</div>';
+
+  $("actionsList").innerHTML = html;
+}
+function actionsAnswer(id) {
+  var el = $("act_reply_" + id);
+  var reply = el ? el.value.trim() : "";
+  if (!reply) { toast("Type a reply first."); return; }
+  apiPost({ action: "answerQuery", issue_id: id, reply: reply, app_url: APP_URL }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Reply sent.");
+    loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+function actionsMarkNotified(id) {
+  apiPost({ action: "updateIssue", issue_id: id, notified_students: true }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Marked as told.");
+    loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+function actionsResolveTbc(id, good) {
+  apiPost({ action: "updateIssue", issue_id: id, status: good ? "resolved" : "open" }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast(good ? "Resolved for good." : "Reopened for a proper fix.");
+    loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+function copyText(t) {
+  navigator.clipboard.writeText(t).then(function () { toast("Copied."); }, function () { toast("Couldn't copy."); });
+}
+
+// ---- ?issue= deep link (from Slack pings): open that issue once loaded ----
+function openDeepLinkedIssue() {
+  if (state._deepLinkDone) return;
+  var id = new URLSearchParams(location.search).get("issue");
+  if (!id) { state._deepLinkDone = true; return; }
+  var issue = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (!issue) return; // issues may not all be in yet; try again on next load
+  state._deepLinkDone = true;
+  var p = state.perms || {};
+  if (p.manage || p.users) { setView("admin"); openIssueById(id, false); }
+  else if (p.dev || p.course) { setView(p.dev ? "dev" : "course"); openDevDetail(id); }
+  else if (p.log) { setView("actions"); }
 }
 
 // ============================ VIEW SWITCH ============================
 function setView(v) {
   state.view = v;
   $("tabInstructor").classList.toggle("active", v === "instructor");
+  $("tabActions").classList.toggle("active", v === "actions");
   $("tabAdmin").classList.toggle("active", v === "admin");
   $("tabAnalytics").classList.toggle("active", v === "analytics");
   $("tabDev").classList.toggle("active", v === "dev");
   $("tabCourse").classList.toggle("active", v === "course");
   $("tabUsers").classList.toggle("active", v === "users");
   $("instructorView").classList.toggle("hidden", v !== "instructor");
+  $("actionsView").classList.toggle("hidden", v !== "actions");
   $("adminView").classList.toggle("hidden", v !== "admin");
   $("analyticsView").classList.toggle("hidden", v !== "analytics");
   $("devView").classList.toggle("hidden", v !== "dev");
   $("courseView").classList.toggle("hidden", v !== "course");
   $("usersView").classList.toggle("hidden", v !== "users");
+  if (v === "actions") renderActions();
   if (v === "admin") renderAdmin();
   if (v === "analytics") renderAnalytics();
   if (v === "dev") renderDev();
@@ -1503,6 +1726,7 @@ function updateAdaptiveFields() {
   showField("field_course_row", !isInternal);
   showField("field_module_row", !isInternal);
   showField("field_device", !isInternal && !isCourse);  // tech only
+  showField("field_platform", !isCourse);               // tech + internal bugs: browser/app tick boxes
   showField("field_media", isCourse);                   // course only
   showField("field_double_checked", isCourse);          // course only
   showField("field_impact", !isInternal && isImprovement); // improvements (either category)
@@ -1647,6 +1871,20 @@ function requestSuggestion() {
   }).catch(function (e) { console.error(e); });
 }
 
+// ---- wizard popups: one at a time, queued so nothing gets scrolled past ----
+var wizardQueue = [];
+function wizardShow(modalId) {
+  var anyOpen = ["suggestModal", "splitModal"].some(function (id) {
+    var el = $(id); return el && el.classList.contains("show");
+  });
+  if (anyOpen) { if (wizardQueue.indexOf(modalId) < 0) wizardQueue.push(modalId); return; }
+  $(modalId).classList.add("show");
+}
+function wizardClosed() {
+  var next = wizardQueue.shift();
+  if (next) setTimeout(function () { $(next).classList.add("show"); }, 150);
+}
+
 function showSuggestion(fix, basedOn) {
   state.suggestedFix = fix;
   $("suggestPanel").innerHTML =
@@ -1657,13 +1895,30 @@ function showSuggestion(fix, basedOn) {
     '<label style="display:block;margin-top:6px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="tbcApplied" style="width:auto;margin-right:6px;vertical-align:-1px;">' +
       'I\'ve given the student this fix — mark Resolved (TBC)</label>' +
-    '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="hideSuggestion()">Dismiss</button>';
-  $("suggestPanel").classList.remove("hidden");
+    '<div class="row" style="margin-top:10px;">' +
+      '<button class="primary" onclick="closeSuggestModal()">Got it</button>' +
+      '<button class="ghost" onclick="hideSuggestion()">Dismiss</button></div>';
+  wizardShow("suggestModal");
+}
+// "Got it" keeps the suggestion (and the TBC tick) live; a note under the
+// extract button stays visible as the reminder that it's there.
+function closeSuggestModal() {
+  $("suggestModal").classList.remove("show");
+  var n = $("suggestNote");
+  if (n && state.suggestedFix) {
+    var ticked = $("tbcApplied") && $("tbcApplied").checked;
+    n.innerHTML = 'Suggested fix from a past issue' + (ticked ? ' (marking Resolved – TBC on submit)' : '') +
+      ' — <a href="#" onclick="wizardShow(\'suggestModal\');return false;" style="color:var(--accent);">view</a>';
+    n.classList.remove("hidden");
+  }
+  wizardClosed();
 }
 function hideSuggestion() {
-  $("suggestPanel").classList.add("hidden");
+  $("suggestModal").classList.remove("show");
   $("suggestPanel").innerHTML = "";
   state.suggestedFix = "";
+  var n = $("suggestNote"); if (n) { n.classList.add("hidden"); n.innerHTML = ""; }
+  wizardClosed();
 }
 
 // Playbook-based "things to try", only for tech issues.
@@ -1805,8 +2060,24 @@ function showSplitSuggestion(subIssues) {
     '<label style="display:block;margin-top:8px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="splitTick" checked style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="onSplitToggle(this.checked);">' +
       'Log these as ' + subIssues.length + ' separate issues when I submit</label>' +
-    '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="dismissSplit()">Dismiss</button>';
-  $("splitPanel").classList.remove("hidden");
+    '<div class="row" style="margin-top:10px;">' +
+      '<button class="primary" onclick="closeSplitModal()">Continue</button>' +
+      '<button class="ghost" onclick="dismissSplit()">Dismiss</button></div>';
+  wizardShow("splitModal");
+}
+// Continue keeps whatever the tick says; the note under the extract button
+// carries the choice so it can't be forgotten by submit time.
+function closeSplitModal() {
+  $("splitModal").classList.remove("show");
+  var n = $("splitNote");
+  if (n && state.subIssues && state.subIssues.length > 1) {
+    n.innerHTML = (state.splitMode
+      ? 'Logging as ' + state.subIssues.length + ' separate issues on submit'
+      : 'Multi-issue split is OFF (logging as one)') +
+      ' — <a href="#" onclick="wizardShow(\'splitModal\');return false;" style="color:var(--accent);">change</a>';
+    n.classList.remove("hidden");
+  }
+  wizardClosed();
 }
 // Splitting and "add as an update to an existing issue" are mutually exclusive:
 // one paste can't both fan out into new issues and fold into one old one. When
@@ -1821,6 +2092,7 @@ function onSplitToggle(on) {
 function dismissSplit() {
   hideSplitSuggestion();
   onSplitDismissed();
+  wizardClosed();
 }
 function onSplitDismissed() {
   if (state.lastExtract) showResolutionSuggestion(state.lastExtract);
@@ -1854,10 +2126,11 @@ function hideResolutionSuggestion() {
   state.resolution = null;
 }
 function hideSplitSuggestion() {
-  $("splitPanel").classList.add("hidden");
+  $("splitModal").classList.remove("show");
   $("splitPanel").innerHTML = "";
   state.subIssues = null;
   state.splitMode = false;
+  var n = $("splitNote"); if (n) { n.classList.add("hidden"); n.innerHTML = ""; }
 }
 function findOpenIssuesByEmail(email) {
   email = String(email || "").trim().toLowerCase();
@@ -2000,8 +2273,49 @@ function collectForm() {
     section: getField("f_section"),
     media_kind: state.category === "course_error" ? getField("f_media_kind") : "",
     double_checked: state.category === "course_error" && $("f_double_checked") ? $("f_double_checked").checked : false,
-    impact: state.requestKind === "improvement" && !isInternal ? getField("f_impact") : ""
+    impact: state.requestKind === "improvement" && !isInternal ? getField("f_impact") : "",
+    platform: collectPlatform()
   };
+}
+// The "where does the bug show" tick boxes: browser, app, both, or unstated.
+function collectPlatform() {
+  var b = $("f_plat_browser") && $("f_plat_browser").checked;
+  var a = $("f_plat_app") && $("f_plat_app").checked;
+  return b && a ? "both" : b ? "browser" : a ? "app" : "";
+}
+// Fill the outcome box from what's already known instead of retyping it: the
+// resolution the extractor read, the suggested fix if it was handed over, or
+// the placeholder example as a starting point.
+function useOutcomeSuggestion() {
+  var el = $("f_outcome"); if (!el) return;
+  var s = "";
+  if (state.resolution && state.resolution.note) {
+    s = (state.resolution.status === "tbc" ? "Gave the student this workaround: " : "Sorted in the chat: ") + state.resolution.note;
+  } else if (state.suggestedFix) {
+    s = "Gave the student the suggested fix: " + state.suggestedFix;
+  } else {
+    s = String(el.getAttribute("placeholder") || "").replace(/^e\.g\.\s*/, "");
+  }
+  el.value = s;
+}
+// The Resolved-TBC double-check popup (after submitting a workaround).
+function recheckChoice(kind) {
+  var id = state._recheckIssueId;
+  $("recheckModal").classList.remove("show");
+  state._recheckIssueId = null;
+  if (!id) return;
+  if (kind === "fault") {
+    apiPost({ action: "updateIssue", issue_id: id, status: "open" }).then(function (res) {
+      toast(res && res.ok ? "Reopened as a fault for a proper fix." : "Reopen failed: " + ((res && res.error) || "unknown"));
+      loadIssues();
+    }).catch(function () { toast("Reopen error."); });
+  } else if (kind === "later") {
+    apiPost({ action: "requestRecheck", issue_id: id, days: 1 }).then(function (res) {
+      toast(res && res.ok ? "Reminder booked — Slack will nudge tomorrow." : "Couldn't book the reminder: " + ((res && res.error) || "unknown"));
+    }).catch(function () { toast("Reminder error."); });
+  } else {
+    toast("Left as Resolved – TBC.");
+  }
 }
 
 // Turn a detected resolution (status "resolved"/"tbc", a note, and an optional
@@ -2204,6 +2518,11 @@ function submitIssue() {
       : res.issue_ids ? res.issue_ids
       : (res.issue && res.issue.issue_id) ? [res.issue.issue_id] : [];
     uploadImagesInBackground(targetIds);
+    // A workaround was handed over and this landed as Resolved – TBC: check
+    // whether that was verified as a one-off or needs a proper look. If the
+    // instructor can't check now, requestRecheck books a Slack reminder.
+    var tbcLanded = (wasTbc || wasResolvedUpdate === "tbc") && targetIds.length === 1;
+    if (tbcLanded) { state._recheckIssueId = targetIds[0]; $("recheckModal").classList.add("show"); }
     resetForm();
     loadIssues();
   }).catch(function (e) {
@@ -2223,6 +2542,8 @@ function resetForm() {
   renderFormChecklist();
   ["rawText","f_student_name","f_student_contact","f_device_info","f_module","f_lesson","f_lesson_code","f_summary","f_priority_reason","f_outcome"]
     .forEach(function (id) { $(id).value = ""; });
+  if ($("f_plat_browser")) $("f_plat_browser").checked = false;
+  if ($("f_plat_app")) $("f_plat_app").checked = false;
   $("f_course").value = "";
   $("f_section").value = "";
   $("f_issue_type").value = "bug";
@@ -2620,8 +2941,8 @@ function openDetail(issue) {
   var images = parseImageUrls(issue.image_urls);
 
   var html = '<button class="close" onclick="closeDetail()">&times;</button>' +
-    '<h2>' + esc(issue.summary || "Issue") + '</h2>' +
-    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(issue.category) + " " + reqBadge(kindOf(issue)) +
+    '<h2>' + esc(cardTitle(issue)) + '</h2>' +
+    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(issue.category) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
 
@@ -2647,6 +2968,11 @@ function openDetail(issue) {
     '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>';
   } else {
     html += '<p class="muted small">No student contacts recorded.</p>';
+  }
+
+  // The full summary, below the students (the title up top is the short form).
+  if (issue.summary) {
+    html += '<h3>Summary</h3><div style="font-size:13.5px;margin-bottom:4px;">' + esc(issue.summary) + '</div>';
   }
 
   html += '<div class="kv">' +
@@ -2689,15 +3015,27 @@ function openDetail(issue) {
           ' has fixed this. Verify it, resolve it below, and contact the affected students.</div>';
       }
     }
-    // A question from the developer/course team, waiting on a reply. Answering
-    // clears the flag (and the badge) everywhere this issue is listed.
+    // A question waiting on a reply. Answering clears the flag (and the badge)
+    // everywhere this issue is listed. Questions for the logging instructor
+    // show here too, so an admin can see them and step in if needed.
     if (issue.dev_query_at) {
+      var forInstructor = issue.dev_query_target === 'instructor';
       html += '<div class="batch" style="background:rgba(221,139,0,0.10);border-color:var(--medium);">' +
-        '<strong>Question from ' + esc(issue.dev_query_by || (isCourseIssue ? "the course team" : "the developer")) + '</strong>' +
+        '<strong>Question from ' + esc(issue.dev_query_by || (isCourseIssue ? "the course team" : "the developer")) +
+          (forInstructor ? ' for ' + esc(issue.instructor_name || 'the instructor') : '') + '</strong>' +
+        (forInstructor ? '<div class="small muted" style="margin-top:2px;">It\'s in ' + esc(issue.instructor_name || 'their') + '\'s Actions tab; replying here answers it on their behalf.</div>' : '') +
         '<div class="small" style="margin:4px 0 8px;">' + esc(issue.dev_query) + '</div>' +
         '<textarea id="d_query_reply" rows="2" placeholder="Reply..." style="width:100%;margin-bottom:6px;"></textarea>' +
         '<button class="ghost small" style="padding:4px 10px;" onclick="answerDevQuery(\'' + esc(issue.issue_id) + '\')">Send reply</button>' +
       '</div>';
+    }
+    // Admins can ask the logging instructor for more detail; it pings Slack and
+    // lands in that instructor's Actions tab like any other question.
+    if (state.perms && state.perms.users && !issue.dev_query_at && issue.instructor_name &&
+        issue.instructor_name !== (state.user && state.user.name)) {
+      html += '<h3>Need more info?</h3>' +
+        '<div class="field"><textarea id="d_ask_logger" rows="2" placeholder="Ask ' + esc(issue.instructor_name) + ' for more detail on this report..."></textarea></div>' +
+        '<button class="ghost small" style="margin-bottom:10px;padding:4px 10px;" onclick="askLoggerFromTrack(\'' + esc(issue.issue_id) + '\')">Ask ' + esc(issue.instructor_name) + '</button>';
     }
   }
 
@@ -3193,6 +3531,8 @@ function courseCardHtml(i) {
   var part = String(i.media_kind || "").toLowerCase();
   var partBadge = part === "video" ? '<span class="badge type-badge">Video</span>'
     : part === "text" ? '<span class="badge type-badge">Text</span>' : "";
+  // Fix-first card: the code and what needs doing, fluff behind the drawer.
+  var lessonLine = dispLesson(i);
   return '<div class="issue-card" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
     '<div class="top">' +
       priBadge(i.priority) +
@@ -3203,7 +3543,9 @@ function courseCardHtml(i) {
       partBadge +
       (i.assignee ? '<span class="badge type-badge">&rarr; ' + esc(i.assignee) + '</span>' : '') +
     '</div>' +
-    '<div class="sum">' + esc(i.summary || "(no summary)") + '</div>' +
+    (lessonLine ? '<div class="small muted" style="margin-bottom:2px;">' + esc(lessonLine) + '</div>' : '') +
+    '<div class="sum"><strong>' + esc(cardTitle(i)) + '</strong></div>' +
+    '<div class="sum clamp4 small" style="color:var(--muted);">' + esc(i.summary || "") + '</div>' +
   '</div>';
 }
 
@@ -3328,9 +3670,10 @@ function setCourseSel(key, value) {
 function sendDevQuery(id) {
   var q = $("devQueryText") ? $("devQueryText").value.trim() : "";
   if (!q) { toast("Add a question first."); return; }
-  apiPost({ action: "flagQuery", issue_id: id, question: q, app_url: APP_URL }).then(function (res) {
+  var target = $("devQueryTarget") ? $("devQueryTarget").value : "admins";
+  apiPost({ action: "flagQuery", issue_id: id, question: q, target: target, app_url: APP_URL }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Sent to the admins.");
+    toast(target === "instructor" ? "Sent to the instructor." : "Sent to the bosses.");
     closeDetail(); loadIssues();
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
@@ -3351,9 +3694,11 @@ function openDevDetail(id) {
         : fmtDuration(Date.now() - new Date(startedAt)) + " so far")
     : "—";
 
+  // A short scannable title up top; the full summary sits further down (below
+  // the affected students), per Edd's 18 Jul feedback.
   var html = '<button class="close" onclick="closeDetail()">&times;</button>' +
-    '<h2>' + esc(issue.summary || "Issue") + '</h2>' +
-    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + reqBadge(kindOf(issue)) +
+    '<h2>' + esc(cardTitle(issue)) + '</h2>' +
+    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
     '<div class="kv">' +
       kv("Submitted by", issue.instructor_name) +
@@ -3396,6 +3741,11 @@ function openDevDetail(id) {
     state._copyContacts = "";
   }
 
+  // The real summary, in full, now the students are out of the way.
+  if (issue.summary) {
+    html += '<h3>Summary</h3><div style="font-size:13.5px;margin-bottom:4px;">' + esc(issue.summary) + '</div>';
+  }
+
   if (issue.raw_text) {
     html += '<h3>Report</h3><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' +
       esc(issue.raw_text) + '</div>';
@@ -3412,16 +3762,23 @@ function openDevDetail(id) {
   html += '<h3>Developer notes</h3><div class="field">' +
     '<textarea id="dev_notes" rows="3" placeholder="Cause and fix...">' + esc(issue.dev_notes || "") + '</textarea></div>';
 
-  // A question for the admins: more detail, a decision, access to something,
-  // whatever's blocking progress. Pings Slack and shows a badge everywhere
-  // this issue is listed until an admin replies (see openDetail).
-  html += '<h3>Question for the admins</h3>';
+  // A question about this fix: more detail, a decision, access to something,
+  // whatever's blocking progress. Sent either up to the bosses or back to the
+  // instructor who logged it. Pings Slack and shows a badge everywhere this
+  // issue is listed until someone replies.
+  html += '<h3>Question about this fix?</h3>';
   if (issue.dev_query_at) {
-    html += '<div class="small muted" style="margin-bottom:6px;">Waiting on a reply, sent ' + fmtDate(issue.dev_query_at) + '.</div>';
+    html += '<div class="small muted" style="margin-bottom:6px;">Waiting on a reply from ' +
+      (issue.dev_query_target === 'instructor' ? esc(issue.instructor_name || 'the instructor') : 'the bosses') +
+      ', sent ' + fmtDate(issue.dev_query_at) + '.</div>';
   }
-  html += '<div class="field"><textarea id="devQueryText" rows="2" placeholder="Ask the admins something about this issue..."></textarea></div>' +
+  html += '<div class="field"><select id="devQueryTarget">' +
+      '<option value="admins">Ask the bosses</option>' +
+      '<option value="instructor">Ask the instructor who submitted this' + (issue.instructor_name ? ' (' + esc(issue.instructor_name) + ')' : '') + '</option>' +
+    '</select></div>' +
+    '<div class="field"><textarea id="devQueryText" rows="2" placeholder="Ask something about this issue..."></textarea></div>' +
     '<div class="row" style="margin-bottom:10px;"><button class="ghost" onclick="sendDevQuery(\'' + esc(issue.issue_id) + '\')">' +
-    (issue.dev_query_at ? 'Send another question' : 'Send to admins') + '</button></div>';
+    (issue.dev_query_at ? 'Send another question' : 'Send question') + '</button></div>';
 
   var detStatus = (issue.status || "").toLowerCase();
   var detDone = detStatus === "dev_fixed" || detStatus === "resolved";
@@ -3429,11 +3786,16 @@ function openDevDetail(id) {
     html += '<div class="small muted" style="margin-bottom:8px;">' +
       (detStatus === "resolved"
         ? 'Resolved ' + fmtDate(issue.resolved_at || issue.dev_fixed_at) + '.'
-        : 'Marked fixed ' + fmtDate(issue.dev_fixed_at) + '. Waiting on an admin to verify, resolve, and contact the students.') +
+        : 'Marked fixed ' + fmtDate(issue.dev_fixed_at) + '.') +
       '</div>' +
       '<div class="row"><button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
   } else {
-    html += '<div class="row">' +
+    // "Notify student?" books a Slack ask to the instructors when it's ticked;
+    // unticked, marking fixed is quiet (no more "verify every fix" pings).
+    html += '<label style="display:block;margin-bottom:8px;font-size:13px;color:var(--text);">' +
+      '<input type="checkbox" id="notifyStudentTick" style="width:auto;margin-right:6px;vertical-align:-1px;"' + (state._copyContacts ? ' checked' : '') + '>' +
+      'Notify student? (asks the instructors on Slack to pass the good news on)</label>' +
+      '<div class="row">' +
       '<button class="primary" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
       '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
   }
@@ -3444,9 +3806,10 @@ function openDevDetail(id) {
 
 function devMarkFixed(id) {
   var notes = $("dev_notes") ? $("dev_notes").value : "";
-  apiPost({ action: "markDevFixed", issue_id: id, dev_notes: notes, app_url: APP_URL }).then(function (res) {
+  var notify = !!($("notifyStudentTick") && $("notifyStudentTick").checked);
+  apiPost({ action: "markDevFixed", issue_id: id, dev_notes: notes, notify_student: notify, app_url: APP_URL }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Marked fixed. Admins notified.");
+    toast(notify ? "Marked fixed. Instructors asked to tell the student." : "Marked fixed.");
     closeDetail(); loadIssues();
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
@@ -3457,6 +3820,17 @@ function devSaveNotes(id) {
     if (!res || !res.ok) { toast("Save failed."); return; }
     toast("Notes saved."); loadIssues();
   }).catch(function (e) { toast("Save error."); console.error(e); });
+}
+
+// Admin (from Track) asks the instructor who logged an issue for more info.
+function askLoggerFromTrack(id) {
+  var q = $("d_ask_logger") ? $("d_ask_logger").value.trim() : "";
+  if (!q) { toast("Type the question first."); return; }
+  apiPost({ action: "flagQuery", issue_id: id, question: q, target: "instructor", app_url: APP_URL }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Sent — it's in their Actions tab and on Slack.");
+    closeDetail(); loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 
 function adminPassToDev(id) {
@@ -3761,10 +4135,17 @@ function captureFeedbackContext() {
   if (state.viewAs) ctx.view_as = state.viewAs;
   if (state.detailId) { ctx.open_issue_id = state.detailId; ctx.open_issue_kind = state.detailKind || ""; }
   var modals = [];
-  ["emailModal", "slideModal", "tshootModal"].forEach(function (id) {
+  ["emailModal", "slideModal", "tshootModal", "suggestModal", "splitModal", "recheckModal"].forEach(function (id) {
     var el = $(id); if (el && el.classList.contains("show")) modals.push(id);
   });
   if (modals.length) ctx.open_modals = modals.join(",");
+  // What's actually written on the page right now (the visible view, or the
+  // open drawer if one's up), so feedback lands with its surroundings attached.
+  try {
+    var srcEl = ($("overlay") && $("overlay").classList.contains("show")) ? $("drawer") :
+      document.querySelector(".wrap:not(.hidden)");
+    if (srcEl) ctx.page_text = srcEl.innerText.replace(/\s+/g, " ").trim().slice(0, 2000);
+  } catch (e) {}
   // Page-specific state, only where it says something useful.
   if (state.view === "instructor") {
     ctx.form_mode = state.formMode;
