@@ -13,7 +13,7 @@
   } catch (e) {}
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Ardent Issue Tracker</title>
+<title>Bugs</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%23163a70%22/><g stroke=%22%23ff9190%22 stroke-width=%224%22 stroke-linecap=%22round%22><line x1=%2242%22 y1=%2220%22 x2=%2236%22 y2=%2210%22/><line x1=%2258%22 y1=%2220%22 x2=%2264%22 y2=%2210%22/><line x1=%2230%22 y1=%2248%22 x2=%2216%22 y2=%2242%22/><line x1=%2230%22 y1=%2258%22 x2=%2214%22 y2=%2262%22/><line x1=%2270%22 y1=%2248%22 x2=%2284%22 y2=%2242%22/><line x1=%2270%22 y1=%2258%22 x2=%2286%22 y2=%2262%22/></g><ellipse cx=%2250%22 cy=%2256%22 rx=%2220%22 ry=%2226%22 fill=%22%23ff9190%22/><circle cx=%2250%22 cy=%2230%22 r=%2212%22 fill=%22%23ff9190%22/><line x1=%2250%22 y1=%2234%22 x2=%2250%22 y2=%2280%22 stroke=%22%23163a70%22 stroke-width=%223%22/></svg>" />
 <style>
   :root {
@@ -338,12 +338,12 @@
 </head>
 <body>
 <div id="bootLoader" style="position:fixed;inset:0;z-index:10000;background:#163a70;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#ffffff;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;">
-  <div style="font-weight:700;font-size:18px;letter-spacing:0.02em;">Ardent Issue Tracker</div>
+  <div style="font-weight:700;font-size:18px;letter-spacing:0.02em;">Bugs</div>
   <div class="spinner" style="width:30px;height:30px;border-width:3px;border-color:rgba(94,114,235,0.35);border-top-color:#5e72eb;"></div>
 </div>
 
 <header class="topbar">
-  <div class="brand">Ardent Issue Tracker <small>course issue log</small></div>
+  <div class="brand">Bugs <small>course issue log</small></div>
   <div style="display:flex;align-items:center;gap:14px;">
     <div class="switcher">
       <button id="tabInstructor" class="active" onclick="setView('instructor')">Log an issue</button>
@@ -754,7 +754,7 @@
 <div class="modal-bg" id="authScreen">
   <div class="modal">
     <div id="authLogin">
-      <h3>Ardent Issue Tracker</h3>
+      <h3>Bugs</h3>
       <p class="small muted">Sign in with your email and password.</p>
       <div class="field"><label>Email</label><input id="loginEmail" type="email" placeholder="you@ardent-training.com" onkeydown="if(event.key==='Enter')doLogin()"></div>
       <div class="field"><label>Password</label><input id="loginPass" type="password" onkeydown="if(event.key==='Enter')doLogin()"></div>
