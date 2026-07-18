@@ -871,7 +871,7 @@
     <div class="btns" style="flex-direction:column;align-items:stretch;gap:8px;">
       <button class="ghost" onclick="recheckChoice('oneoff')">Checked — it's a one-off, leave as Resolved – TBC</button>
       <button class="ghost" onclick="recheckChoice('fault')">Checked — it affects everyone, reopen as a fault</button>
-      <button class="primary" onclick="recheckChoice('later')">Can't check right now — remind me on Slack tomorrow</button>
+      <button class="primary" onclick="recheckChoice('later')">Can't check right now — put it on Slack so it's waiting for me</button>
     </div>
   </div>
 </div>
@@ -2310,8 +2310,8 @@ function recheckChoice(kind) {
       loadIssues();
     }).catch(function () { toast("Reopen error."); });
   } else if (kind === "later") {
-    apiPost({ action: "requestRecheck", issue_id: id, days: 1 }).then(function (res) {
-      toast(res && res.ok ? "Reminder booked — Slack will nudge tomorrow." : "Couldn't book the reminder: " + ((res && res.error) || "unknown"));
+    apiPost({ action: "requestRecheck", issue_id: id, app_url: APP_URL }).then(function (res) {
+      toast(res && res.ok ? "On Slack — it'll be waiting for you." : "Couldn't send the reminder: " + ((res && res.error) || "unknown"));
     }).catch(function () { toast("Reminder error."); });
   } else {
     toast("Left as Resolved – TBC.");
