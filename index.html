@@ -144,6 +144,8 @@
   .st-resolved_tbc { color: var(--medium); border-color: var(--medium); }
   .st-resolved { color: var(--low); border-color: var(--low); }
   .st-past { color: var(--muted); border-color: var(--line); opacity: .85; }
+  /* a developer/course-team question waiting on an admin reply */
+  .query-badge { color: var(--medium); border-color: var(--medium); border: 1px solid var(--medium); background: rgba(221,139,0,0.10); }
   /* Long summaries are capped at four lines on cards so a full board or list
      scans quickly; the full text lives in the detail drawer. */
   .clamp4 { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
@@ -316,6 +318,12 @@
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--line); padding: 12px 18px; border-radius: 10px; z-index: 100; display: none; }
   .toast.show { display: block; }
   .fab { position: fixed; bottom: 20px; right: 20px; z-index: 60; background: var(--accent); color: #fff; font-weight: 600; border-radius: 999px; padding: 11px 18px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: none; }
+
+  /* view-as bar: super-admin testing tool, bottom-left so it stays clear of the Feedback fab */
+  .viewas-bar { position: fixed; bottom: 20px; left: 20px; z-index: 60; display: none; align-items: center; gap: 8px; background: var(--surface); border: 1px solid rgba(232,237,242,0.15); border-radius: 999px; padding: 7px 14px; font-size: 12.5px; color: var(--muted); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
+  .viewas-bar.show { display: flex; }
+  .viewas-bar.simulating { border-color: var(--accent); color: var(--text); }
+  .viewas-bar select { width: auto; font-size: 12.5px; padding: 3px 6px; }
 
   /* duplicate confirm modal */
   .modal-bg { position: fixed; inset: 0; background: rgba(5,10,18,0.7); display: none; z-index: 80; align-items: center; justify-content: center; }
@@ -594,6 +602,13 @@
       <option>SRC</option>
       <option>PPR</option>
     </select>
+    <select id="flt_sort" onchange="renderAdmin()">
+      <option value="">Sort: priority (default)</option>
+      <option value="newest">Sort: most recent first</option>
+      <option value="oldest">Sort: oldest first</option>
+      <option value="reporter">Sort: reported by (A–Z)</option>
+      <option value="reports">Sort: most reported</option>
+    </select>
     <input id="flt_search" placeholder="Search lesson code / keyword" oninput="renderAdmin()" />
   </div>
 
@@ -804,6 +819,17 @@
   </div>
 </div>
 
+<!-- SLIDE / QUESTION NUMBER POPUP -->
+<div class="modal-bg" id="slideModal">
+  <div class="modal">
+    <h3>Which slide or question?</h3>
+    <p class="small muted" id="slideModalLead"></p>
+    <div class="field"><input id="slideModalInput" placeholder="e.g. 13, or 09.2" onkeydown="if(event.key==='Enter')saveSlideRef()"></div>
+    <div class="btns"><button class="primary" onclick="saveSlideRef()">Save</button><button class="ghost" onclick="skipSlideRef()">Don't know — skip</button></div>
+    <div id="slideModalMsg" class="small muted" style="margin-top:6px;"></div>
+  </div>
+</div>
+
 <!-- THINGS-TO-TRY POPUP -->
 <div class="modal-bg" id="tshootModal">
   <div class="modal" style="max-width:540px;">
@@ -812,6 +838,17 @@
     <div id="tshootModalBody"></div>
     <div class="btns" style="margin-top:12px;"><button class="primary" onclick="ackTroubleshoot()">Got it, I'll try these and submit</button></div>
   </div>
+</div>
+
+<!-- VIEW-AS BAR (super admins only, for testing what each role sees) -->
+<div class="viewas-bar" id="viewAsBar">
+  <span id="viewAsLabel">Viewing as</span>
+  <select id="viewAsSelect" onchange="setViewAs(this.value)">
+    <option value="">My full access</option>
+    <option value="instructor">Instructor</option>
+    <option value="dev">Developer</option>
+    <option value="course">Course team</option>
+  </select>
 </div>
 
 <!-- FEEDBACK on the tracker -->
@@ -870,6 +907,8 @@ var state = {
   token: "",                  // session token for this login
   user: null,                 // logged-in user { email, name, perms }
   perms: {},                  // current user's permission flags
+  realUser: null,             // the real login while view-as is simulating a role
+  viewAs: null,               // null | instructor | dev | course (super-admin testing)
   suggestedFix: "",           // last AI-suggested fix, for the TBC tick-box
   resolution: null,           // { status, note, by, at, apply } when the paste reads as already resolved
   lastExtract: null,          // last extract fields, so dismissing the split can fall back to one issue
@@ -1089,6 +1128,11 @@ function reqBadge(kind) {
   kind = kind === "improvement" ? "improvement" : "fix";
   return '<span class="badge kind kind-' + kind + '">' + (kind === "improvement" ? "Improvement" : "Fix") + "</span>";
 }
+// Shown wherever an issue is listed or opened, any time a developer or course
+// team member has asked the admins something and is waiting on a reply.
+function queryBadge(i) {
+  return i && i.dev_query_at ? '<span class="badge query-badge">Question pending</span>' : "";
+}
 function toast(msg) {
   var t = $("toast"); t.textContent = msg; t.classList.add("show");
   setTimeout(function () { t.classList.remove("show"); }, 3200);
@@ -1257,8 +1301,41 @@ function mediaLabel(m) {
 }
 function isTrue(v) { return v === true || v === "true" || v === "TRUE"; }
 
+// ---- view-as: let a super admin see the app as another role would ----------
+// Frontend-only simulation: the real login stays active and every action is
+// still recorded as the real user; we just re-apply a smaller permission set
+// so the tabs and controls render as that role would see them.
+var VIEWAS_PRESETS = {
+  instructor: { log: true, manage: true },   // matches the invite "Instructor" preset
+  dev: { dev: true },
+  course: { course: true }
+};
+function setViewAs(kind) {
+  if (!state.realUser) return;
+  if (kind && VIEWAS_PRESETS[kind]) {
+    state.viewAs = kind;
+    applyPerms({ email: state.realUser.email, name: state.realUser.name, perms: VIEWAS_PRESETS[kind] });
+  } else {
+    state.viewAs = null;
+    applyPerms(state.realUser);
+  }
+}
+function updateViewAsBar() {
+  var bar = $("viewAsBar");
+  if (!bar) return;
+  var realPerms = (state.realUser && state.realUser.perms) || {};
+  bar.classList.toggle("show", !!realPerms.users);
+  bar.classList.toggle("simulating", !!state.viewAs);
+  var sel = $("viewAsSelect");
+  if (sel) sel.value = state.viewAs || "";
+  $("viewAsLabel").textContent = state.viewAs ? "Viewing as" : "View as";
+}
+
 // Show only the pages this user has permission for, and land them on the first.
 function applyPerms(user) {
+  // Remember the real login the first time through (and whenever we're not
+  // simulating), so the view-as bar can always find its way back.
+  if (!state.viewAs) state.realUser = user;
   state.user = user;
   state.perms = (user && user.perms) || {};
   var p = state.perms;
@@ -1285,6 +1362,7 @@ function applyPerms(user) {
   for (var i = 0; i < order.length; i++) { if (p[order[i][0]]) { first = order[i][1]; break; } }
   setView(first);
   renderPrev(); // issues may still be loading, but the name is known now
+  updateViewAsBar();
 }
 
 function loadIssues(isRetry) {
@@ -1532,7 +1610,7 @@ function runExtract() {
     if (state.formMode !== "internal" && state.requestKind !== "improvement" && !isEmail(getField("f_student_contact"))) {
       showEmailModal();
     } else {
-      afterExtractReady();
+      postExtractSlideCheck();
     }
   }).catch(function (e) {
     btn.disabled = false;
@@ -1641,17 +1719,68 @@ function saveStudentEmail() {
   if (!isEmail(v)) { $("emailModalMsg").textContent = "Enter a valid email address."; return; }
   setField("f_student_contact", v);
   $("emailModal").classList.remove("show");
-  afterExtractReady();
+  postExtractSlideCheck();
 }
 function skipEmail() {
   $("emailModal").classList.remove("show");
-  afterExtractReady();
+  postExtractSlideCheck();
 }
 // This report isn't about a student at all (a portal bug, say), so stop
 // chasing an email for it: remember that for this form and carry on.
 function noStudentInvolved() {
   state.noStudent = true;
   $("emailModal").classList.remove("show");
+  postExtractSlideCheck();
+}
+
+// ---- slide / question number: ask when the ref stops short ----------------
+// A chat transcript often pins down the lesson ("the Tidal Streams module
+// assessment") but not which slide or question, and that last part is the bit
+// the course team otherwise has to hunt for. So when the extracted ref has no
+// slide/question yet, ask the instructor while the conversation is still fresh.
+function parseShortRef_() {
+  var ref = String(getField("f_lesson") || "").trim();
+  if (!/^(EN|DS|YM|FT)[\s.]*\d/i.test(ref)) ref = String(getField("f_lesson_code") || "").trim();
+  if (!/^(EN|DS|YM|FT)[\s.]*\d/i.test(ref)) return null;
+  var parts = ref.split(".").map(function (s) { return s.trim(); }).filter(Boolean);
+  var suffix = /^[KM]$/i.test(parts[parts.length - 1] || "") ? parts.pop().toUpperCase() : "";
+  return { parts: parts, suffix: suffix };
+}
+function refNeedsSlide() {
+  var r = parseShortRef_();
+  // course.module.lesson with nothing after it (a bare "DS.09.12", or a
+  // "DS.09.12.M" that names the assessment but not the question).
+  return !!(r && r.parts.length === 3);
+}
+function postExtractSlideCheck() {
+  if (refNeedsSlide()) { showSlideModal(); return; }
+  afterExtractReady();
+}
+function showSlideModal() {
+  var r = parseShortRef_();
+  var base = r.parts.join(".");
+  var what = r.suffix === "M" ? " (module assessment)" : r.suffix === "K" ? " (knowledge check)" : "";
+  $("slideModalLead").textContent = "The report points at " + base + what +
+    " but not which slide or question. If it's in the conversation, or you can find out, add the number here. Skip if there's no way to know.";
+  $("slideModalInput").value = "";
+  $("slideModalMsg").textContent = "";
+  $("slideModal").classList.add("show");
+  setTimeout(function () { if ($("slideModalInput")) $("slideModalInput").focus(); }, 50);
+}
+function saveSlideRef() {
+  var v = $("slideModalInput").value.trim().replace(/^\.+|\.+$/g, "");
+  if (!v) { $("slideModalMsg").textContent = "Enter a number, or press Skip."; return; }
+  if (!/^[\d.\s]+$/.test(v)) { $("slideModalMsg").textContent = "Numbers only, e.g. 13 or 09.2"; return; }
+  var r = parseShortRef_();
+  if (r) {
+    var full = r.parts.concat(v.split(".").map(function (s) { return s.trim(); }).filter(Boolean)).join(".") + (r.suffix ? "." + r.suffix : "");
+    setField("f_lesson", full);
+  }
+  $("slideModal").classList.remove("show");
+  afterExtractReady();
+}
+function skipSlideRef() {
+  $("slideModal").classList.remove("show");
   afterExtractReady();
 }
 
@@ -2267,10 +2396,11 @@ function renderAdmin() {
   }).length;
 
   var fs = $("flt_status").value, fp = $("flt_priority").value, ft = $("flt_type").value,
-      fc = $("flt_course").value, fq = $("flt_search").value.trim().toLowerCase();
+      fc = $("flt_course").value, fq = $("flt_search").value.trim().toLowerCase(),
+      fsort = $("flt_sort") ? $("flt_sort").value : "";
 
-  // Any change of filters, area, or view starts the paging again from the top.
-  var sig = [fs, fp, ft, fc, fq, state.area, state.reqFilter, state.trackView].join("|");
+  // Any change of filters, sort, area, or view starts the paging again from the top.
+  var sig = [fs, fp, ft, fc, fq, fsort, state.area, state.reqFilter, state.trackView].join("|");
   if (sig !== state._adminFilterSig) { state._adminFilterSig = sig; state.adminShown = 20; }
 
   var list = base.filter(function (i) {
@@ -2293,14 +2423,35 @@ function renderAdmin() {
     return true;
   });
 
-  list.sort(function (a, b) {
-    var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()];
-    var pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
-    if (pa !== pb) return pa - pb;
-    var ca = reportCount(a), cb = reportCount(b);
-    if (ca !== cb) return cb - ca;
-    return new Date(b.submitted_at) - new Date(a.submitted_at);
-  });
+  // Default order is triage order (priority, then how many reports, then
+  // newest); the sort dropdown swaps that for a simple ordering when you're
+  // scanning by date or by who logged things.
+  if (fsort === "newest") {
+    list.sort(function (a, b) { return new Date(b.submitted_at) - new Date(a.submitted_at); });
+  } else if (fsort === "oldest") {
+    list.sort(function (a, b) { return new Date(a.submitted_at) - new Date(b.submitted_at); });
+  } else if (fsort === "reporter") {
+    list.sort(function (a, b) {
+      var na = (a.instructor_name || "").toLowerCase(), nb = (b.instructor_name || "").toLowerCase();
+      if (na !== nb) return na < nb ? -1 : 1;
+      return new Date(b.submitted_at) - new Date(a.submitted_at);
+    });
+  } else if (fsort === "reports") {
+    list.sort(function (a, b) {
+      var ca = reportCount(a), cb = reportCount(b);
+      if (ca !== cb) return cb - ca;
+      return new Date(b.submitted_at) - new Date(a.submitted_at);
+    });
+  } else {
+    list.sort(function (a, b) {
+      var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()];
+      var pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
+      if (pa !== pb) return pa - pb;
+      var ca = reportCount(a), cb = reportCount(b);
+      if (ca !== cb) return cb - ca;
+      return new Date(b.submitted_at) - new Date(a.submitted_at);
+    });
+  }
 
   if (state.trackView === "board") {
     $("adminList").innerHTML = kanbanHtml(list);
@@ -2322,7 +2473,7 @@ function renderAdmin() {
     var imgs = parseImageUrls(i.image_urls).length;
     return '<div class="issue-card" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
@@ -2538,6 +2689,16 @@ function openDetail(issue) {
           ' has fixed this. Verify it, resolve it below, and contact the affected students.</div>';
       }
     }
+    // A question from the developer/course team, waiting on a reply. Answering
+    // clears the flag (and the badge) everywhere this issue is listed.
+    if (issue.dev_query_at) {
+      html += '<div class="batch" style="background:rgba(221,139,0,0.10);border-color:var(--medium);">' +
+        '<strong>Question from ' + esc(issue.dev_query_by || (isCourseIssue ? "the course team" : "the developer")) + '</strong>' +
+        '<div class="small" style="margin:4px 0 8px;">' + esc(issue.dev_query) + '</div>' +
+        '<textarea id="d_query_reply" rows="2" placeholder="Reply..." style="width:100%;margin-bottom:6px;"></textarea>' +
+        '<button class="ghost small" style="padding:4px 10px;" onclick="answerDevQuery(\'' + esc(issue.issue_id) + '\')">Send reply</button>' +
+      '</div>';
+    }
   }
 
   // Pre-dev troubleshooting checklist (tech issues only).
@@ -2590,7 +2751,8 @@ function openDetail(issue) {
   if (reps.length) {
     html += '<h3>Reports &amp; updates (' + reps.length + ')</h3>';
     reps.forEach(function (rp, i) {
-      var meta = (rp.kind === "update" ? "Update" : "Report") +
+      var kindLabel = { update: "Update", question: "Question", answer: "Reply" }[rp.kind] || "Report";
+      var meta = kindLabel +
         (rp.instructor_name ? " · " + esc(rp.instructor_name) : "") +
         (rp.date ? " · " + fmtDate(rp.date) : "") +
         (rp.student_contact ? " · " + esc(rp.student_contact) : "");
@@ -2969,7 +3131,7 @@ function renderQueue(cat, ids, filterVal) {
     var age = i.dev_passed_at ? fmtDuration(Date.now() - new Date(i.dev_passed_at)) : "";
     return '<div class="issue-card" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
@@ -3036,7 +3198,7 @@ function courseCardHtml(i) {
       priBadge(i.priority) +
       (reps > 1 ? '<span class="badge type-badge">×' + reps + ' reports</span>' : '') +
       (done ? statusBadge(i.status) : "") +
-      refBadge(i) +
+      refBadge(i) + queryBadge(i) +
       (ref ? '<span class="code">' + esc(ref) + '</span>' : '') +
       partBadge +
       (i.assignee ? '<span class="badge type-badge">&rarr; ' + esc(i.assignee) + '</span>' : '') +
@@ -3160,10 +3322,17 @@ function setCourseSel(key, value) {
   if (key === "courseModule") { state.courseLesson = "all"; }
   renderCourse();
 }
-// Placeholder: message the person who logged an issue to ask for more detail.
-// Ardent Crew wiring is still to come, so for now it just says so.
-function requestMoreInfo(id) {
-  toast("Request more info — feature still in construction.");
+// A developer or course-team member sends a question to the admins from the
+// detail drawer (see the "Question for the admins" section in openDevDetail).
+// Flags the issue, pings Slack, and refreshes so the pending badge shows up.
+function sendDevQuery(id) {
+  var q = $("devQueryText") ? $("devQueryText").value.trim() : "";
+  if (!q) { toast("Add a question first."); return; }
+  apiPost({ action: "flagQuery", issue_id: id, question: q, app_url: APP_URL }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Sent to the admins.");
+    closeDetail(); loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 
 function openDevDetail(id) {
@@ -3243,20 +3412,30 @@ function openDevDetail(id) {
   html += '<h3>Developer notes</h3><div class="field">' +
     '<textarea id="dev_notes" rows="3" placeholder="Cause and fix...">' + esc(issue.dev_notes || "") + '</textarea></div>';
 
+  // A question for the admins: more detail, a decision, access to something,
+  // whatever's blocking progress. Pings Slack and shows a badge everywhere
+  // this issue is listed until an admin replies (see openDetail).
+  html += '<h3>Question for the admins</h3>';
+  if (issue.dev_query_at) {
+    html += '<div class="small muted" style="margin-bottom:6px;">Waiting on a reply, sent ' + fmtDate(issue.dev_query_at) + '.</div>';
+  }
+  html += '<div class="field"><textarea id="devQueryText" rows="2" placeholder="Ask the admins something about this issue..."></textarea></div>' +
+    '<div class="row" style="margin-bottom:10px;"><button class="ghost" onclick="sendDevQuery(\'' + esc(issue.issue_id) + '\')">' +
+    (issue.dev_query_at ? 'Send another question' : 'Send to admins') + '</button></div>';
+
   var detStatus = (issue.status || "").toLowerCase();
   var detDone = detStatus === "dev_fixed" || detStatus === "resolved";
-  var moreInfoBtn = '<button class="ghost" onclick="requestMoreInfo(\'' + esc(issue.issue_id) + '\')">Request more info</button>';
   if (detDone) {
     html += '<div class="small muted" style="margin-bottom:8px;">' +
       (detStatus === "resolved"
         ? 'Resolved ' + fmtDate(issue.resolved_at || issue.dev_fixed_at) + '.'
         : 'Marked fixed ' + fmtDate(issue.dev_fixed_at) + '. Waiting on an admin to verify, resolve, and contact the students.') +
       '</div>' +
-      '<div class="row"><button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button>' + moreInfoBtn + '</div>';
+      '<div class="row"><button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
   } else {
     html += '<div class="row">' +
       '<button class="primary" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
-      '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button>' + moreInfoBtn + '</div>';
+      '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
   }
 
   $("drawer").innerHTML = html;
@@ -3284,6 +3463,18 @@ function adminPassToDev(id) {
   apiPost({ action: "passToDev", issue_id: id }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Passed to developers.");
+    closeDetail(); loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+
+// Admin replies to a developer's/course team's question (see openDetail).
+// Clears the flag on send, so the pending badge drops off the card.
+function answerDevQuery(id) {
+  var reply = $("d_query_reply") ? $("d_query_reply").value.trim() : "";
+  if (!reply) { toast("Add a reply first."); return; }
+  apiPost({ action: "answerQuery", issue_id: id, reply: reply, app_url: APP_URL }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Reply sent.");
     closeDetail(); loadIssues();
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
@@ -3385,6 +3576,8 @@ function doLogout() {
   apiPost({ action: "logout" }).catch(function () {});
   clearToken();
   state.user = null; state.perms = {};
+  state.viewAs = null; state.realUser = null;
+  var vb = $("viewAsBar"); if (vb) vb.classList.remove("show", "simulating");
   $("userbox").style.display = "none";
   showLogin();
 }
@@ -3565,9 +3758,10 @@ function captureFeedbackContext() {
     captured_at: new Date().toISOString()
   };
   // What's open on top of the page right now.
+  if (state.viewAs) ctx.view_as = state.viewAs;
   if (state.detailId) { ctx.open_issue_id = state.detailId; ctx.open_issue_kind = state.detailKind || ""; }
   var modals = [];
-  ["emailModal", "tshootModal"].forEach(function (id) {
+  ["emailModal", "slideModal", "tshootModal"].forEach(function (id) {
     var el = $(id); if (el && el.classList.contains("show")) modals.push(id);
   });
   if (modals.length) ctx.open_modals = modals.join(",");
