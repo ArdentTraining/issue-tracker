@@ -273,6 +273,21 @@
     .detail-side { position: sticky; top: 0; }
   }
   .drawer .close { position: absolute; top: 14px; right: 16px; background: transparent; font-size: 20px; color: var(--muted); padding: 4px 8px; }
+
+  /* Split pane (Edd, 21 Jul): opening an issue on Track / Developers / Course
+     fixes shrinks the cards into a narrow left column and docks the detail as
+     a right-hand pane, so the queue stays visible while working an issue.
+     Board view, mobile, and everywhere else keep the slide-over drawer. */
+  .split-host.split-on { display: flex; gap: 14px; align-items: flex-start; }
+  .split-host.split-on > .list-col { width: 232px; flex-shrink: 0; max-height: 82vh; overflow-y: auto; padding-right: 2px; }
+  .split-host.split-on > .list-col .issue-card { padding: 10px; }
+  .split-host.split-on > .list-col .issue-card .sum { font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .split-host.split-on > .list-col .issue-card .who,
+  .split-host.split-on > .list-col .issue-card .small.muted { display: none; }
+  .split-host.split-on > .list-col .badge { font-size: 10px; padding: 1px 6px; }
+  .split-host.split-on > .split-dock { display: block !important; flex: 1; min-width: 0; position: sticky; top: 12px; }
+  .split-dock .drawer { position: static; height: auto; max-height: 88vh; width: 100%; max-width: none; border: 1px solid var(--line); border-radius: 12px; }
+  .issue-card.active { border-color: var(--accent); }
   .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 4px 0 14px; font-size: 14px; }
   .kv .k { color: var(--muted); }
   .batch { background: rgba(94,114,235,0.12); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin: 12px 0; }
@@ -649,7 +664,10 @@
     <button class="ghost small" style="padding:3px 10px;margin-left:8px;" onclick="clearLessonFilter()">Clear</button>
   </div>
 
-  <div id="adminList"></div>
+  <div class="split-host" id="adminSplitHost">
+    <div class="list-col" id="adminList"></div>
+    <div class="split-dock" id="adminDock" style="display:none;"></div>
+  </div>
 </div>
 
 <!-- ===================== ANALYTICS VIEW (real admins only) ===================== -->
@@ -714,7 +732,10 @@
       <button type="button" id="dev_all" onclick="setDevFilter('all')">All</button>
     </div>
   </div>
-  <div id="devList"></div>
+  <div class="split-host" id="devSplitHost">
+    <div class="list-col" id="devList"></div>
+    <div class="split-dock" id="devDock" style="display:none;"></div>
+  </div>
 </div>
 
 <!-- ===================== COURSE FIXES VIEW ===================== -->
@@ -725,7 +746,10 @@
     <div class="stat"><div class="n" id="courseStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
   <div class="area-toggle" id="courseFilters" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
-  <div id="courseList"></div>
+  <div class="split-host" id="courseSplitHost">
+    <div class="list-col" id="courseList"></div>
+    <div class="split-dock" id="courseDock" style="display:none;"></div>
+  </div>
 </div>
 
 <!-- ===================== USERS VIEW (manage people) ===================== -->
@@ -1614,6 +1638,7 @@ function openDeepLinkedIssue() {
 
 // ============================ VIEW SWITCH ============================
 function setView(v) {
+  if (state.detailId) closeDetail(); // a docked detail belongs to the old tab
   state.view = v;
   $("tabInstructor").classList.toggle("active", v === "instructor");
   $("tabActions").classList.toggle("active", v === "actions");
@@ -2651,6 +2676,7 @@ function renderPrev() {
         '<span class="date">' + fmtDate(i.submitted_at) + '</span>' +
         (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
       '</div>' +
+      (i.student_name ? '<div class="small" style="margin:2px 0;color:var(--text);font-weight:600;">' + esc(i.student_name) + '</div>' : '') +
       '<div class="summary">' + esc(i.summary || "(no summary)") + '</div>' +
     '</div>';
   }).join("") + (mine.length > shown.length
@@ -2797,7 +2823,7 @@ function renderAdmin() {
 
   $("adminList").innerHTML = list.length ? visible.map(function (i) {
     var imgs = parseImageUrls(i.image_urls).length;
-    return '<div class="issue-card" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
+    return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
       '<div class="top">' +
         priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
@@ -2809,6 +2835,7 @@ function renderAdmin() {
       '<div class="sum clamp4">' + esc(i.summary || "(no summary)") + '</div>' +
     '</div>';
   }).join("") + moreBar : '<p class="muted">No issues match these filters.</p>';
+  markActiveCard();
 }
 
 // ---- kanban board: one column per stage ----
@@ -3129,10 +3156,55 @@ function openDetail(issue) {
   html += '</div><div class="detail-side">' + sideCol + '</div></div>';
 
   $("drawer").innerHTML = html;
-  $("overlay").classList.add("show");
+  presentDetail("admin");
 
   state._copyContacts = studentArr.filter(function (s) { return s.contact; })
     .map(function (s) { return s.name + ": " + s.contact; }).join("\n");
+}
+
+// ---- split pane vs slide-over: where the detail actually appears -----------
+// On a wide screen, Track's list view and the two fix queues dock the detail
+// beside a narrowed card column (Edd's option B, 21 Jul). The board, phones,
+// and one-off opens (Analytics, previous submissions) keep the overlay drawer.
+function splitTargetFor(kind) {
+  if (window.innerWidth < 900) return null;
+  if (kind === "admin" && state.view === "admin" && state.trackView !== "board") return { host: $("adminSplitHost"), dock: $("adminDock") };
+  if (kind === "dev" && state.view === "dev") return { host: $("devSplitHost"), dock: $("devDock") };
+  if (kind === "dev" && state.view === "course") return { host: $("courseSplitHost"), dock: $("courseDock") };
+  return null;
+}
+function presentDetail(kind) {
+  var drawer = $("drawer");
+  closeSplit();
+  var target = splitTargetFor(kind);
+  if (target && target.host && target.dock) {
+    target.dock.appendChild(drawer);
+    target.host.classList.add("split-on");
+    target.dock.style.display = "";
+    $("overlay").classList.remove("show");
+    state._splitOpen = true;
+  } else {
+    if (drawer.parentElement !== $("overlay")) $("overlay").appendChild(drawer);
+    $("overlay").classList.add("show");
+  }
+  markActiveCard();
+}
+function closeSplit() {
+  ["adminSplitHost", "devSplitHost", "courseSplitHost"].forEach(function (id) {
+    var h = $(id);
+    if (!h) return;
+    h.classList.remove("split-on");
+    var d = h.querySelector(".split-dock");
+    if (d) d.style.display = "none";
+  });
+  var drawer = $("drawer");
+  if (drawer && drawer.parentElement !== $("overlay")) $("overlay").appendChild(drawer);
+  state._splitOpen = false;
+}
+function markActiveCard() {
+  Array.prototype.forEach.call(document.querySelectorAll(".issue-card.active"), function (el) { el.classList.remove("active"); });
+  if (!state.detailId) return;
+  Array.prototype.forEach.call(document.querySelectorAll('.issue-card[data-id="' + state.detailId + '"]'), function (el) { el.classList.add("active"); });
 }
 
 function kv(k, v) { return '<div class="k">' + esc(k) + '</div><div>' + (v ? esc(v) : "—") + '</div>'; }
@@ -3141,7 +3213,12 @@ function onStatusChange() {
   var sv = $("d_status").value;
   $("d_resnote_wrap").classList.toggle("hidden", sv.indexOf("resolved") !== 0 && sv !== "past");
 }
-function closeDetail() { $("overlay").classList.remove("show"); state.detailId = null; }
+function closeDetail() {
+  $("overlay").classList.remove("show");
+  closeSplit();
+  state.detailId = null;
+  markActiveCard();
+}
 
 function saveDetail() {
   var status = $("d_status").value;
@@ -3472,7 +3549,7 @@ function renderQueue(cat, ids, filterVal) {
   $(ids.list).innerHTML = list.length ? list.map(function (i) {
     var imgs = parseImageUrls(i.image_urls).length;
     var age = i.dev_passed_at ? fmtDuration(Date.now() - new Date(i.dev_passed_at)) : "";
-    return '<div class="issue-card" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
+    return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
       '<div class="top">' +
         priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
@@ -3484,6 +3561,7 @@ function renderQueue(cat, ids, filterVal) {
       '<div class="sum">' + esc(i.summary || "(no summary)") + '</div>' +
     '</div>';
   }).join("") : '<p class="muted">Nothing here.</p>';
+  markActiveCard();
 }
 
 function renderDev() {
@@ -3538,7 +3616,7 @@ function courseCardHtml(i) {
     : part === "text" ? '<span class="badge type-badge">Text</span>' : "";
   // Fix-first card: the code and what needs doing, fluff behind the drawer.
   var lessonLine = dispLesson(i);
-  return '<div class="issue-card" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
+  return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
     '<div class="top">' +
       priBadge(i.priority) +
       (reps > 1 ? '<span class="badge type-badge">×' + reps + ' reports</span>' : '') +
@@ -3612,6 +3690,7 @@ function renderCourse() {
     ? '<div class="small muted" style="margin:4px 0 10px;">' + list.length + ' fix' + (list.length === 1 ? "" : "es") + ' shown</div>' +
       list.map(courseCardHtml).join("")
     : '<p class="muted">Nothing here.</p>';
+  markActiveCard();
 }
 
 // Build the dropdown filter bar from whatever is in the current status view.
@@ -3724,6 +3803,14 @@ function openDevDetail(id) {
     '<div class="field"><select id="assignSelect" onchange="assignFromDetail(\'' + esc(issue.issue_id) + '\')">' +
       assignOptionsHtml(issue) + '</select></div>';
 
+  // The team can retune the priority if the report got it wrong (Edd, 21 Jul).
+  var curPri = (issue.priority || "medium").toLowerCase();
+  html += '<h3>Priority</h3>' +
+    '<div class="field"><select id="devPrioritySel" onchange="devSetPriority(\'' + esc(issue.issue_id) + '\')">' +
+      ["high", "medium", "low"].map(function (p) {
+        return '<option value="' + p + '"' + (p === curPri ? " selected" : "") + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
+      }).join("") + '</select></div>';
+
   // Student details, so developers can reproduce account-specific problems and
   // test against the affected account.
   var devStudents = {};
@@ -3801,21 +3888,47 @@ function openDevDetail(id) {
       '<input type="checkbox" id="notifyStudentTick" style="width:auto;margin-right:6px;vertical-align:-1px;"' + (state._copyContacts ? ' checked' : '') + '>' +
       'Notify student? (asks the instructors on Slack to pass the good news on)</label>' +
       '<div class="row">' +
-      '<button class="primary" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
+      '<button class="primary" id="markFixedBtn" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
       '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
   }
 
   $("drawer").innerHTML = html;
-  $("overlay").classList.add("show");
+  presentDetail("dev");
 }
 
 function devMarkFixed(id) {
   var notes = $("dev_notes") ? $("dev_notes").value : "";
   var notify = !!($("notifyStudentTick") && $("notifyStudentTick").checked);
+  // The round-trip takes a few seconds, so say so immediately instead of
+  // leaving a dead-looking button (Edd, 21 Jul).
+  var btn = $("markFixedBtn");
+  if (btn) { if (btn.disabled) return; btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> marking…'; }
   apiPost({ action: "markDevFixed", issue_id: id, dev_notes: notes, notify_student: notify, app_url: APP_URL }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    if (!res || !res.ok) {
+      if (btn) { btn.disabled = false; btn.textContent = "Mark fixed"; }
+      toast("Failed: " + ((res && res.error) || "unknown")); return;
+    }
     toast(notify ? "Marked fixed. Instructors asked to tell the student." : "Marked fixed.");
     closeDetail(); loadIssues();
+  }).catch(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Mark fixed"; }
+    toast("Error. See console."); console.error(e);
+  });
+}
+
+// Priority tweak from the Developers / Course fixes drawer.
+function devSetPriority(id) {
+  var sel = $("devPrioritySel");
+  if (!sel) return;
+  var v = sel.value;
+  apiPost({ action: "updateIssue", issue_id: id, priority: v }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    var iss = state.issues.filter(function (i) { return i.issue_id === id; })[0];
+    if (iss) iss.priority = v;
+    toast("Priority set to " + v + ".");
+    if (state.view === "dev") renderDev();
+    else if (state.view === "course") renderCourse();
+    else if (state.view === "admin") renderAdmin();
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 
@@ -4195,9 +4308,38 @@ function openFeedback() {
   state.fbContext = captureFeedbackContext();
   $("fbContextNote").textContent = "This report will include where you are: " + describeContext(state.fbContext);
   renderFbThumbs();
-  $("feedbackModal").classList.add("show");
+  // Quietly capture what the page looks like right now, before the modal
+  // covers it, so every feedback lands with a picture of its surroundings.
+  // (A DOM render via html2canvas, not a real screenshot - real ones need a
+  // browser permission prompt. Close enough for "what was on screen".)
+  state.fbShot = null;
+  captureFbShot();
+  setTimeout(function () { $("feedbackModal").classList.add("show"); }, 80);
 }
 function closeFeedback() { $("feedbackModal").classList.remove("show"); }
+
+function captureFbShot() {
+  var go = function () {
+    if (!window.html2canvas) return;
+    try {
+      window.html2canvas(document.body, {
+        logging: false, useCORS: true,
+        scale: Math.min(1, 1200 / Math.max(1, document.body.clientWidth)),
+        ignoreElements: function (el) { return el.id === "feedbackModal"; }
+      }).then(function (canvas) {
+        state.fbShot = canvas.toDataURL("image/jpeg", 0.7);
+      }).catch(function () {});
+    } catch (e) {}
+  };
+  if (window.html2canvas) { go(); return; }
+  if (state._h2cLoading) return;
+  state._h2cLoading = true;
+  var s = document.createElement("script");
+  s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+  s.onload = go;
+  s.onerror = function () {};
+  document.head.appendChild(s);
+}
 
 function onFbFilesPicked(ev) {
   var files = Array.prototype.slice.call(ev.target.files || []);
@@ -4232,6 +4374,9 @@ function submitFeedback() {
   sendBtn.disabled = true;
   $("fbMsg").textContent = "Sending…";
   var pending = state.fbImages.filter(function (im) { return !im.uploaded; });
+  // The quiet page capture rides along as an extra image (no thumbnail shown).
+  var autoShot = state.fbShot ? { name: "auto-page-capture.jpg", dataUrl: state.fbShot, mimeType: "image/jpeg", uploaded: false } : null;
+  if (autoShot) pending = pending.concat([autoShot]);
   var uploadError = "";
   Promise.all(pending.map(function (im) {
     return apiPost({ action: "uploadImage", filename: im.name, mimeType: im.mimeType, base64: im.dataUrl })
@@ -4242,6 +4387,7 @@ function submitFeedback() {
       .catch(function (e) { uploadError = String(e); });
   })).then(function () {
     var urls = state.fbImages.filter(function (im) { return im.uploaded; }).map(function (im) { return im.url; });
+    if (autoShot && autoShot.uploaded) urls.push(autoShot.url);
     return apiPost({ action: "addFeedback", message: msg, image_urls: urls, context: JSON.stringify(state.fbContext || {}) });
   }).then(function (res) {
     sendBtn.disabled = false;

@@ -57,8 +57,9 @@ var EXTRACTION_MODEL = 'claude-haiku-4-5-20251001';
 
 // A "Resolved - TBC" issue auto-resolves after this many days of silence (no
 // further reports or objections). The timer is the issue's updated_at, so any
-// new activity resets it.
-var TBC_AUTO_RESOLVE_DAYS = 7;
+// new activity resets it. 14 days per Edd (21 Jul); the sweep runs on a daily
+// trigger created by ensureTriggers_.
+var TBC_AUTO_RESOLVE_DAYS = 14;
 
 // Column order for both issue sheets (A..V). Both tabs use the same columns
 // so the code can treat them the same.
@@ -179,6 +180,7 @@ function doPost(e) {
     // session — same pattern as the mirror. See deployBackend_ below.
     if (action === 'deployBackend') return jsonOut(deployBackend_(body));
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
+    if (action === 'runSetup') return jsonOut(runSetup_(body));
 
     if (action === 'login') return jsonOut(login_(body));
     if (action === 'acceptInvite') return jsonOut(acceptInvite_(body));
@@ -304,7 +306,11 @@ function hasPerm_(user, req) {
 function reqPerm_(action) {
   switch (action) {
     case 'addIssue': case 'addUpdate': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': return 'log';
-    case 'updateIssue': case 'splitIssue': case 'linkIssues': case 'askIssues': return 'manage';
+    // updateIssue is 'work' so the dev/course team can retune priority from
+    // their drawer; anything beyond priority still needs manage (checked
+    // inside updateIssue_ itself).
+    case 'updateIssue': return 'work';
+    case 'splitIssue': case 'linkIssues': case 'askIssues': return 'manage';
     // Handing work to the developers is an admin call (or automatic on
     // submission); instructors log and manage, they don't route.
     case 'passToDev': return 'users';
@@ -809,7 +815,11 @@ function addIssue_(data) {
         issue.dev_passed_at = new Date().toISOString();
         issue.status = 'with_dev';
       }
-    } else if (category === 'tech_issue' && (String(issue.priority).toLowerCase() === 'high' || aiNeedsDeveloper_(data))) {
+    } else if (category === 'tech_issue' && String(issue.priority).toLowerCase() === 'high') {
+      // Edd's rule (21 Jul): tech issues reach the developers automatically
+      // only when HIGH priority, or when a repeat report makes it 3+ reports
+      // (see addReportToIssue_). The old AI "needs a developer" judgement was
+      // routing single medium reports, so it no longer routes on its own.
       issue.dev_passed_at = new Date().toISOString();
       issue.status = 'with_dev';
     }
@@ -865,6 +875,15 @@ function addReportToIssue_(id, data, report) {
     if (data.resolution_note) rec.resolution_note = data.resolution_note;
   } else if (String(rec.status).toLowerCase() === 'resolved_tbc') {
     rec.status = 'open';
+  }
+
+  // Repeat reports can tip a tech issue over the routing line (3+ reports, or
+  // the priority bump above making it high): hand it to the developers.
+  if (String(rec.category).toLowerCase() === 'tech_issue' &&
+      String(rec.status).toLowerCase() === 'open' &&
+      (reports.length >= 3 || String(rec.priority).toLowerCase() === 'high')) {
+    rec.status = 'with_dev';
+    if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
   }
 
   var stamp = new Date().toISOString().slice(0, 10);
@@ -1019,6 +1038,16 @@ function updateIssue_(data) {
 
   var record = found.record;
   var wasResolved = String(record.status || '').toLowerCase() === 'resolved';
+
+  // Without the manage permission (dev / course team), only the priority may
+  // be tweaked - that's the one edit their drawer offers (Edd, 21 Jul).
+  if (data._user && !hasPerm_(data._user, 'manage')) {
+    var allowedKeys = { priority: 1, priority_reason: 1 };
+    var blocked = HEADERS.filter(function (k) {
+      return data.hasOwnProperty(k) && !allowedKeys[k] && k !== 'issue_id';
+    });
+    if (blocked.length) return { ok: false, error: 'Only priority can be edited from this queue.' };
+  }
 
   // Moving something INTO the dev queue by hand (including a kanban drag) is
   // the same admin call as passToDev, so hold it to the same permission.
@@ -1616,14 +1645,29 @@ function deployBackend_(data) {
 // daily recheck trigger if one exists (rechecks ping Slack immediately now).
 // Called from setup(), safe to run repeatedly.
 function ensureTriggers_() {
-  var haveMonthly = false;
+  var haveMonthly = false, haveTbc = false;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
+    if (t.getHandlerFunction() === 'autoResolveTbc') haveTbc = true;
   });
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
   }
+  // The TBC auto-resolve sweep existed but was never given a trigger, which is
+  // why an 18-day-old TBC was still sitting there (Edd, 21 Jul).
+  if (!haveTbc) {
+    ScriptApp.newTrigger('autoResolveTbc').timeBased().everyDays(1).atHour(8).create();
+  }
+}
+
+// Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
+// via deployBackend don't need anyone in the editor either.
+function runSetup_(data) {
+  var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  setup();
+  return { ok: true };
 }
 
 // Ask the AI whether a tech issue genuinely needs a developer (a real code/bug
@@ -2260,6 +2304,7 @@ function buildExtractionPrompt_(rawText) {
     '',
     'Priority rules. For tech issues, do NOT jump to high until the fixes RELEVANT to this case have actually been tried:',
     '- high: a factual or safety-critical content error; OR a tech issue where the troubleshooting steps relevant to this situation have genuinely been tried and the student is still completely blocked with no workaround. Judge relevance by the case: for a browser/website problem the relevant fixes are things like clearing cache, an incognito window, a different browser, a different network; for a mobile-app problem they are reinstalling or updating the app, restarting, a different device, a different network. Do NOT expect app-only fixes for a browser problem or browser-only fixes for an app problem, and do not hold back from high just because an irrelevant fix was not tried.',
+    '- high ALSO covers an outage that hits everyone rather than one student: a page, resource, video host, or the site itself down or erroring for all users (e.g. a resource page returning an error). User-side troubleshooting cannot fix a down server, so never hold one of these at medium because steps were not tried.',
     '- medium: a real problem but the student is not fully blocked, has a workaround, or the relevant fixes have not all been tried yet.',
     '- low: minor or cosmetic, a one-off, or something very likely solved by a simple relevant step the student has not tried yet.',
     '',
