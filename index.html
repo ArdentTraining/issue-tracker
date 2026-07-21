@@ -14,34 +14,42 @@
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bugs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;800&family=Hedvig+Letters+Serif&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%23163a70%22/><g stroke=%22%23ff9190%22 stroke-width=%224%22 stroke-linecap=%22round%22><line x1=%2242%22 y1=%2220%22 x2=%2236%22 y2=%2210%22/><line x1=%2258%22 y1=%2220%22 x2=%2264%22 y2=%2210%22/><line x1=%2230%22 y1=%2248%22 x2=%2216%22 y2=%2242%22/><line x1=%2230%22 y1=%2258%22 x2=%2214%22 y2=%2262%22/><line x1=%2270%22 y1=%2248%22 x2=%2284%22 y2=%2242%22/><line x1=%2270%22 y1=%2258%22 x2=%2286%22 y2=%2262%22/></g><ellipse cx=%2250%22 cy=%2256%22 rx=%2220%22 ry=%2226%22 fill=%22%23ff9190%22/><circle cx=%2250%22 cy=%2230%22 r=%2212%22 fill=%22%23ff9190%22/><line x1=%2250%22 y1=%2234%22 x2=%2250%22 y2=%2280%22 stroke=%22%23163a70%22 stroke-width=%223%22/></svg>" />
 <style>
+  /* Aligned to the new website + Brand Guidelines v4 (21 Jul 2026):
+     Midnight Navy leads, Deep Atlantic supports, Coastal Indigo drives
+     actions, Soft Coral is the sparing hover accent. */
   :root {
-    --bg: #0c2146;          /* derived deep blue from #163a70 */
-    --surface: #163a70;     /* given */
-    --surface-2: #1e478a;   /* derived */
-    --line: #2c5596;        /* derived */
-    --accent: #5e72eb;      /* given */
-    --text: #e9effb;
-    --muted: #9badd0;
-    --high: #ff9190;        /* given */
-    --medium: #fec195;      /* given */
+    --bg: #021231;          /* Midnight Navy */
+    --surface: #122241;     /* Deep Atlantic Blue */
+    --surface-2: #163a70;   /* the site's open-water blue, raised/active */
+    --line: #2b4a7d;        /* derived from the open-water blue */
+    --accent: #5B69E1;      /* Coastal Indigo */
+    --coral: #FFB698;       /* Soft Coral - hovers and key moments only */
+    --text: #f2f5fb;
+    --muted: #93a3c6;
+    --high: #ff9190;
+    --medium: #fec195;
     --low: #46c08a;         /* kept green so "low/resolved" still reads as safe */
-    --course: #797ef6;      /* given */
-    --tech: #54bcd6;        /* derived teal, kept distinct from the course indigo */
+    --course: #797ef6;
+    --tech: #54bcd6;
     --radius: 10px;
   }
   /* Light theme. The brand colours stay; only the surfaces and text flip so it
      stays recognisably Ardent. The priority/status badges use fixed light fills
      with dark text, so they read fine on either theme without overrides. */
   :root[data-theme="light"] {
-    --bg: #eef2f9;          /* app background, soft blue-grey */
+    --bg: #f2f5fb;          /* app background, soft blue-grey */
     --surface: #ffffff;     /* cards */
-    --surface-2: #e2e8f5;   /* raised / active controls */
+    --surface-2: #e5eaf6;   /* raised / active controls */
     --line: #d2dbec;        /* borders */
-    --accent: #4257d6;      /* darker indigo so white text on it stays readable */
-    --text: #16233f;        /* deep navy text */
-    --muted: #5a6b88;
+    --accent: #4a58d8;      /* darker Coastal Indigo so white text stays readable */
+    --coral: #f09a75;       /* deeper coral for light surfaces */
+    --text: #021231;        /* Midnight Navy text */
+    --muted: #56678a;
     --high: #ff9190;
     --medium: #fec195;
     --low: #46c08a;
@@ -53,13 +61,14 @@
      dark :root above, so it needs nothing extra here. */
   @media (prefers-color-scheme: light) {
     :root[data-theme="auto"] {
-      --bg: #eef2f9;
+      --bg: #f2f5fb;
       --surface: #ffffff;
-      --surface-2: #e2e8f5;
+      --surface-2: #e5eaf6;
       --line: #d2dbec;
-      --accent: #4257d6;
-      --text: #16233f;
-      --muted: #5a6b88;
+      --accent: #4a58d8;
+      --coral: #f09a75;
+      --text: #021231;
+      --muted: #56678a;
       --high: #ff9190;
       --medium: #fec195;
       --low: #46c08a;
@@ -72,10 +81,13 @@
     margin: 0; padding: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    font-family: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
     font-size: 15px;
     line-height: 1.45;
   }
+  /* Website-family headings: Hedvig serif for the brand and page titles only;
+     the working UI stays in Hanken Grotesk. */
+  .brand, .wrap > h2, .card > h2 { font-family: "Hedvig Letters Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
   a { color: var(--accent); }
   button {
     font-family: inherit; font-size: 14px; cursor: pointer;
@@ -84,7 +96,9 @@
   }
   button:hover { filter: brightness(1.12); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button.primary { background: var(--accent); color: #fff; font-weight: 600; }
+  /* Primary actions take the website's pill CTAs and coral hover. */
+  button.primary { background: var(--accent); color: #fff; font-weight: 600; border-radius: 999px; }
+  button.primary:hover { background: var(--coral); color: #021231; filter: none; }
   button.ghost { background: transparent; border: 1px solid var(--line); }
   input, select, textarea {
     font-family: inherit; font-size: 14px;
