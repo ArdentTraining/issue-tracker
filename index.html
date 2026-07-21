@@ -368,7 +368,16 @@
   /* Actions tab: one card per thing an instructor needs to do */
   .action-card { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
   .action-card h4 { margin: 0 0 6px; font-size: 14px; }
+  .action-card.active { border-color: var(--accent); }
   .action-empty { color: var(--muted); font-size: 13px; margin: 4px 0 14px; }
+  /* Cards (and their buttons) keep a sensible width instead of stretching
+     across a full-width screen; buttons size to their label on any screen. */
+  #actionsList { max-width: 900px; }
+  .action-card .row { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+  .action-card .row button { width: auto; align-self: flex-start; flex: 0 0 auto; }
+  /* Opening an action docks the detail beside the list, same as Track. */
+  #actionsSplitHost.split-on > .list-col { width: 300px; }
+  #actionsSplitHost.split-on .action-card .small { display: none; }
 
   /* view-as bar: super-admin testing tool, bottom-left so it stays clear of the Feedback fab */
   .viewas-bar { position: fixed; bottom: 20px; left: 20px; z-index: 60; display: none; align-items: center; gap: 8px; background: var(--surface); border: 1px solid rgba(232,237,242,0.15); border-radius: 999px; padding: 7px 14px; font-size: 12.5px; color: var(--muted); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
@@ -602,9 +611,12 @@
 
 <!-- ===================== ACTIONS VIEW (instructor to-dos) ===================== -->
 <div id="actionsView" class="wrap hidden">
-  <h2 style="margin-top:0;">Your actions</h2>
-  <p class="small muted" style="margin-top:-6px;">Just the things waiting on you. Everything else lives in Track and your previous submissions.</p>
-  <div id="actionsList"></div>
+  <h2 style="margin-top:0;">Actions</h2>
+  <p class="small muted" style="margin-top:-6px;">The things waiting on an instructor. Everything else lives in Track and your previous submissions.</p>
+  <div class="split-host" id="actionsSplitHost">
+    <div class="list-col" id="actionsList"></div>
+    <div class="split-dock" id="actionsDock" style="display:none;"></div>
+  </div>
 </div>
 
 <!-- ===================== ADMIN VIEW ===================== -->
@@ -1574,7 +1586,7 @@ function renderActions() {
 
   html += '<h3>Questions for the instructors</h3>';
   html += a.questions.length ? a.questions.map(function (i) {
-    return '<div class="action-card" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
+    return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(i.dev_query_by || "The team") + ' asks:</h4>' +
       '<div class="small" style="margin-bottom:8px;">' + esc(i.dev_query || "") + '</div>' +
       '<div class="small muted" style="margin-bottom:6px;">On: ' + esc(cardTitle(i)) + '</div>' +
@@ -1585,7 +1597,7 @@ function renderActions() {
 
   html += '<h3>Students to tell about a fix</h3>';
   html += a.notify.length ? a.notify.map(function (i) {
-    return '<div class="action-card" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
+    return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
       '<div class="small" style="margin-bottom:4px;">' + esc(i.student_name || "Student") + (i.student_contact ? ' - ' + esc(i.student_contact) : '') + '</div>' +
       (i.dev_notes || i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Fix: ' + esc(i.dev_notes || i.resolution_note) + '</div>' : '') +
@@ -1598,7 +1610,7 @@ function renderActions() {
 
   html += '<h3>Workarounds to double-check</h3>';
   html += a.followups.length ? a.followups.map(function (i) {
-    return '<div class="action-card" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
+    return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
       (i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Workaround: ' + esc(i.resolution_note) + '</div>' : '') +
       '<div class="small" style="margin-bottom:6px;">Did that sort it for good, or is it hiding a fault everyone hits?</div>' +
@@ -1612,7 +1624,7 @@ function renderActions() {
   html += '<h3>Open a while - worth a reassuring update</h3>';
   html += a.longOpen.length ? a.longOpen.map(function (i) {
     var days = Math.floor((Date.now() - new Date(i.submitted_at)) / (24 * 60 * 60 * 1000));
-    return '<div class="action-card" style="border-left-color:var(--line);cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
+    return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="border-left-color:var(--line);cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
       '<div class="small" style="margin-bottom:6px;">Open ' + days + ' days. A quick "we\'re still on this" to ' +
         esc(i.student_name || "the student") + ' goes a long way.</div>' +
@@ -1624,6 +1636,7 @@ function renderActions() {
   }).join("") : '<div class="action-empty">Nothing lingering.</div>';
 
   $("actionsList").innerHTML = html;
+  markActiveCard();
 }
 function actionsAnswer(id) {
   var el = $("act_reply_" + id);
@@ -3214,6 +3227,7 @@ function openDetail(issue) {
 function splitTargetFor(kind) {
   if (window.innerWidth < 900) return null;
   if (kind === "admin" && state.view === "admin" && state.trackView !== "board") return { host: $("adminSplitHost"), dock: $("adminDock") };
+  if (kind === "admin" && state.view === "actions") return { host: $("actionsSplitHost"), dock: $("actionsDock") };
   if (kind === "dev" && state.view === "dev") return { host: $("devSplitHost"), dock: $("devDock") };
   if (kind === "dev" && state.view === "course") return { host: $("courseSplitHost"), dock: $("courseDock") };
   return null;
@@ -3235,7 +3249,7 @@ function presentDetail(kind) {
   markActiveCard();
 }
 function closeSplit() {
-  ["adminSplitHost", "devSplitHost", "courseSplitHost"].forEach(function (id) {
+  ["adminSplitHost", "devSplitHost", "courseSplitHost", "actionsSplitHost"].forEach(function (id) {
     var h = $(id);
     if (!h) return;
     h.classList.remove("split-on");
@@ -3247,9 +3261,9 @@ function closeSplit() {
   state._splitOpen = false;
 }
 function markActiveCard() {
-  Array.prototype.forEach.call(document.querySelectorAll(".issue-card.active"), function (el) { el.classList.remove("active"); });
+  Array.prototype.forEach.call(document.querySelectorAll(".issue-card.active, .action-card.active"), function (el) { el.classList.remove("active"); });
   if (!state.detailId) return;
-  Array.prototype.forEach.call(document.querySelectorAll('.issue-card[data-id="' + state.detailId + '"]'), function (el) { el.classList.add("active"); });
+  Array.prototype.forEach.call(document.querySelectorAll('.issue-card[data-id="' + state.detailId + '"], .action-card[data-id="' + state.detailId + '"]'), function (el) { el.classList.add("active"); });
 }
 
 function kv(k, v) { return '<div class="k">' + esc(k) + '</div><div>' + (v ? esc(v) : "—") + '</div>'; }
