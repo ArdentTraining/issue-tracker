@@ -436,8 +436,8 @@
       <div class="field" id="field_category">
         <label>Category (auto-detected, change if wrong)</label>
         <select id="f_category" onchange="onCategoryChange()">
-          <option value="course_error">Course error — wrong or confusing lesson content</option>
-          <option value="tech_issue">Tech issue — login, access, progress, formatting, or anything not about lesson content</option>
+          <option value="course_error">Course error - wrong or confusing lesson content</option>
+          <option value="tech_issue">Tech issue - login, access, progress, formatting, or anything not about lesson content</option>
         </select>
         <div class="small muted" style="margin-top:4px;">Tech issues don't need a lesson: login, account, progress, and formatting problems all go here, and the course fields can stay blank.</div>
       </div>
@@ -603,7 +603,7 @@
       <option value="in_progress">In progress (being worked on)</option>
       <option value="with_dev">With developers</option>
       <option value="dev_fixed">Fixed by dev</option>
-      <option value="resolved_tbc">Resolved – TBC</option>
+      <option value="resolved_tbc">Resolved - TBC</option>
       <option value="resolved">Resolved</option>
       <option value="past">Past (imported)</option>
     </select>
@@ -638,7 +638,7 @@
       <option value="">Sort: priority (default)</option>
       <option value="newest">Sort: most recent first</option>
       <option value="oldest">Sort: oldest first</option>
-      <option value="reporter">Sort: reported by (A–Z)</option>
+      <option value="reporter">Sort: reported by (A-Z)</option>
       <option value="reports">Sort: most reported</option>
     </select>
     <input id="flt_search" placeholder="Search lesson code / keyword" oninput="renderAdmin()" />
@@ -846,7 +846,7 @@
     <p class="small muted" id="emailModalLead">We couldn't find the student's email in the message. Add it so we can log and contact them, for example to tell them when it's fixed.</p>
     <div class="field"><input id="emailModalInput" type="email" placeholder="student@example.com" onkeydown="if(event.key==='Enter')saveStudentEmail()"></div>
     <div class="btns"><button class="primary" onclick="saveStudentEmail()">Save</button><button class="ghost" id="emailSkipBtn" onclick="skipEmail()">Skip for now</button></div>
-    <div style="margin-top:8px;"><button class="ghost small" style="padding:4px 10px;" onclick="noStudentInvolved()">No student involved — this is a portal / internal problem</button></div>
+    <div style="margin-top:8px;"><button class="ghost small" style="padding:4px 10px;" onclick="noStudentInvolved()">No student involved - this is a portal / internal problem</button></div>
     <div id="emailModalMsg" class="small muted" style="margin-top:6px;"></div>
   </div>
 </div>
@@ -869,9 +869,9 @@
     <h3>Was that a one-off?</h3>
     <p class="small muted">The student's got a workaround, but we don't know yet whether the underlying problem hits everyone. Did you get a chance to double-check it yourself?</p>
     <div class="btns" style="flex-direction:column;align-items:stretch;gap:8px;">
-      <button class="ghost" onclick="recheckChoice('oneoff')">Checked — it's a one-off, leave as Resolved – TBC</button>
-      <button class="ghost" onclick="recheckChoice('fault')">Checked — it affects everyone, reopen as a fault</button>
-      <button class="primary" onclick="recheckChoice('later')">Can't check right now — put it on Slack so it's waiting for me</button>
+      <button class="ghost" onclick="recheckChoice('oneoff')">Checked - it's a one-off, leave as Resolved - TBC</button>
+      <button class="ghost" onclick="recheckChoice('fault')">Checked - it affects everyone, reopen as a fault</button>
+      <button class="primary" onclick="recheckChoice('later')">Can't check right now - put it on Slack so it's waiting for me</button>
     </div>
   </div>
 </div>
@@ -882,7 +882,7 @@
     <h3>Which slide or question?</h3>
     <p class="small muted" id="slideModalLead"></p>
     <div class="field"><input id="slideModalInput" placeholder="e.g. 13, or 09.2" onkeydown="if(event.key==='Enter')saveSlideRef()"></div>
-    <div class="btns"><button class="primary" onclick="saveSlideRef()">Save</button><button class="ghost" onclick="skipSlideRef()">Don't know — skip</button></div>
+    <div class="btns"><button class="primary" onclick="saveSlideRef()">Save</button><button class="ghost" onclick="skipSlideRef()">Don't know - skip</button></div>
     <div id="slideModalMsg" class="small muted" style="margin-top:6px;"></div>
   </div>
 </div>
@@ -1165,7 +1165,7 @@ function priBadge(p) {
   var label = p ? p.charAt(0).toUpperCase() + p.slice(1) : "—";
   return '<span class="badge pri pri-' + (p || "low") + '">' + label + "</span>";
 }
-var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", resolved_tbc: "resolved – TBC", resolved: "resolved", past: "past" };
+var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", resolved_tbc: "resolved - TBC", resolved: "resolved", past: "past" };
 function statusBadge(s) {
   s = (s || "open").toLowerCase();
   return '<span class="badge st st-' + s + '">' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + "</span>";
@@ -1487,7 +1487,12 @@ function myActionItems() {
     if (!mine(i)) return;
     var st = String(i.status || "open").toLowerCase();
     if (i.dev_query_at && i.dev_query_target === "instructor") out.questions.push(i);
-    if ((st === "dev_fixed" || st === "resolved") && !isTrue(i.notified_students) &&
+    // "Tell the student": only fixes that happened AFTER logging. An issue that
+    // arrived already resolved was sorted in the chat with the student present,
+    // so there's nobody to notify (resolved_at at/before logging = chat-resolved).
+    var chatResolved = st === "resolved" && i.resolved_at &&
+      (new Date(i.resolved_at) - new Date(i.submitted_at)) < 2 * 60 * 1000;
+    if ((st === "dev_fixed" || st === "resolved") && !isTrue(i.notified_students) && !chatResolved &&
         (i.student_contact || i.student_name)) out.notify.push(i);
     if (st === "resolved_tbc" && (now - new Date(i.updated_at || i.submitted_at)) > ACTIONS_TBC_FOLLOWUP_DAYS * day) out.followups.push(i);
     if ((st === "open" || st === "in_progress" || st === "with_dev") &&
@@ -1528,11 +1533,11 @@ function renderActions() {
   html += a.notify.length ? a.notify.map(function (i) {
     return '<div class="action-card">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
-      '<div class="small" style="margin-bottom:4px;">' + esc(i.student_name || "Student") + (i.student_contact ? ' — ' + esc(i.student_contact) : '') + '</div>' +
+      '<div class="small" style="margin-bottom:4px;">' + esc(i.student_name || "Student") + (i.student_contact ? ' - ' + esc(i.student_contact) : '') + '</div>' +
       (i.dev_notes || i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Fix: ' + esc(i.dev_notes || i.resolution_note) + '</div>' : '') +
       '<div class="row">' +
         (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
-        '<button class="primary small" style="padding:5px 12px;" onclick="actionsMarkNotified(\'' + esc(i.issue_id) + '\')">Done — student told</button>' +
+        '<button class="primary small" style="padding:5px 12px;" onclick="actionsMarkNotified(\'' + esc(i.issue_id) + '\')">Done - student told</button>' +
       '</div>' +
     '</div>';
   }).join("") : '<div class="action-empty">No fixes waiting to be passed on.</div>';
@@ -1544,13 +1549,13 @@ function renderActions() {
       (i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Workaround: ' + esc(i.resolution_note) + '</div>' : '') +
       '<div class="small" style="margin-bottom:6px;">Did that sort it for good, or is it hiding a fault everyone hits?</div>' +
       '<div class="row">' +
-        '<button class="ghost small" style="padding:5px 12px;" onclick="actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">All good — resolve</button>' +
-        '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Still broken — reopen</button>' +
+        '<button class="ghost small" style="padding:5px 12px;" onclick="actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">All good - resolve</button>' +
+        '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Still broken - reopen</button>' +
       '</div>' +
     '</div>';
   }).join("") : '<div class="action-empty">No workarounds waiting on a check.</div>';
 
-  html += '<h3>Open a while — worth a reassuring update</h3>';
+  html += '<h3>Open a while - worth a reassuring update</h3>';
   html += a.longOpen.length ? a.longOpen.map(function (i) {
     var days = Math.floor((Date.now() - new Date(i.submitted_at)) / (24 * 60 * 60 * 1000));
     return '<div class="action-card" style="border-left-color:var(--line);">' + actionCardTop(i) +
@@ -1649,7 +1654,7 @@ function setFormMode(mode) {
   state.formMode = mode;
   var isInternal = mode === "internal";
   // Nothing shows below the Extract button until an extraction has run (or an
-  // existing issue is loaded for editing) — the same in both modes, so the form
+  // existing issue is loaded for editing) -the same in both modes, so the form
   // stays short and nobody fills fields the AI would have filled for them.
   $("mode_student").className = isInternal ? "" : "active";
   $("mode_internal").className = isInternal ? "active" : "";
@@ -1894,7 +1899,7 @@ function showSuggestion(fix, basedOn) {
     '<div class="small" style="margin-top:8px;">Still submit this so we can track how many people hit it.</div>' +
     '<label style="display:block;margin-top:6px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="tbcApplied" style="width:auto;margin-right:6px;vertical-align:-1px;">' +
-      'I\'ve given the student this fix — mark Resolved (TBC)</label>' +
+      'I\'ve given the student this fix - mark Resolved (TBC)</label>' +
     '<div class="row" style="margin-top:10px;">' +
       '<button class="primary" onclick="closeSuggestModal()">Got it</button>' +
       '<button class="ghost" onclick="hideSuggestion()">Dismiss</button></div>';
@@ -1907,8 +1912,8 @@ function closeSuggestModal() {
   var n = $("suggestNote");
   if (n && state.suggestedFix) {
     var ticked = $("tbcApplied") && $("tbcApplied").checked;
-    n.innerHTML = 'Suggested fix from a past issue' + (ticked ? ' (marking Resolved – TBC on submit)' : '') +
-      ' — <a href="#" onclick="wizardShow(\'suggestModal\');return false;" style="color:var(--accent);">view</a>';
+    n.innerHTML = 'Suggested fix from a past issue' + (ticked ? ' (marking Resolved - TBC on submit)' : '') +
+      ' - <a href="#" onclick="wizardShow(\'suggestModal\');return false;" style="color:var(--accent);">view</a>';
     n.classList.remove("hidden");
   }
   wizardClosed();
@@ -2055,7 +2060,7 @@ function showSplitSuggestion(subIssues) {
       var resolved = s.resolution_status === 'resolved' || s.resolution_status === 'tbc';
       return '<div style="margin:4px 0;">' + (i + 1) + '. ' + esc(s.summary || "") +
         (s.issue_type ? ' <span class="badge type-badge">' + esc(s.issue_type) + '</span>' : '') +
-        (resolved ? ' <span class="badge" style="background:var(--low);color:#fff;">' + (s.resolution_status === 'tbc' ? 'resolved – TBC' : 'resolved') + '</span>' : '') + '</div>';
+        (resolved ? ' <span class="badge" style="background:var(--low);color:#fff;">' + (s.resolution_status === 'tbc' ? 'resolved - TBC' : 'resolved') + '</span>' : '') + '</div>';
     }).join("") +
     '<label style="display:block;margin-top:8px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="splitTick" checked style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="onSplitToggle(this.checked);">' +
@@ -2074,7 +2079,7 @@ function closeSplitModal() {
     n.innerHTML = (state.splitMode
       ? 'Logging as ' + state.subIssues.length + ' separate issues on submit'
       : 'Multi-issue split is OFF (logging as one)') +
-      ' — <a href="#" onclick="wizardShow(\'splitModal\');return false;" style="color:var(--accent);">change</a>';
+      ' - <a href="#" onclick="wizardShow(\'splitModal\');return false;" style="color:var(--accent);">change</a>';
     n.classList.remove("hidden");
   }
   wizardClosed();
@@ -2111,12 +2116,12 @@ function showResolutionSuggestion(f) {
     '<div class="h">This conversation looks ' + (isResolved ? "resolved" + who : "answered (waiting for the student to confirm)") + '</div>' +
     '<div class="small" style="margin-bottom:6px;">' + (isResolved
       ? (onUpdate ? "The existing issue will be marked Resolved and this answer saved as the resolution note." : "It will be logged as Resolved with this answer saved as the resolution note, so it stays on the record without sitting in the open queue.")
-      : "It will be logged as Resolved – TBC with the suggested fix saved; it reopens if the student comes back.") + '</div>' +
+      : "It will be logged as Resolved - TBC with the suggested fix saved; it reopens if the student comes back.") + '</div>' +
     '<label class="small" style="display:block;">Resolution note' +
       '<textarea id="resNote" rows="2" style="width:100%;margin-top:4px;">' + esc(f.resolution_note || "") + '</textarea></label>' +
     '<label style="display:block;margin-top:8px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="resTick" checked style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="if(state.resolution)state.resolution.apply=this.checked;">' +
-      'Log as ' + (isResolved ? "Resolved" : "Resolved – TBC") + '</label>' +
+      'Log as ' + (isResolved ? "Resolved" : "Resolved - TBC") + '</label>' +
     '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="hideResolutionSuggestion()">Dismiss</button>';
   $("resolutionPanel").classList.remove("hidden");
 }
@@ -2311,10 +2316,10 @@ function recheckChoice(kind) {
     }).catch(function () { toast("Reopen error."); });
   } else if (kind === "later") {
     apiPost({ action: "requestRecheck", issue_id: id, app_url: APP_URL }).then(function (res) {
-      toast(res && res.ok ? "On Slack — it'll be waiting for you." : "Couldn't send the reminder: " + ((res && res.error) || "unknown"));
+      toast(res && res.ok ? "On Slack - it'll be waiting for you." : "Couldn't send the reminder: " + ((res && res.error) || "unknown"));
     }).catch(function () { toast("Reminder error."); });
   } else {
-    toast("Left as Resolved – TBC.");
+    toast("Left as Resolved - TBC.");
   }
 }
 
@@ -2473,7 +2478,7 @@ function submitIssue() {
         // Keep only the not-yet-saved subs so a resubmit continues from here.
         state.subIssues = subIssues.slice(acc.ok.length);
         return { ok: false, error: (acc.failed.error || "save failed") +
-          " (saved " + acc.ok.length + " of " + subIssues.length + " — press Submit again to finish the rest)" };
+          " (saved " + acc.ok.length + " of " + subIssues.length + " - press Submit again to finish the rest)" };
       }
       return { ok: true, split: acc.ok.length, issue_ids: acc.ok.map(function (r) { return r.issue && r.issue.issue_id; }) };
     });
@@ -2506,11 +2511,11 @@ function submitIssue() {
       apiPost({ action: "saveChecklist", issue_id: updateTarget, checklist_json: checklistJson }).catch(function () {});
     }
     if (wasUpdate) toast(wasResolvedUpdate === "resolved" ? "Update added and the issue marked resolved."
-      : wasResolvedUpdate === "tbc" ? "Update added; issue set to Resolved – TBC."
+      : wasResolvedUpdate === "tbc" ? "Update added; issue set to Resolved - TBC."
       : "Update added to the existing issue.");
     else if (res.split) toast("Logged as " + res.split + " separate issues.");
-    else if (res.merged) toast("Already reported — added to the existing one (now " + (res.report_count || "") + " reports)." + (wasTbc ? " Marked Resolved – TBC." : ""));
-    else toast(wasResolvedNew ? "Logged as Resolved." : (wasTbc ? "Logged as Resolved – TBC." : (state.editingId ? "Issue updated." : "Issue logged.")));
+    else if (res.merged) toast("Already reported - added to the existing one (now " + (res.report_count || "") + " reports)." + (wasTbc ? " Marked Resolved - TBC." : ""));
+    else toast(wasResolvedNew ? "Logged as Resolved." : (wasTbc ? "Logged as Resolved - TBC." : (state.editingId ? "Issue updated." : "Issue logged.")));
     // Work out where any pending screenshots belong, then let them upload in
     // the background: the save itself is already done.
     var targetIds = state.editingId ? [state.editingId]
@@ -2518,7 +2523,7 @@ function submitIssue() {
       : res.issue_ids ? res.issue_ids
       : (res.issue && res.issue.issue_id) ? [res.issue.issue_id] : [];
     uploadImagesInBackground(targetIds);
-    // A workaround was handed over and this landed as Resolved – TBC: check
+    // A workaround was handed over and this landed as Resolved - TBC: check
     // whether that was verified as a one-off or needs a proper look. If the
     // instructor can't check now, requestRecheck books a Slack reminder.
     var tbcLanded = (wasTbc || wasResolvedUpdate === "tbc") && targetIds.length === 1;
@@ -2812,7 +2817,7 @@ var KANBAN_COLS = [
   { key: "in_progress",  label: "In progress" },
   { key: "with_dev",     label: "With devs / course team" },
   { key: "dev_fixed",    label: "Fixed, awaiting check" },
-  { key: "resolved_tbc", label: "Resolved – TBC" },
+  { key: "resolved_tbc", label: "Resolved - TBC" },
   { key: "resolved",     label: "Resolved" }
 ];
 function kanbanHtml(list) {
@@ -3172,7 +3177,7 @@ function copyContacts() {
   var text = state._copyContacts || "";
   if (!text) { toast("No contacts to copy."); return; }
   navigator.clipboard.writeText(text).then(function () { toast("Contacts copied."); },
-    function () { toast("Copy failed — select manually."); });
+    function () { toast("Copy failed - select manually."); });
 }
 
 function viewAllOnLesson(code) {
@@ -3486,7 +3491,7 @@ function renderDev() {
 }
 // Every course fix that still needs doing or is awaiting verification. Unlike
 // the Developers queue this is NOT gated on dev_passed_at, so imported "open"
-// course errors (never auto-routed) come through too — every reported course
+// course errors (never auto-routed) come through too -every reported course
 // fix lands here for Edd to work.
 function courseQueueAll() {
   return state.issues.filter(function (i) {
@@ -3507,8 +3512,8 @@ function courseIsTodo(status) {
 
 // The course a fix belongs to, for grouping and filtering. Uses the stored
 // course when there is one; otherwise infers it from a real lesson/slide code
-// (e.g. DS.09.04 -> Day Skipper). Anything with no course and no code — the
-// platform-wide bits like Discussions, Live Chat, exams — is "General / all
+// (e.g. DS.09.04 -> Day Skipper). Anything with no course and no code -the
+// platform-wide bits like Discussions, Live Chat, exams -is "General / all
 // courses", since those genuinely aren't tied to a single course.
 var COURSE_BY_PREFIX = { EN: "Essential Navigation", DS: "Day Skipper", YM: "Yachtmaster", FT: "Fast Track" };
 function courseOf(i) {
@@ -3828,7 +3833,7 @@ function askLoggerFromTrack(id) {
   if (!q) { toast("Type the question first."); return; }
   apiPost({ action: "flagQuery", issue_id: id, question: q, target: "instructor", app_url: APP_URL }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Sent — it's in their Actions tab and on Slack.");
+    toast("Sent - it's in their Actions tab and on Slack.");
     closeDetail(); loadIssues();
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
