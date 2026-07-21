@@ -1320,7 +1320,7 @@ function sendNotifyStudentSlack_(issue, appUrl) {
   var isCourse = String(issue.category).toLowerCase() === 'course_error';
   var student = (issue.student_name || '') + (issue.student_contact ? ' (' + issue.student_contact + ')' : '');
   var text = [
-    ':white_check_mark: *' + (isCourse ? 'Course fix done' : 'Fix done') + ' — student to notify*',
+    ':white_check_mark: *' + (isCourse ? 'Course fix done' : 'Fix done') + ' - student to notify*',
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
     '*Summary:* ' + (issue.summary || '-'),
     '*Fix notes:* ' + (issue.dev_notes || '-'),
@@ -1415,12 +1415,13 @@ function answerQuery_(data) {
   var rec = found.record;
 
   // Who may answer depends on who the question was for: admin-targeted
-  // questions need the users perm (unchanged from Round 11); a question sent to
-  // the logging instructor is theirs to answer (admins can still step in).
+  // questions need the users perm (unchanged from Round 11); instructor-
+  // targeted ones can be answered by ANY instructor (the whole team sees the
+  // Actions list, and whoever knows the answer shouldn't have to wait - Edd,
+  // 21 Jul) or by an admin.
   var perms = permsOf_(data._user || {});
   if (rec.dev_query_target === 'instructor') {
-    var isLogger = data._user && String(data._user.name || '').toLowerCase() === String(rec.instructor_name || '').toLowerCase();
-    if (!perms.users && !isLogger) return { ok: false, error: 'This question is for ' + (rec.instructor_name || 'the logging instructor') + ' to answer.' };
+    if (!perms.users && !perms.log) return { ok: false, error: 'forbidden' };
   } else if (!perms.users) {
     return { ok: false, error: 'forbidden' };
   }
@@ -1452,7 +1453,7 @@ function answerQuery_(data) {
 
 function sendQueryAnsweredSlack_(issue, question, reply, asker, appUrl) {
   var text = [
-    ':speech_balloon: *Question answered*' + (asker ? ' — ' + asker + ', this one\'s for you' : ''),
+    ':speech_balloon: *Question answered*' + (asker ? ' - ' + asker + ', this one\'s for you' : ''),
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
     '*Summary:* ' + (issue.summary || '-'),
     '*Question:* ' + (question || '-'),
@@ -1492,7 +1493,7 @@ function sendRecheckSlack_(rec, appUrl) {
     '*Workaround given:* ' + (rec.resolution_note || '-'),
     '',
     (rec.instructor_name || 'Whoever logged this') + " couldn't check at the time: is this a one-off for that student, or a fault for everyone? " +
-      "One-off — leave it as Resolved - TBC. Everyone — reopen it so it gets a proper fix.",
+      "One-off - leave it as Resolved - TBC. Everyone - reopen it so it gets a proper fix.",
     'Open this issue: ' + issueLink_(rec, appUrl)
   ].join('\n');
   UrlFetchApp.fetch(slackWebhook_(), {
@@ -1545,10 +1546,10 @@ function monthlyChecklistReview() {
 
   var sugg = (out && out.suggestions) || [];
   var text = sugg.length
-    ? [':clipboard: *Monthly checklist review* — ' + recent.length + ' tech issues looked at, ' + sugg.length + ' suggested addition' + (sugg.length > 1 ? 's' : '') + ':']
-        .concat(sugg.map(function (s) { return '• *' + s.label + '* — ' + s.why; }))
+    ? [':clipboard: *Monthly checklist review* - ' + recent.length + ' tech issues looked at, ' + sugg.length + ' suggested addition' + (sugg.length > 1 ? 's' : '') + ':']
+        .concat(sugg.map(function (s) { return '• *' + s.label + '* - ' + s.why; }))
         .concat(['', 'If one earns its place, tell Claude to add it to the checklist.']).join('\n')
-    : ':clipboard: *Monthly checklist review* — ' + recent.length + ' tech issues looked at, the current checklist already covers what came up. Nothing to add.';
+    : ':clipboard: *Monthly checklist review* - ' + recent.length + ' tech issues looked at, the current checklist already covers what came up. Nothing to add.';
   try {
     UrlFetchApp.fetch(slackWebhook_(), {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
@@ -1645,11 +1646,12 @@ function deployBackend_(data) {
 // daily recheck trigger if one exists (rechecks ping Slack immediately now).
 // Called from setup(), safe to run repeatedly.
 function ensureTriggers_() {
-  var haveMonthly = false, haveTbc = false;
+  var haveMonthly = false, haveTbc = false, haveBackup = false;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
     if (t.getHandlerFunction() === 'autoResolveTbc') haveTbc = true;
+    if (t.getHandlerFunction() === 'weeklyBackup') haveBackup = true;
   });
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
@@ -1659,6 +1661,30 @@ function ensureTriggers_() {
   if (!haveTbc) {
     ScriptApp.newTrigger('autoResolveTbc').timeBased().everyDays(1).atHour(8).create();
   }
+  if (!haveBackup) {
+    ScriptApp.newTrigger('weeklyBackup').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(7).create();
+  }
+}
+
+// Weekly safety net: the Sheet IS the database, and until now nothing backed
+// it up. Copies the whole spreadsheet into a "Bugs backups" Drive folder every
+// Monday morning and keeps the most recent 8 copies.
+function weeklyBackup() {
+  var ss = ss_();
+  var file = DriveApp.getFileById(ss.getId());
+  var it = DriveApp.getFoldersByName('Bugs backups');
+  var folder = it.hasNext() ? it.next() : DriveApp.createFolder('Bugs backups');
+  file.makeCopy('Bugs backup ' + new Date().toISOString().slice(0, 10), folder);
+  // Prune to the newest 8.
+  var copies = [];
+  var files = folder.getFiles();
+  while (files.hasNext()) {
+    var f = files.next();
+    if (f.getName().indexOf('Bugs backup ') === 0) copies.push(f);
+  }
+  copies.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  copies.slice(8).forEach(function (f) { f.setTrashed(true); });
+  Logger.log('weeklyBackup: ' + copies.length + ' backup(s) on file.');
 }
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped

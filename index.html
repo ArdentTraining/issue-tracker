@@ -108,7 +108,15 @@
   .switcher button.active { background: var(--surface-2); color: var(--text); }
   .themebtn { white-space: nowrap; padding: 7px 12px; }
 
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px; }
+  /* Full-width app (Edd, 21 Jul): no artificial cap, just breathing room. */
+  .wrap { max-width: none; margin: 0 auto; padding: 20px 28px; }
+
+  /* Slim, theme-matched scrollbars instead of the browser defaults. */
+  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
   .card {
     background: var(--surface); border: 1px solid var(--line);
@@ -196,7 +204,8 @@
   .matrix tbody tr:hover { background: rgba(94,114,235,0.04); }
   .stat.alert .n { color: var(--high); }
 
-  .filterbar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
+  /* Auto-fit so every control (search included) shares one wrapping row. */
+  .filterbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 16px; }
   @media (max-width: 860px) { .filterbar { grid-template-columns: 1fr 1fr; } }
 
   .issue-card {
@@ -270,7 +279,7 @@
   @media (min-width: 761px) {
     .drawer { width: min(1080px, 68vw); max-width: 96vw; }
     .detail-cols { grid-template-columns: minmax(0, 1fr) 320px; }
-    .detail-side { position: sticky; top: 0; }
+    .detail-side { position: sticky; top: 0; border-left: 1px solid var(--line); padding-left: 20px; }
   }
   .drawer .close { position: absolute; top: 14px; right: 16px; background: transparent; font-size: 20px; color: var(--muted); padding: 4px 8px; }
 
@@ -1125,7 +1134,11 @@ function apiPost(payload) {
 }
 // If the backend rejects the session, drop it and show the login screen.
 function gateCheck(res) {
-  if (res && res.ok === false && res.error === "unauthorized") { clearToken(); showLogin(); }
+  if (res && res.ok === false && res.error === "unauthorized") {
+    clearToken();
+    showLogin();
+    toast("Your session expired - sign in again and carry on where you were.");
+  }
   return res;
 }
 function localGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -1502,13 +1515,11 @@ var ACTIONS_LONG_OPEN_DAYS = 14;
 var ACTIONS_TBC_FOLLOWUP_DAYS = 3;
 
 function myActionItems() {
-  var me = String(state.selectedInstructor || "").toLowerCase();
-  var showAll = !!(state.perms && state.perms.users); // admins see everyone's, labelled
-  var mine = function (i) { return showAll || String(i.instructor_name || "").toLowerCase() === me; };
+  // Everyone with the tab sees every action (Edd, 21 Jul): the team is small
+  // and any instructor can pass a fix on. Cards carry who logged each one.
   var now = Date.now(), day = 24 * 60 * 60 * 1000;
   var out = { questions: [], notify: [], followups: [], longOpen: [] };
   (state.issues || []).forEach(function (i) {
-    if (!mine(i)) return;
     var st = String(i.status || "open").toLowerCase();
     if (i.dev_query_at && i.dev_query_target === "instructor") out.questions.push(i);
     // "Tell the student": only fixes that happened AFTER logging. An issue that
@@ -1519,8 +1530,11 @@ function myActionItems() {
     if ((st === "dev_fixed" || st === "resolved") && !isTrue(i.notified_students) && !chatResolved &&
         (i.student_contact || i.student_name)) out.notify.push(i);
     if (st === "resolved_tbc" && (now - new Date(i.updated_at || i.submitted_at)) > ACTIONS_TBC_FOLLOWUP_DAYS * day) out.followups.push(i);
+    // Long-open: been around a while AND quiet lately, so a "we're still on
+    // it" note (or the update button below) clears it off the list.
     if ((st === "open" || st === "in_progress" || st === "with_dev") &&
         (now - new Date(i.submitted_at)) > ACTIONS_LONG_OPEN_DAYS * day &&
+        (now - new Date(i.updated_at || i.submitted_at)) > 7 * day &&
         (i.student_contact || i.student_name)) out.longOpen.push(i);
   });
   return out;
@@ -1535,46 +1549,48 @@ function updateActionsTabCount() {
 function actionCardTop(i) {
   return '<div style="margin-bottom:4px;">' + priBadge(i.priority) + " " + statusBadge(i.status) +
     (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
-    ((state.perms && state.perms.users && i.instructor_name) ? ' <span class="badge type-badge">' + esc(i.instructor_name) + '</span>' : '') +
+    (i.instructor_name ? ' <span class="badge type-badge">' + esc(i.instructor_name) + '</span>' : '') +
     '</div>';
 }
+// Whole action cards open the full issue; inner controls stop the bubble.
+function actionOpen(id) { openIssueById(id, false); }
 function renderActions() {
   var a = myActionItems();
   var html = "";
 
-  html += '<h3>Questions for you</h3>';
+  html += '<h3>Questions for the instructors</h3>';
   html += a.questions.length ? a.questions.map(function (i) {
-    return '<div class="action-card">' + actionCardTop(i) +
+    return '<div class="action-card" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(i.dev_query_by || "The team") + ' asks:</h4>' +
       '<div class="small" style="margin-bottom:8px;">' + esc(i.dev_query || "") + '</div>' +
       '<div class="small muted" style="margin-bottom:6px;">On: ' + esc(cardTitle(i)) + '</div>' +
-      '<textarea id="act_reply_' + esc(i.issue_id) + '" rows="2" placeholder="Your reply..." style="width:100%;margin-bottom:6px;"></textarea>' +
-      '<button class="primary small" style="padding:5px 12px;" onclick="actionsAnswer(\'' + esc(i.issue_id) + '\')">Send reply</button>' +
+      '<textarea id="act_reply_' + esc(i.issue_id) + '" rows="2" placeholder="Your reply..." style="width:100%;margin-bottom:6px;" onclick="event.stopPropagation()"></textarea>' +
+      '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsAnswer(\'' + esc(i.issue_id) + '\')">Send reply</button>' +
     '</div>';
   }).join("") : '<div class="action-empty">Nothing waiting. Lovely.</div>';
 
   html += '<h3>Students to tell about a fix</h3>';
   html += a.notify.length ? a.notify.map(function (i) {
-    return '<div class="action-card">' + actionCardTop(i) +
+    return '<div class="action-card" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
       '<div class="small" style="margin-bottom:4px;">' + esc(i.student_name || "Student") + (i.student_contact ? ' - ' + esc(i.student_contact) : '') + '</div>' +
       (i.dev_notes || i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Fix: ' + esc(i.dev_notes || i.resolution_note) + '</div>' : '') +
       '<div class="row">' +
-        (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
-        '<button class="primary small" style="padding:5px 12px;" onclick="actionsMarkNotified(\'' + esc(i.issue_id) + '\')">Done - student told</button>' +
+        (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+        '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsMarkNotified(\'' + esc(i.issue_id) + '\')">Done - student told</button>' +
       '</div>' +
     '</div>';
   }).join("") : '<div class="action-empty">No fixes waiting to be passed on.</div>';
 
   html += '<h3>Workarounds to double-check</h3>';
   html += a.followups.length ? a.followups.map(function (i) {
-    return '<div class="action-card">' + actionCardTop(i) +
+    return '<div class="action-card" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
       (i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Workaround: ' + esc(i.resolution_note) + '</div>' : '') +
       '<div class="small" style="margin-bottom:6px;">Did that sort it for good, or is it hiding a fault everyone hits?</div>' +
       '<div class="row">' +
-        '<button class="ghost small" style="padding:5px 12px;" onclick="actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">All good - resolve</button>' +
-        '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Still broken - reopen</button>' +
+        '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">All good - resolve</button>' +
+        '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Still broken - reopen</button>' +
       '</div>' +
     '</div>';
   }).join("") : '<div class="action-empty">No workarounds waiting on a check.</div>';
@@ -1582,12 +1598,13 @@ function renderActions() {
   html += '<h3>Open a while - worth a reassuring update</h3>';
   html += a.longOpen.length ? a.longOpen.map(function (i) {
     var days = Math.floor((Date.now() - new Date(i.submitted_at)) / (24 * 60 * 60 * 1000));
-    return '<div class="action-card" style="border-left-color:var(--line);">' + actionCardTop(i) +
+    return '<div class="action-card" style="border-left-color:var(--line);cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
       '<div class="small" style="margin-bottom:6px;">Open ' + days + ' days. A quick "we\'re still on this" to ' +
         esc(i.student_name || "the student") + ' goes a long way.</div>' +
       '<div class="row">' +
-        (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+        (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+        '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsSentUpdate(\'' + esc(i.issue_id) + '\')">Done - student updated</button>' +
       '</div>' +
     '</div>';
   }).join("") : '<div class="action-empty">Nothing lingering.</div>';
@@ -1608,6 +1625,16 @@ function actionsMarkNotified(id) {
   apiPost({ action: "updateIssue", issue_id: id, notified_students: true }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Marked as told.");
+    loadIssues();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+// "I've told the student we're still on it" - logs the reassurance as an
+// update, which bumps updated_at and drops the card off the long-open list.
+function actionsSentUpdate(id) {
+  apiPost({ action: "addUpdate", issue_id: id, summary: "Reassurance update sent to the student",
+    raw_text: "Instructor let the student know this is still being worked on." }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Noted - it'll pop back up if it goes quiet again.");
     loadIssues();
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
@@ -1809,7 +1836,8 @@ function runExtract() {
     // instructor can still fill them in by hand).
     showDetails();
     if (!res || !res.ok) {
-      $("extractStatus").textContent = "Extraction failed: " + ((res && res.error) || "unknown");
+      $("extractStatus").innerHTML = esc("Extraction failed: " + ((res && res.error) || "unknown")) +
+        ' <button class="ghost small" style="padding:3px 10px;margin-left:6px;" onclick="runExtract()">Retry</button>';
       return;
     }
     var f = res.fields || {};
@@ -2767,9 +2795,12 @@ function renderAdmin() {
     if (ft && i.issue_type !== ft) return false;
     if (fc && i.course !== fc) return false;
     if (fq) {
+      // raw_text included so an issue can be found by anything anyone said in
+      // the pasted conversation or its updates, not just the extracted fields.
       var hay = ((i.lesson_code || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
                  " " + (i.lesson || "") + " " + (i.module || "") + " " + (i.device_info || "") +
-                 " " + (i.resolution_note || "") + " " + (i.student_contact || "")).toLowerCase();
+                 " " + (i.resolution_note || "") + " " + (i.student_contact || "") +
+                 " " + (i.raw_text || "")).toLowerCase();
       if (hay.indexOf(fq) === -1) return false;
     }
     return true;
