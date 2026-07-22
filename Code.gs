@@ -216,6 +216,7 @@ function doPost(e) {
     if (action === 'flagQuery') return jsonOut(flagQuery_(body));
     if (action === 'answerQuery') return jsonOut(answerQuery_(body));
     if (action === 'requestRecheck') return jsonOut(requestRecheck_(body));
+    if (action === 'rateExtraction') return jsonOut(rateExtraction_(body));
     if (action === 'saveChecklist') return jsonOut(saveChecklist_(body));
     if (action === 'assignIssue') return jsonOut(assignIssue_(body));
     if (action === 'uploadImage') return jsonOut(uploadImage_(body));
@@ -320,7 +321,7 @@ function reqPerm_(action) {
     // inside answerQuery_ itself: admin-targeted questions need the users perm,
     // instructor-targeted ones are answered by the instructor who logged it.
     case 'flagQuery': case 'answerQuery': return 'work';
-    case 'requestRecheck': return 'log';
+    case 'requestRecheck': case 'rateExtraction': return 'log';
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':
@@ -737,7 +738,12 @@ function addIssue_(data) {
   var thisKind = data.request_kind === 'improvement' ? 'improvement' : 'fix';
   // A conversation that was already sorted out in the chat is logged for the
   // record. Don't roll it into an open issue, and don't route it to a queue.
-  var matchId = data.resolved ? null : aiMatchIssue_(data, category);
+  // The instructor can also decide this on the form (Round 16): merge_into is
+  // an explicit "same fault, add my student as another report", and no_merge
+  // is an explicit "this is different" that overrides the AI matcher too.
+  var matchId = data.resolved ? null
+    : data.no_merge ? null
+    : (data.merge_into || aiMatchIssue_(data, category));
   if (matchId) {
     // Never roll a fix into an improvement (or vice versa); they are different
     // things even on the same lesson, so keep them as separate entries.
@@ -1646,12 +1652,13 @@ function deployBackend_(data) {
 // daily recheck trigger if one exists (rechecks ping Slack immediately now).
 // Called from setup(), safe to run repeatedly.
 function ensureTriggers_() {
-  var haveMonthly = false, haveTbc = false, haveBackup = false;
+  var haveMonthly = false, haveTbc = false, haveBackup = false, haveDigest = false;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
     if (t.getHandlerFunction() === 'autoResolveTbc') haveTbc = true;
     if (t.getHandlerFunction() === 'weeklyBackup') haveBackup = true;
+    if (t.getHandlerFunction() === 'weeklyDigest') haveDigest = true;
   });
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
@@ -1664,6 +1671,86 @@ function ensureTriggers_() {
   if (!haveBackup) {
     ScriptApp.newTrigger('weeklyBackup').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(7).create();
   }
+  if (!haveDigest) {
+    ScriptApp.newTrigger('weeklyDigest').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).create();
+  }
+}
+
+// Monday-morning state of the tracker, posted to Slack so the team sees where
+// things stand without opening the app. Runs on a weekly trigger (8am, after
+// the 7am backup).
+function weeklyDigest() {
+  var issues = getIssues_().issues || [];
+  var openStates = { open: 1, in_progress: 1, with_dev: 1, dev_fixed: 1 };
+  var day = 24 * 3600 * 1000, now = Date.now();
+  var open = issues.filter(function (i) { return openStates[String(i.status || 'open').toLowerCase()]; });
+  var high = open.filter(function (i) { return String(i.priority || '').toLowerCase() === 'high'; });
+  var newWeek = issues.filter(function (i) { return now - new Date(i.submitted_at) < 7 * day; });
+  var resolvedWeek = issues.filter(function (i) {
+    return String(i.status || '').toLowerCase() === 'resolved' && i.resolved_at && (now - new Date(i.resolved_at) < 7 * day);
+  });
+
+  var oldest = open.slice().sort(function (a, b) { return new Date(a.submitted_at) - new Date(b.submitted_at); }).slice(0, 3);
+
+  // Lessons carrying the most open weight (report counts included, since
+  // repeat reports are how things get prioritised).
+  var byLesson = {};
+  open.forEach(function (i) {
+    var code = String(i.lesson_code || '').trim();
+    if (!code) return;
+    byLesson[code] = (byLesson[code] || 0) + Math.max(1, Number(i.report_count) || 1);
+  });
+  var hot = Object.keys(byLesson).filter(function (c) { return byLesson[c] >= 3; })
+    .sort(function (a, b) { return byLesson[b] - byLesson[a]; }).slice(0, 5);
+
+  var appUrl = getAppUrl_();
+  var lines = [
+    ':newspaper: *Bugs - the week ahead*',
+    '*Open:* ' + open.length + ' (' + high.length + ' high) · *New last 7 days:* ' + newWeek.length + ' · *Resolved last 7 days:* ' + resolvedWeek.length
+  ];
+  if (oldest.length) {
+    lines.push('');
+    lines.push('*Longest waiting:*');
+    oldest.forEach(function (i) {
+      var days = Math.floor((now - new Date(i.submitted_at)) / day);
+      lines.push('• ' + (i.lesson_code ? i.lesson_code + ' - ' : '') + String(i.summary || '').slice(0, 90) + ' (' + days + ' days) ' + issueLink_(i, appUrl));
+    });
+  }
+  if (hot.length) {
+    lines.push('');
+    lines.push('*Lessons with 3+ open reports:* ' + hot.map(function (c) { return c + ' (' + byLesson[c] + ')'; }).join(', '));
+  }
+  lines.push('');
+  lines.push('Open the tracker: ' + (appUrl || '(app url not set)'));
+  try {
+    UrlFetchApp.fetch(slackWebhook_(), {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ text: lines.join('\n') })
+    });
+  } catch (e) {}
+}
+
+// One tap of feedback on each AI extraction ("Spot on" / "Needed fixing"),
+// logged so the extraction prompt can be tuned on real data as usage grows.
+var RATINGS_SHEET = 'Extraction Ratings';
+var RATINGS_HEADERS = ['rated_at', 'instructor', 'verdict', 'lesson_code', 'summary'];
+function rateExtraction_(data) {
+  var verdict = data.verdict === 'good' ? 'good' : 'bad';
+  var ss = ss_();
+  var sheet = ss.getSheetByName(RATINGS_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(RATINGS_SHEET);
+    sheet.getRange(1, 1, 1, RATINGS_HEADERS.length).setValues([RATINGS_HEADERS]);
+    sheet.setFrozenRows(1);
+  }
+  sheet.appendRow([
+    new Date().toISOString(),
+    (data._user && data._user.name) || '',
+    verdict,
+    String(data.lesson_code || '').slice(0, 40),
+    String(data.summary || '').slice(0, 300)
+  ]);
+  return { ok: true };
 }
 
 // Weekly safety net: the Sheet IS the database, and until now nothing backed

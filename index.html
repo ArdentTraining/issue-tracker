@@ -475,6 +475,7 @@
            lines are the persistent reminder of what was chosen. -->
       <div id="suggestNote" class="small muted hidden" style="margin-bottom:8px;"></div>
       <div id="splitNote" class="small muted hidden" style="margin-bottom:8px;"></div>
+      <div id="dupNote" class="small muted hidden" style="margin-bottom:8px;"></div>
       <div id="resolutionPanel" class="suggest hidden"></div>
       <div id="troubleshootPanel" class="tshoot hidden"></div>
 
@@ -919,6 +920,11 @@
 <div class="modal-bg" id="splitModal">
   <div class="modal" style="max-width:540px;">
     <div id="splitPanel" class="suggest" style="margin:0;"></div>
+  </div>
+</div>
+<div class="modal-bg" id="dupModal">
+  <div class="modal" style="max-width:540px;">
+    <div id="dupPanel" class="suggest" style="margin:0;"></div>
   </div>
 </div>
 
@@ -1912,6 +1918,12 @@ function runExtract() {
     if (f.sub_issues && f.sub_issues.length > 1) hideResolutionSuggestion();
     else showResolutionSuggestion(f);
     if (!$("extractStatus").textContent) $("extractStatus").textContent = "Done. Check the fields and edit anything that is off.";
+    // One-tap verdict on the extraction, logged so the prompt can be tuned on
+    // real data rather than gut feel.
+    $("extractStatus").innerHTML = esc($("extractStatus").textContent) +
+      ' <span id="rateBar" style="margin-left:8px;">How did the AI do? ' +
+      '<button type="button" class="ghost small" style="padding:2px 8px;" onclick="rateExtraction(\'good\')">Spot on</button> ' +
+      '<button type="button" class="ghost small" style="padding:2px 8px;" onclick="rateExtraction(\'bad\')">Needed fixing</button></span>';
     // Ask for the student's email if we couldn't find one. Required for tech
     // fixes, encouraged (skippable) for course errors. Improvements are an idea,
     // often not tied to a student, and internal tasks never have one, so we
@@ -1926,6 +1938,12 @@ function runExtract() {
     $("extractStatus").textContent = "Extraction error. See console.";
     console.error(e);
   });
+}
+
+function rateExtraction(verdict) {
+  var bar = $("rateBar");
+  if (bar) bar.textContent = verdict === "good" ? "Thanks - logged." : "Thanks - logged. Fix the fields and submit as normal.";
+  apiPost({ action: "rateExtraction", verdict: verdict, lesson_code: getField("f_lesson_code"), summary: getField("f_summary") }).catch(function () {});
 }
 
 // Look back at issues we've already resolved in this area, and if the new one
@@ -1959,7 +1977,7 @@ function requestSuggestion() {
 // ---- wizard popups: one at a time, queued so nothing gets scrolled past ----
 var wizardQueue = [];
 function wizardShow(modalId) {
-  var anyOpen = ["suggestModal", "splitModal"].some(function (id) {
+  var anyOpen = ["suggestModal", "splitModal", "dupModal"].some(function (id) {
     var el = $(id); return el && el.classList.contains("show");
   });
   if (anyOpen) { if (wizardQueue.indexOf(modalId) < 0) wizardQueue.push(modalId); return; }
@@ -2035,9 +2053,85 @@ function requestTroubleshoot() {
   }).catch(function (e) { hideLoading(); console.error(e); });
 }
 
+// ---- same fault, different student: offer to add as another report --------
+// The backend's AI matcher already merges quietly at submit, but the
+// instructor should SEE it coming and get the choice. Repeat reports are how
+// faults get prioritised (each one bumps the count and nudges priority up),
+// so the default is to add to the existing trail.
+function tokensOf(s) {
+  var stop = { this: 1, that: 1, with: 1, from: 1, when: 1, then: 1, does: 1, not: 1, the: 1, and: 1, for: 1, are: 1, was: 1, has: 1, have: 1, been: 1, student: 1, issue: 1, page: 1 };
+  return String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length > 3 && !stop[w]; });
+}
+function detectDuplicateFault() {
+  if (state.editingId || state.updateTargetId) return null;
+  if (state.splitMode && state.subIssues && state.subIssues.length > 1) return null;
+  var myRef = String(getField("f_lesson_code") || "").trim().toUpperCase();
+  var mySum = tokensOf(getField("f_summary"));
+  if (!mySum.length) return null;
+  var myEmail = String(getField("f_student_contact") || "").trim().toLowerCase();
+  var myCat = state.category;
+  var best = null, bestScore = 0;
+  (state.issues || []).forEach(function (i) {
+    if (!isOpen(i)) return;
+    if (catOf(i) !== myCat) return;
+    if (myEmail && String(i.student_contact || "").trim().toLowerCase() === myEmail) return; // same-student path handles this
+    var score = 0;
+    var iRef = String(i.lesson_code || "").trim().toUpperCase();
+    if (myRef && iRef && myRef === iRef) score += 2;
+    var theirs = tokensOf(i.summary);
+    if (theirs.length) {
+      var shared = mySum.filter(function (w) { return theirs.indexOf(w) > -1; }).length;
+      score += 4 * (shared / Math.min(mySum.length, theirs.length));
+    }
+    if (score > bestScore) { bestScore = score; best = i; }
+  });
+  return bestScore >= 3 ? best : null;
+}
+function showDupSuggestion() {
+  var match = detectDuplicateFault();
+  if (!match) return;
+  state.dupTargetId = match.issue_id;
+  state.dupDismissed = false;
+  $("dupPanel").innerHTML =
+    '<div class="h">Looks like a fault already on the log</div>' +
+    '<div style="margin:4px 0;">' + priBadge(match.priority) + ' ' + statusBadge(match.status) +
+      (match.lesson_code ? ' <span class="code">' + esc(match.lesson_code) + '</span>' : '') +
+      (reportCount(match) > 1 ? ' <span class="badge type-badge">×' + reportCount(match) + ' reports</span>' : '') + '</div>' +
+    '<div class="small" style="margin-bottom:8px;">' + esc(match.summary || "") + '</div>' +
+    '<div class="small" style="margin-bottom:8px;">Adding this student as another report keeps one trail and pushes the fault up the priority list - exactly what repeat reports are for.</div>' +
+    '<div class="row" style="margin-top:10px;">' +
+      '<button class="primary" onclick="dupChoice(true)">Add as another report</button>' +
+      '<button class="ghost" onclick="dupChoice(false)">It\'s different - log separately</button></div>';
+  wizardShow("dupModal");
+}
+function dupChoice(merge) {
+  $("dupModal").classList.remove("show");
+  var n = $("dupNote");
+  if (merge) {
+    state.dupDismissed = false;
+    if (n) {
+      n.innerHTML = 'Will be added to the existing issue as another report - <a href="#" onclick="wizardShow(\'dupModal\');return false;" style="color:var(--accent);">change</a>';
+      n.classList.remove("hidden");
+    }
+  } else {
+    state.dupTargetId = null;
+    state.dupDismissed = true;
+    if (n) { n.classList.add("hidden"); n.innerHTML = ""; }
+  }
+  wizardClosed();
+}
+function hideDupSuggestion() {
+  state.dupTargetId = null;
+  state.dupDismissed = false;
+  $("dupModal").classList.remove("show");
+  $("dupPanel").innerHTML = "";
+  var n = $("dupNote"); if (n) { n.classList.add("hidden"); n.innerHTML = ""; }
+}
+
 // ---- post-extract flow: email, existing-issue detection ----
 function afterExtractReady() {
   detectExistingIssue();
+  showDupSuggestion();
   // The known-fix suggestion and the troubleshooting steps are bug-only. An
   // improvement is a feature request, so there's nothing to fix or try. And if
   // the conversation was already sorted out in the chat, there's nothing left to
@@ -2564,6 +2658,10 @@ function submitIssue() {
     });
   } else {
     data.action = "addIssue"; data.app_url = APP_URL;
+    // The duplicate-fault choice from the wizard: merge into the existing
+    // trail, or explicitly keep separate (which also overrides the AI matcher).
+    if (state.dupTargetId) data.merge_into = state.dupTargetId;
+    else if (state.dupDismissed) data.no_merge = true;
     if (applyRes) {
       // The pasted conversation was already sorted out in the chat, so log it as
       // Resolved (or Resolved - TBC) with the answer saved, not as open work.
@@ -2638,6 +2736,7 @@ function resetForm() {
   state.lastExtract = null;
   hideSuggestion();
   hideSplitSuggestion();
+  hideDupSuggestion();
   hideResolutionSuggestion();
   hideTroubleshoot();
   hideExisting();
