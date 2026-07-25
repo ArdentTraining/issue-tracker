@@ -52,8 +52,12 @@ var FEEDBACK_HEADERS = ['id', 'created_at', 'user_email', 'user_name', 'message'
 // truncated mid-object and the parse failed. If a stronger extraction model is
 // used later, give it a much larger max_tokens to leave room for the JSON after
 // the thinking, and confirm it still returns a single clean JSON object.
-var ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
-var EXTRACTION_MODEL = 'claude-haiku-4-5-20251001';
+// Upgraded from Haiku 4.5 (25 Jul 2026) after a couple of poor fix
+// suggestions: Sonnet is markedly better at the judgement calls (does this
+// really match a past fix? is this one issue or three?) for a few extra
+// seconds per call. Volume is small, so the cost difference is pennies.
+var ANTHROPIC_MODEL = 'claude-sonnet-5';
+var EXTRACTION_MODEL = 'claude-sonnet-5';
 
 // A "Resolved - TBC" issue auto-resolves after this many days of silence (no
 // further reports or objections). The timer is the issue's updated_at, so any
@@ -2026,10 +2030,16 @@ function suggestFix_(data) {
   var prompt = 'An instructor has just logged an issue with an online sailing course platform (Ardent Training). ' +
     'Below are PAST issues that were already resolved, each with the fix that was applied. ' +
     'If the new issue clearly matches one of these known, already-solved problems, write a short recommended fix for the instructor: ' +
-    '1 to 3 plain, practical sentences they can act on or pass to the student (for example, telling the student to reinstall the app). ' +
-    'Base it on how the matching past issue was actually resolved. If nothing matches closely enough to be genuinely useful, return found false rather than guessing.\n\n' +
+    '1 to 3 plain, practical sentences they can act on or pass to the student. ' +
+    'Base it on how the matching past issue was actually resolved.\n\n' +
+    'Hold a HIGH bar for "found". A genuine match means the SAME failure mode in the same part of the platform - ' +
+    'the same thing failing in the same way, not merely the same lesson, the same device, or a similar-sounding symptom. ' +
+    'Never pad a weak match into advice, and never suggest generic steps (restart, reinstall, clear cache, log out and in) ' +
+    'unless the matching past issue was genuinely resolved by exactly that step - the logging form already walks instructors ' +
+    'through the generic checklist, so repeating it here is noise. A wrong suggestion wastes the student\'s time and the ' +
+    'instructor\'s trust; when in doubt, return found false. Most new issues do NOT have a matching past fix.\n\n' +
     'NEW issue:\n' + JSON.stringify(newIssue) + '\n\n' +
-    'PAST resolved issues (summary + how it was fixed):\n' + JSON.stringify(candidates) + '\n\n' +
+    'PAST resolved issues (summary + how it was fixed, most relevant first):\n' + JSON.stringify(candidates) + '\n\n' +
     'Return ONLY JSON: {"found": true or false, "fix": "<the recommendation, or empty string>", "based_on": "<short reference to the matching past issue, or empty string>"}. No prose, no markdown fences.';
 
   var res;
@@ -2037,7 +2047,7 @@ function suggestFix_(data) {
     res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 300, messages: [{ role: 'user', content: prompt }] })
+      payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 500, messages: [{ role: 'user', content: prompt }] })
     });
   } catch (e) { return { ok: true, found: false }; }
   if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return { ok: true, found: false };

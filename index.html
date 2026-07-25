@@ -1991,12 +1991,24 @@ function rateExtraction(verdict) {
 // Look back at issues we've already resolved in this area, and if the new one
 // matches a known fix, surface it to the instructor.
 function gatherResolvedCandidates(cat) {
+  // Most RELEVANT first, not just most recent: a fix on the same lesson or the
+  // same part of the platform is far more likely to be the same fault than
+  // whatever happened to be resolved last week.
+  var myCode = String(getField("f_lesson_code") || "").trim().toUpperCase();
+  var mySection = String(getField("f_section") || "").trim().toLowerCase();
   return state.issues.filter(function (i) {
     return (i.status || "").toLowerCase() === "resolved" && i.resolution_note && catOf(i) === cat;
+  }).map(function (i) {
+    var rel = 0;
+    if (myCode && String(i.lesson_code || "").trim().toUpperCase() === myCode) rel += 2;
+    if (mySection && String(i.section || "").trim().toLowerCase() === mySection) rel += 1;
+    return { i: i, rel: rel };
   }).sort(function (a, b) {
-    return new Date(b.resolved_at || b.updated_at || 0) - new Date(a.resolved_at || a.updated_at || 0);
-  }).slice(0, 20).map(function (i) {
-    return { summary: i.summary || "", resolution_note: i.resolution_note || "", lesson_code: i.lesson_code || "", issue_type: i.issue_type || "" };
+    if (a.rel !== b.rel) return b.rel - a.rel;
+    return new Date(b.i.resolved_at || b.i.updated_at || 0) - new Date(a.i.resolved_at || a.i.updated_at || 0);
+  }).slice(0, 30).map(function (x) {
+    var i = x.i;
+    return { summary: i.summary || "", resolution_note: i.resolution_note || "", lesson_code: i.lesson_code || "", section: i.section || "", issue_type: i.issue_type || "" };
   });
 }
 
