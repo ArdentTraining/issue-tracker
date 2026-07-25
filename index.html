@@ -928,6 +928,17 @@
   </div>
 </div>
 
+<!-- OUTCOME LOOKS LIKE AN IMPROVEMENT POPUP -->
+<div class="modal-bg" id="improveModal">
+  <div class="modal" style="max-width:520px;">
+    <h3>Log that as an improvement too?</h3>
+    <p class="small muted">The outcome note reads like an idea worth keeping:</p>
+    <div class="small" id="improveText" style="background:var(--bg);border-radius:8px;padding:10px;margin-bottom:10px;white-space:pre-wrap;"></div>
+    <p class="small muted">It would go on the improvements backlog for review. Improvements never auto-route or page anyone.</p>
+    <div class="btns"><button class="primary" onclick="logPendingImprovement()">Log improvement</button><button class="ghost" onclick="dismissImprovement()">No thanks</button></div>
+  </div>
+</div>
+
 <!-- RESOLVED-TBC DOUBLE-CHECK POPUP -->
 <div class="modal-bg" id="recheckModal">
   <div class="modal" style="max-width:520px;">
@@ -947,7 +958,7 @@
     <h3>Which slide or question?</h3>
     <p class="small muted" id="slideModalLead"></p>
     <div class="field"><input id="slideModalInput" placeholder="e.g. 13, or 09.2" onkeydown="if(event.key==='Enter')saveSlideRef()"></div>
-    <div class="btns"><button class="primary" onclick="saveSlideRef()">Save</button><button class="ghost" onclick="skipSlideRef()">Don't know - skip</button></div>
+    <div class="btns"><button class="primary" onclick="saveSlideRef()">Save</button><button class="ghost" onclick="skipSlideRef()">Not tied to one slide - whole lesson</button><button class="ghost" onclick="skipSlideRef()">Don't know - skip</button></div>
     <div id="slideModalMsg" class="small muted" style="margin-top:6px;"></div>
   </div>
 </div>
@@ -1562,9 +1573,12 @@ function myActionItems() {
     if ((st === "dev_fixed" || st === "resolved") && !isTrue(i.notified_students) && !chatResolved &&
         (i.student_contact || i.student_name)) out.notify.push(i);
     if (st === "resolved_tbc" && (now - new Date(i.updated_at || i.submitted_at)) > ACTIONS_TBC_FOLLOWUP_DAYS * day) out.followups.push(i);
-    // Long-open: been around a while AND quiet lately, so a "we're still on
-    // it" note (or the update button below) clears it off the list.
-    if ((st === "open" || st === "in_progress" || st === "with_dev") &&
+    // Long-open: HIGH priority only (Edd, 24 Jul) - if the student can carry
+    // on unbothered (a wording tweak, a cosmetic niggle), no update is needed
+    // until it's fixed. Blocked students are the ones who deserve a "still on
+    // it" note. Also wants age AND quiet, so sending the update clears it.
+    if (String(i.priority || "").toLowerCase() === "high" &&
+        (st === "open" || st === "in_progress" || st === "with_dev") &&
         (now - new Date(i.submitted_at)) > ACTIONS_LONG_OPEN_DAYS * day &&
         (now - new Date(i.updated_at || i.submitted_at)) > 7 * day &&
         (i.student_contact || i.student_name)) out.longOpen.push(i);
@@ -1586,6 +1600,31 @@ function actionCardTop(i) {
 }
 // Whole action cards open the full issue; inner controls stop the bubble.
 function actionOpen(id) { openIssueById(id, false); }
+
+// Pre-written student emails for the update moments (Edd, 24 Jul): one click
+// copies a draft the instructor can paste and tweak, rather than composing
+// from scratch every time.
+function draftEmailFor(id, kind) {
+  var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
+  if (!i) { toast("Issue not found."); return; }
+  var name = (i.student_name || "").split(" ")[0] || "there";
+  var lesson = dispLesson(i) || i.lesson_code || "the course";
+  var me = state.selectedInstructor || "The Ardent team";
+  var fix = i.dev_notes || i.resolution_note || "";
+  var text;
+  if (kind === "fixed") {
+    text = "Hi " + name + ",\n\nGood news - the problem you reported on " + lesson + " has been fixed" +
+      (fix ? ": " + fix : ".") + "\n\nGive it another go when you get a minute, and shout if anything still looks off. " +
+      "Thanks for flagging it - reports like yours make the course better for everyone.\n\n" + me;
+  } else if (kind === "followup") {
+    text = "Hi " + name + ",\n\nJust checking in on the issue you reported on " + lesson + ". Did the workaround we suggested do the trick? " +
+      "If everything is working, brilliant - if not, tell us what you're seeing and we'll dig deeper.\n\n" + me;
+  } else {
+    text = "Hi " + name + ",\n\nA quick note about the issue you reported on " + lesson + ": we're still on it. " +
+      "It's not forgotten, and we'll let you know the moment it's sorted. Thanks for bearing with us.\n\n" + me;
+  }
+  copyText(text);
+}
 function renderActions() {
   var a = myActionItems();
   var html = "";
@@ -1609,6 +1648,7 @@ function renderActions() {
       (i.dev_notes || i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Fix: ' + esc(i.dev_notes || i.resolution_note) + '</div>' : '') +
       '<div class="row">' +
         (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+        '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();draftEmailFor(\'' + esc(i.issue_id) + '\', \'fixed\')">Copy draft email</button>' +
         '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsMarkNotified(\'' + esc(i.issue_id) + '\')">Done - student told</button>' +
       '</div>' +
     '</div>';
@@ -1618,9 +1658,10 @@ function renderActions() {
   html += a.followups.length ? a.followups.map(function (i) {
     return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
-      (i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Workaround: ' + esc(i.resolution_note) + '</div>' : '') +
-      '<div class="small" style="margin-bottom:6px;">Did that sort it for good, or is it hiding a fault everyone hits?</div>' +
+      (i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Workaround given: ' + esc(i.resolution_note) + '</div>' : '') +
+      '<div class="small" style="margin-bottom:6px;"><strong>Action:</strong> ask ' + esc((i.student_name || "the student").split(" ")[0]) + ' whether the workaround stuck, then resolve or reopen.</div>' +
       '<div class="row">' +
+        '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();draftEmailFor(\'' + esc(i.issue_id) + '\', \'followup\')">Copy draft email</button>' +
         '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">All good - resolve</button>' +
         '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Still broken - reopen</button>' +
       '</div>' +
@@ -1632,10 +1673,11 @@ function renderActions() {
     var days = Math.floor((Date.now() - new Date(i.submitted_at)) / (24 * 60 * 60 * 1000));
     return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="border-left-color:var(--line);cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
       '<h4>' + esc(cardTitle(i)) + '</h4>' +
-      '<div class="small" style="margin-bottom:6px;">Open ' + days + ' days. A quick "we\'re still on this" to ' +
-        esc(i.student_name || "the student") + ' goes a long way.</div>' +
+      '<div class="small" style="margin-bottom:6px;">High priority and open ' + days + ' days - ' +
+        esc((i.student_name || "the student").split(" ")[0]) + ' is likely still stuck, so a quick "we\'re still on this" goes a long way.</div>' +
       '<div class="row">' +
         (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+        '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();draftEmailFor(\'' + esc(i.issue_id) + '\', \'longopen\')">Copy draft email</button>' +
         '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsSentUpdate(\'' + esc(i.issue_id) + '\')">Done - student updated</button>' +
       '</div>' +
     '</div>';
@@ -2355,9 +2397,22 @@ function showExisting(matches) {
           (fmtDate(m.updated_at) && fmtDate(m.updated_at) !== fmtDate(m.submitted_at) ? ', last update ' + fmtDate(m.updated_at) : '') + '</div>' +
       '</div>';
     }).join("") +
-    '<button class="ghost small" id="newModeBtn" onclick="chooseExisting(null)">Log as a new issue instead</button>';
+    '<div class="row" style="margin-top:8px;">' +
+      '<button class="primary small" id="confirmSameBtn" onclick="confirmSameIssue()">Confirm same issue - add as update</button>' +
+      '<button class="ghost small" id="newModeBtn" onclick="chooseExisting(null)">Log as a new issue instead</button>' +
+    '</div>';
   $("existingPanel").innerHTML = html;
   $("existingPanel").classList.remove("hidden");
+}
+// Explicit confirm (Edd, 24 Jul): locks the selected match in as the update
+// target and points at the submit button; the things-to-try suggestions run on
+// submit as usual.
+function confirmSameIssue() {
+  if (!state.updateTargetId && state.existingMatches && state.existingMatches.length) {
+    state.updateTargetId = state.existingMatches[0].issue_id;
+  }
+  highlightChosen();
+  toast("Same issue confirmed - press Add update when the fields look right.");
 }
 function chooseExisting(id) {
   state.updateTargetId = id || null;
@@ -2477,6 +2532,22 @@ function useOutcomeSuggestion() {
   }
   el.value = s;
 }
+// The outcome box suggested an improvement: one click puts it on the backlog.
+function logPendingImprovement() {
+  var p = state._pendingImprovement;
+  $("improveModal").classList.remove("show");
+  state._pendingImprovement = null;
+  if (!p) return;
+  apiPost(Object.assign({ action: "addIssue", app_url: APP_URL }, p)).then(function (res) {
+    toast(res && res.ok ? "Improvement logged for review." : "Couldn't log it: " + ((res && res.error) || "unknown"));
+    loadIssues();
+  }).catch(function () { toast("Error logging the improvement."); });
+}
+function dismissImprovement() {
+  state._pendingImprovement = null;
+  $("improveModal").classList.remove("show");
+}
+
 // The Resolved-TBC double-check popup (after submitting a workaround).
 function recheckChoice(kind) {
   var id = state._recheckIssueId;
@@ -2573,6 +2644,7 @@ function submitIssue() {
   var checklistJson = (!isInternal && state.category === "tech_issue" && state.requestKind !== "improvement")
     ? JSON.stringify(state.checklist || {}) : null;
   var updateTarget = state.updateTargetId;
+  var outcomeText = String(getField("f_outcome") || "").trim();
   // The issue row saves FIRST, then screenshots upload in the background and
   // attach themselves. A slow or failed upload used to hang the whole submit
   // for a minute or more and could lose the report; now it can't.
@@ -2706,6 +2778,23 @@ function submitIssue() {
     // instructor can't check now, requestRecheck books a Slack reminder.
     var tbcLanded = (wasTbc || wasResolvedUpdate === "tbc") && targetIds.length === 1;
     if (tbcLanded) { state._recheckIssueId = targetIds[0]; $("recheckModal").classList.add("show"); }
+    // An outcome note that reads like an improvement idea ("maybe make the
+    // circles work too") deserves a place on the backlog, not to vanish into
+    // one issue's record (Edd, 24 Jul).
+    var improveRx = /(in future|would be (nice|good|great)|should (also )?(work|let|allow|do)|maybe make|could (add|make|let)|suggest|improve|ideally)/i;
+    if (!state.editingId && outcomeText && improveRx.test(outcomeText)) {
+      state._pendingImprovement = {
+        instructor_name: state.selectedInstructor,
+        category: state.formMode === "internal" ? "internal" : state.category,
+        course: data.course || "", module: data.module || "", lesson: data.lesson || "",
+        lesson_code: data.lesson_code || "", section: data.section || "",
+        raw_text: "Improvement idea spotted in an issue outcome:\n\n" + outcomeText,
+        summary: outcomeText.replace(/\s+/g, " ").slice(0, 140),
+        request_kind: "improvement", priority: "low", impact: "low", no_merge: true
+      };
+      $("improveText").textContent = outcomeText;
+      $("improveModal").classList.add("show");
+    }
     resetForm();
     loadIssues();
   }).catch(function (e) {
@@ -4234,7 +4323,7 @@ function doLogout() {
 
 // ============================ USERS (manage people) ============================
 var PERM_LABELS = [
-  { k: "log", label: "Log" },
+  { k: "log", label: "Log + Actions" },
   { k: "manage", label: "Track" },
   { k: "analytics", label: "Analytics" },
   { k: "dev", label: "Developers" },
@@ -4448,13 +4537,18 @@ function captureFeedbackContext() {
 // A one-line human version for showing in the modal and the admin list.
 function describeContext(ctx) {
   if (!ctx || !ctx.view) return "";
-  var names = { instructor: "Log an issue", admin: "Track", analytics: "Analytics", dev: "Developers", course: "Course fixes", users: "Admin" };
+  var names = { instructor: "Log an issue", actions: "Actions", admin: "Track", analytics: "Analytics", dev: "Developers", course: "Course fixes", users: "Admin" };
   var bits = [names[ctx.view] || ctx.view];
   if (ctx.view === "admin" && ctx.track_view === "board") bits.push("board view");
   if (ctx.area && ctx.area !== "all") bits.push(CATEGORY_LABEL[ctx.area] || ctx.area);
   if (ctx.form_mode === "internal") bits.push("internal form");
   if (ctx.editing_issue_id) bits.push("editing an issue");
-  if (ctx.open_issue_id) bits.push("issue detail open");
+  if (ctx.open_issue_id) {
+    // Name the issue, so "which one was open" is answered at a glance (the id
+    // travels in the context either way).
+    var oi = (state.issues || []).filter(function (i) { return i.issue_id === ctx.open_issue_id; })[0];
+    bits.push(oi ? 'issue open: ' + (oi.student_name || cardTitle(oi)).slice(0, 40) + (oi.lesson_code ? ' (' + oi.lesson_code + ')' : '') : "issue detail open");
+  }
   if (ctx.filters) bits.push("filters on");
   return bits.join(" · ");
 }
@@ -4477,25 +4571,32 @@ function openFeedback() {
 function closeFeedback() { $("feedbackModal").classList.remove("show"); }
 
 function captureFbShot() {
+  // Viewport only (not the whole 900-issue page - that render was so slow the
+  // shot never finished before Send), and a promise so Send can wait for it.
+  var done = function () { if (state._fbShotResolve) { state._fbShotResolve(); state._fbShotResolve = null; } };
+  state.fbShotPromise = new Promise(function (resolve) { state._fbShotResolve = resolve; });
   var go = function () {
-    if (!window.html2canvas) return;
+    if (!window.html2canvas) { done(); return; }
     try {
       window.html2canvas(document.body, {
         logging: false, useCORS: true,
-        scale: Math.min(1, 1200 / Math.max(1, document.body.clientWidth)),
+        x: window.scrollX, y: window.scrollY,
+        width: window.innerWidth, height: window.innerHeight,
+        scale: Math.min(1, 1400 / Math.max(1, window.innerWidth)),
         ignoreElements: function (el) { return el.id === "feedbackModal"; }
       }).then(function (canvas) {
         state.fbShot = canvas.toDataURL("image/jpeg", 0.7);
-      }).catch(function () {});
-    } catch (e) {}
+        done();
+      }).catch(done);
+    } catch (e) { done(); }
   };
   if (window.html2canvas) { go(); return; }
-  if (state._h2cLoading) return;
+  if (state._h2cLoading) { return; }
   state._h2cLoading = true;
   var s = document.createElement("script");
   s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
   s.onload = go;
-  s.onerror = function () {};
+  s.onerror = done;
   document.head.appendChild(s);
 }
 
@@ -4531,6 +4632,12 @@ function submitFeedback() {
   if (sendBtn.disabled) return;
   sendBtn.disabled = true;
   $("fbMsg").textContent = "Sending…";
+  // Give a still-rendering page capture a moment to finish, so quick one-line
+  // feedbacks don't outrun their own screenshot.
+  var waitShot = state.fbShotPromise
+    ? Promise.race([state.fbShotPromise, new Promise(function (r) { setTimeout(r, 4000); })])
+    : Promise.resolve();
+  waitShot.then(function () {
   var pending = state.fbImages.filter(function (im) { return !im.uploaded; });
   // The quiet page capture rides along as an extra image (no thumbnail shown).
   var autoShot = state.fbShot ? { name: "auto-page-capture.jpg", dataUrl: state.fbShot, mimeType: "image/jpeg", uploaded: false } : null;
@@ -4555,17 +4662,49 @@ function submitFeedback() {
     if (lost) toast("Feedback sent, but " + lost + " screenshot" + (lost > 1 ? "s" : "") + " failed to upload." + (uploadError ? " (" + uploadError + ")" : ""));
     else toast("Thanks, your feedback was sent.");
   }).catch(function (e) { sendBtn.disabled = false; $("fbMsg").textContent = "Send error. See console."; console.error(e); });
+  }); // end waitShot
 }
 
 function renderFeedback() {
   apiGet("getFeedback").then(function (res) {
     if (!res || !res.ok) { $("feedbackList").innerHTML = ""; return; }
-    var list = res.feedback || [];
-    $("feedbackList").innerHTML = list.length ? list.map(feedbackRowHtml).join("") : '<p class="muted small">No feedback yet.</p>';
+    state._fbAll = res.feedback || [];
+    renderFeedbackRows();
     // Show how much is waiting right on the sub-tab button.
-    var open = list.filter(function (f) { return String(f.status || "new").toLowerCase() !== "done"; }).length;
+    var open = state._fbAll.filter(function (f) { return String(f.status || "new").toLowerCase() !== "done"; }).length;
     if ($("us_feedback")) $("us_feedback").textContent = open ? "Feedback (" + open + ")" : "Feedback";
   }).catch(function (e) { console.error(e); });
+}
+// Filter + sort over the cached list, so flicking between views is instant.
+function setFbListView(key, value) {
+  if (key === "filter") state.fbListFilter = value;
+  if (key === "sort") state.fbListSort = value;
+  renderFeedbackRows();
+}
+function renderFeedbackRows() {
+  var flt = state.fbListFilter || "all", srt = state.fbListSort || "newest";
+  var list = (state._fbAll || []).slice();
+  if (flt !== "all") list = list.filter(function (f) { return String(f.status || "new").toLowerCase() === flt; });
+  if (srt === "oldest") {
+    list.sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
+  } else if (srt === "status") {
+    var rank = { "new": 0, needs_testing: 1, done: 2 };
+    list.sort(function (a, b) {
+      var ra = rank[String(a.status || "new").toLowerCase()] || 0, rb = rank[String(b.status || "new").toLowerCase()] || 0;
+      if (ra !== rb) return ra - rb;
+      return String(b.created_at).localeCompare(String(a.created_at));
+    });
+  } else {
+    list.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+  }
+  var opt = function (v, label, cur) { return '<option value="' + v + '"' + (cur === v ? " selected" : "") + '>' + label + '</option>'; };
+  var bar = '<div class="row" style="margin-bottom:10px;gap:8px;">' +
+    '<select style="width:auto;" onchange="setFbListView(\'filter\', this.value)">' +
+      opt("all", "All statuses", flt) + opt("new", "Reported", flt) + opt("needs_testing", "Needs testing", flt) + opt("done", "Done", flt) + '</select>' +
+    '<select style="width:auto;" onchange="setFbListView(\'sort\', this.value)">' +
+      opt("newest", "Newest first", srt) + opt("oldest", "Oldest first", srt) + opt("status", "By status", srt) + '</select>' +
+    '<span class="small muted" style="align-self:center;">' + list.length + ' shown</span></div>';
+  $("feedbackList").innerHTML = bar + (list.length ? list.map(feedbackRowHtml).join("") : '<p class="muted small">Nothing matches.</p>');
 }
 function feedbackRowHtml(f) {
   var imgs = parseImageUrls(f.image_urls);
