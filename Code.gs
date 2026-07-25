@@ -2426,6 +2426,10 @@ function suggestFix_(data) {
     'If the new issue clearly matches one of these known, already-solved problems, write a short recommended fix for the instructor: ' +
     '1 to 3 plain, practical sentences they can act on or pass to the student. ' +
     'Base it on how the matching past issue was actually resolved.\n\n' +
+    'Before answering, name to yourself the exact thing that FAILED in the new issue, and the exact thing that failed in the ' +
+    'past issue you are considering. If those two things are not the same, the answer is found false, however similar the ' +
+    'surrounding circumstances (same device type, same student, same lesson, both involving logging in). Two different faults ' +
+    'on a tablet are still two different faults.\n\n' +
     'Hold a HIGH bar for "found". A genuine match means the SAME failure mode in the same part of the platform - ' +
     'the same thing failing in the same way, not merely the same lesson, the same device, or a similar-sounding symptom. ' +
     'Never pad a weak match into advice, and never suggest generic steps (restart, reinstall, clear cache, log out and in) ' +
