@@ -804,6 +804,7 @@
     <div class="seg" id="usersSeg" style="flex-wrap:wrap;">
       <button type="button" id="us_people" onclick="setUsersSection('people')">People</button>
       <button type="button" id="us_feedback" onclick="setUsersSection('feedback')">Feedback</button>
+      <button type="button" id="us_chatscan" onclick="setUsersSection('chatscan')">Spotted in chat</button>
       <button type="button" id="us_playbook" onclick="setUsersSection('playbook')">Playbook</button>
     </div>
   </div>
@@ -847,6 +848,18 @@
   <div id="usec_feedback" class="hidden">
   <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">Feedback on the tracker</h3>
   <div id="feedbackList"></div>
+  </div>
+
+  <div id="usec_chatscan" class="hidden">
+    <div class="card">
+      <h2>Spotted in chat</h2>
+      <p class="small muted" style="margin-top:-6px;">Problems students mentioned in live chat that nobody logged. Found overnight, then re-checked by a second AI before anything appears here, so this list should be short and mostly right. Logging one pulls the conversation into the normal form.</p>
+      <div class="row" style="margin-bottom:10px;">
+        <button class="ghost small" id="scanNowBtn" style="padding:5px 12px;" onclick="runChatScanNow()">Scan now</button>
+        <button class="ghost small" style="padding:5px 12px;" onclick="renderChatScan()">Refresh</button>
+      </div>
+      <div id="chatScanList"></div>
+    </div>
   </div>
 
   <div id="usec_playbook" class="hidden">
@@ -4465,7 +4478,7 @@ function renderUsers() {
 // nobody has to scroll through the whole user list to reach the feedback. The
 // last-used section is remembered.
 function setUsersSection(s) {
-  var sections = ["people", "feedback", "playbook"];
+  var sections = ["people", "feedback", "chatscan", "playbook"];
   if (s === "invite") s = "people"; // invite now lives at the top of People
   if (sections.indexOf(s) < 0) s = "feedback";
   state.usersSection = s;
@@ -4473,6 +4486,67 @@ function setUsersSection(s) {
   sections.forEach(function (k) {
     var body = $("usec_" + k); if (body) body.classList.toggle("hidden", k !== s);
     var btn = $("us_" + k); if (btn) btn.className = k === s ? "active" : "";
+  });
+  if (s === "chatscan") renderChatScan();
+}
+
+// ---- "Spotted in chat": the nightly scan's suggestions, awaiting a verdict --
+function renderChatScan() {
+  var box = $("chatScanList");
+  if (!box) return;
+  box.innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
+  apiGet("chatScanList").then(function (res) {
+    if (!res || !res.ok) { box.innerHTML = '<p class="muted small">Could not load: ' + esc((res && res.error) || "unknown") + '</p>'; return; }
+    var rows = res.scans || [];
+    if ($("us_chatscan")) $("us_chatscan").textContent = rows.length ? "Spotted in chat (" + rows.length + ")" : "Spotted in chat";
+    box.innerHTML = rows.length ? rows.map(function (r) {
+      var link = "https://app.chatwoot.com/app/accounts/100142/conversations/" + esc(String(r.conversation_id));
+      return '<div class="issue-card" style="cursor:default;">' +
+        '<div class="top">' +
+          '<span class="badge type-badge">' + esc(String(r.confidence || "")) + ' confidence</span>' +
+          catBadge(r.category) +
+          (r.lesson_code ? '<span class="code">' + esc(r.lesson_code) + '</span>' : '') +
+          (r.student_name ? '<span class="small muted">' + esc(r.student_name) + '</span>' : '') +
+          '<span class="who">' + fmtDate(r.scanned_at) + '</span>' +
+        '</div>' +
+        '<div class="sum">' + esc(r.summary || "") + '</div>' +
+        (r.verifier_note ? '<div class="small muted" style="margin-top:4px;">Second opinion: ' + esc(r.verifier_note) + '</div>' : '') +
+        '<div class="row" style="margin-top:8px;">' +
+          '<button class="primary small" style="padding:5px 12px;" onclick="chatScanLogIt(\'' + esc(String(r.conversation_id)) + '\')">Log it</button>' +
+          '<button class="ghost small" style="padding:5px 12px;" onclick="chatScanDismiss(\'' + esc(String(r.conversation_id)) + '\')">Not an issue</button>' +
+          '<a class="ghost small" href="' + link + '" target="_blank" style="padding:5px 12px;text-decoration:none;display:inline-block;border:1px solid var(--line);border-radius:8px;color:var(--muted);">Open the chat</a>' +
+        '</div>' +
+      '</div>';
+    }).join("") : '<p class="muted small">Nothing waiting. The scan runs overnight and only queues what two different models both call a real problem.</p>';
+  }).catch(function (e) { box.innerHTML = '<p class="muted small">Load error.</p>'; console.error(e); });
+}
+// Send it to the log form, pre-filled from the conversation, and mark the
+// suggestion as acted on. The normal extraction and duplicate checks then run.
+function chatScanLogIt(convId) {
+  apiPost({ action: "chatScanReview", conversation_id: convId, status: "logged" }).catch(function () {});
+  setView("instructor");
+  if ($("cwInput")) $("cwInput").value = convId;
+  chatwootImport(convId);
+  toast("Pulled into the form - press Extract, then Submit as normal.");
+}
+function chatScanDismiss(convId) {
+  apiPost({ action: "chatScanReview", conversation_id: convId, status: "dismissed" }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Dismissed - it won't come back.");
+    renderChatScan();
+  }).catch(function () { toast("Error."); });
+}
+function runChatScanNow() {
+  var btn = $("scanNowBtn");
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> scanning…'; }
+  apiPost({ action: "runChatScan", since_hours: 24 }).then(function (res) {
+    if (btn) { btn.disabled = false; btn.textContent = "Scan now"; }
+    if (!res || !res.ok) { toast("Scan failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Scan finished - " + res.queued + " waiting.");
+    renderChatScan();
+  }).catch(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Scan now"; }
+    toast("Scan error. See console."); console.error(e);
   });
 }
 

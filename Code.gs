@@ -224,6 +224,9 @@ function doPost(e) {
     if (action === 'rateExtraction') return jsonOut(rateExtraction_(body));
     if (action === 'chatwootImport') return jsonOut(chatwootImport_(body));
     if (action === 'chatwootList') return jsonOut(chatwootList_(body));
+    if (action === 'chatScanList') return jsonOut(chatScanList_());
+    if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
+    if (action === 'runChatScan') return jsonOut(runChatScan_(body));
     if (action === 'saveChecklist') return jsonOut(saveChecklist_(body));
     if (action === 'assignIssue') return jsonOut(assignIssue_(body));
     if (action === 'uploadImage') return jsonOut(uploadImage_(body));
@@ -330,6 +333,8 @@ function reqPerm_(action) {
     case 'flagQuery': case 'answerQuery': return 'work';
     case 'requestRecheck': case 'rateExtraction': return 'log';
     case 'chatwootImport': case 'chatwootList': return 'log';
+    // The scan queue is admin-only while we learn how precise it is.
+    case 'chatScanList': case 'chatScanReview': case 'runChatScan': return 'users';
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':
@@ -1724,6 +1729,225 @@ function chatwootNote_(convId, issue, appUrl) {
   } catch (e) {}
 }
 
+// ---- nightly chat scan ----------------------------------------------------
+// Finds problems students mentioned in live chat that nobody logged. Runs at
+// 5am so the morning list is fresh. Two models on purpose (Edd, 25 Jul): a
+// finder reads everything, then a DIFFERENT model re-checks each candidate
+// before a human ever sees it. Different models fail differently, so the
+// second opinion kills most false positives, and it only runs on the few
+// things the first one flagged.
+var SCAN_SHEET = 'Chat Scan';
+var SCAN_HEADERS = ['conversation_id', 'scanned_at', 'confidence', 'summary', 'category', 'lesson_code',
+                    'student_name', 'student_contact', 'status', 'issue_id', 'reviewed_by', 'reviewed_at', 'verifier_note'];
+var FINDER_MODEL = 'claude-sonnet-5';
+var VERIFIER_MODEL = 'claude-opus-5';
+var SCAN_MAX_CONVERSATIONS = 60;   // per run, keeps us inside the 6-minute trigger limit
+var SCAN_BATCH = 8;                // conversations per finder call
+var SCAN_MAX_SUGGESTIONS = 10;     // a bigger night than this means the prompt is wrong
+var SCAN_BUDGET_MS = 4 * 60 * 1000;
+
+function scanSheet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName(SCAN_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(SCAN_SHEET);
+    sh.getRange(1, 1, 1, SCAN_HEADERS.length).setValues([SCAN_HEADERS]);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, SCAN_HEADERS.length).setFontWeight('bold');
+  }
+  return sh;
+}
+function scanRows_() {
+  var sh = scanSheet_();
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var head = values[0];
+  return values.slice(1).filter(function (r) { return r[0]; }).map(function (r) {
+    var o = {}; head.forEach(function (h, i) { o[h] = r[i]; }); return o;
+  });
+}
+function anthropicJson_(model, prompt, maxTokens) {
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) return null;
+  var res;
+  try {
+    res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({ model: model, max_tokens: maxTokens || 1500, messages: [{ role: 'user', content: prompt }] })
+    });
+  } catch (e) { return null; }
+  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return null;
+  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return null; }
+  var text = '';
+  if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
+    if (parsed.content[i].type === 'text') text += parsed.content[i].text;
+  }
+  text = text.replace(/^```json?\s*|\s*```$/g, '').trim();
+  try { return JSON.parse(text); } catch (e) { return null; }
+}
+
+function scanChatwoot() {
+  var started = Date.now();
+  var props = PropertiesService.getScriptProperties();
+  var cfg = chatwootCfg_();
+  if (!cfg.token || !cfg.account) return;
+  var lastScan = Number(props.getProperty('CHATWOOT_LAST_SCAN') || 0);
+  // First ever run starts clean from now (Edd's call): no back-catalogue sweep.
+  if (!lastScan) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
+
+  var seen = {};
+  scanRows_().forEach(function (r) { seen[String(r.conversation_id)] = true; });
+
+  var list = [];
+  try {
+    var out = chatwootCall_('/conversations?status=all&page=1');
+    list = (out && out.data && out.data.payload) || (out && out.payload) || [];
+  } catch (e) { return; }
+
+  // Stage 1: the free filter. Anything with no student voice, or a single
+  // exchange, is not a report worth an AI call.
+  var candidates = list.filter(function (c) {
+    if (seen[String(c.id)]) return false;
+    var last = Number(c.last_activity_at || 0) * 1000;
+    if (last <= lastScan) return false;
+    return true;
+  }).slice(0, SCAN_MAX_CONVERSATIONS);
+
+  var prepared = [];
+  candidates.forEach(function (c) {
+    if (Date.now() - started > SCAN_BUDGET_MS) return;
+    var imp;
+    try { imp = chatwootImport_({ conversation: String(c.id) }); } catch (e) { return; }
+    if (!imp || !imp.ok || !imp.transcript) return;
+    if (imp.message_count < 2) return;
+    prepared.push({
+      id: String(c.id), name: imp.student_name || '', contact: imp.student_contact || '',
+      text: String(imp.transcript).slice(0, 2500)
+    });
+  });
+  if (!prepared.length) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
+
+  // Stage 2: the finder reads batches and proposes candidates.
+  var found = [];
+  for (var i = 0; i < prepared.length; i += SCAN_BATCH) {
+    if (Date.now() - started > SCAN_BUDGET_MS) break;
+    var batch = prepared.slice(i, i + SCAN_BATCH);
+    var prompt = 'You are reading support chats from Ardent Training, an online RYA sailing theory school, looking ONLY for ' +
+      'problems with their course platform or course content that a student described.\n\n' +
+      'Flag a conversation when a student says something is BROKEN, WRONG, or genuinely CONFUSING: a video or page that will not ' +
+      'load, progress not saving, a login or access failure, an error in a lesson or quiz answer, a mark or assessment behaving wrongly.\n\n' +
+      'Do NOT flag: sales or pricing enquiries, course recommendations, mock exam marking or feedback on a student\'s work, ' +
+      'extensions and admin, general sailing questions, praise, chit-chat, or a student simply not knowing how something works ' +
+      'when the answer is "here is how". If the instructor answered a question and nothing was actually broken, that is not an issue.\n\n' +
+      'Most conversations are NOT issues. Returning an empty list is the common, correct answer.\n\n' +
+      'CONVERSATIONS:\n' + batch.map(function (b) { return '### id ' + b.id + '\n' + b.text; }).join('\n\n') + '\n\n' +
+      'Return ONLY JSON: {"issues":[{"id":"<conversation id>","summary":"<one sentence, what is broken>",' +
+      '"category":"course_error|tech_issue","lesson_code":"<e.g. DS.09.12 or empty>","confidence":"high|medium|low"}]}. ' +
+      'No prose, no markdown fences.';
+    var res = anthropicJson_(FINDER_MODEL, prompt, 1500);
+    if (res && res.issues && res.issues.length) {
+      res.issues.forEach(function (x) {
+        var src = batch.filter(function (b) { return b.id === String(x.id); })[0];
+        if (src && String(x.confidence || '').toLowerCase() !== 'low') found.push({ x: x, src: src });
+      });
+    }
+  }
+  if (!found.length) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
+
+  // Stage 3: a different model checks each candidate, adversarially.
+  var confirmed = [];
+  found.slice(0, SCAN_MAX_SUGGESTIONS * 2).forEach(function (f) {
+    if (Date.now() - started > SCAN_BUDGET_MS) return;
+    var vPrompt = 'A first-pass AI flagged this support conversation as containing an unreported problem with an online ' +
+      'sailing course platform. Your job is to DISAGREE if it is wrong. Be strict: a genuine issue means the student described ' +
+      'something broken, wrong, or seriously confusing about the platform or course content. A question that was simply answered, ' +
+      'an enquiry, marking feedback, admin, or a student misunderstanding with no underlying fault is NOT an issue.\n\n' +
+      'CLAIM: ' + JSON.stringify(f.x) + '\n\nFULL CONVERSATION:\n' + f.src.text + '\n\n' +
+      'Return ONLY JSON: {"agree": true or false, "why":"<one short sentence>", "summary":"<corrected one-sentence summary if you agree, else empty>"}. No prose, no fences.';
+    var v = anthropicJson_(VERIFIER_MODEL, vPrompt, 400);
+    if (v && v.agree === true) {
+      confirmed.push({
+        id: f.src.id, name: f.src.name, contact: f.src.contact,
+        summary: v.summary || f.x.summary || '', category: f.x.category || 'tech_issue',
+        lesson_code: f.x.lesson_code || '', confidence: f.x.confidence || 'medium',
+        note: v.why || ''
+      });
+    }
+  });
+
+  // Stage 4: dedupe against what is already on the log, then write the queue.
+  var openIssues = getIssues_().issues.filter(function (i) {
+    var s = String(i.status || 'open').toLowerCase();
+    return s !== 'resolved' && s !== 'past';
+  });
+  var fresh = confirmed.filter(function (c) {
+    var email = String(c.contact || '').trim().toLowerCase();
+    if (!email) return true;
+    // Same student already has something open: assume it is the same thread of
+    // trouble and leave it alone. Different students reporting the same fault
+    // are kept - repeat reports are how faults get prioritised.
+    return !openIssues.some(function (i) { return String(i.student_contact || '').trim().toLowerCase() === email; });
+  }).slice(0, SCAN_MAX_SUGGESTIONS);
+
+  if (fresh.length) {
+    var sh = scanSheet_();
+    var now = new Date().toISOString();
+    fresh.forEach(function (c) {
+      sh.appendRow([c.id, now, c.confidence, c.summary, c.category, c.lesson_code,
+                    c.name, c.contact, 'suggested', '', '', '', c.note]);
+    });
+    try {
+      var appUrl = getAppUrl_();
+      UrlFetchApp.fetch(slackWebhook_(), {
+        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        payload: JSON.stringify({ text: ':mag: *' + fresh.length + ' possible issue' + (fresh.length === 1 ? '' : 's') +
+          ' spotted in yesterday\'s chats* (nobody logged these)\n' +
+          fresh.slice(0, 5).map(function (c) { return '• ' + String(c.summary).slice(0, 110); }).join('\n') +
+          '\n\nReview them in the tracker: ' + (appUrl || '') })
+      });
+    } catch (e) {}
+  }
+  props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now()));
+  Logger.log('scanChatwoot: ' + prepared.length + ' read, ' + found.length + ' flagged, ' + confirmed.length + ' confirmed, ' + fresh.length + ' queued.');
+}
+
+// Run the scan on demand (admin button), so it can be tried without waiting
+// for 5am. Clears the "start clean" pointer back a few hours so there is
+// something to look at.
+function runChatScan_(data) {
+  var props = PropertiesService.getScriptProperties();
+  if (data && data.since_hours) {
+    props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now() - Number(data.since_hours) * 3600 * 1000));
+  } else if (!props.getProperty('CHATWOOT_LAST_SCAN')) {
+    props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now() - 12 * 3600 * 1000));
+  }
+  scanChatwoot();
+  return { ok: true, queued: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }).length };
+}
+
+// The admin queue: list what is waiting, and record the verdict.
+function chatScanList_() {
+  return { ok: true, scans: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }) };
+}
+function chatScanReview_(data) {
+  var id = String(data.conversation_id || '');
+  if (!id) return { ok: false, error: 'need a conversation_id' };
+  var sh = scanSheet_();
+  var values = sh.getDataRange().getValues();
+  var head = values[0];
+  var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][idx.conversation_id]) !== id) continue;
+    sh.getRange(r + 1, idx.status + 1).setValue(data.status === 'logged' ? 'logged' : 'dismissed');
+    sh.getRange(r + 1, idx.reviewed_by + 1).setValue((data._user && data._user.name) || '');
+    sh.getRange(r + 1, idx.reviewed_at + 1).setValue(new Date().toISOString());
+    if (data.issue_id) sh.getRange(r + 1, idx.issue_id + 1).setValue(data.issue_id);
+    return { ok: true };
+  }
+  return { ok: false, error: 'not found' };
+}
+
 // ---- self-deploy ----------------------------------------------------------
 // Lets Claude push a new Code.gs without anyone opening the Apps Script
 // editor: POST { action:'deployBackend', key:<DEPLOY_KEY>, source:<full file> }
@@ -1800,13 +2024,14 @@ function deployBackend_(data) {
 // daily recheck trigger if one exists (rechecks ping Slack immediately now).
 // Called from setup(), safe to run repeatedly.
 function ensureTriggers_() {
-  var haveMonthly = false, haveTbc = false, haveBackup = false, haveDigest = false;
+  var haveMonthly = false, haveTbc = false, haveBackup = false, haveDigest = false, haveScan = false;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
     if (t.getHandlerFunction() === 'autoResolveTbc') haveTbc = true;
     if (t.getHandlerFunction() === 'weeklyBackup') haveBackup = true;
     if (t.getHandlerFunction() === 'weeklyDigest') haveDigest = true;
+    if (t.getHandlerFunction() === 'scanChatwoot') haveScan = true;
   });
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
@@ -1821,6 +2046,9 @@ function ensureTriggers_() {
   }
   if (!haveDigest) {
     ScriptApp.newTrigger('weeklyDigest').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).create();
+  }
+  if (!haveScan) {
+    ScriptApp.newTrigger('scanChatwoot').timeBased().everyDays(1).atHour(5).create();
   }
 }
 
