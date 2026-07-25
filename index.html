@@ -452,9 +452,19 @@
         <div class="small muted" id="modeHint" style="margin-top:4px;"></div>
       </div>
 
+      <div class="field" id="field_chatwoot">
+        <label>Pull it from a live chat</label>
+        <div class="row" style="gap:8px;">
+          <input id="cwInput" placeholder="Paste a Chatwoot conversation link or number" autocomplete="off" style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();chatwootImport();}" />
+          <button type="button" class="ghost" style="white-space:nowrap;" onclick="chatwootImport()">Import</button>
+          <button type="button" class="ghost" style="white-space:nowrap;" onclick="openChatwootPicker()">Browse recent</button>
+        </div>
+        <div class="small muted" id="cwStatus" style="margin-top:4px;"></div>
+      </div>
+
       <div class="field">
         <label>Paste report</label>
-        <textarea id="rawText" rows="6" placeholder="Paste the email, chat message, or your own notes here."></textarea>
+        <textarea id="rawText" rows="6" placeholder="Paste the email, chat message, or your own notes here - or pull it from a live chat above."></textarea>
       </div>
 
       <div class="field">
@@ -925,6 +935,23 @@
 <div class="modal-bg" id="dupModal">
   <div class="modal" style="max-width:540px;">
     <div id="dupPanel" class="suggest" style="margin:0;"></div>
+  </div>
+</div>
+
+<!-- CHATWOOT CONVERSATION PICKER -->
+<div class="modal-bg" id="cwModal">
+  <div class="modal" style="max-width:620px;">
+    <h3>Recent live chats</h3>
+    <div class="row" style="gap:8px;margin-bottom:8px;">
+      <select id="cwStatusSel" style="width:auto;" onchange="loadChatwootList()">
+        <option value="open">Open</option>
+        <option value="resolved">Resolved</option>
+        <option value="pending">Pending</option>
+      </select>
+      <button type="button" class="ghost small" style="padding:5px 12px;" onclick="loadChatwootList()">Refresh</button>
+    </div>
+    <div id="cwList" style="max-height:52vh;overflow-y:auto;"></div>
+    <div class="btns" style="margin-top:10px;"><button class="ghost" onclick="closeChatwootPicker()">Close</button></div>
   </div>
 </div>
 
@@ -1982,6 +2009,52 @@ function runExtract() {
   });
 }
 
+// ---- Chatwoot: pull a live chat straight into the form --------------------
+function chatwootImport(value) {
+  var v = value || ($("cwInput") ? $("cwInput").value.trim() : "");
+  if (!v) { $("cwStatus").textContent = "Paste a conversation link or number first."; return; }
+  $("cwStatus").innerHTML = '<span class="spinner"></span> fetching the conversation…';
+  apiPost({ action: "chatwootImport", conversation: v }).then(function (res) {
+    if (!res || !res.ok) { $("cwStatus").textContent = "Couldn't fetch it: " + ((res && res.error) || "unknown"); return; }
+    if (!res.transcript) { $("cwStatus").textContent = "That conversation has no messages to import."; return; }
+    setField("rawText", res.transcript);
+    // Remember the conversation so the issue can carry a note back to it.
+    state.chatwootConvId = res.conversation_id;
+    state.chatwootLink = res.link || "";
+    // The student's details come from Chatwoot's contact record, which beats
+    // whatever the AI can infer from the text.
+    if (res.student_name) setField("f_student_name", res.student_name);
+    if (res.student_contact) setField("f_student_contact", res.student_contact);
+    $("cwStatus").innerHTML = 'Imported ' + res.message_count + ' message' + (res.message_count === 1 ? '' : 's') +
+      (res.student_name ? ' from ' + esc(res.student_name) : '') + '. Press Extract when you\'re ready.' +
+      (res.link ? ' <a href="' + esc(res.link) + '" target="_blank" style="color:var(--accent);">Open in Chatwoot</a>' : '');
+    closeChatwootPicker();
+  }).catch(function (e) { $("cwStatus").textContent = "Import error. See console."; console.error(e); });
+}
+function openChatwootPicker() {
+  $("cwModal").classList.add("show");
+  loadChatwootList();
+}
+function closeChatwootPicker() { $("cwModal").classList.remove("show"); }
+function loadChatwootList() {
+  var status = $("cwStatusSel") ? $("cwStatusSel").value : "open";
+  $("cwList").innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
+  apiPost({ action: "chatwootList", status: status }).then(function (res) {
+    if (!res || !res.ok) { $("cwList").innerHTML = '<p class="muted small">Could not load: ' + esc((res && res.error) || "unknown") + '</p>'; return; }
+    var rows = res.conversations || [];
+    $("cwList").innerHTML = rows.length ? rows.map(function (c) {
+      return '<div class="issue-card" style="margin-bottom:8px;" onclick="chatwootImport(\'' + esc(String(c.id)) + '\')">' +
+        '<div class="top"><span class="code">#' + esc(String(c.id)) + '</span>' +
+          (c.student_name ? '<strong>' + esc(c.student_name) + '</strong>' : '') +
+          (c.student_contact ? '<span class="small muted">' + esc(c.student_contact) + '</span>' : '') +
+          (c.last_at ? '<span class="who">' + fmtDate(c.last_at) + '</span>' : '') +
+        '</div>' +
+        (c.snippet ? '<div class="sum clamp4">' + esc(c.snippet) + '</div>' : '') +
+      '</div>';
+    }).join("") : '<p class="muted small">No ' + esc(status) + ' conversations.</p>';
+  }).catch(function (e) { $("cwList").innerHTML = '<p class="muted small">Load error.</p>'; console.error(e); });
+}
+
 function rateExtraction(verdict) {
   var bar = $("rateBar");
   if (bar) bar.textContent = verdict === "good" ? "Thanks - logged." : "Thanks - logged. Fix the fields and submit as normal.";
@@ -2746,6 +2819,8 @@ function submitIssue() {
     // trail, or explicitly keep separate (which also overrides the AI matcher).
     if (state.dupTargetId) data.merge_into = state.dupTargetId;
     else if (state.dupDismissed) data.no_merge = true;
+    // Imported from a live chat: the backend drops an internal note back on it.
+    if (state.chatwootConvId) data.chatwoot_conversation_id = state.chatwootConvId;
     if (applyRes) {
       // The pasted conversation was already sorted out in the chat, so log it as
       // Resolved (or Resolved - TBC) with the answer saved, not as open work.
@@ -2835,6 +2910,10 @@ function resetForm() {
   setCategory("course_error");
   $("extractStatus").textContent = "";
   state.lastExtract = null;
+  state.chatwootConvId = null;
+  state.chatwootLink = "";
+  if ($("cwInput")) $("cwInput").value = "";
+  if ($("cwStatus")) $("cwStatus").innerHTML = "";
   hideSuggestion();
   hideSplitSuggestion();
   hideDupSuggestion();

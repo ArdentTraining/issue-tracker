@@ -184,6 +184,7 @@ function doPost(e) {
     // session — same pattern as the mirror. See deployBackend_ below.
     if (action === 'deployBackend') return jsonOut(deployBackend_(body));
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
+    if (action === 'setChatwootConfig') return jsonOut(setChatwootConfig_(body));
     if (action === 'runSetup') return jsonOut(runSetup_(body));
 
     if (action === 'login') return jsonOut(login_(body));
@@ -221,6 +222,8 @@ function doPost(e) {
     if (action === 'answerQuery') return jsonOut(answerQuery_(body));
     if (action === 'requestRecheck') return jsonOut(requestRecheck_(body));
     if (action === 'rateExtraction') return jsonOut(rateExtraction_(body));
+    if (action === 'chatwootImport') return jsonOut(chatwootImport_(body));
+    if (action === 'chatwootList') return jsonOut(chatwootList_(body));
     if (action === 'saveChecklist') return jsonOut(saveChecklist_(body));
     if (action === 'assignIssue') return jsonOut(assignIssue_(body));
     if (action === 'uploadImage') return jsonOut(uploadImage_(body));
@@ -326,6 +329,7 @@ function reqPerm_(action) {
     // instructor-targeted ones are answered by the instructor who logged it.
     case 'flagQuery': case 'answerQuery': return 'work';
     case 'requestRecheck': case 'rateExtraction': return 'log';
+    case 'chatwootImport': case 'chatwootList': return 'log';
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':
@@ -843,6 +847,12 @@ function addIssue_(data) {
   if (String(issue.priority).toLowerCase() === 'high' && issue.request_kind !== 'improvement' &&
       issue.status !== 'resolved' && issue.status !== 'resolved_tbc') {
     try { sendSlack_(issue, data.app_url || getAppUrl_()); } catch (slackErr) {}
+  }
+
+  // Imported from a live chat: leave an internal note on that conversation so
+  // the two systems stay joined up.
+  if (data.chatwoot_conversation_id) {
+    try { chatwootNote_(data.chatwoot_conversation_id, issue, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
   return { ok: true, issue: issue, merged: false };
@@ -1578,6 +1588,123 @@ function setSlackWebhook_(data) {
   if (!/^https:\/\/hooks\.slack\.com\/services\//.test(url)) return { ok: false, error: 'not a Slack webhook URL' };
   PropertiesService.getScriptProperties().setProperty('SLACK_WEBHOOK_URL', url);
   return { ok: true };
+}
+
+// ---- Chatwoot ------------------------------------------------------------
+// Instructors were copy-pasting live-chat transcripts by hand; this pulls them
+// straight from Chatwoot instead, with the student's name and email attached.
+// Credentials live in Script Properties (never in this file, which is public
+// on GitHub): CHATWOOT_TOKEN and CHATWOOT_ACCOUNT_ID, set via
+// setChatwootConfig below. Cloud only for now (app.chatwoot.com).
+var CHATWOOT_BASE = 'https://app.chatwoot.com';
+
+function setChatwootConfig_(data) {
+  var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  var props = PropertiesService.getScriptProperties();
+  if (data.token) props.setProperty('CHATWOOT_TOKEN', String(data.token));
+  if (data.account_id) props.setProperty('CHATWOOT_ACCOUNT_ID', String(data.account_id));
+  return { ok: true };
+}
+function chatwootCfg_() {
+  var p = PropertiesService.getScriptProperties();
+  return { token: p.getProperty('CHATWOOT_TOKEN') || '', account: p.getProperty('CHATWOOT_ACCOUNT_ID') || '' };
+}
+function chatwootCall_(path, method, payload) {
+  var cfg = chatwootCfg_();
+  if (!cfg.token || !cfg.account) throw new Error('Chatwoot is not configured yet.');
+  var res = UrlFetchApp.fetch(CHATWOOT_BASE + '/api/v1/accounts/' + cfg.account + path, {
+    method: method || 'get', contentType: 'application/json',
+    headers: { api_access_token: cfg.token },
+    payload: payload ? JSON.stringify(payload) : undefined,
+    muteHttpExceptions: true
+  });
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  if (code < 200 || code >= 300) throw new Error('Chatwoot ' + code + ': ' + body.slice(0, 200));
+  return body ? JSON.parse(body) : {};
+}
+// Accepts a full conversation URL, or just the number.
+function chatwootConvId_(input) {
+  var s = String(input || '').trim();
+  var m = s.match(/conversations\/(\d+)/);
+  if (m) return m[1];
+  m = s.match(/^\d+$/);
+  return m ? s : '';
+}
+// Pull one conversation and flatten it into the kind of transcript the
+// extraction prompt already understands.
+function chatwootImport_(data) {
+  var id = chatwootConvId_(data.conversation);
+  if (!id) return { ok: false, error: 'Paste a Chatwoot conversation link or number.' };
+  var conv, msgs;
+  try {
+    conv = chatwootCall_('/conversations/' + id);
+    msgs = chatwootCall_('/conversations/' + id + '/messages');
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+
+  var list = (msgs && (msgs.payload || msgs.data && msgs.data.payload)) || [];
+  var sender = (conv && conv.meta && conv.meta.sender) || {};
+  var lines = [];
+  list.forEach(function (m) {
+    // 0 incoming (student), 1 outgoing (agent). Skip activity lines and
+    // internal notes - they're noise in a transcript the AI has to read.
+    var t = Number(m.message_type);
+    if (t !== 0 && t !== 1) return;
+    if (m.private) return;
+    var body = String(m.content || '').trim();
+    if (!body) return;
+    var who = t === 0
+      ? (sender.name || 'Student')
+      : ((m.sender && (m.sender.name || m.sender.available_name)) || 'Ardent');
+    var when = m.created_at ? new Date(Number(m.created_at) * 1000).toISOString().slice(0, 16).replace('T', ' ') : '';
+    lines.push(who + (when ? ' (' + when + ')' : '') + ': ' + body);
+  });
+
+  return {
+    ok: true,
+    conversation_id: id,
+    student_name: sender.name || '',
+    student_contact: sender.email || sender.phone_number || '',
+    transcript: lines.join('\n\n'),
+    message_count: lines.length,
+    link: CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/conversations/' + id
+  };
+}
+// Recent conversations for the in-app picker.
+function chatwootList_(data) {
+  var out;
+  try {
+    out = chatwootCall_('/conversations?status=' + encodeURIComponent(data.status || 'open') + '&page=1');
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+  var payload = (out && out.data && out.data.payload) || (out && out.payload) || [];
+  var rows = payload.slice(0, 40).map(function (c) {
+    var sender = (c.meta && c.meta.sender) || {};
+    return {
+      id: c.id,
+      student_name: sender.name || '',
+      student_contact: sender.email || '',
+      status: c.status || '',
+      last_at: c.last_activity_at ? new Date(Number(c.last_activity_at) * 1000).toISOString() : '',
+      snippet: String((c.messages && c.messages.length && c.messages[c.messages.length - 1].content) || '').replace(/\s+/g, ' ').slice(0, 120)
+    };
+  });
+  return { ok: true, conversations: rows };
+}
+// Private (internal) note back on the conversation, so Chatwoot shows the
+// issue was logged and where to follow it. Never visible to the student.
+function chatwootNote_(convId, issue, appUrl) {
+  if (!convId) return;
+  var cfg = chatwootCfg_();
+  if (!cfg.token || !cfg.account) return;
+  var text = 'Logged in Bugs: ' + (issue.summary || '(no summary)') +
+    '\nPriority: ' + (issue.priority || '-') + (issue.lesson_code ? ' · ' + issue.lesson_code : '') +
+    '\n' + issueLink_(issue, appUrl);
+  try {
+    chatwootCall_('/conversations/' + convId + '/messages', 'post', {
+      content: text, message_type: 'outgoing', private: true
+    });
+  } catch (e) {}
 }
 
 // ---- self-deploy ----------------------------------------------------------
