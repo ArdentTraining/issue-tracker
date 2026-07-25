@@ -1787,8 +1787,12 @@ function anthropicJson_(model, prompt, maxTokens) {
   try { return JSON.parse(text); } catch (e) { return null; }
 }
 
+// Counts from the last run, so a quiet night can be told apart from a broken
+// one (and so the finder/verifier ratio can be watched as we tune).
+var SCAN_STATS = {};
 function scanChatwoot() {
   var started = Date.now();
+  SCAN_STATS = { listed: 0, candidates: 0, prepared: 0, flagged: 0, confirmed: 0, queued: 0, note: '' };
   var props = PropertiesService.getScriptProperties();
   var cfg = chatwootCfg_();
   if (!cfg.token || !cfg.account) return;
@@ -1803,7 +1807,8 @@ function scanChatwoot() {
   try {
     var out = chatwootCall_('/conversations?status=all&page=1');
     list = (out && out.data && out.data.payload) || (out && out.payload) || [];
-  } catch (e) { return; }
+  } catch (e) { SCAN_STATS.note = 'list failed: ' + e; return; }
+  SCAN_STATS.listed = list.length;
 
   // Stage 1: the free filter. Anything with no student voice, or a single
   // exchange, is not a report worth an AI call.
@@ -1813,6 +1818,7 @@ function scanChatwoot() {
     if (last <= lastScan) return false;
     return true;
   }).slice(0, SCAN_MAX_CONVERSATIONS);
+  SCAN_STATS.candidates = candidates.length;
 
   var prepared = [];
   candidates.forEach(function (c) {
@@ -1826,6 +1832,7 @@ function scanChatwoot() {
       text: String(imp.transcript).slice(0, 2500)
     });
   });
+  SCAN_STATS.prepared = prepared.length;
   if (!prepared.length) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
 
   // Stage 2: the finder reads batches and proposes candidates.
@@ -1846,6 +1853,7 @@ function scanChatwoot() {
       '"category":"course_error|tech_issue","lesson_code":"<e.g. DS.09.12 or empty>","confidence":"high|medium|low"}]}. ' +
       'No prose, no markdown fences.';
     var res = anthropicJson_(FINDER_MODEL, prompt, 1500);
+    if (!res) SCAN_STATS.note = 'finder returned nothing parseable';
     if (res && res.issues && res.issues.length) {
       res.issues.forEach(function (x) {
         var src = batch.filter(function (b) { return b.id === String(x.id); })[0];
@@ -1853,6 +1861,7 @@ function scanChatwoot() {
       });
     }
   }
+  SCAN_STATS.flagged = found.length;
   if (!found.length) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
 
   // Stage 3: a different model checks each candidate, adversarially.
@@ -1889,6 +1898,8 @@ function scanChatwoot() {
     // are kept - repeat reports are how faults get prioritised.
     return !openIssues.some(function (i) { return String(i.student_contact || '').trim().toLowerCase() === email; });
   }).slice(0, SCAN_MAX_SUGGESTIONS);
+  SCAN_STATS.confirmed = confirmed.length;
+  SCAN_STATS.queued = fresh.length;
 
   if (fresh.length) {
     var sh = scanSheet_();
@@ -1923,7 +1934,7 @@ function runChatScan_(data) {
     props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now() - 12 * 3600 * 1000));
   }
   scanChatwoot();
-  return { ok: true, queued: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }).length };
+  return { ok: true, queued: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }).length, stats: SCAN_STATS };
 }
 
 // The admin queue: list what is waiting, and record the verdict.
