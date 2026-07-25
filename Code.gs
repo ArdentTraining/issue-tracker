@@ -1803,10 +1803,21 @@ function scanChatwoot() {
   var seen = {};
   scanRows_().forEach(function (r) { seen[String(r.conversation_id)] = true; });
 
+  // Chatwoot pages at 25. At 50-70 conversations a day a single page would
+  // silently miss half of them, so page back until we reach conversations
+  // older than the last scan (or hit the cap).
   var list = [];
   try {
-    var out = chatwootCall_('/conversations?status=all&page=1');
-    list = (out && out.data && out.data.payload) || (out && out.payload) || [];
+    for (var page = 1; page <= 6; page++) {
+      var out = chatwootCall_('/conversations?status=all&page=' + page);
+      var chunk = (out && out.data && out.data.payload) || (out && out.payload) || [];
+      if (!chunk.length) break;
+      list = list.concat(chunk);
+      var oldest = Math.min.apply(null, chunk.map(function (c) { return Number(c.last_activity_at || 0) * 1000; }));
+      if (oldest <= lastScan) break;           // we've gone back far enough
+      if (list.length >= SCAN_MAX_CONVERSATIONS) break;
+      if (Date.now() - started > SCAN_BUDGET_MS / 2) break;
+    }
   } catch (e) { SCAN_STATS.note = 'list failed: ' + e; return; }
   SCAN_STATS.listed = list.length;
 
