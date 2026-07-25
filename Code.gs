@@ -1632,6 +1632,23 @@ function chatwootConvId_(input) {
   m = s.match(/^\d+$/);
   return m ? s : '';
 }
+// Strip the noise real chat messages carry: inline image blobs, email
+// signatures, and quoted reply chains. The AI reads better without them, and
+// a 3,000-character signature is 3,000 characters of nothing.
+function cleanChatwootBody_(raw) {
+  var s = String(raw || '');
+  s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, '[image]');       // markdown images
+  s = s.replace(/<img[^>]*>/gi, '[image]');
+  s = s.replace(/\\\n/g, '\n');                            // escaped newlines
+  s = s.split(/\n-- ?\n/)[0];                              // standard sig delimiter
+  s = s.replace(/\n>[^\n]*/g, '');                          // quoted reply lines
+  // Common sign-off block: cut everything after it if it looks like a footer.
+  s = s.replace(/\n+(Kind regards|Best regards|All the best|Many thanks|Cheers|Regards)[\s\S]{0,400}$/i, function (m) {
+    return /\n.*\n/.test(m) ? '' : m; // only if it spans several lines (a footer, not a one-line sign-off)
+  });
+  return s.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // Pull one conversation and flatten it into the kind of transcript the
 // extraction prompt already understands.
 function chatwootImport_(data) {
@@ -1652,7 +1669,7 @@ function chatwootImport_(data) {
     var t = Number(m.message_type);
     if (t !== 0 && t !== 1) return;
     if (m.private) return;
-    var body = String(m.content || '').trim();
+    var body = cleanChatwootBody_(m.content);
     if (!body) return;
     var who = t === 0
       ? (sender.name || 'Student')
