@@ -72,7 +72,7 @@ var HEADERS = [
   'submitted_at',      // B
   'updated_at',        // C
   'instructor_name',   // D
-  'category',          // E  course_error | tech_issue | internal (internal task/bug, admin-only logging)
+  'category',          // E  course_error | tech_issue  (WHAT is broken)
   'raw_text',          // F
   'student_name',      // G
   'student_contact',   // H
@@ -107,7 +107,13 @@ var HEADERS = [
   'dev_query_by',      // AK who raised it
   'dev_query_target',  // AL who the question is for: 'admins' (default) or 'instructor' (the one who logged it)
   'platform',          // AM where the bug shows: 'browser' | 'app' | 'both' | '' (tick boxes on the form)
-  'recheck_at'         // AN when to remind the instructor to double-check a Resolved-TBC (blank = no reminder)
+  'recheck_at',        // AN when to remind the instructor to double-check a Resolved-TBC (blank = no reminder)
+  // WHO it hits, kept separate from WHAT is broken (Edd, 26 Jul): an
+  // instructor-portal bug is a tech issue AND internal, and the old single
+  // category forced a choice between them. 'internal' used to be a third
+  // category; migrateAudience() moved those rows across.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'audience'           // AO student | internal
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -186,6 +192,11 @@ function doPost(e) {
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
     if (action === 'setChatwootConfig') return jsonOut(setChatwootConfig_(body));
     if (action === 'runSetup') return jsonOut(runSetup_(body));
+    if (action === 'runMigrateAudience') {
+      var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+      if (!mk || String(body.key || '') !== mk) return jsonOut({ ok: false, error: 'bad deploy key' });
+      return jsonOut({ ok: true, result: migrateAudience() });
+    }
 
     if (action === 'login') return jsonOut(login_(body));
     if (action === 'acceptInvite') return jsonOut(acceptInvite_(body));
@@ -635,7 +646,7 @@ function sheetByName_(name) { return ss_().getSheetByName(name); }
 // course_error -> Course Errors; anything else (incl tech_issue) decided here.
 function targetSheetName_(category) {
   var c = String(category).toLowerCase();
-  // Internal tasks/bugs live in the Tech Issues sheet, kept apart by their
+  // Internal work lives in the Tech Issues sheet, kept apart by its
   // category value, so we don't need a third tab or a sheet migration.
   return (c === 'tech_issue' || c === 'internal') ? TECH_SHEET : COURSE_SHEET;
 }
@@ -730,6 +741,10 @@ function addIssue_(data) {
   if (data._user && data._user.name) data.instructor_name = data._user.name;
   var now = new Date().toISOString();
   var category = (data.category || 'course_error').toLowerCase();
+  // Legacy callers (and old saved drafts) may still send category 'internal'.
+  // That is now an audience, not a category, and it always meant tech.
+  var audience = data.audience === 'internal' || category === 'internal' ? 'internal' : 'student';
+  if (category === 'internal') category = 'tech_issue';
 
   // One entry describing this particular report (who hit it, who logged it).
   // We keep its own priority and raw text too, so a wrongly merged report can
@@ -815,7 +830,8 @@ function addIssue_(data) {
     section: data.section || '',
     dev_query: '', dev_query_at: '', dev_query_by: '', dev_query_target: '',
     platform: ['browser', 'app', 'both'].indexOf(String(data.platform || '')) > -1 ? data.platform : '',
-    recheck_at: ''
+    recheck_at: '',
+    audience: audience
   };
 
   // Auto-route to the right fix queue (unless the instructor already settled it
@@ -829,8 +845,8 @@ function addIssue_(data) {
     if (category === 'course_error') {
       issue.dev_passed_at = new Date().toISOString();
       issue.status = 'with_dev';
-    } else if (category === 'internal') {
-      // Internal tasks are logged deliberately by an admin, so no AI judgement
+    } else if (audience === 'internal') {
+      // Internal work is logged deliberately by an admin, so no AI judgement
       // needed: genuine defects and infrastructure work go straight to the dev
       // queue; content, admin, and feature items sit open for triage.
       if (issue.issue_type === 'bug' || issue.issue_type === 'infrastructure') {
@@ -2037,7 +2053,7 @@ function scanSlack_(newCount, updateCount) {
 // catOf for a sheet record (the frontend has its own).
 function catOf_(issue) {
   var c = String((issue && issue.category) || '').toLowerCase();
-  return c === 'course_error' || c === 'tech_issue' || c === 'internal' ? c : 'tech_issue';
+  return c === 'course_error' ? 'course_error' : 'tech_issue';
 }
 
 // The admin queue: list what is waiting, and record the verdict.
@@ -2262,6 +2278,40 @@ function weeklyBackup() {
   copies.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
   copies.slice(8).forEach(function (f) { f.setTrashed(true); });
   Logger.log('weeklyBackup: ' + copies.length + ' backup(s) on file.');
+}
+
+// One-off (26 Jul): move the old 'internal' CATEGORY onto the new audience
+// column. Audience is derived from section rather than blanket-marking every
+// old internal row, because "internal" had drifted to mean "we spotted it
+// ourselves" as much as "students can't see it" - a video cutting short was
+// filed internal but hits students squarely.
+function migrateAudience() {
+  var internalSections = { instructor_portal: 1, partner_portal: 1, other: 1 };
+  var moved = 0, stamped = 0;
+  ISSUE_SHEETS.forEach(function (name) {
+    var sheet = sheetByName_(name);
+    if (!sheet) return;
+    var values = sheet.getDataRange().getValues();
+    if (values.length < 2) return;
+    var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
+    if (idx.audience == null) return;
+    for (var r = 1; r < values.length; r++) {
+      if (!values[r][idx.issue_id]) continue;
+      var cat = String(values[r][idx.category] || '').toLowerCase();
+      var aud = String(values[r][idx.audience] || '').toLowerCase();
+      if (cat === 'internal') {
+        var sec = String(values[r][idx.section] || '').toLowerCase();
+        sheet.getRange(r + 1, idx.category + 1).setValue('tech_issue');
+        sheet.getRange(r + 1, idx.audience + 1).setValue(internalSections[sec] ? 'internal' : 'student');
+        moved++;
+      } else if (!aud) {
+        sheet.getRange(r + 1, idx.audience + 1).setValue('student');
+        stamped++;
+      }
+    }
+  });
+  Logger.log('migrateAudience: ' + moved + ' moved off the internal category, ' + stamped + ' stamped student.');
+  return { moved: moved, stamped: stamped };
 }
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
@@ -3033,7 +3083,8 @@ var MODULE_ASSESSMENTS_TEXT = [
 
 function sendSlack_(issue, appUrl) {
   var c = String(issue.category).toLowerCase();
-  var area = c === 'tech_issue' ? 'Tech issue' : (c === 'internal' ? 'Internal' : 'Course error');
+  var area = (c === 'tech_issue' ? 'Tech issue' : 'Course error') +
+    (String(issue.audience || 'student').toLowerCase() === 'internal' ? ' · internal' : '');
   if (issue.section) area += ' · ' + String(issue.section).replace(/_/g, ' ');
   var text = [
     ':red_circle: *High priority issue logged* (' + area + ')',

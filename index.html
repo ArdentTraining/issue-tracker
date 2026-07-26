@@ -646,7 +646,11 @@
       <button type="button" id="area_all" class="active" onclick="setArea('all')">All</button>
       <button type="button" id="area_course" onclick="setArea('course_error')">Course errors</button>
       <button type="button" id="area_tech" onclick="setArea('tech_issue')">Tech issues</button>
-      <button type="button" id="area_internal" onclick="setArea('internal')">Internal</button>
+    </div>
+    <div class="seg" id="audSeg" style="margin-left:10px;">
+      <button type="button" id="aud_all" class="active" onclick="setAudience('all')">Everyone</button>
+      <button type="button" id="aud_student" onclick="setAudience('student')">Student-facing</button>
+      <button type="button" id="aud_internal" onclick="setAudience('internal')">Internal</button>
     </div>
     <div class="seg" id="reqFilterSeg">
       <button type="button" id="rf_all" class="active" onclick="setReqFilter('all')">All</button>
@@ -732,7 +736,7 @@
       <button type="button" id="ana_all" class="active" onclick="setAnaArea('all')">All</button>
       <button type="button" id="ana_course" onclick="setAnaArea('course_error')">Course errors</button>
       <button type="button" id="ana_tech" onclick="setAnaArea('tech_issue')">Tech issues</button>
-      <button type="button" id="ana_internal" onclick="setAnaArea('internal')">Internal</button>
+      <button type="button" id="ana_internal" onclick="setAnaArea('internal')">Internal only</button>
     </div>
   </div>
   <div class="summary-row">
@@ -1067,7 +1071,16 @@ var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxROZipuieRjz8BBW
 var APP_URL = window.location.href; // used in the Slack link; updated once hosted
 
 var PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
-var CATEGORY_LABEL = { course_error: "Course error", tech_issue: "Tech issue", internal: "Internal" };
+// WHAT is broken. Who it affects is the separate `audience` field below.
+var CATEGORY_LABEL = { course_error: "Course error", tech_issue: "Tech issue", internal: "Tech issue" };
+function audienceOf(i) {
+  // Old rows carried "internal" as a category; treat that as the audience.
+  if (String((i && i.category) || "").toLowerCase() === "internal") return "internal";
+  return String((i && i.audience) || "student").toLowerCase() === "internal" ? "internal" : "student";
+}
+function audienceBadge(i) {
+  return audienceOf(i) === "internal" ? '<span class="badge cat cat-internal">Internal</span>' : "";
+}
 var SECTION_LABEL = { website: "Website", instructor_portal: "Instructor portal", partner_portal: "Partner portal", course_player: "Course player", app: "App", other: "Other" };
 function sectionBadge(s) {
   if (!s) return "";
@@ -1086,7 +1099,8 @@ var state = {
   editingId: null,
   attachedImages: [],
   detailId: null,
-  area: "all",                // admin area filter
+  area: "all",                // all | course_error | tech_issue  (WHAT is broken)
+  audienceFilter: "all",      // all | student | internal          (WHO it hits)
   token: "",                  // session token for this login
   user: null,                 // logged-in user { email, name, perms }
   perms: {},                  // current user's permission flags
@@ -1438,7 +1452,11 @@ function isMine(i) {
   }
   return false;
 }
-function catOf(i) { return (i.category || "course_error").toLowerCase(); }
+// WHAT is broken, always one of two. Legacy "internal" rows were technical.
+function catOf(i) {
+  var c = (i.category || "course_error").toLowerCase();
+  return c === "course_error" ? "course_error" : "tech_issue";
+}
 
 // ============================ INIT ============================
 function init() {
@@ -1866,7 +1884,8 @@ function setFormMode(mode) {
     ? "An internal job for the team: portals, website, infrastructure, or admin. Not tied to a student."
     : "";
   if (isInternal) {
-    state.category = "internal";
+    // Internal work is technical by definition (our portals, site, infra).
+    state.category = "tech_issue";
     // Internal work isn't something to troubleshoot with a student.
     hideTroubleshoot();
     hideSuggestion();
@@ -2625,7 +2644,9 @@ function collectForm() {
   var isInternal = state.formMode === "internal";
   return {
     instructor_name: state.selectedInstructor,
-    category: isInternal ? "internal" : state.category,
+    // Internal is an audience now, not a category: internal work is technical.
+    category: isInternal ? "tech_issue" : state.category,
+    audience: isInternal ? "internal" : "student",
     // Internal feature requests are backlog items, same as improvements.
     request_kind: isInternal
       ? (getField("f_issue_type") === "feature_request" ? "improvement" : "fix")
@@ -2956,7 +2977,8 @@ function submitIssue() {
     if (!state.editingId && outcomeText && improveRx.test(outcomeText)) {
       state._pendingImprovement = {
         instructor_name: state.selectedInstructor,
-        category: state.formMode === "internal" ? "internal" : state.category,
+        category: state.formMode === "internal" ? "tech_issue" : state.category,
+        audience: state.formMode === "internal" ? "internal" : "student",
         course: data.course || "", module: data.module || "", lesson: data.lesson || "",
         lesson_code: data.lesson_code || "", section: data.section || "",
         raw_text: "Improvement idea spotted in an issue outcome:\n\n" + outcomeText,
@@ -3016,9 +3038,9 @@ function loadIntoForm(issue) {
   setView("instructor");
   showDetails();
   state.editingId = issue.issue_id;
-  // Re-open internal tasks in internal mode; everything else in student mode.
-  setFormMode(catOf(issue) === "internal" ? "internal" : "student");
-  if (catOf(issue) !== "internal") setCategory(catOf(issue));
+  // Re-open internal work in internal mode; everything else in student mode.
+  setFormMode(audienceOf(issue) === "internal" ? "internal" : "student");
+  if (audienceOf(issue) !== "internal") setCategory(catOf(issue));
   state.requestKind = kindOf(issue);
   renderRequestKind();
   setField("rawText", issue.raw_text);
@@ -3091,7 +3113,7 @@ function renderPrev() {
   box.innerHTML = shown.map(function (i) {
     return '<div class="sub-item" onclick="openIssueById(\'' + esc(i.issue_id) + '\', true)">' +
       '<div class="meta">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + typeBadge(i.issue_type) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + reqBadge(kindOf(i)) + typeBadge(i.issue_type) +
         '<span class="date">' + fmtDate(i.submitted_at) + '</span>' +
         (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
       '</div>' +
@@ -3124,7 +3146,6 @@ function setArea(a) {
   $("area_course").classList.toggle("course", a === "course_error");
   $("area_tech").classList.toggle("active", a === "tech_issue");
   $("area_tech").classList.toggle("tech", a === "tech_issue");
-  $("area_internal").classList.toggle("active", a === "internal");
   renderAdmin();
 }
 
@@ -3147,9 +3168,21 @@ function setReqFilter(k) {
   renderAdmin();
 }
 
+// Who the issues are shown for: everyone, students only, or our own systems.
+// Separate from the area (what kind of thing is broken), because they're
+// genuinely separate questions (Edd, 26 Jul).
+function setAudience(a) {
+  state.audienceFilter = a;
+  ["all", "student", "internal"].forEach(function (k) {
+    var b = $("aud_" + k); if (b) b.classList.toggle("active", k === a);
+  });
+  renderAdmin();
+}
 function areaBase() {
   var base = state.area === "all" ? state.issues
     : state.issues.filter(function (i) { return catOf(i) === state.area; });
+  var aud = state.audienceFilter || "all";
+  if (aud !== "all") base = base.filter(function (i) { return audienceOf(i) === aud; });
   if (state.reqFilter && state.reqFilter !== "all") {
     base = base.filter(function (i) { return kindOf(i) === state.reqFilter; });
   }
@@ -3251,7 +3284,7 @@ function renderAdmin() {
     var imgs = parseImageUrls(i.image_urls).length;
     return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
@@ -3288,7 +3321,7 @@ function kanbanHtml(list) {
         return '<div class="kcard kpri-' + ((i.priority || "low").toLowerCase()) + '" draggable="true" ' +
           'ondragstart="kanbanDrag(event, \'' + esc(i.issue_id) + '\')" ' +
           'onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
-          '<div class="ktop">' + priBadge(i.priority) + catBadge(i.category) + sectionBadge(i.section) + refBadge(i) +
+          '<div class="ktop">' + priBadge(i.priority) + catBadge(catOf(i)) + audienceBadge(i) + sectionBadge(i.section) + refBadge(i) +
             (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
             (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') + '</div>' +
           '<div class="ktitle">' + esc(cardTitle(i)) + '</div>' +
@@ -3402,7 +3435,7 @@ function openDetail(issue) {
 
   var html = '<button class="close" onclick="closeDetail()">&times;</button>' +
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
-    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(issue.category) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
+    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
 
@@ -3448,7 +3481,8 @@ function openDetail(issue) {
     (catOf(issue) === "course_error" ? kv("Which part", mediaLabel(issue.media_kind)) : "") +
     (catOf(issue) === "course_error" ? kv("Double-checked", isTrue(issue.double_checked) ? "Yes" : "No") : "") +
     (kindOf(issue) === "improvement" ? kv("Impact", issue.impact) : "") +
-    (catOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "—") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
+    kv("Affects", audienceOf(issue) === "internal" ? "Us (internal)" : "Students") +
+    (audienceOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "—") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
     kv("Priority reason", issue.priority_reason) +
   '</div>';
 
@@ -3787,7 +3821,9 @@ function setAnaArea(a) {
 // ---- breakdown matrix: fixes / improvements / all, by course / tech / both ----
 function statSubset(area, kind) {
   return state.issues.filter(function (i) {
-    if (area !== "all" && catOf(i) !== area) return false;
+    // "internal" is an audience now, but Analytics keeps it as a quick view.
+    if (area === "internal") { if (audienceOf(i) !== "internal") return false; }
+    else if (area !== "all" && catOf(i) !== area) return false;
     if (kind !== "all" && kindOf(i) !== kind) return false;
     return true;
   });
@@ -3858,7 +3894,9 @@ function renderAnalytics() {
   renderStatMatrix();
   var base = state.anaArea === "all"
     ? state.issues
-    : state.issues.filter(function (i) { return catOf(i) === state.anaArea; });
+    : state.anaArea === "internal"
+      ? state.issues.filter(function (i) { return audienceOf(i) === "internal"; })
+      : state.issues.filter(function (i) { return catOf(i) === state.anaArea; });
   var openIssues = base.filter(isOpen);
 
   // headline stats for this area
@@ -3985,7 +4023,7 @@ function renderQueue(cat, ids, filterVal) {
     var age = i.dev_passed_at ? fmtDuration(Date.now() - new Date(i.dev_passed_at)) : "";
     return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(i.category) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
@@ -3999,7 +4037,9 @@ function renderQueue(cat, ids, filterVal) {
 }
 
 function renderDev() {
-  renderQueue(["tech_issue", "internal"], { queue: "devStatQueue", fixed: "devStatFixed", avg: "devStatAvg", list: "devList" }, state.devFilter);
+  // Internal work is tech_issue now, so one category covers both halves of
+  // the dev queue (student-facing bugs and our own systems).
+  renderQueue(["tech_issue"], { queue: "devStatQueue", fixed: "devStatFixed", avg: "devStatAvg", list: "devList" }, state.devFilter);
 }
 // Every course fix that still needs doing or is awaiting verification. Unlike
 // the Developers queue this is NOT gated on dev_passed_at, so imported "open"
