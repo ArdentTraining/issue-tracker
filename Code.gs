@@ -1738,7 +1738,8 @@ function chatwootNote_(convId, issue, appUrl) {
 // things the first one flagged.
 var SCAN_SHEET = 'Chat Scan';
 var SCAN_HEADERS = ['conversation_id', 'scanned_at', 'confidence', 'summary', 'category', 'lesson_code',
-                    'student_name', 'student_contact', 'status', 'issue_id', 'reviewed_by', 'reviewed_at', 'verifier_note'];
+                    'student_name', 'student_contact', 'status', 'issue_id', 'reviewed_by', 'reviewed_at', 'verifier_note',
+                    'kind', 'verdict'];
 var FINDER_MODEL = 'claude-sonnet-5';
 var VERIFIER_MODEL = 'claude-opus-5';
 var SCAN_MAX_CONVERSATIONS = 60;   // per run, keeps us inside the 6-minute trigger limit
@@ -1751,10 +1752,12 @@ function scanSheet_() {
   var sh = ss.getSheetByName(SCAN_SHEET);
   if (!sh) {
     sh = ss.insertSheet(SCAN_SHEET);
-    sh.getRange(1, 1, 1, SCAN_HEADERS.length).setValues([SCAN_HEADERS]);
     sh.setFrozenRows(1);
-    sh.getRange(1, 1, 1, SCAN_HEADERS.length).setFontWeight('bold');
   }
+  // Keep row 1 in step with SCAN_HEADERS, so adding a column later doesn't
+  // need a migration.
+  sh.getRange(1, 1, 1, SCAN_HEADERS.length).setValues([SCAN_HEADERS]);
+  sh.getRange(1, 1, 1, SCAN_HEADERS.length).setFontWeight('bold');
   return sh;
 }
 function scanRows_() {
@@ -1846,6 +1849,89 @@ function scanChatwoot() {
   SCAN_STATS.prepared = prepared.length;
   if (!prepared.length) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
 
+  // Who already has something open? Those conversations are followed up as
+  // UPDATES rather than new issues - previously they were dropped at the
+  // dedupe step, which threw away exactly the "still broken" and "all sorted
+  // now" news the tracker most needs (Edd, 25 Jul).
+  var openIssuesAll = getIssues_().issues.filter(function (i) {
+    var s = String(i.status || 'open').toLowerCase();
+    return s !== 'resolved' && s !== 'past';
+  });
+  var openByEmail = {};
+  openIssuesAll.forEach(function (i) {
+    var e = String(i.student_contact || '').trim().toLowerCase();
+    if (!e) return;
+    var prev = openByEmail[e];
+    if (!prev || new Date(i.updated_at || i.submitted_at) > new Date(prev.updated_at || prev.submitted_at)) openByEmail[e] = i;
+  });
+
+  var updateCandidates = [], newCandidates = [];
+  prepared.forEach(function (p) {
+    var match = openByEmail[String(p.contact || '').trim().toLowerCase()];
+    if (match) updateCandidates.push({ conv: p, issue: match });
+    else newCandidates.push(p);
+  });
+  SCAN_STATS.updateCandidates = updateCandidates.length;
+
+  // ---- update path: what does this conversation say about that open issue? --
+  var updates = [];
+  updateCandidates.slice(0, 12).forEach(function (u) {
+    if (Date.now() - started > SCAN_BUDGET_MS) return;
+    var p = 'A student with an OPEN issue on our sailing course platform has been in touch again. ' +
+      'Decide what this conversation says about THAT issue, and nothing else.\n\n' +
+      'THE OPEN ISSUE:\n' + JSON.stringify({ summary: u.issue.summary, status: u.issue.status, lesson_code: u.issue.lesson_code, logged: u.issue.submitted_at }) + '\n\n' +
+      'THE NEW CONVERSATION:\n' + u.conv.text + '\n\n' +
+      'Choose one verdict:\n' +
+      '- "fixed": the student says it now works, or confirms the fix or workaround did the job.\n' +
+      '- "still_broken": the student says it is still happening, happening again, or worse.\n' +
+      '- "new_detail": genuinely new information about the same problem (another device, steps to reproduce, when it started, more students affected).\n' +
+      '- "nothing_new": the conversation is about something else entirely, or adds nothing. This is the common answer - use it freely.\n\n' +
+      'Return ONLY JSON: {"verdict":"fixed|still_broken|new_detail|nothing_new","note":"<one sentence of what the student actually said>"}. No prose, no fences.';
+    var res = anthropicJson_(FINDER_MODEL, p, 400);
+    if (res && res.verdict && res.verdict !== 'nothing_new') {
+      updates.push({ conv: u.conv, issue: u.issue, verdict: res.verdict, note: res.note || '' });
+    }
+  });
+  SCAN_STATS.updatesFlagged = updates.length;
+
+  // Second opinion on updates too - a wrong "it's fixed" is the costly one.
+  var updatesConfirmed = [];
+  updates.forEach(function (u) {
+    if (Date.now() - started > SCAN_BUDGET_MS) return;
+    var vp = 'A first-pass AI read a support conversation and concluded it is an update on a known open issue. Disagree if it is wrong.\n\n' +
+      'OPEN ISSUE: ' + JSON.stringify({ summary: u.issue.summary, status: u.issue.status }) + '\n' +
+      'CLAIMED VERDICT: ' + u.verdict + ' - ' + u.note + '\n\n' +
+      'CONVERSATION:\n' + u.conv.text + '\n\n' +
+      'Be strict. "fixed" requires the student actually confirming it works now, not an instructor hoping so. ' +
+      'If the conversation is really about a different problem, disagree.\n' +
+      'Return ONLY JSON: {"agree":true or false,"verdict":"fixed|still_broken|new_detail","note":"<corrected one sentence>"}. No prose, no fences.';
+    var v = anthropicJson_(VERIFIER_MODEL, vp, 400);
+    if (v && v.agree === true) {
+      updatesConfirmed.push({
+        id: u.conv.id, name: u.conv.name, contact: u.conv.contact,
+        summary: v.note || u.note, verdict: v.verdict || u.verdict, issue: u.issue
+      });
+    }
+  });
+  SCAN_STATS.updatesConfirmed = updatesConfirmed.length;
+
+  if (updatesConfirmed.length) {
+    var ush = scanSheet_();
+    var unow = new Date().toISOString();
+    updatesConfirmed.slice(0, SCAN_MAX_SUGGESTIONS).forEach(function (u) {
+      ush.appendRow([u.id, unow, 'high', u.summary, catOf_(u.issue), u.issue.lesson_code || '',
+                     u.name, u.contact, 'suggested', u.issue.issue_id, '', '', '', 'update', u.verdict]);
+    });
+  }
+
+  // The new-issue path only looks at students with nothing open.
+  prepared = newCandidates;
+  if (!prepared.length) {
+    props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now()));
+    if (updatesConfirmed.length) scanSlack_(0, updatesConfirmed.length);
+    return;
+  }
+
   // Stage 2: the finder reads batches and proposes candidates.
   var found = [];
   for (var i = 0; i < prepared.length; i += SCAN_BATCH) {
@@ -1896,19 +1982,11 @@ function scanChatwoot() {
     }
   });
 
-  // Stage 4: dedupe against what is already on the log, then write the queue.
-  var openIssues = getIssues_().issues.filter(function (i) {
-    var s = String(i.status || 'open').toLowerCase();
-    return s !== 'resolved' && s !== 'past';
-  });
-  var fresh = confirmed.filter(function (c) {
-    var email = String(c.contact || '').trim().toLowerCase();
-    if (!email) return true;
-    // Same student already has something open: assume it is the same thread of
-    // trouble and leave it alone. Different students reporting the same fault
-    // are kept - repeat reports are how faults get prioritised.
-    return !openIssues.some(function (i) { return String(i.student_contact || '').trim().toLowerCase() === email; });
-  }).slice(0, SCAN_MAX_SUGGESTIONS);
+  // Stage 4: write the queue. Students with an open issue already went down
+  // the update path above, so anything here is genuinely new. Different
+  // students hitting the same fault are kept deliberately: repeat reports are
+  // how faults get prioritised.
+  var fresh = confirmed.slice(0, SCAN_MAX_SUGGESTIONS);
   SCAN_STATS.confirmed = confirmed.length;
   SCAN_STATS.queued = fresh.length;
 
@@ -1917,19 +1995,10 @@ function scanChatwoot() {
     var now = new Date().toISOString();
     fresh.forEach(function (c) {
       sh.appendRow([c.id, now, c.confidence, c.summary, c.category, c.lesson_code,
-                    c.name, c.contact, 'suggested', '', '', '', c.note]);
+                    c.name, c.contact, 'suggested', '', '', '', c.note, 'new', '']);
     });
-    try {
-      var appUrl = getAppUrl_();
-      UrlFetchApp.fetch(slackWebhook_(), {
-        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-        payload: JSON.stringify({ text: ':mag: *' + fresh.length + ' possible issue' + (fresh.length === 1 ? '' : 's') +
-          ' spotted in yesterday\'s chats* (nobody logged these)\n' +
-          fresh.slice(0, 5).map(function (c) { return '• ' + String(c.summary).slice(0, 110); }).join('\n') +
-          '\n\nReview them in the tracker: ' + (appUrl || '') })
-      });
-    } catch (e) {}
   }
+  if (fresh.length || updatesConfirmed.length) scanSlack_(fresh.length, updatesConfirmed.length);
   props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now()));
   Logger.log('scanChatwoot: ' + prepared.length + ' read, ' + found.length + ' flagged, ' + confirmed.length + ' confirmed, ' + fresh.length + ' queued.');
 }
@@ -1946,6 +2015,26 @@ function runChatScan_(data) {
   }
   scanChatwoot();
   return { ok: true, queued: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }).length, stats: SCAN_STATS };
+}
+
+// One Slack line covering both halves of the scan.
+function scanSlack_(newCount, updateCount) {
+  var bits = [];
+  if (newCount) bits.push(newCount + ' possible new issue' + (newCount === 1 ? '' : 's'));
+  if (updateCount) bits.push(updateCount + ' update' + (updateCount === 1 ? '' : 's') + ' on open issues');
+  if (!bits.length) return;
+  try {
+    UrlFetchApp.fetch(slackWebhook_(), {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ text: ':mag: *Spotted in yesterday\'s chats:* ' + bits.join(' and ') +
+        ', none of it logged.\nReview in the tracker: ' + (getAppUrl_() || '') })
+    });
+  } catch (e) {}
+}
+// catOf for a sheet record (the frontend has its own).
+function catOf_(issue) {
+  var c = String((issue && issue.category) || '').toLowerCase();
+  return c === 'course_error' || c === 'tech_issue' || c === 'internal' ? c : 'tech_issue';
 }
 
 // The admin queue: list what is waiting, and record the verdict.
