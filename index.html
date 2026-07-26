@@ -375,20 +375,21 @@
   /* Actions tab: one card per thing an instructor needs to do */
   /* Compact one-line rows (Edd, 26 Jul): status in a word, the issue in a
      line, the action in a few words. Everything else waits behind a click. */
-  .act-row { display: grid; grid-template-columns: 104px minmax(0,1fr) 190px 28px; gap: 10px; align-items: center;
+  .act-row { display: grid; grid-template-columns: 108px minmax(0,1fr) auto; gap: 12px; align-items: center;
              background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-             padding: 10px 12px; margin-bottom: 6px; cursor: pointer; }
-  .act-row:hover { border-color: var(--accent); }
-  .act-row .act-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
-  .act-row .act-do { font-size: 13px; color: var(--accent); font-weight: 600; }
-  .act-row .act-chev { color: var(--muted); text-align: right; }
-  .act-panel { border: 1px solid var(--accent); border-top: none; border-radius: 0 0 var(--radius) var(--radius);
-               background: var(--surface); padding: 12px; margin: -7px 0 10px; }
+             padding: 11px 12px; margin-bottom: 6px; cursor: pointer; }
+  .act-row:hover, .act-row.active { border-color: var(--accent); }
+  .act-row .act-title { font-size: 14px; line-height: 1.35; }
+  .act-row .act-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .act-row .act-do { font-size: 12.5px; color: var(--accent); font-weight: 600; display: block; margin-bottom: 5px; }
   .act-word { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px; border-radius: 999px;
               text-align: center; white-space: nowrap; overflow: hidden; }
-  @media (max-width: 700px) {
-    .act-row { grid-template-columns: 88px minmax(0,1fr); }
-    .act-row .act-do, .act-row .act-chev { display: none; }
+  /* On a phone everything stacks and stays visible - nothing is hidden, it
+     just reflows (Edd, 26 Jul: "over simplified"). */
+  @media (max-width: 760px) {
+    .act-row { grid-template-columns: 1fr; gap: 6px; }
+    .act-word { justify-self: start; }
+    .act-row .act-do { margin-bottom: 4px; }
   }
 
   .action-card { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
@@ -1727,9 +1728,11 @@ function draftEmailFor(id, kind) {
 }
 function renderActions() {
   var a = myActionItems();
-  // One flat list, most pressing first. Each row: status in a word, the issue
-  // in a line, the action in a few words. Click for the controls (Edd's
-  // redesign, 26 Jul) - the detail lives behind the row rather than in it.
+  // One flat list, most pressing first. Each row carries all three things at
+  // once: the status in a word, a few words on the issue, and the action
+  // needed with its button. Clicking the row opens the full issue in the
+  // right-hand pane, same as Track (Edd, 26 Jul - my first pass hid the
+  // action text on mobile and buried the detail in an accordion).
   var rows = []
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
@@ -1744,74 +1747,48 @@ function renderActions() {
   }
 
   $("actionsList").innerHTML = rows.map(function (r) {
-    var id = esc(r.i.issue_id);
-    return '<div class="act-row" data-id="' + id + '" onclick="toggleAction(\'' + id + '\',\'' + r.kind + '\')">' +
+    var i = r.i, id = esc(i.issue_id);
+    var stop = 'event.stopPropagation();';
+    // The one button that matches the action phrase. Everything else is in
+    // the issue itself, one click away.
+    var btn = "";
+    if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
+    else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>';
+    else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'fixed\')">Draft email</button>';
+    else if (r.kind === "followup") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Sorted</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
+    else btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsSentUpdate(\'' + id + '\')">Student updated</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft email</button>';
+
+    // A few words on the issue: what it is, who it's about, where it lives.
+    var sub = [];
+    if (i.student_name) sub.push(String(i.student_name).split(" ")[0]);
+    if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
+    if (r.kind === "question" && i.dev_query) sub.push('"' + String(i.dev_query).slice(0, 60) + '"');
+    if (r.kind === "longopen") sub.push(Math.floor((Date.now() - new Date(i.submitted_at)) / 864e5) + " days open");
+
+    return '<div class="act-row" data-id="' + id + '" onclick="actionOpen(\'' + id + '\')">' +
         '<span class="act-word" style="background:' + r.colour + ';color:#02121f;">' + esc(r.word) + '</span>' +
-        '<span class="act-title">' + esc(cardTitle(r.i)) +
-          (r.i.student_name ? ' <span class="muted">· ' + esc(String(r.i.student_name).split(" ")[0]) + '</span>' : '') + '</span>' +
-        '<span class="act-do">' + esc(r.act) + '</span>' +
-        '<span class="act-chev" id="chev_' + id + '">›</span>' +
-      '</div>' +
-      '<div class="act-panel hidden" id="panel_' + id + '"></div>';
+        '<div><div class="act-title">' + esc(cardTitle(i)) + '</div>' +
+          (sub.length ? '<div class="act-sub">' + esc(sub.join(" · ")) + '</div>' : '') + '</div>' +
+        '<div><span class="act-do">' + esc(r.act) + '</span>' + btn + '</div>' +
+      '</div>';
   }).join("");
   markActiveCard();
   renderChatScan("actionsScan");
 }
 
-// Expand a row to show what you can actually do with it.
-function toggleAction(id, kind) {
-  var panel = $("panel_" + id), chev = $("chev_" + id);
-  if (!panel) return;
-  if (!panel.classList.contains("hidden")) {
-    panel.classList.add("hidden"); panel.innerHTML = "";
-    if (chev) chev.textContent = "›";
-    return;
-  }
-  var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
-  if (!i) return;
-  if (chev) chev.textContent = "⌄";
-  var esc_id = esc(id);
-  var body = '<div class="small muted" style="margin-bottom:8px;">' +
-      priBadge(i.priority) + " " + statusBadge(i.status) +
-      (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
-      (i.instructor_name ? ' logged by ' + esc(i.instructor_name) : '') + '</div>' +
-    '<div style="font-size:13.5px;margin-bottom:10px;">' + esc(i.summary || "") + '</div>';
-
-  if (kind === "question") {
-    body += '<div class="small" style="margin-bottom:6px;"><strong>' + esc(i.dev_query_by || "The team") + ' asks:</strong> ' + esc(i.dev_query || "") + '</div>' +
-      '<textarea id="act_reply_' + esc_id + '" rows="2" placeholder="Your reply..." style="width:100%;margin-bottom:6px;"></textarea>' +
-      '<div class="row"><button class="primary small" style="padding:5px 12px;" onclick="actionsAnswer(\'' + esc_id + '\')">Send reply</button>' +
-      '<button class="ghost small" style="padding:5px 12px;" onclick="actionOpen(\'' + esc_id + '\')">Open the issue</button></div>';
-  } else if (kind === "verify") {
-    body += (i.dev_notes ? '<div class="small muted" style="margin-bottom:8px;">Fix notes: ' + esc(i.dev_notes) + '</div>' : '') +
-      '<div class="row"><button class="primary small" style="padding:5px 12px;" onclick="actionsResolveTbc(\'' + esc_id + '\', true)">Checked - resolve</button>' +
-      '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="actionsResolveTbc(\'' + esc_id + '\', false)">Not fixed - reopen</button>' +
-      '<button class="ghost small" style="padding:5px 12px;" onclick="actionOpen(\'' + esc_id + '\')">Open the issue</button></div>';
-  } else if (kind === "notify") {
-    body += '<div class="small" style="margin-bottom:8px;">' + esc(i.student_name || "The student") +
-        (i.student_contact ? ' - ' + esc(i.student_contact) : '') + '</div>' +
-      (i.dev_notes || i.resolution_note ? '<div class="small muted" style="margin-bottom:8px;">Fix: ' + esc(i.dev_notes || i.resolution_note) + '</div>' : '') +
-      '<div class="row">' +
-      (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
-      '<button class="ghost small" style="padding:5px 12px;" onclick="draftEmailFor(\'' + esc_id + '\', \'fixed\')">Copy draft email</button>' +
-      '<button class="primary small" style="padding:5px 12px;" onclick="actionsMarkNotified(\'' + esc_id + '\')">Done - student told</button></div>';
-  } else if (kind === "followup") {
-    body += (i.resolution_note ? '<div class="small muted" style="margin-bottom:8px;">Workaround given: ' + esc(i.resolution_note) + '</div>' : '') +
-      '<div class="row">' +
-      '<button class="ghost small" style="padding:5px 12px;" onclick="draftEmailFor(\'' + esc_id + '\', \'followup\')">Copy draft email</button>' +
-      '<button class="primary small" style="padding:5px 12px;" onclick="actionsResolveTbc(\'' + esc_id + '\', true)">All good - resolve</button>' +
-      '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="actionsResolveTbc(\'' + esc_id + '\', false)">Still broken - reopen</button></div>';
-  } else {
-    var days = Math.floor((Date.now() - new Date(i.submitted_at)) / (24 * 60 * 60 * 1000));
-    body += '<div class="small" style="margin-bottom:8px;">High priority, open ' + days + ' days. A quick "we\'re still on it" goes a long way.</div>' +
-      '<div class="row">' +
-      (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
-      '<button class="ghost small" style="padding:5px 12px;" onclick="draftEmailFor(\'' + esc_id + '\', \'longopen\')">Copy draft email</button>' +
-      '<button class="primary small" style="padding:5px 12px;" onclick="actionsSentUpdate(\'' + esc_id + '\')">Done - student updated</button></div>';
-  }
-  panel.innerHTML = body;
-  panel.classList.remove("hidden");
+// Park an issue from Actions: known about, deliberately left, and it wakes up
+// if anyone reports it again (Edd, 26 Jul).
+function actionsPark(id) {
+  apiPost({ action: "updateIssue", issue_id: id, status: "parked" }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Parked - it'll come back if anyone else reports it.");
+    loadIssues();
+  }).catch(function () { toast("Error."); });
 }
+
 function actionsAnswer(id) {
   var el = $("act_reply_" + id);
   var reply = el ? el.value.trim() : "";
@@ -3698,9 +3675,9 @@ function closeSplit() {
   state._splitOpen = false;
 }
 function markActiveCard() {
-  Array.prototype.forEach.call(document.querySelectorAll(".issue-card.active, .action-card.active"), function (el) { el.classList.remove("active"); });
+  Array.prototype.forEach.call(document.querySelectorAll(".issue-card.active, .action-card.active, .act-row.active"), function (el) { el.classList.remove("active"); });
   if (!state.detailId) return;
-  Array.prototype.forEach.call(document.querySelectorAll('.issue-card[data-id="' + state.detailId + '"], .action-card[data-id="' + state.detailId + '"]'), function (el) { el.classList.add("active"); });
+  Array.prototype.forEach.call(document.querySelectorAll('.issue-card[data-id="' + state.detailId + '"], .action-card[data-id="' + state.detailId + '"], .act-row[data-id="' + state.detailId + '"]'), function (el) { el.classList.add("active"); });
 }
 
 function kv(k, v) { return '<div class="k">' + esc(k) + '</div><div>' + (v ? esc(v) : "—") + '</div>'; }
