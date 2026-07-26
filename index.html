@@ -373,6 +373,24 @@
   .submit-row { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0; z-index: 5; box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.45); }
 
   /* Actions tab: one card per thing an instructor needs to do */
+  /* Compact one-line rows (Edd, 26 Jul): status in a word, the issue in a
+     line, the action in a few words. Everything else waits behind a click. */
+  .act-row { display: grid; grid-template-columns: 104px minmax(0,1fr) 190px 28px; gap: 10px; align-items: center;
+             background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+             padding: 10px 12px; margin-bottom: 6px; cursor: pointer; }
+  .act-row:hover { border-color: var(--accent); }
+  .act-row .act-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+  .act-row .act-do { font-size: 13px; color: var(--accent); font-weight: 600; }
+  .act-row .act-chev { color: var(--muted); text-align: right; }
+  .act-panel { border: 1px solid var(--accent); border-top: none; border-radius: 0 0 var(--radius) var(--radius);
+               background: var(--surface); padding: 12px; margin: -7px 0 10px; }
+  .act-word { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px; border-radius: 999px;
+              text-align: center; white-space: nowrap; overflow: hidden; }
+  @media (max-width: 700px) {
+    .act-row { grid-template-columns: 88px minmax(0,1fr); }
+    .act-row .act-do, .act-row .act-chev { display: none; }
+  }
+
   .action-card { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
   .action-card h4 { margin: 0 0 6px; font-size: 14px; }
   .action-card.active { border-color: var(--accent); }
@@ -677,6 +695,7 @@
       <option value="in_progress">In progress (being worked on)</option>
       <option value="with_dev">With developers</option>
       <option value="dev_fixed">Fixed by dev</option>
+      <option value="parked">Parked (waiting to see if it recurs)</option>
       <option value="resolved_tbc">Resolved - TBC</option>
       <option value="resolved">Resolved</option>
       <option value="past">Past (imported)</option>
@@ -715,7 +734,7 @@
       <option value="reporter">Sort: reported by (A-Z)</option>
       <option value="reports">Sort: most reported</option>
     </select>
-    <input id="flt_search" placeholder="Search lesson code / keyword" oninput="renderAdmin()" />
+    <input id="flt_search" placeholder="Search student, lesson, or any word in the report" oninput="renderAdmin()" />
   </div>
 
   <div id="filterClear" class="small hidden" style="margin-bottom:10px;">
@@ -1309,7 +1328,10 @@ function priBadge(p) {
   var label = p ? p.charAt(0).toUpperCase() + p.slice(1) : "—";
   return '<span class="badge pri pri-' + (p || "low") + '">' + label + "</span>";
 }
-var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", resolved_tbc: "resolved - TBC", resolved: "resolved", past: "past" };
+// "parked" is known about and deliberately not being worked on - the "let's
+// leave this unless more people report it" state (Edd, 26 Jul). A fresh report
+// wakes it back up (see addReportToIssue_).
+var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", parked: "parked", resolved_tbc: "resolved - TBC", resolved: "resolved", past: "past" };
 function statusBadge(s) {
   s = (s || "open").toLowerCase();
   return '<span class="badge st st-' + s + '">' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + "</span>";
@@ -1439,7 +1461,7 @@ function isOpen(issue) {
   // Anything not yet finished: open, in progress, with developers, or fixed by
   // a dev but not yet verified/resolved by an admin.
   var s = (issue.status || "open").toLowerCase();
-  return s !== "resolved" && s !== "resolved_tbc" && s !== "past";
+  return s !== "resolved" && s !== "resolved_tbc" && s !== "past" && s !== "parked";
 }
 // Is this issue mine? The primary logger, or a contributor via a merged report.
 function isMine(i) {
@@ -1705,80 +1727,90 @@ function draftEmailFor(id, kind) {
 }
 function renderActions() {
   var a = myActionItems();
-  var html = "";
+  // One flat list, most pressing first. Each row: status in a word, the issue
+  // in a line, the action in a few words. Click for the controls (Edd's
+  // redesign, 26 Jul) - the detail lives behind the row rather than in it.
+  var rows = []
+    .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
+    .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
+    .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
+    .concat(a.followups.map(function (i) { return { i: i, kind: "followup", word: "Workaround", colour: "var(--medium)", act: "Did it stick?" }; }))
+    .concat(a.longOpen.map(function (i) { return { i: i, kind: "longopen", word: "Waiting", colour: "var(--high)", act: "Reassure the student" }; }));
 
-  html += '<h3>Questions for the instructors</h3>';
-  html += a.questions.length ? a.questions.map(function (i) {
-    return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
-      '<h4>' + esc(i.dev_query_by || "The team") + ' asks:</h4>' +
-      '<div class="small" style="margin-bottom:8px;">' + esc(i.dev_query || "") + '</div>' +
-      '<div class="small muted" style="margin-bottom:6px;">On: ' + esc(cardTitle(i)) + '</div>' +
-      '<textarea id="act_reply_' + esc(i.issue_id) + '" rows="2" placeholder="Your reply..." style="width:100%;margin-bottom:6px;" onclick="event.stopPropagation()"></textarea>' +
-      '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsAnswer(\'' + esc(i.issue_id) + '\')">Send reply</button>' +
-    '</div>';
-  }).join("") : '<div class="action-empty">Nothing waiting. Lovely.</div>';
-
-  if (state.perms && (state.perms.manage || state.perms.users)) {
-    html += '<h3>Fixed by the team - waiting on a check</h3>';
-    html += a.verify.length ? a.verify.map(function (i) {
-      return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
-        '<h4>' + esc(cardTitle(i)) + '</h4>' +
-        (i.dev_notes ? '<div class="small muted" style="margin-bottom:6px;">Fix notes: ' + esc(i.dev_notes) + '</div>' : '') +
-        '<div class="small" style="margin-bottom:6px;">Give it a quick check, then resolve it so the student can be told.</div>' +
-        '<div class="row">' +
-          '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">Checked - resolve</button>' +
-          '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Not fixed - reopen</button>' +
-        '</div>' +
-      '</div>';
-    }).join("") : '<div class="action-empty">Nothing waiting on a check.</div>';
+  if (!rows.length) {
+    $("actionsList").innerHTML = '<p class="muted small">Nothing waiting on you. Have a cup of tea.</p>';
+    renderChatScan("actionsScan");
+    return;
   }
 
-  html += '<h3>Students to tell about a fix</h3>';
-  html += a.notify.length ? a.notify.map(function (i) {
-    return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
-      '<h4>' + esc(cardTitle(i)) + '</h4>' +
-      '<div class="small" style="margin-bottom:4px;">' + esc(i.student_name || "Student") + (i.student_contact ? ' - ' + esc(i.student_contact) : '') + '</div>' +
-      (i.dev_notes || i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Fix: ' + esc(i.dev_notes || i.resolution_note) + '</div>' : '') +
-      '<div class="row">' +
-        (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
-        '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();draftEmailFor(\'' + esc(i.issue_id) + '\', \'fixed\')">Copy draft email</button>' +
-        '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsMarkNotified(\'' + esc(i.issue_id) + '\')">Done - student told</button>' +
+  $("actionsList").innerHTML = rows.map(function (r) {
+    var id = esc(r.i.issue_id);
+    return '<div class="act-row" data-id="' + id + '" onclick="toggleAction(\'' + id + '\',\'' + r.kind + '\')">' +
+        '<span class="act-word" style="background:' + r.colour + ';color:#02121f;">' + esc(r.word) + '</span>' +
+        '<span class="act-title">' + esc(cardTitle(r.i)) +
+          (r.i.student_name ? ' <span class="muted">· ' + esc(String(r.i.student_name).split(" ")[0]) + '</span>' : '') + '</span>' +
+        '<span class="act-do">' + esc(r.act) + '</span>' +
+        '<span class="act-chev" id="chev_' + id + '">›</span>' +
       '</div>' +
-    '</div>';
-  }).join("") : '<div class="action-empty">No fixes waiting to be passed on.</div>';
-
-  html += '<h3>Workarounds to double-check</h3>';
-  html += a.followups.length ? a.followups.map(function (i) {
-    return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
-      '<h4>' + esc(cardTitle(i)) + '</h4>' +
-      (i.resolution_note ? '<div class="small muted" style="margin-bottom:6px;">Workaround given: ' + esc(i.resolution_note) + '</div>' : '') +
-      '<div class="small" style="margin-bottom:6px;"><strong>Action:</strong> ask ' + esc((i.student_name || "the student").split(" ")[0]) + ' whether the workaround stuck, then resolve or reopen.</div>' +
-      '<div class="row">' +
-        '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();draftEmailFor(\'' + esc(i.issue_id) + '\', \'followup\')">Copy draft email</button>' +
-        '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">All good - resolve</button>' +
-        '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Still broken - reopen</button>' +
-      '</div>' +
-    '</div>';
-  }).join("") : '<div class="action-empty">No workarounds waiting on a check.</div>';
-
-  html += '<h3>Open a while - worth a reassuring update</h3>';
-  html += a.longOpen.length ? a.longOpen.map(function (i) {
-    var days = Math.floor((Date.now() - new Date(i.submitted_at)) / (24 * 60 * 60 * 1000));
-    return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="border-left-color:var(--line);cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
-      '<h4>' + esc(cardTitle(i)) + '</h4>' +
-      '<div class="small" style="margin-bottom:6px;">High priority and open ' + days + ' days - ' +
-        esc((i.student_name || "the student").split(" ")[0]) + ' is likely still stuck, so a quick "we\'re still on this" goes a long way.</div>' +
-      '<div class="row">' +
-        (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
-        '<button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();draftEmailFor(\'' + esc(i.issue_id) + '\', \'longopen\')">Copy draft email</button>' +
-        '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsSentUpdate(\'' + esc(i.issue_id) + '\')">Done - student updated</button>' +
-      '</div>' +
-    '</div>';
-  }).join("") : '<div class="action-empty">Nothing lingering.</div>';
-
-  $("actionsList").innerHTML = html;
+      '<div class="act-panel hidden" id="panel_' + id + '"></div>';
+  }).join("");
   markActiveCard();
   renderChatScan("actionsScan");
+}
+
+// Expand a row to show what you can actually do with it.
+function toggleAction(id, kind) {
+  var panel = $("panel_" + id), chev = $("chev_" + id);
+  if (!panel) return;
+  if (!panel.classList.contains("hidden")) {
+    panel.classList.add("hidden"); panel.innerHTML = "";
+    if (chev) chev.textContent = "›";
+    return;
+  }
+  var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
+  if (!i) return;
+  if (chev) chev.textContent = "⌄";
+  var esc_id = esc(id);
+  var body = '<div class="small muted" style="margin-bottom:8px;">' +
+      priBadge(i.priority) + " " + statusBadge(i.status) +
+      (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
+      (i.instructor_name ? ' logged by ' + esc(i.instructor_name) : '') + '</div>' +
+    '<div style="font-size:13.5px;margin-bottom:10px;">' + esc(i.summary || "") + '</div>';
+
+  if (kind === "question") {
+    body += '<div class="small" style="margin-bottom:6px;"><strong>' + esc(i.dev_query_by || "The team") + ' asks:</strong> ' + esc(i.dev_query || "") + '</div>' +
+      '<textarea id="act_reply_' + esc_id + '" rows="2" placeholder="Your reply..." style="width:100%;margin-bottom:6px;"></textarea>' +
+      '<div class="row"><button class="primary small" style="padding:5px 12px;" onclick="actionsAnswer(\'' + esc_id + '\')">Send reply</button>' +
+      '<button class="ghost small" style="padding:5px 12px;" onclick="actionOpen(\'' + esc_id + '\')">Open the issue</button></div>';
+  } else if (kind === "verify") {
+    body += (i.dev_notes ? '<div class="small muted" style="margin-bottom:8px;">Fix notes: ' + esc(i.dev_notes) + '</div>' : '') +
+      '<div class="row"><button class="primary small" style="padding:5px 12px;" onclick="actionsResolveTbc(\'' + esc_id + '\', true)">Checked - resolve</button>' +
+      '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="actionsResolveTbc(\'' + esc_id + '\', false)">Not fixed - reopen</button>' +
+      '<button class="ghost small" style="padding:5px 12px;" onclick="actionOpen(\'' + esc_id + '\')">Open the issue</button></div>';
+  } else if (kind === "notify") {
+    body += '<div class="small" style="margin-bottom:8px;">' + esc(i.student_name || "The student") +
+        (i.student_contact ? ' - ' + esc(i.student_contact) : '') + '</div>' +
+      (i.dev_notes || i.resolution_note ? '<div class="small muted" style="margin-bottom:8px;">Fix: ' + esc(i.dev_notes || i.resolution_note) + '</div>' : '') +
+      '<div class="row">' +
+      (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+      '<button class="ghost small" style="padding:5px 12px;" onclick="draftEmailFor(\'' + esc_id + '\', \'fixed\')">Copy draft email</button>' +
+      '<button class="primary small" style="padding:5px 12px;" onclick="actionsMarkNotified(\'' + esc_id + '\')">Done - student told</button></div>';
+  } else if (kind === "followup") {
+    body += (i.resolution_note ? '<div class="small muted" style="margin-bottom:8px;">Workaround given: ' + esc(i.resolution_note) + '</div>' : '') +
+      '<div class="row">' +
+      '<button class="ghost small" style="padding:5px 12px;" onclick="draftEmailFor(\'' + esc_id + '\', \'followup\')">Copy draft email</button>' +
+      '<button class="primary small" style="padding:5px 12px;" onclick="actionsResolveTbc(\'' + esc_id + '\', true)">All good - resolve</button>' +
+      '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="actionsResolveTbc(\'' + esc_id + '\', false)">Still broken - reopen</button></div>';
+  } else {
+    var days = Math.floor((Date.now() - new Date(i.submitted_at)) / (24 * 60 * 60 * 1000));
+    body += '<div class="small" style="margin-bottom:8px;">High priority, open ' + days + ' days. A quick "we\'re still on it" goes a long way.</div>' +
+      '<div class="row">' +
+      (i.student_contact ? '<button class="ghost small" style="padding:5px 12px;" onclick="copyText(\'' + esc(i.student_contact) + '\')">Copy contact</button>' : '') +
+      '<button class="ghost small" style="padding:5px 12px;" onclick="draftEmailFor(\'' + esc_id + '\', \'longopen\')">Copy draft email</button>' +
+      '<button class="primary small" style="padding:5px 12px;" onclick="actionsSentUpdate(\'' + esc_id + '\')">Done - student updated</button></div>';
+  }
+  panel.innerHTML = body;
+  panel.classList.remove("hidden");
 }
 function actionsAnswer(id) {
   var el = $("act_reply_" + id);
@@ -3216,7 +3248,7 @@ function renderAdmin() {
       var st = (i.status || "open").toLowerCase();
       // "needs_action" is the catch-all for anything still open: everything that
       // is not resolved or parked as resolved-TBC.
-      if (fs === "needs_action") { if (st === "resolved" || st === "resolved_tbc" || st === "past") return false; }
+      if (fs === "needs_action") { if (st === "resolved" || st === "resolved_tbc" || st === "past" || st === "parked") return false; }
       else if (st !== fs) return false;
     }
     if (fp && (i.priority || "").toLowerCase() !== fp) return false;
@@ -3228,6 +3260,7 @@ function renderAdmin() {
       var hay = ((i.lesson_code || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
                  " " + (i.lesson || "") + " " + (i.module || "") + " " + (i.device_info || "") +
                  " " + (i.resolution_note || "") + " " + (i.student_contact || "") +
+                 " " + (i.instructor_name || "") + " " + (i.assignee || "") +
                  " " + (i.raw_text || "")).toLowerCase();
       if (hay.indexOf(fq) === -1) return false;
     }
@@ -3555,7 +3588,7 @@ function openDetail(issue) {
 
   sideCol += '<h3>Update status &amp; priority</h3>' +
     '<div class="field"><select id="d_status" onchange="onStatusChange()">' +
-      ['open','in_progress','with_dev','dev_fixed','resolved_tbc','resolved','past'].map(function (s) {
+      ['open','in_progress','with_dev','dev_fixed','parked','resolved_tbc','resolved','past'].map(function (s) {
         var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
         return '<option value="' + s + '"' + sel + '>' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + '</option>';
       }).join("") +

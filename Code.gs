@@ -921,6 +921,13 @@ function addReportToIssue_(id, data, report) {
     rec.status = 'open';
   }
 
+  // A parked issue was left alone "unless more people report it". Someone just
+  // did, so wake it up (Edd, 26 Jul).
+  if (String(rec.status).toLowerCase() === 'parked') {
+    rec.status = 'open';
+    rec.raw_text = (rec.raw_text || '') + '\n\n--- unparked: reported again ---';
+  }
+
   // Repeat reports can tip a tech issue over the routing line (3+ reports, or
   // the priority bump above making it high): hand it to the developers.
   if (String(rec.category).toLowerCase() === 'tech_issue' &&
