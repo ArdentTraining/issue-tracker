@@ -333,8 +333,11 @@ function reqPerm_(action) {
     case 'flagQuery': case 'answerQuery': return 'work';
     case 'requestRecheck': case 'rateExtraction': return 'log';
     case 'chatwootImport': case 'chatwootList': return 'log';
-    // The scan queue is admin-only while we learn how precise it is.
-    case 'chatScanList': case 'chatScanReview': case 'runChatScan': return 'users';
+    // The scan queue is visible to every instructor (Edd, 26 Jul) - the team
+    // is small and whoever spots it first should be able to act. Kicking off a
+    // manual scan stays with the admins.
+    case 'chatScanList': case 'chatScanReview': return 'log';
+    case 'runChatScan': return 'users';
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':

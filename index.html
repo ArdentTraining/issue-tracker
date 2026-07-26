@@ -258,6 +258,10 @@
     .brand small { display: none; }
     header.topbar > div { flex-wrap: wrap; gap: 8px; width: 100%; }
     .switcher { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+    /* On a phone the account row (name, theme, log out) sits above the tab
+       strip, so the tabs stay next to the content they switch. */
+    .topbar > div:last-child { flex-direction: column-reverse; align-items: stretch !important; gap: 8px !important; }
+    .topbar #userbox { display: flex !important; justify-content: flex-end; align-items: center; gap: 6px; flex-wrap: wrap; }
     .switcher button { padding: 7px 10px; font-size: 13px; white-space: nowrap; }
     .wrap { padding: 12px; }
     .row { flex-direction: column; gap: 0; }
@@ -358,8 +362,11 @@
   .fab { position: fixed; bottom: 20px; right: 20px; z-index: 60; background: var(--accent); color: #fff; font-weight: 600; border-radius: 999px; padding: 11px 18px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: none; }
 
   /* Course fixes filter dropdowns: a single wrapping row, not a stack */
-  #courseFilters { display: flex; }
-  #courseFilters select { width: auto; }
+  /* Course fixes filters: a tidy auto-fitting grid rather than one long row
+     that wraps awkwardly (Edd, 26 Jul). */
+  #courseFilters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 10px; align-items: center; }
+  #courseFilters select { width: 100%; min-width: 0; }
+  @media (max-width: 700px) { #courseFilters { grid-template-columns: 1fr 1fr; } }
 
   /* Submit row sticks to the bottom of the viewport while the (long) details
      section is scrolled, so nobody misses that the form ends in a button. */
@@ -629,6 +636,7 @@
     <div class="list-col" id="actionsList"></div>
     <div class="split-dock" id="actionsDock" style="display:none;"></div>
   </div>
+  <div id="actionsScan" style="max-width:900px;margin-top:18px;"></div>
 </div>
 
 <!-- ===================== ADMIN VIEW ===================== -->
@@ -768,8 +776,8 @@
 <!-- ===================== DEVELOPER VIEW ===================== -->
 <div id="devView" class="wrap hidden">
   <div class="summary-row">
-    <div class="stat"><div class="n" id="devStatQueue">–</div><div class="l">In the dev queue</div></div>
-    <div class="stat"><div class="n" id="devStatFixed">–</div><div class="l">Fixed, awaiting admin</div></div>
+    <div class="stat" style="cursor:pointer;" onclick="setDevFilter('todo')"><div class="n" id="devStatQueue">–</div><div class="l">In the dev queue</div></div>
+    <div class="stat" style="cursor:pointer;" onclick="setDevFilter('fixed')"><div class="n" id="devStatFixed">–</div><div class="l">Fixed, awaiting admin</div></div>
     <div class="stat"><div class="n" id="devStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
   <div class="area-toggle">
@@ -788,8 +796,8 @@
 <!-- ===================== COURSE FIXES VIEW ===================== -->
 <div id="courseView" class="wrap hidden">
   <div class="summary-row">
-    <div class="stat"><div class="n" id="courseStatQueue">–</div><div class="l">In the course-fix queue</div></div>
-    <div class="stat"><div class="n" id="courseStatFixed">–</div><div class="l">Fixed / done</div></div>
+    <div class="stat" style="cursor:pointer;" onclick="setCourseFilter('todo')"><div class="n" id="courseStatQueue">–</div><div class="l">In the course-fix queue</div></div>
+    <div class="stat" style="cursor:pointer;" onclick="setCourseFilter('fixed')"><div class="n" id="courseStatFixed">–</div><div class="l">Fixed / done</div></div>
     <div class="stat"><div class="n" id="courseStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
   <div class="area-toggle" id="courseFilters" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
@@ -858,6 +866,7 @@
       <div class="row" style="margin-bottom:10px;">
         <button class="ghost small" id="scanNowBtn" style="padding:5px 12px;" onclick="runChatScanNow()">Scan now</button>
         <button class="ghost small" style="padding:5px 12px;" onclick="renderChatScan()">Refresh</button>
+        <span class="small muted" style="align-self:center;">Instructors see this list in their Actions tab too.</span>
       </div>
       <div id="chatScanList"></div>
     </div>
@@ -1401,7 +1410,12 @@ function platformBadge(i) {
 // board can be scanned with a couple of words per issue.
 function cardTitle(i) {
   var s = String((i && i.summary) || "").trim();
-  if (!s) return "(no summary)";
+  // Blank summary (an extraction that came back empty, or an old import):
+  // show the first useful line of the report rather than a hole in the list.
+  if (!s) {
+    var raw = String((i && i.raw_text) || "").replace(/\s+/g, " ").trim();
+    return raw ? raw.slice(0, 90) + (raw.length > 90 ? "…" : "") : "(no summary)";
+  }
   var firstStop = s.search(/[.!?]\s/);
   var t = firstStop > 0 && firstStop < 70 ? s.slice(0, firstStop) : s;
   if (t.length > 70) t = t.slice(0, 70).replace(/\s+\S*$/, "") + "…";
@@ -1602,10 +1616,15 @@ function myActionItems() {
   // Everyone with the tab sees every action (Edd, 21 Jul): the team is small
   // and any instructor can pass a fix on. Cards carry who logged each one.
   var now = Date.now(), day = 24 * 60 * 60 * 1000;
-  var out = { questions: [], notify: [], followups: [], longOpen: [] };
+  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [] };
+  var canVerify = !!(state.perms && (state.perms.manage || state.perms.users));
   (state.issues || []).forEach(function (i) {
     var st = String(i.status || "open").toLowerCase();
     if (i.dev_query_at && i.dev_query_target === "instructor") out.questions.push(i);
+    // The dev/course team marked it fixed and it's sitting waiting for someone
+    // to check and close it. It was only visible in the queues before, which
+    // is why "awaiting admin" had nowhere to be found (Edd, 26 Jul).
+    if (canVerify && st === "dev_fixed") out.verify.push(i);
     // "Tell the student": only fixes that happened AFTER logging. An issue that
     // arrived already resolved was sorted in the chat with the student present,
     // so there's nobody to notify (resolved_at at/before logging = chat-resolved).
@@ -1630,7 +1649,7 @@ function updateActionsTabCount() {
   var t = $("tabActions");
   if (!t || t.style.display === "none") return;
   var a = myActionItems();
-  var n = a.questions.length + a.notify.length + a.followups.length;
+  var n = a.questions.length + a.verify.length + a.notify.length + a.followups.length;
   t.textContent = n ? "Actions (" + n + ")" : "Actions";
 }
 function actionCardTop(i) {
@@ -1681,6 +1700,21 @@ function renderActions() {
     '</div>';
   }).join("") : '<div class="action-empty">Nothing waiting. Lovely.</div>';
 
+  if (state.perms && (state.perms.manage || state.perms.users)) {
+    html += '<h3>Fixed by the team - waiting on a check</h3>';
+    html += a.verify.length ? a.verify.map(function (i) {
+      return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
+        '<h4>' + esc(cardTitle(i)) + '</h4>' +
+        (i.dev_notes ? '<div class="small muted" style="margin-bottom:6px;">Fix notes: ' + esc(i.dev_notes) + '</div>' : '') +
+        '<div class="small" style="margin-bottom:6px;">Give it a quick check, then resolve it so the student can be told.</div>' +
+        '<div class="row">' +
+          '<button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', true)">Checked - resolve</button>' +
+          '<button class="ghost small" style="padding:5px 12px;color:var(--high);" onclick="event.stopPropagation();actionsResolveTbc(\'' + esc(i.issue_id) + '\', false)">Not fixed - reopen</button>' +
+        '</div>' +
+      '</div>';
+    }).join("") : '<div class="action-empty">Nothing waiting on a check.</div>';
+  }
+
   html += '<h3>Students to tell about a fix</h3>';
   html += a.notify.length ? a.notify.map(function (i) {
     return '<div class="action-card" data-id="' + esc(i.issue_id) + '" style="cursor:pointer;" onclick="actionOpen(\'' + esc(i.issue_id) + '\')">' + actionCardTop(i) +
@@ -1726,6 +1760,7 @@ function renderActions() {
 
   $("actionsList").innerHTML = html;
   markActiveCard();
+  renderChatScan("actionsScan");
 }
 function actionsAnswer(id) {
   var el = $("act_reply_" + id);
@@ -3079,6 +3114,10 @@ function openIssueById(id, intoForm) {
 
 // ============================ ADMIN: DASHBOARD ============================
 function setArea(a) {
+  // A lesson drill-down (from Analytics or the batch panel) sets the search
+  // box. Switching area with that still applied looked like "tech fixes is
+  // empty" when it was really "no tech issues on DS.09.12" (Edd, 26 Jul).
+  if (state.area !== a) clearLessonFilter(true);
   state.area = a;
   $("area_all").classList.toggle("active", a === "all");
   $("area_course").classList.toggle("active", a === "course_error");
@@ -3302,9 +3341,11 @@ function kanbanDrop(ev) {
   });
 }
 
-function clearLessonFilter() {
+function clearLessonFilter(quiet) {
+  var had = !$("filterClear").classList.contains("hidden");
   $("flt_search").value = "";
   $("filterClear").classList.add("hidden");
+  if (quiet) { if (had) toast("Cleared the lesson filter."); return; }
   renderAdmin();
 }
 
@@ -4533,14 +4574,23 @@ function setUsersSection(s) {
 }
 
 // ---- "Spotted in chat": the nightly scan's suggestions, awaiting a verdict --
-function renderChatScan() {
-  var box = $("chatScanList");
+// The queue appears in two places now (Admin sub-tab and Actions), so redraw
+// whichever is on screen.
+function refreshScanViews() {
+  if (state.view === "actions") renderChatScan("actionsScan");
+  else if (state.view === "users" && state.usersSection === "chatscan") renderChatScan();
+}
+function renderChatScan(targetId) {
+  var box = $(targetId || "chatScanList");
   if (!box) return;
+  var inActions = targetId === "actionsScan";
   box.innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
   apiGet("chatScanList").then(function (res) {
     if (!res || !res.ok) { box.innerHTML = '<p class="muted small">Could not load: ' + esc((res && res.error) || "unknown") + '</p>'; return; }
     var rows = res.scans || [];
     if ($("us_chatscan")) $("us_chatscan").textContent = rows.length ? "Spotted in chat (" + rows.length + ")" : "Spotted in chat";
+    // In Actions it's a secondary block, so stay quiet when there's nothing.
+    if (inActions && !rows.length) { box.innerHTML = ""; return; }
     var news = rows.filter(function (r) { return String(r.kind || "new") !== "update"; });
     var ups = rows.filter(function (r) { return String(r.kind || "") === "update"; });
     var VERDICT = {
@@ -4551,6 +4601,8 @@ function renderChatScan() {
     var chatLink = function (id) { return "https://app.chatwoot.com/app/accounts/100142/conversations/" + esc(String(id)); };
 
     var html = "";
+    if (inActions) html += '<h3 style="margin-top:0;">Spotted in the live chats</h3>' +
+      '<p class="small muted" style="margin-top:-6px;">Found overnight and checked by a second AI. Nobody logged these.</p>';
     html += '<h3>Updates on open issues</h3>';
     html += ups.length ? ups.map(function (r) {
       var v = VERDICT[String(r.verdict || "")] || { label: String(r.verdict || "update"), colour: "var(--muted)" };
@@ -4631,7 +4683,7 @@ function chatScanUpdate(convId, issueId, action) {
       return after.then(function () {
         apiPost({ action: "chatScanReview", conversation_id: convId, status: "logged", issue_id: issueId }).catch(function () {});
         toast(action === "resolve" ? "Added and resolved." : action === "reopen" ? "Added and reopened." : "Added to the issue.");
-        renderChatScan();
+        refreshScanViews();
         loadIssues();
       });
     });
@@ -4642,7 +4694,7 @@ function chatScanDismiss(convId) {
   apiPost({ action: "chatScanReview", conversation_id: convId, status: "dismissed" }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Dismissed - it won't come back.");
-    renderChatScan();
+    refreshScanViews();
   }).catch(function () { toast("Error."); });
 }
 function runChatScanNow() {
@@ -4652,7 +4704,7 @@ function runChatScanNow() {
     if (btn) { btn.disabled = false; btn.textContent = "Scan now"; }
     if (!res || !res.ok) { toast("Scan failed: " + ((res && res.error) || "unknown")); return; }
     toast("Scan finished - " + res.queued + " waiting.");
-    renderChatScan();
+    refreshScanViews();
   }).catch(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = "Scan now"; }
     toast("Scan error. See console."); console.error(e);
