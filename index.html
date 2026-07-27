@@ -314,6 +314,11 @@
   .split-host.split-on > .list-col .badge { font-size: 10px; padding: 1px 6px; }
   .split-host.split-on > .split-dock { display: block !important; flex: 1; min-width: 0; position: sticky; top: 12px; }
   .split-dock .drawer { position: static; height: auto; max-height: 88vh; width: 100%; max-width: none; border: 1px solid var(--line); border-radius: 12px; }
+  /* The list column is narrow when a detail is docked, so action rows stack
+     instead of squeezing into three columns (Edd, 27 Jul). */
+  .split-host.split-on .act-row { grid-template-columns: 1fr; gap: 6px; }
+  .split-host.split-on .act-row .act-word { justify-self: start; }
+  .split-host.split-on .kv { grid-template-columns: 110px 1fr; }
   .issue-card.active { border-color: var(--accent); }
   .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 4px 0 14px; font-size: 14px; }
   .kv .k { color: var(--muted); }
@@ -1480,6 +1485,13 @@ function catOf(i) {
   var c = (i.category || "course_error").toLowerCase();
   return c === "course_error" ? "course_error" : "tech_issue";
 }
+// A short reference people can actually say out loud or paste into Slack
+// (Edd, 27 Jul). Derived from the id, so nothing new to store and it never
+// collides in practice.
+function shortId(i) {
+  var id = String((i && i.issue_id) || "").replace(/-/g, "");
+  return id ? "#" + id.slice(0, 6).toUpperCase() : "";
+}
 
 // ============================ INIT ============================
 function init() {
@@ -1753,7 +1765,8 @@ function renderActions() {
     // the issue itself, one click away.
     var btn = "";
     if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
-    else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>';
+    else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'fixed\')">Draft email</button>';
     else if (r.kind === "followup") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Sorted</button>' +
@@ -1762,7 +1775,7 @@ function renderActions() {
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft email</button>';
 
     // A few words on the issue: what it is, who it's about, where it lives.
-    var sub = [];
+    var sub = [shortId(i)];
     if (i.student_name) sub.push(String(i.student_name).split(" ")[0]);
     if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
     if (r.kind === "question" && i.dev_query) sub.push('"' + String(i.dev_query).slice(0, 60) + '"');
@@ -1777,6 +1790,26 @@ function renderActions() {
   }).join("");
   markActiveCard();
   renderChatScan("actionsScan");
+}
+
+// Status change straight from a detail drawer banner, no scrolling to the
+// dropdown. Resolving still wants a note, so it opens the drawer's field.
+function detailSetStatus(id, status) {
+  if (status === "resolved") {
+    var note = $("d_resolution_note") ? $("d_resolution_note").value.trim() : "";
+    if (!note) {
+      if ($("d_status")) { $("d_status").value = "resolved"; onStatusChange(); }
+      if ($("d_resolution_note")) $("d_resolution_note").focus();
+      toast("Add a line on what fixed it, then press Save.");
+      return;
+    }
+  }
+  apiPost({ action: "updateIssue", issue_id: id, status: status }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast(status === "parked" ? "Parked - it'll wake up if anyone reports it again."
+      : status === "open" ? "Sent back as still open." : "Resolved.");
+    closeDetail(); loadIssues();
+  }).catch(function () { toast("Error."); });
 }
 
 // Park an issue from Actions: known about, deliberately left, and it wakes up
@@ -3238,6 +3271,7 @@ function renderAdmin() {
                  " " + (i.lesson || "") + " " + (i.module || "") + " " + (i.device_info || "") +
                  " " + (i.resolution_note || "") + " " + (i.student_contact || "") +
                  " " + (i.instructor_name || "") + " " + (i.assignee || "") +
+                 " " + shortId(i) + " " + (i.issue_id || "") +
                  " " + (i.raw_text || "")).toLowerCase();
       if (hay.indexOf(fq) === -1) return false;
     }
@@ -3445,7 +3479,9 @@ function openDetail(issue) {
 
   var html = '<button class="close" onclick="closeDetail()">&times;</button>' +
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
-    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
+    '<div style="margin-bottom:12px;">' +
+      '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
+      priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
 
@@ -3514,9 +3550,16 @@ function openDetail(issue) {
         (issue.dev_notes ? kv("Fix notes", issue.dev_notes) : "") +
       '</div>';
       if ((issue.status || "").toLowerCase() === "dev_fixed") {
+        // Marked fixed is a claim, not a fact, and sometimes the right answer
+        // is neither resolve nor reopen but park (Edd, 27 Jul).
         html += '<div class="batch" style="background:rgba(70,192,138,0.10);border-color:var(--low);">' +
-          (isCourseIssue ? "The course team" : "The developer") +
-          ' has fixed this. Verify it, resolve it below, and contact the affected students.</div>';
+          '<strong>' + (isCourseIssue ? "The course team" : "The developer") + ' says this is fixed.</strong>' +
+          '<div class="small" style="margin:4px 0 8px;">Check it, then close the loop: resolve it and tell the students, or send it back if it is not right. If it is not really fixed and not worth chasing, park it instead.</div>' +
+          '<div class="row">' +
+            '<button class="ghost small" style="padding:4px 10px;" onclick="detailSetStatus(\'' + esc(issue.issue_id) + '\', \'resolved\')">Verified - resolve</button>' +
+            '<button class="ghost small" style="padding:4px 10px;" onclick="detailSetStatus(\'' + esc(issue.issue_id) + '\', \'parked\')">Park it</button>' +
+            '<button class="ghost small" style="padding:4px 10px;color:var(--high);" onclick="detailSetStatus(\'' + esc(issue.issue_id) + '\', \'open\')">Not fixed - reopen</button>' +
+          '</div></div>';
       }
     }
     // A question waiting on a reply. Answering clears the flag (and the badge)
@@ -4266,7 +4309,9 @@ function openDevDetail(id) {
   // the affected students), per Edd's 18 Jul feedback.
   var html = '<button class="close" onclick="closeDetail()">&times;</button>' +
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
-    '<div style="margin-bottom:12px;">' + priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
+    '<div style="margin-bottom:12px;">' +
+      '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
+      priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
     '<div class="kv">' +
       kv("Submitted by", issue.instructor_name) +
