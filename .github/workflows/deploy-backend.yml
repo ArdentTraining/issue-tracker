@@ -1,0 +1,39 @@
+name: Deploy backend to Apps Script
+
+# When Code.gs changes on main, push the new source to the live Apps Script
+# web app via the key-gated deployBackend action. This runs on GitHub's own
+# runner, which can reach script.google.com - so a deploy no longer needs a
+# browser tab on the app origin. The front end (index.html) is served by
+# GitHub Pages automatically on any push, so it needs no step here.
+
+on:
+  push:
+    branches: [main]
+    paths: ['Code.gs']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Deploy Code.gs via deployBackend
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          EXEC_URL: https://script.google.com/macros/s/AKfycbxROZipuieRjz8BBW7tjR5tvbidB_oLwbDup2PHfD0-KUka4u6oQLlUNrjJT21O783qdg/exec
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "DEPLOY_KEY secret is not set - skipping the backend deploy."
+            echo "Add it under Settings > Secrets and variables > Actions to switch this on."
+            exit 0
+          fi
+          jq -n --rawfile src Code.gs --arg key "$DEPLOY_KEY" --arg note "CI deploy ${GITHUB_SHA::7}" \
+            '{action:"deployBackend", key:$key, source:$src, note:$note}' > payload.json
+          echo "Posting $(wc -c < Code.gs) bytes of Code.gs to the backend..."
+          resp=$(curl -sS -X POST "$EXEC_URL" -H "Content-Type: text/plain;charset=utf-8" --data-binary @payload.json)
+          echo "Response: $resp"
+          echo "$resp" | grep -q '"ok":true' || { echo "Deploy failed - see response above."; exit 1; }
+          ver=$(echo "$resp" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
+          echo "Backend deployed as version $ver"
