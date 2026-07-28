@@ -32,7 +32,9 @@ jobs:
           jq -n --rawfile src Code.gs --arg key "$DEPLOY_KEY" --arg note "CI deploy ${GITHUB_SHA::7}" \
             '{action:"deployBackend", key:$key, source:$src, note:$note}' > payload.json
           echo "Posting $(wc -c < Code.gs) bytes of Code.gs to the backend..."
-          resp=$(curl -sS -X POST "$EXEC_URL" -H "Content-Type: text/plain;charset=utf-8" --data-binary @payload.json)
+          # -L is essential: Apps Script answers a POST with a 302 to
+          # script.googleusercontent.com, and the JSON result lives there.
+          resp=$(curl -sSL -X POST "$EXEC_URL" -H "Content-Type: text/plain;charset=utf-8" --data-binary @payload.json)
           echo "Response: $resp"
           echo "$resp" | grep -q '"ok":true' || { echo "Deploy failed - see response above."; exit 1; }
           ver=$(echo "$resp" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
