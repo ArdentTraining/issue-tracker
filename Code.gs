@@ -2516,8 +2516,10 @@ function extract_(data) {
     // A single thread can now split into several full issue objects, so give the
     // model enough room. 1024 truncated the JSON mid-string on long multi-topic
     // threads (exactly the ones this splitting is for) and the parse then failed.
+    // A 16-message live-chat import still hit that ceiling on 27 Jul, so lifted
+    // again to 8192 (sonnet-5 handles it fine) to keep long transcripts whole.
     model: EXTRACTION_MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [{ role: 'user', content: prompt }]
   };
 
@@ -2554,7 +2556,18 @@ function extract_(data) {
 
   var fields;
   try { fields = JSON.parse(text); }
-  catch (parseErr) { return { ok: false, error: 'Could not parse model output as JSON', raw: text }; }
+  catch (parseErr) {
+    // A "max_tokens" stop means the reply was cut off mid-JSON, so no amount of
+    // brace-trimming can rescue it. Say what actually happened and how to get
+    // past it, rather than the opaque "could not parse". stop_reason is passed
+    // back either way so a genuinely garbled (not truncated) reply is diagnosable.
+    if (parsed.stop_reason === 'max_tokens') {
+      return { ok: false, stop_reason: parsed.stop_reason, raw: text,
+        error: 'That report was too long to read in one go, so the extraction got cut off. Try splitting it into a couple of separate pastes, or trim it down a bit.' };
+    }
+    return { ok: false, stop_reason: parsed.stop_reason, raw: text,
+      error: 'Could not parse model output as JSON' };
+  }
 
   return { ok: true, fields: fields };
 }
