@@ -59,6 +59,10 @@ var FEEDBACK_HEADERS = ['id', 'created_at', 'user_email', 'user_name', 'message'
 var ANTHROPIC_MODEL = 'claude-sonnet-5';
 var EXTRACTION_MODEL = 'claude-sonnet-5';
 
+// Deploys: pushing a change to Code.gs on main now auto-deploys the backend
+// via .github/workflows/deploy-backend.yml (GitHub Action -> deployBackend).
+// No browser needed. index.html is served by GitHub Pages on the same push.
+
 // A "Resolved - TBC" issue auto-resolves after this many days of silence (no
 // further reports or objections). The timer is the issue's updated_at, so any
 // new activity resets it. 14 days per Edd (21 Jul); the sweep runs on a daily
