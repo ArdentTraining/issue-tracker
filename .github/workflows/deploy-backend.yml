@@ -33,11 +33,16 @@ jobs:
             '{action:"deployBackend", key:$key, source:$src, note:$note}' > payload.json
           echo "Posting $(wc -c < Code.gs) bytes of Code.gs to the backend..."
           # Apps Script answers a POST with a 302 to script.googleusercontent.com
-          # where the JSON result lives. -L follows it, and the cookie jar (-c/-b)
-          # carries the session cookie the 302 sets - without it the follow-up hits
-          # a "unable to open the file at this time" page instead of the result.
-          resp=$(curl -sSL -c /tmp/gs_cj -b /tmp/gs_cj -X POST "$EXEC_URL" -H "Content-Type: text/plain;charset=utf-8" --data-binary @payload.json)
-          echo "Response: $resp"
-          echo "$resp" | grep -q '"ok":true' || { echo "Deploy failed - see response above."; exit 1; }
-          ver=$(echo "$resp" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
+          # where the JSON result lives. -L follows it; the cookie jar carries the
+          # session cookie the 302 sets; and a browser User-Agent is needed because
+          # the googleusercontent echo serves a "can't open the file" page to plain
+          # curl. The doPost itself runs on the first POST regardless.
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+          resp=$(curl -sSL -A "$UA" -c /tmp/gs_cj -b /tmp/gs_cj \
+            -w "\n__HTTP:%{http_code}__TYPE:%{content_type}__" \
+            -X POST "$EXEC_URL" -H "Content-Type: text/plain;charset=utf-8" --data-binary @payload.json)
+          echo "First 300 chars: $(printf '%s' "$resp" | head -c 300)"
+          echo "Tail: $(printf '%s' "$resp" | tail -c 160)"
+          printf '%s' "$resp" | grep -q '"ok":true' || { echo "Deploy confirmation not readable - see diagnostics above."; exit 1; }
+          ver=$(printf '%s' "$resp" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
           echo "Backend deployed as version $ver"
