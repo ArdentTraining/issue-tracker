@@ -62,7 +62,7 @@ var EXTRACTION_MODEL = 'claude-sonnet-5';
 // Deploys: pushing a change to Code.gs on main now auto-deploys the backend
 // via .github/workflows/deploy-backend.yml (GitHub Action -> deployBackend).
 // No browser needed. index.html is served by GitHub Pages on the same push.
-// (CI pipeline live 27 Jul 2026.)
+// (CI pipeline, 27 Jul 2026.)
 
 // A "Resolved - TBC" issue auto-resolves after this many days of silence (no
 // further reports or objections). The timer is the issue's updated_at, so any

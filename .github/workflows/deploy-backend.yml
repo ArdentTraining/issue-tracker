@@ -32,9 +32,11 @@ jobs:
           jq -n --rawfile src Code.gs --arg key "$DEPLOY_KEY" --arg note "CI deploy ${GITHUB_SHA::7}" \
             '{action:"deployBackend", key:$key, source:$src, note:$note}' > payload.json
           echo "Posting $(wc -c < Code.gs) bytes of Code.gs to the backend..."
-          # -L is essential: Apps Script answers a POST with a 302 to
-          # script.googleusercontent.com, and the JSON result lives there.
-          resp=$(curl -sSL -X POST "$EXEC_URL" -H "Content-Type: text/plain;charset=utf-8" --data-binary @payload.json)
+          # Apps Script answers a POST with a 302 to script.googleusercontent.com
+          # where the JSON result lives. -L follows it, and the cookie jar (-c/-b)
+          # carries the session cookie the 302 sets - without it the follow-up hits
+          # a "unable to open the file at this time" page instead of the result.
+          resp=$(curl -sSL -c /tmp/gs_cj -b /tmp/gs_cj -X POST "$EXEC_URL" -H "Content-Type: text/plain;charset=utf-8" --data-binary @payload.json)
           echo "Response: $resp"
           echo "$resp" | grep -q '"ok":true' || { echo "Deploy failed - see response above."; exit 1; }
           ver=$(echo "$resp" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
