@@ -1513,6 +1513,13 @@ function catOf(i) {
 }
 // ---- shipping helpers -----------------------------------------------------
 function normTracking(v) { return String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+// Today where the user is, not in UTC. Between midnight and 1am through a
+// British summer the UTC date is still yesterday, and a parcel due a chase
+// this morning should show up this morning.
+function todayStr() {
+  var d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
 function matchCourier(name) {
   var n = String(name || "").toLowerCase();
   var hit = COURIERS.filter(function (c) { return n.indexOf(c.toLowerCase()) > -1 || c.toLowerCase().indexOf(n) > -1; })[0];
@@ -1742,7 +1749,7 @@ function myActionItems() {
     // Parcels due a chase. The date is the whole point of a shipping issue, so
     // it belongs in Actions on the day rather than only in Slack.
     if (catOf(i) === "shipping" && isOpen(i) && i.chase_at &&
-        String(i.chase_at).slice(0, 10) <= new Date().toISOString().slice(0, 10)) out.chase.push(i);
+        String(i.chase_at).slice(0, 10) <= todayStr()) out.chase.push(i);
     // Long-open: HIGH priority only (Edd, 24 Jul) - if the student can carry
     // on unbothered (a wording tweak, a cosmetic niggle), no update is needed
     // until it's fixed. Blocked students are the ones who deserve a "still on

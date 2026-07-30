@@ -662,7 +662,20 @@ function sheetByName_(name) { return ss_().getSheetByName(name); }
 // Couriers write tracking numbers with spaces, dashes and mixed case, and the
 // same consignment can arrive looking different in each email.
 function normaliseTracking_(v) {
-  return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  var s = String(v || '');
+  // A long all-digit reference (Evri, Yodel) comes back from the sheet as a
+  // number in scientific notation, e.g. 1.234567890123456E+18, which would
+  // strip down to nonsense. Pull it back to digits before we compare.
+  if (/^[0-9.]+E\+?[0-9]+$/i.test(s)) { var n = Number(s); if (isFinite(n)) s = n.toFixed(0); }
+  return s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+// A date we only ever care about to the day, read back safely. Sheets happily
+// turns '2026-08-02' into a Date object at local midnight, which serialises an
+// hour behind in summer, so slicing the ISO string lands a day early.
+function dayStr_(v) {
+  if (!v) return '';
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return String(v).slice(0, 10);
 }
 // The newest still-live shipping issue on this consignment, if any. A resolved
 // one is left alone: a parcel that arrives, then goes missing on a re-send, is
@@ -755,6 +768,10 @@ function getIssues_() {
       for (var c = 0; c < head.length; c++) {
         obj[head[c]] = row[c] === '' ? null : row[c];
       }
+      // Sheets reads these back as a Date and a number, which would reach the
+      // app a day out and in scientific notation. Hand over what we stored.
+      if (obj.chase_at) obj.chase_at = dayStr_(obj.chase_at);
+      if (obj.tracking_number) obj.tracking_number = normaliseTracking_(obj.tracking_number);
       all.push(obj);
     }
   });
@@ -1639,11 +1656,11 @@ function chaseShipping() {
   if (values.length < 2) return;
   var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
   if (idx.chase_at == null) return;
-  var today = new Date().toISOString().slice(0, 10);
+  var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   var due = [];
   for (var r = 1; r < values.length; r++) {
     if (!values[r][idx.issue_id]) continue;
-    var when = String(values[r][idx.chase_at] || '').slice(0, 10);
+    var when = dayStr_(values[r][idx.chase_at]);
     if (!when || when > today) continue;
     var st = String(values[r][idx.status] || '').toLowerCase();
     if (st === 'resolved' || st === 'past' || st === 'parked') { sheet.getRange(r + 1, idx.chase_at + 1).setValue(''); continue; }
@@ -1655,7 +1672,7 @@ function chaseShipping() {
   var appUrl = getAppUrl_();
   var lines = [':package: *' + due.length + ' shipping issue' + (due.length === 1 ? '' : 's') + ' due a chase*'];
   due.slice(0, 8).forEach(function (i) {
-    lines.push('• ' + (i.courier ? i.courier + ' ' : '') + (i.tracking_number || '(no tracking)') +
+    lines.push('• ' + (i.courier ? i.courier + ' ' : '') + (normaliseTracking_(i.tracking_number) || '(no tracking)') +
       ' - ' + String(i.summary || '').slice(0, 80) + (i.student_name ? ' (' + i.student_name + ')' : '') +
       '\n  ' + issueLink_(i, appUrl));
   });
@@ -3322,6 +3339,15 @@ function setup() {
     sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight('bold');
+    // Tracking references and chase dates are text, not maths. Left to itself
+    // Sheets turns a long consignment number into scientific notation and a
+    // chase date into a Date object an hour behind, so we pin both to plain
+    // text before any row lands.
+    ['tracking_number', 'chase_at'].forEach(function (col) {
+      var c = HEADERS.indexOf(col);
+      if (c < 0) return;
+      sheet.getRange(1, c + 1, sheet.getMaxRows(), 1).setNumberFormat('@');
+    });
   });
 
   var instructors = ss.getSheetByName(INSTRUCTORS_SHEET);
