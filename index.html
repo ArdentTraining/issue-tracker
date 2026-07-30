@@ -2332,22 +2332,65 @@ function detectDuplicateFault() {
   });
   return bestScore >= 3 ? best : null;
 }
+// The words that actually tell us what a logged fault is. The summary first,
+// but a report submitted without Extract has no summary at all, so fall back to
+// what the instructor originally wrote or pasted (Charly, 29 Jul: the panel
+// gave her nothing to compare her own report against).
+function faultWords(issue) {
+  var s = String((issue && issue.summary) || "").replace(/\s+/g, " ").trim();
+  if (s) return { text: s, fromRaw: false };
+  var raw = String((issue && issue.raw_text) || "").replace(/\s+/g, " ").trim();
+  if (!raw) {
+    var reps = parseReports(issue);
+    for (var r = 0; r < reps.length && !raw; r++) {
+      raw = String(reps[r].raw_text || "").replace(/\s+/g, " ").trim();
+    }
+  }
+  return { text: raw, fromRaw: true };
+}
 function showDupSuggestion() {
   var match = detectDuplicateFault();
   if (!match) return;
   state.dupTargetId = match.issue_id;
   state.dupDismissed = false;
+  var words = faultWords(match);
+  var where = dispLesson(match) || match.lesson_code || "";
+  var full = words.text;
+  var clipped = full.length > 320 ? full.slice(0, 320).replace(/\s+\S*$/, "") + "…" : full;
+  state.dupFullText = full;
   $("dupPanel").innerHTML =
     '<div class="h">Looks like a fault already on the log</div>' +
-    '<div style="margin:4px 0;">' + priBadge(match.priority) + ' ' + statusBadge(match.status) +
-      (match.lesson_code ? ' <span class="code">' + esc(match.lesson_code) + '</span>' : '') +
-      (reportCount(match) > 1 ? ' <span class="badge type-badge">×' + reportCount(match) + ' reports</span>' : '') + '</div>' +
-    '<div class="small" style="margin-bottom:8px;">' + esc(match.summary || "") + '</div>' +
-    '<div class="small" style="margin-bottom:8px;">Adding this student as another report keeps one trail and pushes the fault up the priority list - exactly what repeat reports are for.</div>' +
+    '<div class="small muted" style="margin-bottom:8px;">Have a read of the logged one below and see if it is the same fault as the one we are reporting now.</div>' +
+    '<div class="exrow" style="cursor:default;">' +
+      '<div class="small muted" style="margin-bottom:4px;">Already on the log' +
+        (match.instructor_name ? ', logged by ' + esc(match.instructor_name) : '') +
+        (fmtDate(match.submitted_at) ? ' on ' + fmtDate(match.submitted_at) : '') +
+        ' (' + esc(shortId(match)) + ')</div>' +
+      '<div>' + priBadge(match.priority) + ' ' + statusBadge(match.status) +
+        (where ? ' <span class="code">' + esc(where) + '</span>' : '') +
+        (reportCount(match) > 1 ? ' <span class="badge type-badge">×' + reportCount(match) + ' reports</span>' : '') + '</div>' +
+      (clipped
+        ? '<div class="small" style="margin-top:6px;">' +
+            (words.fromRaw ? '<span class="muted">No summary on that one, so here is the report as it was written: </span>' : '') +
+            '<span id="dupWords">' + esc(clipped) + '</span></div>' +
+          (full.length > clipped.length
+            ? '<div class="small" style="margin-top:4px;"><a href="#" onclick="dupShowFull();return false;" style="color:var(--accent);">Read the whole report</a></div>'
+            : '')
+        : '<div class="small muted" style="margin-top:6px;">That one has no description saved, so there is nothing to compare against. Log separately if in any doubt.</div>') +
+    '</div>' +
+    '<div class="exrow" style="cursor:default;">' +
+      '<div class="small muted" style="margin-bottom:4px;">What we are reporting now</div>' +
+      '<div class="small">' + esc(getField("f_summary") || "(no summary yet)") + '</div>' +
+    '</div>' +
+    '<div class="small" style="margin:8px 0;">Same fault? Adding this student as another report keeps one trail and pushes the fault up the priority list - exactly what repeat reports are for. Not sure? Log it separately, it is easy to merge later.</div>' +
     '<div class="row" style="margin-top:10px;">' +
       '<button class="primary" onclick="dupChoice(true)">Add as another report</button>' +
       '<button class="ghost" onclick="dupChoice(false)">It\'s different - log separately</button></div>';
   wizardShow("dupModal");
+}
+function dupShowFull() {
+  var el = $("dupWords");
+  if (el && state.dupFullText) el.textContent = state.dupFullText;
 }
 function dupChoice(merge) {
   $("dupModal").classList.remove("show");
@@ -2368,6 +2411,7 @@ function dupChoice(merge) {
 function hideDupSuggestion() {
   state.dupTargetId = null;
   state.dupDismissed = false;
+  state.dupFullText = null;
   $("dupModal").classList.remove("show");
   $("dupPanel").innerHTML = "";
   var n = $("dupNote"); if (n) { n.classList.add("hidden"); n.innerHTML = ""; }

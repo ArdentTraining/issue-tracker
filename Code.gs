@@ -3106,6 +3106,19 @@ var MODULE_ASSESSMENTS_TEXT = [
 
 // ---- Slack ----------------------------------------------------------------
 
+// A report can be submitted without running Extract, which leaves summary
+// blank. That is fine on a card (the front end falls back to the raw text),
+// but a high priority Slack ping that reads "Summary: -" tells the channel
+// nothing at all and the detail is sitting right there in raw_text, so fall
+// back to a trimmed slice of what the instructor actually pasted.
+function slackSummary_(issue) {
+  var s = String((issue && issue.summary) || '').trim();
+  if (s) return s;
+  var raw = String((issue && issue.raw_text) || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '-';
+  return (raw.length > 300 ? raw.slice(0, 300) + '…' : raw) + ' (no summary - report submitted without Extract)';
+}
+
 function sendSlack_(issue, appUrl) {
   var c = String(issue.category).toLowerCase();
   var area = (c === 'tech_issue' ? 'Tech issue' : 'Course error') +
@@ -3115,7 +3128,7 @@ function sendSlack_(issue, appUrl) {
     ':red_circle: *High priority issue logged* (' + area + ')',
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
     '*Type:* ' + (issue.issue_type || '-'),
-    '*Summary:* ' + (issue.summary || '-'),
+    '*Summary:* ' + slackSummary_(issue),
     '*Student:* ' + (issue.student_name || '-') + ' (' + (issue.student_contact || '-') + ')',
     '*Device:* ' + (issue.device_info || '-'),
     '*Logged by:* ' + (issue.instructor_name || '-'),
