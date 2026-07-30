@@ -614,7 +614,11 @@
         </div>
         <div class="field">
           <label>Priority</label>
+          <!-- Starts on "not set" so a failed extraction can't leave an issue
+               sitting on High by accident. High routes straight to the devs and
+               pings Slack, so it needs to be something we chose. -->
           <select id="f_priority">
+            <option value="">Not set yet</option>
             <option value="high">High</option>
             <option value="medium">Medium</option>
             <option value="low">Low</option>
@@ -2035,6 +2039,15 @@ function removeImage(i) { state.attachedImages.splice(i, 1); renderThumbs(); }
 
 function setField(id, val) { $(id).value = (val == null ? "" : val); }
 function getField(id) { return $(id).value.trim(); }
+// Did the last extraction error? Decides whether a missing summary gets the
+// "press Retry" hint or the plain "write a line yourself" one.
+function extractFailed() { return !!state.extractError; }
+function focusField(id) {
+  var el = $(id);
+  if (!el) return;
+  if (el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  el.focus();
+}
 
 function runExtract() {
   var raw = getField("rawText");
@@ -2048,11 +2061,18 @@ function runExtract() {
     // instructor can still fill them in by hand).
     showDetails();
     if (!res || !res.ok) {
+      // Nothing came back, so leave priority on "not set" rather than letting
+      // the form's first option quietly turn a dropped API call into a
+      // high-priority issue that routes to the devs and pings Slack.
+      state.extractError = true;
+      $("f_priority").value = "";
       $("extractStatus").innerHTML = esc("Extraction failed: " + ((res && res.error) || "unknown")) +
-        ' <button class="ghost small" style="padding:3px 10px;margin-left:6px;" onclick="runExtract()">Retry</button>';
+        ' <button class="ghost small" style="padding:3px 10px;margin-left:6px;" onclick="runExtract()">Retry</button>' +
+        '<div class="small muted" style="margin-top:4px;">Fill in the summary and priority by hand if you would rather not wait, they are the two we need before saving.</div>';
       return;
     }
     var f = res.fields || {};
+    state.extractError = false;
     $("extractStatus").textContent = "";
     if (f.category === "tech_issue" || f.category === "course_error") setCategory(f.category);
     setRequestKind(f.request_kind === "improvement" ? "improvement" : "fix");
@@ -2900,6 +2920,24 @@ function submitIssue() {
   }
   // Make the instructor see the "things to try" popup before they can submit.
   if (!isInternal && state.troubleshootSteps && !state.troubleshootAck) { openTroubleshootModal(); return; }
+  // An issue with no summary and no priority is how a failed extraction used to
+  // get saved: the fields are revealed on failure so they can be filled in by
+  // hand, and pressing Submit straight through saved a blank row that then read
+  // as high priority. Both are the fields everything downstream depends on, so
+  // ask for them before saving. The retry hint only shows when an extraction
+  // actually errored, otherwise it would be confusing on a hand-typed task.
+  if (!getField("f_summary")) {
+    toast(extractFailed()
+      ? "The extract didn't work, so there's no summary. Press Retry above, or write a line yourself."
+      : "Add a one-line summary before saving. It's what we all read on the board.");
+    focusField("f_summary");
+    return;
+  }
+  if (!getField("f_priority")) {
+    toast("Pick a priority before saving. High goes straight to the devs, so it's worth a moment.");
+    focusField("f_priority");
+    return;
+  }
   var btn = $("submitBtn");
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> saving…';
   var wasTbc = false, wasUpdate = false, wasResolvedUpdate = false, wasResolvedNew = false;
@@ -3098,10 +3136,11 @@ function resetForm() {
   $("f_course").value = "";
   $("f_section").value = "";
   $("f_issue_type").value = "bug";
-  $("f_priority").value = "medium";
+  $("f_priority").value = "";
   setCategory("course_error");
   $("extractStatus").textContent = "";
   state.lastExtract = null;
+  state.extractError = false;
   state.forceResolve = null;
   state.chatwootConvId = null;
   state.chatwootLink = "";
@@ -3140,7 +3179,7 @@ function loadIntoForm(issue) {
   renderIssueTypeOptions();
   setField("f_issue_type", issue.issue_type || (state.formMode === "internal" ? "bug" : "other"));
   setField("f_summary", issue.summary);
-  setField("f_priority", (issue.priority || "medium").toLowerCase());
+  setField("f_priority", String(issue.priority || "").toLowerCase());
   setField("f_priority_reason", issue.priority_reason);
   setField("f_section", issue.section || "");
   setField("f_media_kind", issue.media_kind || "");
@@ -3659,6 +3698,10 @@ function openDetail(issue) {
     '</select></div>' +
     '<label class="small" style="display:block;margin:-2px 0 2px;color:var(--muted);">Priority</label>' +
     '<div class="field"><select id="d_priority">' +
+      // Only for an issue that somehow has no priority saved: without this the
+      // select would land on High and the next save would stamp that in without
+      // anyone choosing it.
+      (String(issue.priority || "").trim() ? '' : '<option value="" selected>Not set yet</option>') +
       ['high','medium','low'].map(function (p) {
         var sel = (issue.priority || "").toLowerCase() === p ? " selected" : "";
         return '<option value="' + p + '"' + sel + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
