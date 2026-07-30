@@ -527,9 +527,25 @@
         <select id="f_category" onchange="onCategoryChange()">
           <option value="course_error">Course error - wrong or confusing lesson content</option>
           <option value="tech_issue">Tech issue - login, access, progress, formatting, or anything not about lesson content</option>
+          <option value="shipping">Shipping - a pack, chart or almanac that hasn't arrived, or arrived wrong</option>
         </select>
         <div class="small muted" style="margin-top:4px;">Tech issues don't need a lesson: login, account, progress, and formatting problems all go here, and the course fields can stay blank.</div>
       </div>
+      <div class="field hidden" id="field_shipping">
+        <label>The consignment</label>
+        <div class="row" style="gap:8px;">
+          <select id="f_courier" style="max-width:170px;"></select>
+          <input id="f_tracking_number" placeholder="Tracking number" autocomplete="off" oninput="checkTracking()" style="flex:1;min-width:0;text-transform:uppercase;" />
+        </div>
+        <div class="small muted" style="margin-top:4px;">The tracking number is what joins the threads. Paste a second or third email about the same parcel and it folds into the existing issue instead of starting a new one.</div>
+        <div class="small" id="trackingMatch" style="margin-top:4px;"></div>
+      </div>
+      <div class="field hidden" id="field_chase">
+        <label>Chase it on</label>
+        <input id="f_chase_at" type="date" />
+        <div class="small muted" style="margin-top:4px;">Left blank it defaults to three days. You get a Slack nudge on the day, and the date clears once it fires.</div>
+      </div>
+
       <div class="field" id="field_section">
         <label>Part of the platform</label>
         <select id="f_section">
@@ -674,6 +690,7 @@
       <button type="button" id="area_all" class="active" onclick="setArea('all')">All</button>
       <button type="button" id="area_course" onclick="setArea('course_error')">Course errors</button>
       <button type="button" id="area_tech" onclick="setArea('tech_issue')">Tech issues</button>
+      <button type="button" id="area_shipping" onclick="setArea('shipping')">Shipping</button>
     </div>
     <div class="seg" id="audSeg" style="margin-left:10px;">
       <button type="button" id="aud_all" class="active" onclick="setAudience('all')">Everyone</button>
@@ -1101,7 +1118,7 @@ var APP_URL = window.location.href; // used in the Slack link; updated once host
 
 var PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 // WHAT is broken. Who it affects is the separate `audience` field below.
-var CATEGORY_LABEL = { course_error: "Course error", tech_issue: "Tech issue", internal: "Tech issue" };
+var CATEGORY_LABEL = { course_error: "Course error", tech_issue: "Tech issue", internal: "Tech issue", shipping: "Shipping" };
 function audienceOf(i) {
   // Old rows carried "internal" as a category; treat that as the audience.
   if (String((i && i.category) || "").toLowerCase() === "internal") return "internal";
@@ -1174,6 +1191,9 @@ var state = {
 // student reports keep the original set.
 var ISSUE_TYPES_STUDENT = ["bug", "content_error", "student_confusion", "access_problem", "other"];
 var ISSUE_TYPES_INTERNAL = ["bug", "feature_request", "content_copy", "infrastructure", "administrative"];
+// What actually goes wrong with a delivery (Edd's list, 30 Jul).
+var ISSUE_TYPES_SHIPPING = ["not_arrived", "damaged", "wrong_item", "not_dispatched", "customs", "returned", "wrong_address", "other"];
+var COURIERS = ["DHL", "Royal Mail", "Parcelforce", "UPS", "FedEx", "DPD", "Evri", "Other"];
 
 // The pre-developer troubleshooting checklist for tech issues. Order and ids
 // must match CHECKLIST_ITEMS in the Apps Script so the AI pre-fill lines up.
@@ -1487,8 +1507,35 @@ function isMine(i) {
 // WHAT is broken, always one of two. Legacy "internal" rows were technical.
 function catOf(i) {
   var c = (i.category || "course_error").toLowerCase();
-  return c === "course_error" ? "course_error" : "tech_issue";
+  if (c === "course_error") return "course_error";
+  if (c === "shipping") return "shipping";
+  return "tech_issue";
 }
+// ---- shipping helpers -----------------------------------------------------
+function normTracking(v) { return String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+function matchCourier(name) {
+  var n = String(name || "").toLowerCase();
+  var hit = COURIERS.filter(function (c) { return n.indexOf(c.toLowerCase()) > -1 || c.toLowerCase().indexOf(n) > -1; })[0];
+  return hit || "Other";
+}
+// Tell the instructor, as they type, that this parcel is already on the log -
+// so the DHL thread-splitting problem is visible before they submit, not after
+// (Edd, 30 Jul).
+function checkTracking() {
+  var box = $("trackingMatch");
+  if (!box) return;
+  var t = normTracking(getField("f_tracking_number"));
+  if (!t || t.length < 5) { box.innerHTML = ""; state.shipMergeId = null; return; }
+  var hit = (state.issues || []).filter(function (i) {
+    return catOf(i) === "shipping" && isOpen(i) && normTracking(i.tracking_number) === t && i.issue_id !== state.editingId;
+  }).sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); })[0];
+  if (!hit) { box.innerHTML = '<span class="muted">New consignment - no other threads on this one yet.</span>'; state.shipMergeId = null; return; }
+  state.shipMergeId = hit.issue_id;
+  box.innerHTML = '<span style="color:var(--medium);font-weight:600;">Already logged as ' + esc(shortId(hit)) + '</span>' +
+    ' <span class="muted">' + esc(String(hit.summary || "").slice(0, 70)) + '</span> - ' +
+    'this will be added to it as another update, keeping one trail for the parcel.';
+}
+
 // A short reference people can actually say out loud or paste into Slack
 // (Edd, 27 Jul). Derived from the id, so nothing new to store and it never
 // collides in practice.
@@ -1499,6 +1546,8 @@ function shortId(i) {
 
 // ============================ INIT ============================
 function init() {
+  var cs = $("f_courier");
+  if (cs) cs.innerHTML = COURIERS.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("");
   updateThemeBtn();
   updateAdaptiveFields();
   var params = new URLSearchParams(window.location.search);
@@ -1673,7 +1722,7 @@ function myActionItems() {
   // Everyone with the tab sees every action (Edd, 21 Jul): the team is small
   // and any instructor can pass a fix on. Cards carry who logged each one.
   var now = Date.now(), day = 24 * 60 * 60 * 1000;
-  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [] };
+  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [] };
   var canVerify = !!(state.perms && (state.perms.manage || state.perms.users));
   (state.issues || []).forEach(function (i) {
     var st = String(i.status || "open").toLowerCase();
@@ -1690,6 +1739,10 @@ function myActionItems() {
     if ((st === "dev_fixed" || st === "resolved") && !isTrue(i.notified_students) && !chatResolved &&
         (i.student_contact || i.student_name)) out.notify.push(i);
     if (st === "resolved_tbc" && (now - new Date(i.updated_at || i.submitted_at)) > ACTIONS_TBC_FOLLOWUP_DAYS * day) out.followups.push(i);
+    // Parcels due a chase. The date is the whole point of a shipping issue, so
+    // it belongs in Actions on the day rather than only in Slack.
+    if (catOf(i) === "shipping" && isOpen(i) && i.chase_at &&
+        String(i.chase_at).slice(0, 10) <= new Date().toISOString().slice(0, 10)) out.chase.push(i);
     // Long-open: HIGH priority only (Edd, 24 Jul) - if the student can carry
     // on unbothered (a wording tweak, a cosmetic niggle), no update is needed
     // until it's fixed. Blocked students are the ones who deserve a "still on
@@ -1750,6 +1803,7 @@ function renderActions() {
   // right-hand pane, same as Track (Edd, 26 Jul - my first pass hid the
   // action text on mobile and buried the detail in an accordion).
   var rows = []
+    .concat((a.chase || []).map(function (i) { return { i: i, kind: "chase", word: "Chase", colour: "var(--coral)", act: "Poke the courier" }; }))
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
     .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
@@ -1768,7 +1822,9 @@ function renderActions() {
     // The one button that matches the action phrase. Everything else is in
     // the issue itself, one click away.
     var btn = "";
-    if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
+    if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 days</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Sorted</button>';
+    else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
     else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
@@ -1780,6 +1836,11 @@ function renderActions() {
 
     // A few words on the issue: what it is, who it's about, where it lives.
     var sub = [shortId(i)];
+    if (r.kind === "chase") {
+      if (i.courier) sub.push(i.courier);
+      if (i.tracking_number) sub.push(i.tracking_number);
+      sub.push(reportCount(i) > 1 ? reportCount(i) + " threads" : "1 thread");
+    }
     if (i.student_name) sub.push(String(i.student_name).split(" ")[0]);
     if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
     if (r.kind === "question" && i.dev_query) sub.push('"' + String(i.dev_query).slice(0, 60) + '"');
@@ -1814,6 +1875,21 @@ function detailSetStatus(id, status) {
       : status === "open" ? "Sent back as still open." : "Resolved.");
     closeDetail(); loadIssues();
   }).catch(function () { toast("Error."); });
+}
+
+// Chased the courier: log that it happened and re-arm the reminder, so a
+// parcel can't quietly go a fortnight without anyone poking it.
+function chaseAgain(id, days) {
+  var when = new Date(Date.now() + (Number(days) || 3) * 864e5).toISOString().slice(0, 10);
+  apiPost({ action: "addUpdate", issue_id: id, summary: "Chased the courier",
+    raw_text: "Chased on " + new Date().toISOString().slice(0, 10) + " by " + (state.selectedInstructor || "an instructor") + ". Next chase " + when + "." })
+    .then(function (res) {
+      if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+      return apiPost({ action: "updateIssue", issue_id: id, chase_at: when });
+    }).then(function () {
+      toast("Logged the chase - back on your list " + when + ".");
+      loadIssues();
+    }).catch(function () { toast("Error."); });
 }
 
 // Park an issue from Actions: known about, deliberately left, and it wakes up
@@ -1946,7 +2022,9 @@ function renderIssueTypeOptions() {
   var sel = $("f_issue_type");
   if (!sel) return;
   var current = sel.value;
-  var opts = state.formMode === "internal" ? ISSUE_TYPES_INTERNAL : ISSUE_TYPES_STUDENT;
+  var opts = state.formMode === "internal" ? ISSUE_TYPES_INTERNAL
+    : state.category === "shipping" ? ISSUE_TYPES_SHIPPING
+    : ISSUE_TYPES_STUDENT;
   sel.innerHTML = opts.map(function (t) { return '<option value="' + t + '">' + t + '</option>'; }).join("");
   sel.value = opts.indexOf(current) > -1 ? current : opts[0];
 }
@@ -1990,16 +2068,21 @@ function showField(id, show) {
 function updateAdaptiveFields() {
   var isInternal = state.formMode === "internal";
   var isCourse = !isInternal && state.category === "course_error";
+  var isShipping = !isInternal && state.category === "shipping";
   var isImprovement = state.requestKind === "improvement";
+  // A parcel has no lesson, no device and no part-of-platform: it has a
+  // courier, a tracking number and a date to chase.
+  showField("field_shipping", isShipping);
+  showField("field_chase", isShipping);
   // Internal tasks are about our systems, not a student's problem, so all the
   // student-facing fields go away and the section picker does the locating.
   showField("field_category", !isInternal);
   showField("field_reqkind", !isInternal);
   showField("field_student_row", !isInternal);
-  showField("field_course_row", !isInternal);
-  showField("field_module_row", !isInternal);
-  showField("field_device", !isInternal && !isCourse);  // tech only
-  showField("field_platform", !isCourse);               // tech + internal bugs: browser/app tick boxes
+  showField("field_course_row", !isInternal && !isShipping);
+  showField("field_module_row", !isInternal && !isShipping);
+  showField("field_device", !isInternal && !isCourse && !isShipping);  // tech only
+  showField("field_platform", !isCourse && !isShipping);              // tech + internal bugs
   showField("field_media", isCourse);                   // course only
   showField("field_double_checked", isCourse);          // course only
   showField("field_impact", !isInternal && isImprovement); // improvements (either category)
@@ -2098,6 +2181,10 @@ function runExtract() {
     if (f.priority) setField("f_priority", String(f.priority).toLowerCase());
     setField("f_priority_reason", f.priority_reason);
     setField("f_media_kind", f.media_kind || "");
+    if (f.category === "shipping") {
+      if (f.courier) setField("f_courier", matchCourier(f.courier));
+      if (f.tracking_number) { setField("f_tracking_number", String(f.tracking_number).toUpperCase()); checkTracking(); }
+    }
     setField("f_impact", f.impact || "");
     if ($("f_double_checked")) $("f_double_checked").checked = false;
     updateAdaptiveFields();
@@ -2777,7 +2864,10 @@ function collectForm() {
     media_kind: state.category === "course_error" ? getField("f_media_kind") : "",
     double_checked: state.category === "course_error" && $("f_double_checked") ? $("f_double_checked").checked : false,
     impact: state.requestKind === "improvement" && !isInternal ? getField("f_impact") : "",
-    platform: collectPlatform()
+    platform: collectPlatform(),
+    courier: state.category === "shipping" ? getField("f_courier") : "",
+    tracking_number: state.category === "shipping" ? getField("f_tracking_number") : "",
+    chase_at: state.category === "shipping" ? getField("f_chase_at") : ""
   };
 }
 // The "where does the bug show" tick boxes: browser, app, both, or unstated.
@@ -3271,6 +3361,7 @@ function setArea(a) {
   $("area_course").classList.toggle("course", a === "course_error");
   $("area_tech").classList.toggle("active", a === "tech_issue");
   $("area_tech").classList.toggle("tech", a === "tech_issue");
+  if ($("area_shipping")) $("area_shipping").classList.toggle("active", a === "shipping");
   renderAdmin();
 }
 
@@ -3610,6 +3701,9 @@ function openDetail(issue) {
     (catOf(issue) === "course_error" ? kv("Which part", mediaLabel(issue.media_kind)) : "") +
     (catOf(issue) === "course_error" ? kv("Double-checked", isTrue(issue.double_checked) ? "Yes" : "No") : "") +
     (kindOf(issue) === "improvement" ? kv("Impact", issue.impact) : "") +
+    (catOf(issue) === "shipping" ? kv("Courier", issue.courier) : "") +
+    (catOf(issue) === "shipping" ? kv("Tracking", issue.tracking_number) : "") +
+    (catOf(issue) === "shipping" && issue.chase_at ? kv("Chase on", String(issue.chase_at).slice(0, 10)) : "") +
     kv("Affects", audienceOf(issue) === "internal" ? "Us (internal)" : "Students") +
     (audienceOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "—") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
     kv("Priority reason", issue.priority_reason) +

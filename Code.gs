@@ -36,8 +36,11 @@ function slackWebhook_() {
 
 var COURSE_SHEET = 'Course Errors';
 var TECH_SHEET = 'Tech Issues';
+var SHIPPING_SHEET = 'Shipping Issues';
 var INSTRUCTORS_SHEET = 'Instructors';
-var ISSUE_SHEETS = [COURSE_SHEET, TECH_SHEET];
+// Shipping gets its own tab like the other two: same columns, different
+// lifecycle (chased on a date rather than fixed). setup() creates it.
+var ISSUE_SHEETS = [COURSE_SHEET, TECH_SHEET, SHIPPING_SHEET];
 
 // Feedback on the tracker itself (bugs/improvements suggested by users).
 var FEEDBACK_SHEET = 'Feedback';
@@ -118,7 +121,14 @@ var HEADERS = [
   // category forced a choice between them. 'internal' used to be a third
   // category; migrateAudience() moved those rows across.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'audience'           // AO student | internal
+  'audience',          // AO student | internal
+  // Shipping (Edd, 30 Jul). A parcel problem is neither course content nor
+  // platform tech, and it needs chasing on a date rather than fixing. The
+  // tracking number is the merge key: DHL opens a fresh email thread for the
+  // same consignment, so threads two, three and four fold into one issue.
+  'courier',           // AP DHL | Royal Mail | ...
+  'tracking_number',   // AQ the consignment reference, uppercased, spaces stripped
+  'chase_at'           // AR ISO date when this needs poking again (blank = not waiting on anyone)
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -649,10 +659,39 @@ function ss_() { return SpreadsheetApp.openById(SHEET_ID); }
 function sheetByName_(name) { return ss_().getSheetByName(name); }
 
 // course_error -> Course Errors; anything else (incl tech_issue) decided here.
+// Couriers write tracking numbers with spaces, dashes and mixed case, and the
+// same consignment can arrive looking different in each email.
+function normaliseTracking_(v) {
+  return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+// The newest still-live shipping issue on this consignment, if any. A resolved
+// one is left alone: a parcel that arrives, then goes missing on a re-send, is
+// genuinely a new problem.
+function findShippingByTracking_(track) {
+  if (!track) return null;
+  var sheet = sheetByName_(SHIPPING_SHEET);
+  if (!sheet) return null;
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return null;
+  var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
+  if (idx.tracking_number == null) return null;
+  var best = null, bestAt = 0;
+  for (var r = 1; r < values.length; r++) {
+    if (!values[r][idx.issue_id]) continue;
+    if (normaliseTracking_(values[r][idx.tracking_number]) !== track) continue;
+    var st = String(values[r][idx.status] || '').toLowerCase();
+    if (st === 'resolved' || st === 'past') continue;
+    var at = new Date(values[r][idx.updated_at] || values[r][idx.submitted_at]).getTime() || 0;
+    if (at >= bestAt) { bestAt = at; best = values[r][idx.issue_id]; }
+  }
+  return best;
+}
+
 function targetSheetName_(category) {
   var c = String(category).toLowerCase();
+  if (c === 'shipping') return SHIPPING_SHEET;
   // Internal work lives in the Tech Issues sheet, kept apart by its
-  // category value, so we don't need a third tab or a sheet migration.
+  // audience value, so we don't need a fourth tab or a sheet migration.
   return (c === 'tech_issue' || c === 'internal') ? TECH_SHEET : COURSE_SHEET;
 }
 
@@ -772,6 +811,22 @@ function addIssue_(data) {
   // match on the same underlying bug across any lesson. Course errors match only
   // within the same slide (lesson code), and only when it is the same error.
   var thisKind = data.request_kind === 'improvement' ? 'improvement' : 'fix';
+
+  // SHIPPING: the tracking number is the merge key. DHL starts a fresh email
+  // thread for the same consignment, so without this one parcel problem
+  // becomes four issues (Edd, 30 Jul). Any open shipping issue with the same
+  // tracking number wins outright, before the AI matcher gets a look in.
+  if (category === 'shipping') {
+    var track = normaliseTracking_(data.tracking_number);
+    if (track && !data.no_merge) {
+      var hit = findShippingByTracking_(track);
+      if (hit) {
+        var mergedShip = addReportToIssue_(hit, data, report);
+        if (mergedShip && mergedShip.ok) return mergedShip;
+      }
+    }
+  }
+
   // A conversation that was already sorted out in the chat is logged for the
   // record. Don't roll it into an open issue, and don't route it to a queue.
   // The instructor can also decide this on the form (Round 16): merge_into is
@@ -836,7 +891,14 @@ function addIssue_(data) {
     dev_query: '', dev_query_at: '', dev_query_by: '', dev_query_target: '',
     platform: ['browser', 'app', 'both'].indexOf(String(data.platform || '')) > -1 ? data.platform : '',
     recheck_at: '',
-    audience: audience
+    audience: audience,
+    courier: category === 'shipping' ? (data.courier || '') : '',
+    tracking_number: category === 'shipping' ? normaliseTracking_(data.tracking_number) : '',
+    // Default to chasing in three working-ish days if nobody said otherwise:
+    // an unchased parcel problem is the one that goes quiet for a fortnight.
+    chase_at: category === 'shipping'
+      ? (data.chase_at || new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10))
+      : ''
   };
 
   // Auto-route to the right fix queue (unless the instructor already settled it
@@ -846,7 +908,9 @@ function addIssue_(data) {
   // judges it a genuine code bug rather than a user-side step.
   // Improvements (feature/enhancement requests) are a calmer backlog: they do
   // NOT auto-route to a fix team, they just sit open for the team to review.
-  if (!data.tbc && !data.resolved && issue.request_kind !== 'improvement') {
+  // Shipping never routes to a fix team: nobody here fixes a parcel, we chase
+  // the courier. It stays open with a chase date instead.
+  if (!data.tbc && !data.resolved && issue.request_kind !== 'improvement' && category !== 'shipping') {
     if (category === 'course_error') {
       issue.dev_passed_at = new Date().toISOString();
       issue.status = 'with_dev';
@@ -1564,6 +1628,46 @@ function sendRecheckSlack_(rec, appUrl) {
 // trigger itself is removed by ensureTriggers_ next time setup() runs.
 function sendRecheckReminders() {}
 
+// Daily: shipping issues whose chase date has arrived. A parcel problem goes
+// quiet unless somebody pokes the courier, so this is the nudge (Edd, 30 Jul).
+// The chase date is cleared as it fires, so one nudge per chase, and setting a
+// new date re-arms it.
+function chaseShipping() {
+  var sheet = sheetByName_(SHIPPING_SHEET);
+  if (!sheet) return;
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return;
+  var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
+  if (idx.chase_at == null) return;
+  var today = new Date().toISOString().slice(0, 10);
+  var due = [];
+  for (var r = 1; r < values.length; r++) {
+    if (!values[r][idx.issue_id]) continue;
+    var when = String(values[r][idx.chase_at] || '').slice(0, 10);
+    if (!when || when > today) continue;
+    var st = String(values[r][idx.status] || '').toLowerCase();
+    if (st === 'resolved' || st === 'past' || st === 'parked') { sheet.getRange(r + 1, idx.chase_at + 1).setValue(''); continue; }
+    var rec = {}; HEADERS.forEach(function (h) { rec[h] = idx[h] != null ? values[r][idx[h]] : ''; });
+    due.push(rec);
+    sheet.getRange(r + 1, idx.chase_at + 1).setValue('');
+  }
+  if (!due.length) return;
+  var appUrl = getAppUrl_();
+  var lines = [':package: *' + due.length + ' shipping issue' + (due.length === 1 ? '' : 's') + ' due a chase*'];
+  due.slice(0, 8).forEach(function (i) {
+    lines.push('• ' + (i.courier ? i.courier + ' ' : '') + (i.tracking_number || '(no tracking)') +
+      ' - ' + String(i.summary || '').slice(0, 80) + (i.student_name ? ' (' + i.student_name + ')' : '') +
+      '\n  ' + issueLink_(i, appUrl));
+  });
+  try {
+    UrlFetchApp.fetch(slackWebhook_(), {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ text: lines.join('\n') })
+    });
+  } catch (e) {}
+  Logger.log('chaseShipping: nudged ' + due.length);
+}
+
 // Runs monthly (trigger created by setup()). Reads the last month of tech
 // issues and asks the AI whether the pre-developer troubleshooting checklist
 // is missing anything, posting suggestions (or a quiet all-clear) to Slack.
@@ -2065,7 +2169,7 @@ function scanSlack_(newCount, updateCount) {
 // catOf for a sheet record (the frontend has its own).
 function catOf_(issue) {
   var c = String((issue && issue.category) || '').toLowerCase();
-  return c === 'course_error' ? 'course_error' : 'tech_issue';
+  return c === 'course_error' ? 'course_error' : (c === 'shipping' ? 'shipping' : 'tech_issue');
 }
 
 // The admin queue: list what is waiting, and record the verdict.
@@ -2166,7 +2270,7 @@ function deployBackend_(data) {
 // daily recheck trigger if one exists (rechecks ping Slack immediately now).
 // Called from setup(), safe to run repeatedly.
 function ensureTriggers_() {
-  var haveMonthly = false, haveTbc = false, haveBackup = false, haveDigest = false, haveScan = false;
+  var haveMonthly = false, haveTbc = false, haveBackup = false, haveDigest = false, haveScan = false, haveChase = false;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -2174,6 +2278,7 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'weeklyBackup') haveBackup = true;
     if (t.getHandlerFunction() === 'weeklyDigest') haveDigest = true;
     if (t.getHandlerFunction() === 'scanChatwoot') haveScan = true;
+    if (t.getHandlerFunction() === 'chaseShipping') haveChase = true;
   });
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
@@ -2191,6 +2296,9 @@ function ensureTriggers_() {
   }
   if (!haveScan) {
     ScriptApp.newTrigger('scanChatwoot').timeBased().everyDays(1).atHour(5).create();
+  }
+  if (!haveChase) {
+    ScriptApp.newTrigger('chaseShipping').timeBased().everyDays(1).atHour(9).create();
   }
 }
 
@@ -2959,6 +3067,9 @@ function buildExtractionPrompt_(rawText) {
     MODULE_ASSESSMENTS_TEXT,
     '',
     'Fields:',
+    '- category: "shipping" if the problem is with a physical delivery to a student: a student pack, charts, almanac or plotter that has not arrived, arrived damaged or incomplete, was never dispatched, is stuck in customs, went to the wrong address, or was returned to sender. Emails from a courier (DHL, Royal Mail, UPS, FedEv, Parcelforce) about a consignment are shipping. Note that a student who cannot ACCESS online material is NOT shipping, that is a tech issue.',
+    '- courier: for shipping only, the carrier name as written (e.g. "DHL", "Royal Mail"), or null.',
+    '- tracking_number: for shipping only, the consignment or tracking reference exactly as it appears (couriers quote it in every email, so look for a long alphanumeric code). Return null if none appears. This is how we join several email threads about the same parcel, so it matters more than anything else in a shipping report.',
     '- category: "course_error" if the problem is with the lesson content or teaching material itself (wrong information, a confusing or incorrect explanation, a typo in a lesson, a mislabelled diagram, a quiz answer being wrong, OR a specific lesson that will not open / shows a 404 / page not found, which usually means that lesson was not uploaded properly and the course team needs to re-upload it). "tech_issue" if the problem is with the platform, website or app generally: video or audio not playing, login or access problems, a button that does not work, progress not saving, or anything device or browser specific.',
     '- likely_internal: true if this is NOT a student-facing problem at all but an internal one: instructors talking to each other about the instructor portal, the partner portal, admin tools, or company systems, with no student blocked from learning. A conversation between staff about wrong data shown in the instructor portal is internal. A student unable to watch a video is not. Return false when in doubt.',
     '- section: which part of the platform the problem lives in: one of ["website", "instructor_portal", "partner_portal", "course_player", "app", "other"], or null if unclear. "website" is the public ardent-training.com site, "course_player" is where students take lessons, "app" is the mobile app.',
@@ -2969,7 +3080,7 @@ function buildExtractionPrompt_(rawText) {
     '- module: module title string or null',
     '- lesson: the FULL slide/question code exactly as written when one appears in the text (e.g. "EN.06.03.09" or "DS.10.19.09.2.M", one long string, not broken down), otherwise the lesson title if known, or null',
     '- lesson_code: lesson code string (e.g. DS.09.04) or null',
-    '- issue_type: one of ["bug", "content_error", "student_confusion", "access_problem", "other"]',
+    '- issue_type: one of ["bug", "content_error", "student_confusion", "access_problem", "other"]. For a SHIPPING category report use one of ["not_arrived", "damaged", "wrong_item", "not_dispatched", "customs", "returned", "wrong_address", "other"] instead.',
     '- request_kind: "improvement" if the report is asking for a NEW feature, an enhancement, or an "it would be nice if" change rather than reporting something broken or wrong (this applies to both course content and the platform, for example "could we add a glossary" or "the player should remember playback speed"); otherwise "fix" for a bug, an error, or something not working or incorrect as it stands. When in doubt, choose "fix". Most reports are "fix".',
     '- media_kind: for a course_error only, which part of the lesson it concerns: "video" if it is about a video or animation, "text" if it is about written text, a diagram, or quiz wording, otherwise "other". Return null for tech_issue.',
     '- impact: for an improvement only, a rough impact rating of "low", "medium", or "high" based on how much it would benefit students. Return null for a fix.',
