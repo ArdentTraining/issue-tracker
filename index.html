@@ -2188,6 +2188,10 @@ function runExtract() {
     if (f.priority) setField("f_priority", String(f.priority).toLowerCase());
     setField("f_priority_reason", f.priority_reason);
     setField("f_media_kind", f.media_kind || "");
+    // The words a student uses tell us where they were. Someone who "logged in
+    // on the website" was in a browser, so tick it for them rather than making
+    // them read the transcript again (Edd, 30 Jul).
+    setPlatformTicks(f.platform);
     if (f.category === "shipping") {
       if (f.courier) setField("f_courier", matchCourier(f.courier));
       if (f.tracking_number) { setField("f_tracking_number", String(f.tracking_number).toUpperCase()); checkTracking(); }
@@ -2883,6 +2887,15 @@ function collectPlatform() {
   var a = $("f_plat_app") && $("f_plat_app").checked;
   return b && a ? "both" : b ? "browser" : a ? "app" : "";
 }
+// The other direction: tick the boxes from a stored or extracted value. An
+// unrecognised value clears both, so a report that never said clears rather
+// than quietly leaving the last one ticked.
+function setPlatformTicks(p) {
+  p = String(p || "").toLowerCase();
+  if (p !== "browser" && p !== "app" && p !== "both") p = "";
+  if ($("f_plat_browser")) $("f_plat_browser").checked = (p === "browser" || p === "both");
+  if ($("f_plat_app")) $("f_plat_app").checked = (p === "app" || p === "both");
+}
 // Fill the outcome box from what's already known instead of retyping it: the
 // resolution the extractor read, the suggested fix if it was handed over, or
 // the placeholder example as a starting point.
@@ -3281,6 +3294,7 @@ function loadIntoForm(issue) {
   setField("f_section", issue.section || "");
   setField("f_media_kind", issue.media_kind || "");
   setField("f_impact", issue.impact || "");
+  setPlatformTicks(issue.platform);
   if ($("f_double_checked")) $("f_double_checked").checked = (issue.double_checked === true || issue.double_checked === "true" || issue.double_checked === "TRUE");
   updateAdaptiveFields();
   state.checklist = checklistMapOf(issue);
