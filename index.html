@@ -375,7 +375,9 @@
 
   /* Submit row sticks to the bottom of the viewport while the (long) details
      section is scrolled, so nobody misses that the form ends in a button. */
-  .submit-row { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0; z-index: 5; box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.45); }
+  /* z-index sits above the floating view-as bar (60) so the Submit button is
+     never hidden behind it, whatever else is on screen (Charly, 31 Jul). */
+  .submit-row { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0; z-index: 65; box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.45); }
 
   /* Actions tab: one card per thing an instructor needs to do */
   /* Compact one-line rows (Edd, 26 Jul): status in a word, the issue in a
@@ -414,6 +416,9 @@
   .viewas-bar { position: fixed; bottom: 20px; left: 20px; z-index: 60; display: none; align-items: center; gap: 8px; background: var(--surface); border: 1px solid rgba(232,237,242,0.15); border-radius: 999px; padding: 7px 14px; font-size: 12.5px; color: var(--muted); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
   .viewas-bar.show { display: flex; }
   .viewas-bar.simulating { border-color: var(--accent); color: var(--text); }
+  /* Lifted clear of the instructor form's sticky submit row, which sits in the
+     same bottom-left corner. Without this the bar covered the Submit button. */
+  .viewas-bar.lifted { bottom: 84px; }
   .viewas-bar select { width: auto; font-size: 12.5px; padding: 3px 6px; }
 
   /* duplicate confirm modal */
@@ -1170,7 +1175,9 @@ var state = {
   assignees: [],              // people an issue can be assigned to (name/email + course/dev flags)
   formMode: "student",        // "student" (support report) or "internal" (admin-only internal task/bug)
   noStudent: false,           // instructor confirmed there is no student for this issue, so no email is chased
-  subIssues: null,            // AI-detected separate problems in one report: [{summary, issue_type}]
+  subIssues: null,            // the ticked subset actually being logged: [{summary, issue_type}]
+  subIssuesAll: null,         // every separate problem the AI found in one report
+  subKeep: null,              // per-problem tick state, same order as subIssuesAll
   splitMode: false,           // instructor ticked "log these as separate issues"
   trackView: "list",          // Track tab: "list" or "board" (kanban)
   prevShown: 5,               // "Your previous submissions": how many are visible (Show more raises it)
@@ -1573,8 +1580,8 @@ function init() {
 function hideBoot() { var b = $("bootLoader"); if (b) b.style.display = "none"; }
 // The extracted-details fields stay hidden until there's something to show:
 // after an extract, when editing an existing issue, or in manual internal mode.
-function showDetails() { var d = $("detailsSection"); if (d) d.classList.remove("hidden"); }
-function hideDetails() { var d = $("detailsSection"); if (d) d.classList.add("hidden"); }
+function showDetails() { var d = $("detailsSection"); if (d) d.classList.remove("hidden"); scheduleViewAsLift(); }
+function hideDetails() { var d = $("detailsSection"); if (d) d.classList.add("hidden"); scheduleViewAsLift(); }
 function onAuthed(user) {
   hideBoot();
   $("authScreen").classList.remove("show");
@@ -1655,7 +1662,34 @@ function updateViewAsBar() {
   var sel = $("viewAsSelect");
   if (sel) sel.value = state.viewAs || "";
   $("viewAsLabel").textContent = state.viewAs ? "Viewing as" : "View as";
+  positionViewAsBar();
 }
+
+// The view-as bar floats in the bottom-left corner, and the instructor form's
+// submit row sticks to the bottom of the viewport on that same side, so the bar
+// was sitting right over the Submit button (Charly, 31 Jul). Lift the bar clear
+// whenever the two would overlap, and drop it back down when they don't. The
+// measurement is always taken with the bar in its resting position, so it
+// cannot flip-flop between the two.
+var viewAsLiftQueued = false;
+function scheduleViewAsLift() {
+  if (viewAsLiftQueued) return;
+  viewAsLiftQueued = true;
+  requestAnimationFrame(function () { viewAsLiftQueued = false; positionViewAsBar(); });
+}
+function positionViewAsBar() {
+  var bar = $("viewAsBar");
+  if (!bar || !bar.classList.contains("show")) return;
+  bar.classList.remove("lifted");
+  var row = document.querySelector("#detailsSection .submit-row");
+  if (!row || !row.offsetParent) return;
+  var b = bar.getBoundingClientRect(), r = row.getBoundingClientRect();
+  if (r.bottom > b.top && r.top < b.bottom && r.left < b.right && r.right > b.left) {
+    bar.classList.add("lifted");
+  }
+}
+window.addEventListener("scroll", scheduleViewAsLift, true);
+window.addEventListener("resize", scheduleViewAsLift);
 
 // Show only the pages this user has permission for, and land them on the first.
 function applyPerms(user) {
@@ -2425,9 +2459,16 @@ function tokensOf(s) {
   var stop = { this: 1, that: 1, with: 1, from: 1, when: 1, then: 1, does: 1, not: 1, the: 1, and: 1, for: 1, are: 1, was: 1, has: 1, have: 1, been: 1, student: 1, issue: 1, page: 1 };
   return String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length > 3 && !stop[w]; });
 }
+// True while this paste is set to fan out into its own new issue(s). One
+// ticked problem still counts, because it goes down the split path at submit,
+// and letting the update or duplicate detection back in there would quietly
+// fold it into an old issue instead.
+function isSplitting() {
+  return !!(state.splitMode && state.subIssues && state.subIssues.length >= 1);
+}
 function detectDuplicateFault() {
   if (state.editingId || state.updateTargetId) return null;
-  if (state.splitMode && state.subIssues && state.subIssues.length > 1) return null;
+  if (isSplitting()) return null;
   var myRef = String(getField("f_lesson_code") || "").trim().toUpperCase();
   var mySum = tokensOf(getField("f_summary"));
   if (!mySum.length) return null;
@@ -2630,36 +2671,73 @@ function showSplitSuggestion(subIssues) {
   hideSplitSuggestion();
   if (!Array.isArray(subIssues) || subIssues.length < 2) return; // guard a malformed model value
   if (state.editingId || state.updateTargetId) return; // only for brand-new reports
-  state.subIssues = subIssues;
-  // Default to splitting: a multi-topic thread should fan out into separate
-  // issues unless the instructor unticks it.
+  state.subIssuesAll = subIssues.slice();
+  state.subKeep = subIssues.map(function () { return true; });
+  state.subIssues = subIssues.slice();
+  // Default to splitting, with everything ticked: a multi-topic thread should
+  // fan out into separate issues unless the instructor says otherwise.
   state.splitMode = true;
   $("splitPanel").innerHTML =
     '<div class="h">This looks like ' + subIssues.length + ' separate issues</div>' +
-    '<div class="small" style="margin-bottom:6px;">Each would be fixed independently, so logging them apart keeps the trails clean. The same pasted text and screenshots go on every one, and each keeps its own category, lesson, priority, and resolution.</div>' +
+    '<div class="small" style="margin-bottom:6px;">Each would be fixed independently, so logging them apart keeps the trails clean. The same pasted text and screenshots go on every one, and each keeps its own category, lesson, priority, and resolution. Untick anything that does not need logging, like a delivery that has already turned up.</div>' +
     subIssues.map(function (s, i) {
       var resolved = s.resolution_status === 'resolved' || s.resolution_status === 'tbc';
-      return '<div style="margin:4px 0;">' + (i + 1) + '. ' + esc(s.summary || "") +
+      return '<label style="display:block;margin:4px 0;font-size:13px;color:var(--text);">' +
+        '<input type="checkbox" checked data-sub="' + i + '" style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="onSubIssueToggle(' + i + ',this.checked);">' +
+        esc(s.summary || "") +
         (s.issue_type ? ' <span class="badge type-badge">' + esc(s.issue_type) + '</span>' : '') +
-        (resolved ? ' <span class="badge" style="background:var(--low);color:#fff;">' + (s.resolution_status === 'tbc' ? 'resolved - TBC' : 'resolved') + '</span>' : '') + '</div>';
+        (resolved ? ' <span class="badge" style="background:var(--low);color:#fff;">' + (s.resolution_status === 'tbc' ? 'resolved - TBC' : 'resolved') + '</span>' : '') + '</label>';
     }).join("") +
     '<label style="display:block;margin-top:8px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="splitTick" checked style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="onSplitToggle(this.checked);">' +
-      'Log these as ' + subIssues.length + ' separate issues when I submit</label>' +
+      '<span id="splitTickLabel">Log these as ' + subIssues.length + ' separate issues when I submit</span></label>' +
+    '<div class="small hidden" id="splitNoneNote" style="margin-top:6px;color:var(--high);">Tick at least one to log, or untick the box above to log the whole report as a single issue.</div>' +
     '<div class="row" style="margin-top:10px;">' +
-      '<button class="primary" onclick="closeSplitModal()">Continue</button>' +
+      '<button class="primary" id="splitContinue" onclick="closeSplitModal()">Continue</button>' +
       '<button class="ghost" onclick="dismissSplit()">Dismiss</button></div>';
   wizardShow("splitModal");
+}
+// Unticking a single problem drops it from the submit, so a bit of the report
+// that needs no follow-up (a parcel that has since arrived, say) does not open
+// an issue nobody will ever close.
+function onSubIssueToggle(i, on) {
+  if (!state.subKeep) return;
+  state.subKeep[i] = !!on;
+  syncSubIssues();
+}
+// state.subIssues is what actually gets logged, so keep it as the ticked
+// subset, in the order the AI found them.
+function syncSubIssues() {
+  var all = state.subIssuesAll || [];
+  var keep = state.subKeep || [];
+  state.subIssues = all.filter(function (s, i) { return keep[i]; });
+  var n = state.subIssues.length;
+  var lbl = $("splitTickLabel");
+  if (lbl) {
+    lbl.textContent = (n === all.length)
+      ? 'Log these as ' + all.length + ' separate issues when I submit'
+      : (n === 1
+        ? 'Log the ticked one as its own issue when I submit'
+        : 'Log the ' + n + ' ticked ones as separate issues when I submit');
+  }
+  var none = $("splitNoneNote");
+  if (none) none.classList.toggle("hidden", !(state.splitMode && n === 0));
+  var go = $("splitContinue");
+  if (go) go.disabled = !!(state.splitMode && n === 0);
 }
 // Continue keeps whatever the tick says; the note under the extract button
 // carries the choice so it can't be forgotten by submit time.
 function closeSplitModal() {
   $("splitModal").classList.remove("show");
   var n = $("splitNote");
-  if (n && state.subIssues && state.subIssues.length > 1) {
-    n.innerHTML = (state.splitMode
-      ? 'Logging as ' + state.subIssues.length + ' separate issues on submit'
-      : 'Multi-issue split is OFF (logging as one)') +
+  var all = (state.subIssuesAll || []).length;
+  var kept = (state.subIssues || []).length;
+  if (n && all > 1) {
+    n.innerHTML = ((!state.splitMode || !kept)
+      ? 'Multi-issue split is OFF (logging as one)'
+      : (kept === all
+        ? 'Logging as ' + all + ' separate issues on submit'
+        : 'Logging ' + kept + ' of the ' + all + ' detected issues on submit')) +
       ' - <a href="#" onclick="wizardShow(\'splitModal\');return false;" style="color:var(--accent);">change</a>';
     n.classList.remove("hidden");
   }
@@ -2672,6 +2750,7 @@ function closeSplitModal() {
 // issue update detection that were skipped while splitting was on.
 function onSplitToggle(on) {
   state.splitMode = on;
+  syncSubIssues();
   if (on) { hideResolutionSuggestion(); hideExisting(); state.updateTargetId = null; }
   else onSplitDismissed();
 }
@@ -2715,6 +2794,8 @@ function hideSplitSuggestion() {
   $("splitModal").classList.remove("show");
   $("splitPanel").innerHTML = "";
   state.subIssues = null;
+  state.subIssuesAll = null;
+  state.subKeep = null;
   state.splitMode = false;
   var n = $("splitNote"); if (n) { n.classList.add("hidden"); n.innerHTML = ""; }
 }
@@ -2737,7 +2818,7 @@ function detectExistingIssue() {
   // If we're about to split this paste into several issues, don't also try to
   // fold it into one existing issue as an update; the two would collide and the
   // update would silently win. The instructor can untick the split to get here.
-  if (state.splitMode && state.subIssues && state.subIssues.length > 1) return;
+  if (isSplitting()) return;
   var matches = findOpenIssuesByEmail(getField("f_student_contact"));
   if (!matches.length) return;
   state.existingMatches = matches;
@@ -2799,7 +2880,7 @@ function recommendUpdateTarget(matches) {
   apiPost({ action: "matchUpdate", raw_text: getField("rawText"), candidates: cands }).then(function (res) {
     // If a split was turned on while this async call was in flight, don't let the
     // late match quietly re-select an update target and override the split.
-    if (state.splitMode && state.subIssues && state.subIssues.length > 1) return;
+    if (isSplitting()) return;
     if (res && res.ok && res.match_id) {
       state.updateTargetId = res.match_id;
       highlightChosen();
@@ -3147,6 +3228,8 @@ function submitIssue() {
       if (acc.failed) {
         // Keep only the not-yet-saved subs so a resubmit continues from here.
         state.subIssues = subIssues.slice(acc.ok.length);
+        state.subIssuesAll = state.subIssues.slice();
+        state.subKeep = state.subIssues.map(function () { return true; });
         return { ok: false, error: (acc.failed.error || "save failed") +
           " (saved " + acc.ok.length + " of " + subIssues.length + " - press Submit again to finish the rest)" };
       }
