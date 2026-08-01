@@ -2383,9 +2383,14 @@ function updateGroupSummaries() {
   var plat = [];
   if ($("f_plat_browser") && $("f_plat_browser").checked) plat.push("browser");
   if ($("f_plat_app") && $("f_plat_app").checked) plat.push("app");
+  var section = SECTION_LABEL[val("f_section")] || "";
+  // "app · App" reads like a stutter, so drop the platform when the section
+  // already says the same thing.
+  var platText = plat.join(" + ");
+  if (platText && platText.toLowerCase() === section.toLowerCase()) platText = "";
   setGroupSummary("gsum_filing", join([
-    plat.join(" + "),
-    SECTION_LABEL[val("f_section")] || "",
+    platText,
+    section,
     state.requestKind === "improvement" ? "improvement" : "fix",
     typeEl ? String(typeEl.value || "").replace(/_/g, " ") : "",
     val("f_impact") ? val("f_impact") + " impact" : ""
