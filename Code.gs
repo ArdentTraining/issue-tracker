@@ -1034,15 +1034,10 @@ function addReportToIssue_(id, data, report) {
     rec.raw_text = (rec.raw_text || '') + '\n\n--- unparked: reported again ---';
   }
 
-  // "Update and park": the instructor is saying this particular one has
-  // stalled, usually because the student stopped replying, so there is no way
-  // to get to the bottom of it. That is a deliberate call, so it overrides the
-  // wake-up above (which is for somebody ELSE reporting the same fault) and
-  // keeps it out of the routing below.
-  if (data.park) {
-    rec.status = 'parked';
-    if (data.resolution_note) rec.resolution_note = data.resolution_note;
-  }
+  // Note: a "Submit and park" that turns out to MERGE into an existing issue
+  // deliberately does not park that issue. Park means "this student went quiet
+  // so I can't get to the bottom of it", and that is no reason to stop work on
+  // a fault other people are still hitting. The report still joins the trail.
 
   // Repeat reports can tip a tech issue over the routing line (3+ reports, or
   // the priority bump above making it high): hand it to the developers.
@@ -1380,6 +1375,13 @@ function addUpdate_(data) {
     rec.notified_students = true;
   } else if (data.tbc) {
     rec.status = 'resolved_tbc';
+    if (data.resolution_note) rec.resolution_note = data.resolution_note;
+  } else if (data.park) {
+    // "Update and park": stalled rather than finished. The student stopped
+    // replying, so there is nothing left to chase and it shouldn't sit in an
+    // open queue making the numbers look worse than they are. It wakes up on
+    // its own if somebody else reports the same fault (Edd, FB-0134).
+    rec.status = 'parked';
     if (data.resolution_note) rec.resolution_note = data.resolution_note;
   }
 
