@@ -5330,7 +5330,7 @@ function captureFeedbackContext() {
     view: state.view,
     url: window.location.href,
     build: BUILD,
-    backend_version: (diag.backend && diag.backend.version) || "",
+    backend_version: (diag.backend && (diag.backend.version || diag.backend.stamp)) || "",
     backend_deployed_at: (diag.backend && diag.backend.deployed_at) || "",
     // How long this tab has been sitting open. A page loaded three days ago is
     // running code we may already have replaced, which explains a fair few
@@ -5665,7 +5665,7 @@ function feedbackRowHtml(f) {
   // week-old tab running an older build explains a good few "still broken" ones.
   var buildBits = [];
   if (ctx && ctx.build) buildBits.push("build " + ctx.build);
-  if (ctx && ctx.backend_version) buildBits.push("backend v" + ctx.backend_version);
+  if (ctx && ctx.backend_version) buildBits.push("backend " + (/^\d+$/.test(String(ctx.backend_version)) ? "v" : "") + ctx.backend_version);
   if (ctx && ctx.browser) buildBits.push(ctx.browser);
   if (ctx && ctx.page_age_mins > 120) buildBits.push("tab open " + Math.round(ctx.page_age_mins / 60) + "h");
   var diagBlock = ctx ? feedbackDiagHtml(f.id, ctx) : "";

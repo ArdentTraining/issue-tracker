@@ -3365,9 +3365,16 @@ function getAppUrl_() {
 // the front end reads it on login so every feedback report says which build it
 // came from. Without it, "is this fixed already?" needs guesswork against the
 // deploy notes, and a tab left open since Tuesday looks the same as a fresh one.
+// Bumped by hand each round, same as BUILD in index.html. The deployment
+// number below is more precise but only appears from the first deploy made BY
+// this code onwards (the deploy that ships a version is run by the previous
+// one), so this stamp is what answers "which round is live" in the meantime.
+var CODE_STAMP = 'r29 · 2026-08-01';
+
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();
   return {
+    stamp: CODE_STAMP,
     version: p.getProperty('BACKEND_VERSION') || '',
     deployed_at: p.getProperty('BACKEND_DEPLOYED_AT') || '',
     note: p.getProperty('BACKEND_NOTE') || ''
