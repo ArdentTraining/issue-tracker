@@ -1364,6 +1364,11 @@ function addUpdate_(data) {
   // If the issue is currently parked as Resolved - TBC and a fresh update comes
   // in, reopen it (the suggested fix evidently did not stick).
   if (String(rec.status).toLowerCase() === 'resolved_tbc') rec.status = 'open';
+  // Same reasoning for a parked one. It was parked because the student went
+  // quiet, and a follow-up means they haven't, so there is something to go on
+  // again. The park branch below can set it straight back if the update is
+  // itself an "Update and park".
+  if (String(rec.status).toLowerCase() === 'parked') rec.status = 'open';
 
   // If the pasted follow-up shows the problem was sorted out in the chat, close
   // the issue and save the answer, rather than only gluing more text on.
