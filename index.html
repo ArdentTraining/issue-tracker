@@ -1095,7 +1095,18 @@
   <div class="modal" style="width:520px;max-width:94vw;">
     <h3>Suggest an improvement</h3>
     <p class="small muted">Found a bug, or got an idea to improve this tracker? Tell us. Add a screenshot if it helps.</p>
+    <div class="field"><label>What is this?</label>
+      <select id="fbKind">
+        <option value="bug">Something's broken</option>
+        <option value="idea">An idea to improve it</option>
+        <option value="question">A question about how it works</option>
+      </select>
+    </div>
     <div class="field"><textarea id="fbMessage" rows="4" placeholder="Describe the bug or improvement…"></textarea></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
+      <input type="checkbox" id="fbBlocking" style="width:auto;margin:0;">
+      <span>This is stopping me working right now</span>
+    </label></div>
     <div class="field"><label>Screenshots (optional, up to 5)</label>
       <input type="file" id="fbFileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple onchange="onFbFilesPicked(event)">
       <div class="thumbs" id="fbThumbs"></div>
@@ -1141,6 +1152,109 @@ var MAX_IMAGES = 5;
 var MAX_IMAGE_MB = 5;
 
 // ============================ STATE ============================
+// ============================ DIAGNOSTICS ============================
+// A feedback report is only worth as much as what it can tell us about the
+// moment things went wrong. Everything below runs quietly from page load and
+// rides along with any feedback sent, so "it didn't save" arrives with the
+// error, the failed request, and the last few things that were clicked
+// attached, instead of needing a conversation to reconstruct.
+var BUILD = "r29 · 2026-08-01";  // bump this with each round, it lands on every feedback report
+var PAGE_LOADED_AT = Date.now();
+var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
+var diag = { errors: [], api: [], clicks: [], backend: null };
+
+function diagPush(key, entry) {
+  var list = diag[key];
+  entry.t = Math.round((Date.now() - PAGE_LOADED_AT) / 1000); // seconds since load
+  list.push(entry);
+  if (list.length > DIAG_CAP[key]) list.shift();
+}
+function diagClip(v, n) { return String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n || 300); }
+
+// Uncaught errors, rejected promises, and anything the code deliberately sends
+// to console.error. The last of those matters most: nearly every catch block in
+// here toasts "See console" and logs, and nobody has the console open.
+window.addEventListener("error", function (ev) {
+  try {
+    diagPush("errors", {
+      kind: "error",
+      message: diagClip((ev && ev.message) || "script error", 300),
+      where: diagClip(((ev && ev.filename) || "").split("/").pop() + ":" + ((ev && ev.lineno) || "?"), 80),
+      stack: diagClip(ev && ev.error && ev.error.stack, 400)
+    });
+  } catch (e) {}
+});
+window.addEventListener("unhandledrejection", function (ev) {
+  try {
+    var r = ev && ev.reason;
+    diagPush("errors", {
+      kind: "unhandled promise",
+      message: diagClip((r && r.message) || r, 300),
+      stack: diagClip(r && r.stack, 400)
+    });
+  } catch (e) {}
+});
+(function () {
+  if (!window.console || !console.error) return;
+  var original = console.error;
+  console.error = function () {
+    try {
+      var parts = Array.prototype.slice.call(arguments).map(function (a) {
+        if (a instanceof Error) return a.message + (a.stack ? " | " + a.stack.split("\n")[1] : "");
+        if (typeof a === "object") { try { return JSON.stringify(a); } catch (e) { return String(a); } }
+        return String(a);
+      });
+      diagPush("errors", { kind: "console", message: diagClip(parts.join(" "), 400) });
+    } catch (e) {}
+    original.apply(console, arguments);
+  };
+})();
+
+// Every call to the backend, with how long it took and how it ended. This is
+// what separates "the save button does nothing" from "the save request came
+// back forbidden", and the two need very different fixes.
+function diagApi(action, startedAt, outcome) {
+  diagPush("api", { action: action, ms: Date.now() - startedAt, outcome: diagClip(outcome, 120) });
+}
+
+// The last few things clicked, which is the repro steps we would otherwise have
+// to ask for. Capture phase so it still records when the handler throws.
+document.addEventListener("click", function (ev) {
+  try {
+    var el = ev.target;
+    while (el && el !== document.body) {
+      var tag = (el.tagName || "").toLowerCase();
+      if (tag === "button" || tag === "a" || el.getAttribute("onclick") || el.classList.contains("tab") || el.classList.contains("card")) {
+        var label = diagClip(el.getAttribute("aria-label") || el.textContent || el.id || tag, 60);
+        diagPush("clicks", { what: label + (el.id ? " #" + el.id : "") });
+        return;
+      }
+      el = el.parentElement;
+    }
+  } catch (e) {}
+}, true);
+
+// Raw user agent strings are unreadable and nobody parses them by eye, so do it
+// once here and keep the raw one alongside for the odd case this guesses wrong.
+function browserLabel() {
+  var ua = navigator.userAgent || "";
+  var browser = "Unknown browser";
+  var m;
+  if ((m = /Edg\/([\d.]+)/.exec(ua))) browser = "Edge " + m[1].split(".")[0];
+  else if ((m = /OPR\/([\d.]+)/.exec(ua))) browser = "Opera " + m[1].split(".")[0];
+  else if ((m = /Firefox\/([\d.]+)/.exec(ua))) browser = "Firefox " + m[1].split(".")[0];
+  else if (/Chrome\//.test(ua) && (m = /Chrome\/([\d.]+)/.exec(ua))) browser = "Chrome " + m[1].split(".")[0];
+  else if (/Safari\//.test(ua) && (m = /Version\/([\d.]+)/.exec(ua))) browser = "Safari " + m[1].split(".")[0];
+  var os = "Unknown OS";
+  if (/Windows NT 10/.test(ua)) os = "Windows 10 or 11";
+  else if (/Windows NT ([\d.]+)/.test(ua)) os = "Windows";
+  else if (/iPhone|iPad|iPod/.test(ua)) os = "iOS";
+  else if (/Android ([\d.]+)/.test(ua)) os = "Android " + /Android ([\d.]+)/.exec(ua)[1];
+  else if (/Mac OS X/.test(ua)) os = "macOS";
+  else if (/Linux/.test(ua)) os = "Linux";
+  return browser + " on " + os;
+}
+
 var state = {
   view: "instructor",
   instructors: [],
@@ -1289,11 +1403,23 @@ function apiGet(action) {
 }
 function apiPost(payload) {
   payload.token = getToken();
+  // Time every call and record how it ended, so a feedback report carries the
+  // request that actually failed rather than just the person's description of
+  // it. Only the action name is logged, never the payload (images, text, and
+  // the session token all travel in there).
+  var startedAt = Date.now();
+  var action = payload.action || "?";
   return fetch(APPS_SCRIPT_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload)
-  }).then(function (r) { return r.json(); }).then(gateCheck);
+  }).then(function (r) { return r.json(); }).then(function (res) {
+    diagApi(action, startedAt, (res && res.ok === false) ? ("error: " + (res.error || "unknown")) : "ok");
+    return gateCheck(res);
+  }).catch(function (e) {
+    diagApi(action, startedAt, "failed: " + e);
+    throw e;
+  });
 }
 // If the backend rejects the session, drop it and show the login screen.
 function gateCheck(res) {
@@ -1569,6 +1695,9 @@ function init() {
   if (invite) { startInvite(invite); return; }
   if (getToken()) {
     apiGet("me").then(function (res) {
+      // The backend tells us which version of itself is live, so feedback can
+      // say which build it came from without anyone checking the deploy notes.
+      if (res && res.backend) diag.backend = res.backend;
       if (res && res.ok && res.user) onAuthed(res.user);
       else showLogin();
     }).catch(function () { showLogin(); });
@@ -1585,6 +1714,9 @@ function hideDetails() { var d = $("detailsSection"); if (d) d.classList.add("hi
 function onAuthed(user) {
   hideBoot();
   $("authScreen").classList.remove("show");
+  // Signing in fresh skips the "me" call that normally carries this, so ask
+  // once here instead. Feedback is a lot less useful without a build stamp.
+  if (!diag.backend) apiGet("ping").then(function (res) { if (res && res.backend) diag.backend = res.backend; }).catch(function () {});
   applyPerms(user);
   loadIssues();
   loadAssignees();
@@ -5197,14 +5329,45 @@ function captureFeedbackContext() {
   var ctx = {
     view: state.view,
     url: window.location.href,
+    build: BUILD,
+    backend_version: (diag.backend && diag.backend.version) || "",
+    backend_deployed_at: (diag.backend && diag.backend.deployed_at) || "",
+    // How long this tab has been sitting open. A page loaded three days ago is
+    // running code we may already have replaced, which explains a fair few
+    // "still broken" reports on its own.
+    page_age_mins: Math.round((Date.now() - PAGE_LOADED_AT) / 60000),
     viewport: window.innerWidth + "x" + window.innerHeight,
     scroll_y: Math.round(window.scrollY || 0),
+    browser: browserLabel(),
+    pixel_ratio: window.devicePixelRatio || 1,
+    online: navigator.onLine !== false,
+    theme: document.documentElement.getAttribute("data-theme") || currentTheme(),
     user_agent: navigator.userAgent,
     captured_at: new Date().toISOString()
   };
+  // The three rolling buffers: what broke, what the backend said, what was
+  // clicked on the way there.
+  if (diag.errors.length) ctx.errors = diag.errors.slice();
+  if (diag.api.length) ctx.api = diag.api.slice();
+  if (diag.clicks.length) ctx.clicks = diag.clicks.slice();
   // What's open on top of the page right now.
   if (state.viewAs) ctx.view_as = state.viewAs;
-  if (state.detailId) { ctx.open_issue_id = state.detailId; ctx.open_issue_kind = state.detailKind || ""; }
+  if (state.detailId) {
+    ctx.open_issue_id = state.detailId;
+    ctx.open_issue_kind = state.detailKind || "";
+    // Keep a copy of the record itself, not just its id. The row often gets
+    // edited before anyone reads the feedback, and then the evidence is gone.
+    var openIssue = (state.issues || []).filter(function (i) { return i.issue_id === state.detailId; })[0];
+    if (openIssue) {
+      var snap = {};
+      Object.keys(openIssue).forEach(function (k) {
+        if (k === "raw_text" || k === "reports_json") return;   // long, and rarely what we need here
+        var v = openIssue[k];
+        if (v !== "" && v != null) snap[k] = typeof v === "string" ? v.slice(0, 300) : v;
+      });
+      ctx.open_issue = snap;
+    }
+  }
   var modals = [];
   ["emailModal", "slideModal", "tshootModal", "suggestModal", "splitModal", "recheckModal"].forEach(function (id) {
     var el = $(id); if (el && el.classList.contains("show")) modals.push(id);
@@ -5259,12 +5422,56 @@ function describeContext(ctx) {
   return bits.join(" · ");
 }
 
+// The whole context lands in one spreadsheet cell, and a cell tops out at
+// 50,000 characters. Go over that and Sheets rejects the write, which would
+// lose the report entirely, so shed the bulky-but-least-useful parts first
+// (the page text, then the older buffer entries) until it fits.
+var CONTEXT_MAX = 42000;
+function packContext(ctx) {
+  var out = JSON.stringify(ctx || {});
+  if (out.length <= CONTEXT_MAX) return out;
+  var trimmed = {};
+  Object.keys(ctx).forEach(function (k) { trimmed[k] = ctx[k]; });
+  trimmed.page_text = String(trimmed.page_text || "").slice(0, 400);
+  out = JSON.stringify(trimmed);
+  while (out.length > CONTEXT_MAX && (trimmed.errors || []).length > 1) {
+    trimmed.errors = trimmed.errors.slice(1);       // oldest goes first, the newest is the one that matters
+    out = JSON.stringify(trimmed);
+  }
+  while (out.length > CONTEXT_MAX && (trimmed.api || []).length > 1) {
+    trimmed.api = trimmed.api.slice(1);
+    out = JSON.stringify(trimmed);
+  }
+  trimmed.context_trimmed = true;
+  out = JSON.stringify(trimmed);
+  if (out.length <= CONTEXT_MAX) return out;
+  // Still too big, so fall back to the essentials. Truncating the JSON string
+  // itself would leave something nothing can parse, which is worse than short.
+  var lastErrors = (ctx.errors || []).slice(-3).map(function (e) {
+    return { t: e.t, kind: e.kind, message: diagClip(e.message, 300), where: e.where };
+  });
+  return JSON.stringify({
+    view: ctx.view, url: ctx.url, build: ctx.build, backend_version: ctx.backend_version,
+    browser: ctx.browser, viewport: ctx.viewport, captured_at: ctx.captured_at,
+    errors: lastErrors, api: (ctx.api || []).slice(-5), clicks: (ctx.clicks || []).slice(-5),
+    context_trimmed: "heavily - the full snapshot was too big for one cell"
+  });
+}
+
 function openFeedback() {
   $("fbMessage").value = "";
   $("fbMsg").textContent = "";
+  $("fbKind").value = "bug";
+  $("fbBlocking").checked = false;
   state.fbImages = [];
   state.fbContext = captureFeedbackContext();
-  $("fbContextNote").textContent = "This report will include where you are: " + describeContext(state.fbContext);
+  // Say plainly what's being attached. People are more willing to send a
+  // one-liner when they can see the report is carrying the detail for them.
+  var extras = [];
+  if (state.fbContext.errors) extras.push(state.fbContext.errors.length + " recent error" + (state.fbContext.errors.length > 1 ? "s" : ""));
+  if (state.fbContext.api) extras.push("your last " + state.fbContext.api.length + " actions");
+  $("fbContextNote").textContent = "This report will include where you are: " + describeContext(state.fbContext) +
+    (extras.length ? ". It'll also attach " + extras.join(" and ") + ", plus a picture of the screen." : ", plus a picture of the screen.");
   renderFbThumbs();
   // Quietly capture what the page looks like right now, before the modal
   // covers it, so every feedback lands with a picture of its surroundings.
@@ -5359,14 +5566,26 @@ function submitFeedback() {
   })).then(function () {
     var urls = state.fbImages.filter(function (im) { return im.uploaded; }).map(function (im) { return im.url; });
     if (autoShot && autoShot.uploaded) urls.push(autoShot.url);
-    return apiPost({ action: "addFeedback", message: msg, image_urls: urls, context: JSON.stringify(state.fbContext || {}) });
+    // Re-snapshot the buffers at Send: anything that broke while the person was
+    // typing their description is exactly what we want to see.
+    var ctx = state.fbContext || {};
+    if (diag.errors.length) ctx.errors = diag.errors.slice();
+    if (diag.api.length) ctx.api = diag.api.slice();
+    if (diag.clicks.length) ctx.clicks = diag.clicks.slice();
+    return apiPost({
+      action: "addFeedback", message: msg, image_urls: urls,
+      kind: $("fbKind") ? $("fbKind").value : "bug",
+      urgency: ($("fbBlocking") && $("fbBlocking").checked) ? "blocking" : "normal",
+      context: packContext(ctx)
+    });
   }).then(function (res) {
     sendBtn.disabled = false;
     if (!res || !res.ok) { $("fbMsg").textContent = (res && res.error) || "Could not send."; return; }
     closeFeedback();
+    var ref = res.ref ? " It's " + res.ref + "." : "";
     var lost = state.fbImages.filter(function (im) { return !im.uploaded; }).length;
     if (lost) toast("Feedback sent, but " + lost + " screenshot" + (lost > 1 ? "s" : "") + " failed to upload." + (uploadError ? " (" + uploadError + ")" : ""));
-    else toast("Thanks, your feedback was sent.");
+    else toast("Thanks, your feedback was sent." + ref);
   }).catch(function (e) { sendBtn.disabled = false; $("fbMsg").textContent = "Send error. See console."; console.error(e); });
   }); // end waitShot
 }
@@ -5385,12 +5604,17 @@ function renderFeedback() {
 function setFbListView(key, value) {
   if (key === "filter") state.fbListFilter = value;
   if (key === "sort") state.fbListSort = value;
+  if (key === "kind") state.fbListKind = value;
   renderFeedbackRows();
 }
 function renderFeedbackRows() {
-  var flt = state.fbListFilter || "all", srt = state.fbListSort || "newest";
+  var flt = state.fbListFilter || "all", srt = state.fbListSort || "newest", knd = state.fbListKind || "all";
   var list = (state._fbAll || []).slice();
   if (flt !== "all") list = list.filter(function (f) { return String(f.status || "new").toLowerCase() === flt; });
+  if (knd !== "all") list = list.filter(function (f) { return (String(f.kind || "bug").toLowerCase() === knd); });
+  // Anyone who ticked "this is stopping me working" goes to the top of whatever
+  // sort is on, unless it's already been dealt with.
+  var blocking = function (f) { return String(f.urgency || "") === "blocking" && String(f.status || "new").toLowerCase() !== "done"; };
   if (srt === "oldest") {
     list.sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
   } else if (srt === "status") {
@@ -5403,10 +5627,13 @@ function renderFeedbackRows() {
   } else {
     list.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
   }
+  list.sort(function (a, b) { return (blocking(b) ? 1 : 0) - (blocking(a) ? 1 : 0); });
   var opt = function (v, label, cur) { return '<option value="' + v + '"' + (cur === v ? " selected" : "") + '>' + label + '</option>'; };
   var bar = '<div class="row" style="margin-bottom:10px;gap:8px;">' +
     '<select style="width:auto;" onchange="setFbListView(\'filter\', this.value)">' +
       opt("all", "All statuses", flt) + opt("new", "Reported", flt) + opt("needs_testing", "Needs testing", flt) + opt("done", "Done", flt) + '</select>' +
+    '<select style="width:auto;" onchange="setFbListView(\'kind\', this.value)">' +
+      opt("all", "Bugs and ideas", knd) + opt("bug", "Bugs", knd) + opt("idea", "Ideas", knd) + opt("question", "Questions", knd) + '</select>' +
     '<select style="width:auto;" onchange="setFbListView(\'sort\', this.value)">' +
       opt("newest", "Newest first", srt) + opt("oldest", "Oldest first", srt) + opt("status", "By status", srt) + '</select>' +
     '<span class="small muted" style="align-self:center;">' + list.length + ' shown</span></div>';
@@ -5428,6 +5655,20 @@ function feedbackRowHtml(f) {
   var ctxDetail = ctx ? Object.keys(ctx).map(function (k) {
     return k + ": " + (typeof ctx[k] === "object" ? JSON.stringify(ctx[k]) : ctx[k]);
   }).join("\n") : "";
+  var kind = String(f.kind || "bug").toLowerCase();
+  var kindChip = kind === "idea" ? ' · <span style="color:var(--medium);">idea</span>'
+    : kind === "question" ? ' · <span class="muted">question</span>' : "";
+  var blockChip = (String(f.urgency || "") === "blocking" && !done)
+    ? ' · <span style="color:var(--high);font-weight:600;">blocking</span>' : "";
+  var refChip = f.ref ? '<strong>' + esc(f.ref) + '</strong> · ' : "";
+  // The build the report came from, and how long that tab had been open. A
+  // week-old tab running an older build explains a good few "still broken" ones.
+  var buildBits = [];
+  if (ctx && ctx.build) buildBits.push("build " + ctx.build);
+  if (ctx && ctx.backend_version) buildBits.push("backend v" + ctx.backend_version);
+  if (ctx && ctx.browser) buildBits.push(ctx.browser);
+  if (ctx && ctx.page_age_mins > 120) buildBits.push("tab open " + Math.round(ctx.page_age_mins / 60) + "h");
+  var diagBlock = ctx ? feedbackDiagHtml(f.id, ctx) : "";
   var buttons = done
     ? '<button class="ghost small" onclick="markFeedback(\'' + esc(f.id) + '\', \'new\')">Reopen</button>'
     : testing
@@ -5436,9 +5677,11 @@ function feedbackRowHtml(f) {
       : '<button class="ghost small" onclick="markFeedback(\'' + esc(f.id) + '\', \'needs_testing\')">Needs testing</button>' +
         '<button class="ghost small" onclick="markFeedback(\'' + esc(f.id) + '\', \'done\')">Mark fixed</button>';
   return '<div class="card" style="margin-bottom:8px;' + (done ? "opacity:0.6;" : "") + '">' +
-    '<div class="small muted" style="margin-bottom:4px;">' + esc(f.user_name || f.user_email || "someone") + ' · ' + fmtDate(f.created_at) + chip + '</div>' +
+    '<div class="small muted" style="margin-bottom:4px;">' + refChip + esc(f.user_name || f.user_email || "someone") + ' · ' + fmtDate(f.created_at) + chip + kindChip + blockChip + '</div>' +
     (ctxLine ? '<div class="small" style="margin-bottom:6px;color:var(--muted);" title="' + esc(ctxDetail) + '">From: ' + esc(ctxLine) + '</div>' : '') +
     '<div style="white-space:pre-wrap;">' + esc(f.message || "") + '</div>' +
+    (buildBits.length ? '<div class="small muted" style="margin-top:6px;">' + esc(buildBits.join(" · ")) + '</div>' : '') +
+    diagBlock +
     (imgs.length ? '<div class="thumbs" style="margin-top:8px;">' + imgs.map(function (u) {
       return '<a class="thumb" href="' + esc(u) + '" target="_blank"><img src="' + esc(u) + '" /></a>';
     }).join("") + '</div>' : '') +
@@ -5447,6 +5690,42 @@ function feedbackRowHtml(f) {
     '</div>' +
   '</div>';
 }
+// The technical half of a feedback report, folded away by default so the card
+// still reads as a sentence from a colleague. Open it and you get the errors,
+// the backend calls, and the clicks that led up to it, newest last.
+function feedbackDiagHtml(id, ctx) {
+  var errs = ctx.errors || [], api = ctx.api || [], clicks = ctx.clicks || [];
+  var failed = api.filter(function (c) { return c.outcome && c.outcome !== "ok"; });
+  if (!errs.length && !api.length && !clicks.length) return "";
+  var headline = [];
+  if (errs.length) headline.push(errs.length + " error" + (errs.length > 1 ? "s" : ""));
+  if (failed.length) headline.push(failed.length + " failed call" + (failed.length > 1 ? "s" : ""));
+  if (!headline.length) headline.push("no errors logged");
+  var at = function (e) { return '<span class="muted">+' + (e.t == null ? "?" : e.t) + 's</span> '; };
+  var body = "";
+  if (errs.length) {
+    body += '<div style="margin-bottom:6px;"><strong>Errors</strong>' +
+      errs.map(function (e) {
+        return '<div style="margin-top:3px;">' + at(e) + esc(e.kind || "error") + ': ' + esc(e.message || "") +
+          (e.where ? ' <span class="muted">(' + esc(e.where) + ')</span>' : '') +
+          (e.stack ? '<div class="muted" style="padding-left:12px;">' + esc(e.stack) + '</div>' : '') + '</div>';
+      }).join("") + '</div>';
+  }
+  if (api.length) {
+    body += '<div style="margin-bottom:6px;"><strong>Backend calls</strong>' +
+      api.map(function (c) {
+        var bad = c.outcome && c.outcome !== "ok";
+        return '<div style="margin-top:2px;' + (bad ? "color:var(--high);" : "") + '">' + at(c) + esc(c.action) + ' · ' + c.ms + 'ms · ' + esc(c.outcome || "") + '</div>';
+      }).join("") + '</div>';
+  }
+  if (clicks.length) {
+    body += '<div><strong>Clicked, in order</strong><div style="margin-top:2px;">' +
+      clicks.map(function (c) { return at(c) + esc(c.what || ""); }).join(' <span class="muted">→</span> ') + '</div></div>';
+  }
+  return '<details style="margin-top:8px;"><summary class="small muted" style="cursor:pointer;">Diagnostics · ' + esc(headline.join(", ")) + '</summary>' +
+    '<div class="small" style="margin-top:6px;font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">' + body + '</div></details>';
+}
+
 function deleteFeedback(id) {
   if (!confirm("Delete this feedback for good? There's no undo.")) return;
   apiPost({ action: "deleteFeedback", id: id }).then(function (res) {

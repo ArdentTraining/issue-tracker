@@ -44,9 +44,26 @@ var ISSUE_SHEETS = [COURSE_SHEET, TECH_SHEET, SHIPPING_SHEET];
 
 // Feedback on the tracker itself (bugs/improvements suggested by users).
 var FEEDBACK_SHEET = 'Feedback';
-var FEEDBACK_HEADERS = ['id', 'created_at', 'user_email', 'user_name', 'message', 'image_urls', 'status', 'context'];
+// New columns go on the END of this list, never inserted, so existing rows keep
+// their data where the sheet already has it.
+var FEEDBACK_HEADERS = ['id', 'created_at', 'user_email', 'user_name', 'message', 'image_urls', 'status', 'context', 'ref', 'kind', 'urgency'];
 // context = JSON snapshot of where the Feedback button was pressed (view, open
-// issue, filters, viewport, browser), so a report carries its own crime scene.
+// issue, filters, viewport, browser, recent JS errors, recent API calls, and
+// the last few clicks), so a report carries its own crime scene.
+// ref     = short human handle, FB-0042, so people can say one out loud.
+// kind    = bug | idea | question. urgency = blocking | normal.
+
+// The Feedback sheet gains columns as the tracker grows, and setup() isn't
+// always run the moment a new one appears. This tops the header row up in
+// place (appending only) so a fresh column starts working straight away.
+function ensureFeedbackHeaders_(sheet) {
+  var width = Math.max(1, sheet.getLastColumn());
+  var head = sheet.getRange(1, 1, 1, width).getValues()[0].map(function (h) { return String(h || ''); });
+  var missing = FEEDBACK_HEADERS.filter(function (h) { return head.indexOf(h) < 0; });
+  if (!missing.length) return;
+  var start = head.length + 1;
+  sheet.getRange(1, start, 1, missing.length).setValues([missing]).setFontWeight('bold');
+}
 
 // Anthropic models. Extraction and the small matching/dedupe/troubleshooting
 // calls all run on Haiku: it is fast, cheap, and returns clean, complete JSON.
@@ -172,13 +189,13 @@ function doGet(e) {
   try {
     var p = (e && e.parameter) || {};
     var action = p.action || '';
-    if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString() });
+    if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
     if (action === 'getInvite') return jsonOut(getInvite_(p.token));   // public: validate an invite link
     if (action === 'mirror') return jsonOut(mirror_(p));               // read-only, key-gated mirror for the local Cowork sync
 
     var user = userForToken_(p.token);
     if (!user) return jsonOut({ ok: false, error: 'unauthorized' });
-    if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user) });
+    if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
 
     if (action === 'getIssues') return jsonOut(getIssues_());
@@ -203,6 +220,7 @@ function doPost(e) {
     // Public auth actions (no session yet).
     // Self-deploy: gated by its own DEPLOY_KEY (script property), not a user
     // session — same pattern as the mirror. See deployBackend_ below.
+    if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
     if (action === 'deployBackend') return jsonOut(deployBackend_(body));
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
     if (action === 'setChatwootConfig') return jsonOut(setChatwootConfig_(body));
@@ -226,7 +244,7 @@ function doPost(e) {
     // Reads are served over POST too, so the front-end can keep the session
     // token in the request body rather than the URL (URLs leak into browser
     // history and logs; bodies don't). The GET versions below still work.
-    if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user) });
+    if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (action === 'getIssues') return jsonOut(getIssues_());
     if (action === 'getInstructors') return jsonOut(getInstructors_());
     if (action === 'listUsers') return jsonOut(listUsers_());
@@ -2277,6 +2295,12 @@ function deployBackend_(data) {
         description: String(data.note || ('v' + v.versionNumber + ' by Claude'))
       }
     });
+    // Remember what just went live, so the front end can stamp it onto feedback.
+    PropertiesService.getScriptProperties().setProperties({
+      BACKEND_VERSION: String(v.versionNumber),
+      BACKEND_DEPLOYED_AT: new Date().toISOString(),
+      BACKEND_NOTE: String(data.note || '')
+    });
     return { ok: true, version: v.versionNumber, deployment: target.deploymentId };
   } catch (e) {
     return { ok: false, error: String(e) };
@@ -3000,11 +3024,38 @@ function matchUpdate_(data) {
 
 // ---- Feedback on the tracker itself ---------------------------------------
 
+// The next FB-#### in the sequence. Read off the highest number already in the
+// sheet rather than the row count, so deleting a row never hands the same
+// reference out twice.
+function nextFeedbackRef_(sheet) {
+  var values = sheet.getDataRange().getValues();
+  if (!values.length) return 'FB-0001';
+  var col = values[0].indexOf('ref');
+  var top = 0;
+  if (col >= 0) {
+    for (var r = 1; r < values.length; r++) {
+      var m = /(\d+)/.exec(String(values[r][col] || ''));
+      if (m) top = Math.max(top, parseInt(m[1], 10));
+    }
+  }
+  // First run after this went in: start the count above the rows already there,
+  // so the old unreferenced feedback and the new numbering can't collide.
+  top = Math.max(top, values.length - 1);
+  var n = String(top + 1);
+  while (n.length < 4) n = '0' + n;
+  return 'FB-' + n;
+}
+
+var FEEDBACK_KINDS = ['bug', 'idea', 'question'];
+
 function addFeedback_(data) {
   var sheet = sheetByName_(FEEDBACK_SHEET);
   if (!sheet) return { ok: false, error: 'Feedback sheet missing. Run setup() once.' };
   if (!data.message && !data.image_urls) return { ok: false, error: 'Add a message first.' };
+  ensureFeedbackHeaders_(sheet);
   var u = data._user || {};
+  var kind = String(data.kind || 'bug').toLowerCase();
+  if (FEEDBACK_KINDS.indexOf(kind) < 0) kind = 'bug';
   var row = {
     id: Utilities.getUuid(),
     created_at: new Date().toISOString(),
@@ -3013,10 +3064,37 @@ function addFeedback_(data) {
     message: data.message || '',
     image_urls: normaliseImageUrls_(data.image_urls),
     status: 'new',
-    context: typeof data.context === 'string' ? data.context : (data.context ? JSON.stringify(data.context) : '')
+    context: typeof data.context === 'string' ? data.context : (data.context ? JSON.stringify(data.context) : ''),
+    ref: nextFeedbackRef_(sheet),
+    kind: kind,
+    urgency: String(data.urgency || '') === 'blocking' ? 'blocking' : 'normal'
   };
   sheet.appendRow(FEEDBACK_HEADERS.map(function (k) { return row[k]; }));
-  return { ok: true };
+  // Issues ping Slack, so feedback about the tracker should too - otherwise a
+  // blocked instructor waits for somebody to happen to open the Admin tab.
+  try { sendFeedbackSlack_(row, getAppUrl_()); } catch (e) {}
+  return { ok: true, ref: row.ref };
+}
+
+function sendFeedbackSlack_(fb, appUrl) {
+  if (!slackWebhook_()) return;
+  var blocking = fb.urgency === 'blocking';
+  var kindWord = fb.kind === 'idea' ? 'Idea for the tracker' : fb.kind === 'question' ? 'Question about the tracker' : 'Bug in the tracker';
+  var ctx = {};
+  try { ctx = fb.context ? JSON.parse(fb.context) : {}; } catch (e) { ctx = {}; }
+  var msg = String(fb.message || '').replace(/\s+/g, ' ').trim();
+  var lines = [
+    (blocking ? ':rotating_light: *' + kindWord + ' - blocking someone right now*' : ':speech_balloon: *' + kindWord + '*') + ' (' + fb.ref + ')',
+    '*From:* ' + (fb.user_name || fb.user_email || 'someone'),
+    '*What they said:* ' + (msg.length > 400 ? msg.slice(0, 400) + '…' : msg || '(screenshot only)')
+  ];
+  if (ctx.view) lines.push('*Where:* ' + ctx.view + (ctx.build ? ' · build ' + ctx.build : ''));
+  if (ctx.errors && ctx.errors.length) lines.push('*Last error:* ' + String(ctx.errors[ctx.errors.length - 1].message || '').slice(0, 200));
+  if (appUrl) lines.push('Open the Feedback tab: ' + appUrl);
+  UrlFetchApp.fetch(slackWebhook_(), {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    payload: JSON.stringify({ text: lines.join('\n') })
+  });
 }
 
 function getFeedback_() {
@@ -3028,7 +3106,9 @@ function getFeedback_() {
   var out = [];
   for (var r = 1; r < values.length; r++) {
     if (!values[r][idx['id']]) continue;
-    var o = {}; FEEDBACK_HEADERS.forEach(function (k) { o[k] = values[r][idx[k]]; });
+    // A column the sheet hasn't grown yet reads back as empty rather than
+    // throwing, so an older Feedback tab keeps working until setup() runs.
+    var o = {}; FEEDBACK_HEADERS.forEach(function (k) { o[k] = idx[k] == null ? '' : values[r][idx[k]]; });
     out.push(o);
   }
   out.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
@@ -3279,6 +3359,19 @@ function sendSlack_(issue, appUrl) {
 
 function getAppUrl_() {
   return PropertiesService.getScriptProperties().getProperty('APP_URL') || '';
+}
+
+// Which backend is actually live. deployBackend_ records this as it ships, and
+// the front end reads it on login so every feedback report says which build it
+// came from. Without it, "is this fixed already?" needs guesswork against the
+// deploy notes, and a tab left open since Tuesday looks the same as a fresh one.
+function backendInfo_() {
+  var p = PropertiesService.getScriptProperties();
+  return {
+    version: p.getProperty('BACKEND_VERSION') || '',
+    deployed_at: p.getProperty('BACKEND_DEPLOYED_AT') || '',
+    note: p.getProperty('BACKEND_NOTE') || ''
+  };
 }
 
 // ---- Auto-resolve TBC issues ----------------------------------------------
