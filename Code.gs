@@ -904,9 +904,11 @@ function addIssue_(data) {
     // If the instructor has already given the student the suggested fix, this
     // lands as "Resolved - TBC" with that fix saved, and will auto-resolve
     // after a quiet spell unless it comes back.
-    status: data.resolved ? 'resolved' : (data.tbc ? 'resolved_tbc' : (data.status || 'open')),
+    status: data.resolved ? 'resolved' : (data.parked ? 'parked' : (data.tbc ? 'resolved_tbc' : (data.status || 'open'))),
     resolved_at: data.resolved ? (data.resolved_at || now) : '',
-    resolution_note: (data.resolved || data.tbc) ? (data.resolution_note || '') : '',
+    // Parked keeps its reason here too: a parked issue with no note is just an
+    // open one nobody looks at.
+    resolution_note: (data.resolved || data.tbc || data.parked) ? (data.resolution_note || '') : '',
     // Resolved in the pasted chat itself: the student was part of that
     // conversation, so there's nobody left to notify (keeps it out of the
     // instructor's Actions list).
@@ -945,7 +947,7 @@ function addIssue_(data) {
   // NOT auto-route to a fix team, they just sit open for the team to review.
   // Shipping never routes to a fix team: nobody here fixes a parcel, we chase
   // the courier. It stays open with a chase date instead.
-  if (!data.tbc && !data.resolved && issue.request_kind !== 'improvement' && category !== 'shipping') {
+  if (!data.tbc && !data.resolved && !data.parked && issue.request_kind !== 'improvement' && category !== 'shipping') {
     if (category === 'course_error') {
       issue.dev_passed_at = new Date().toISOString();
       issue.status = 'with_dev';
@@ -1030,6 +1032,16 @@ function addReportToIssue_(id, data, report) {
   if (String(rec.status).toLowerCase() === 'parked') {
     rec.status = 'open';
     rec.raw_text = (rec.raw_text || '') + '\n\n--- unparked: reported again ---';
+  }
+
+  // "Update and park": the instructor is saying this particular one has
+  // stalled, usually because the student stopped replying, so there is no way
+  // to get to the bottom of it. That is a deliberate call, so it overrides the
+  // wake-up above (which is for somebody ELSE reporting the same fault) and
+  // keeps it out of the routing below.
+  if (data.park) {
+    rec.status = 'parked';
+    if (data.resolution_note) rec.resolution_note = data.resolution_note;
   }
 
   // Repeat reports can tip a tech issue over the routing line (3+ reports, or
@@ -1837,6 +1849,20 @@ function chatwootImport_(data) {
 
   var list = (msgs && (msgs.payload || msgs.data && msgs.data.payload)) || [];
   var sender = (conv && conv.meta && conv.meta.sender) || {};
+  // The conversation's sender block often carries a name and no email, because
+  // a web-widget contact only gets one once they hand it over. The contact
+  // record itself usually has it, so go and read that rather than sending the
+  // instructor off to find it by hand (Edd, 1 Aug).
+  if (!sender.email && sender.id) {
+    try {
+      var contact = chatwootCall_('/contacts/' + sender.id);
+      var payload = (contact && (contact.payload || contact)) || {};
+      var extra = payload.additional_attributes || {};
+      sender.email = payload.email || extra.email || sender.email || '';
+      sender.phone_number = sender.phone_number || payload.phone_number || '';
+      if (!sender.name) sender.name = payload.name || '';
+    } catch (e) {}   // a contact we can't read is no reason to lose the transcript
+  }
   var lines = [];
   list.forEach(function (m) {
     // 0 incoming (student), 1 outgoing (agent). Skip activity lines and
@@ -3369,7 +3395,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r29 · 2026-08-01';
+var CODE_STAMP = 'r30 · 2026-08-01';
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();

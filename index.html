@@ -110,6 +110,32 @@
   label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 4px; }
   .field { margin-bottom: 12px; }
 
+  /* Folded field groups on the log form. Every field the form always had is
+     still here; the fold just stops it arriving as one long wall, and the
+     preview on the right of each heading says what's inside without opening
+     it. */
+  .fgroup { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; background: var(--surface); }
+  .fgroup > summary {
+    cursor: pointer; padding: 9px 12px; font-size: 13.5px; font-weight: 600;
+    display: flex; align-items: baseline; gap: 8px; list-style: none;
+    border-radius: 8px; user-select: none;
+  }
+  .fgroup > summary::-webkit-details-marker { display: none; }
+  .fgroup > summary::before {
+    content: "▸"; color: var(--muted); font-weight: 400;
+    transition: transform 0.12s ease; display: inline-block;
+  }
+  .fgroup[open] > summary::before { transform: rotate(90deg); }
+  .fgroup[open] > summary { border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+  .fgroup > summary:hover { background: var(--bg); }
+  .fgroup .gsum {
+    font-weight: 400; color: var(--muted); font-size: 12.5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+  .fgroup .gsum.needed { color: var(--medium); }
+  .fgroup > .field, .fgroup > .row, .fgroup > details { margin: 12px; }
+  .fgroup > .row:last-child, .fgroup > .field:last-child { margin-bottom: 12px; }
+
   header.topbar {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 20px; background: var(--surface);
@@ -527,6 +553,12 @@
 
       <div id="detailsSection" class="hidden">
       <h3>Extracted details</h3>
+
+      <!-- The four that everything downstream reads sit at the top, open. The
+           rest keeps every field it always had, grouped into folds so the page
+           stops being one long wall. Each fold carries a one-line preview of
+           what's inside, so nothing is hidden, it's just not all shouting at
+           once (Edd, FB-0133). -->
       <div class="field" id="field_category">
         <label>Category (auto-detected, change if wrong)</label>
         <select id="f_category" onchange="onCategoryChange()">
@@ -536,103 +568,9 @@
         </select>
         <div class="small muted" style="margin-top:4px;">Tech issues don't need a lesson: login, account, progress, and formatting problems all go here, and the course fields can stay blank.</div>
       </div>
-      <div class="field hidden" id="field_shipping">
-        <label>The consignment</label>
-        <div class="row" style="gap:8px;">
-          <select id="f_courier" style="max-width:170px;"></select>
-          <input id="f_tracking_number" placeholder="Tracking number" autocomplete="off" oninput="checkTracking()" style="flex:1;min-width:0;text-transform:uppercase;" />
-        </div>
-        <div class="small muted" style="margin-top:4px;">The tracking number is what joins the threads. Paste a second or third email about the same parcel and it folds into the existing issue instead of starting a new one.</div>
-        <div class="small" id="trackingMatch" style="margin-top:4px;"></div>
-      </div>
-      <div class="field hidden" id="field_chase">
-        <label>Chase it on</label>
-        <input id="f_chase_at" type="date" />
-        <div class="small muted" style="margin-top:4px;">Left blank it defaults to three days. You get a Slack nudge on the day, and the date clears once it fires.</div>
-      </div>
 
-      <div class="field" id="field_section">
-        <label>Part of the platform</label>
-        <select id="f_section">
-          <option value="">—</option>
-          <option value="website">Website</option>
-          <option value="instructor_portal">Instructor portal</option>
-          <option value="partner_portal">Partner portal</option>
-          <option value="course_player">Course player</option>
-          <option value="app">App</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div class="field" id="field_reqkind">
-        <label>Type of report (auto-detected, change if wrong)</label>
-        <div class="seg" id="reqKindSeg">
-          <button type="button" id="rk_fix" class="active" onclick="setRequestKind('fix')">Fix</button>
-          <button type="button" id="rk_improvement" onclick="setRequestKind('improvement')">Improvement</button>
-        </div>
-        <div class="small muted" id="reqKindHint" style="margin-top:4px;"></div>
-      </div>
-      <div class="row" id="field_student_row">
-        <div class="field"><label>Student name</label><input id="f_student_name" autocomplete="off" /></div>
-        <div class="field"><label>Student contact</label><input id="f_student_contact" autocomplete="off" /></div>
-      </div>
-      <div class="field" id="field_platform"><label>Where does the bug show?</label>
-        <div class="row" style="gap:16px;align-items:center;">
-          <label style="font-size:13px;color:var(--text);"><input type="checkbox" id="f_plat_browser" style="width:auto;margin-right:6px;vertical-align:-1px;"> Browser</label>
-          <label style="font-size:13px;color:var(--text);"><input type="checkbox" id="f_plat_app" style="width:auto;margin-right:6px;vertical-align:-1px;"> App</label>
-        </div>
-      </div>
-      <div class="field" id="field_device"><label>Device / OS / browser (student's setup)</label><input id="f_device_info" placeholder="e.g. iPad, iOS 17, Safari" autocomplete="off" /></div>
-      <div class="field" id="field_media">
-        <label>Which part of the lesson? (auto-detected, change if wrong)</label>
-        <select id="f_media_kind">
-          <option value="">—</option>
-          <option value="video">Video / animation</option>
-          <option value="text">Text / diagram / quiz</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div class="field" id="field_impact">
-        <label>Impact of this improvement</label>
-        <select id="f_impact">
-          <option value="">—</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-        </select>
-      </div>
-      <div class="field" id="field_double_checked">
-        <label style="display:inline;color:var(--text);"><input type="checkbox" id="f_double_checked" style="width:auto;margin-right:6px;vertical-align:-1px;" />I've double-checked this myself, not just taken the student's word for it</label>
-      </div>
-      <div class="row" id="field_course_row">
-        <div class="field">
-          <label>Course</label>
-          <select id="f_course">
-            <option value="">—</option>
-            <option>Essential Navigation</option>
-            <option>Day Skipper</option>
-            <option>Yachtmaster</option>
-            <option>Fast Track</option>
-            <option>SRC</option>
-            <option>PPR</option>
-          </select>
-        </div>
-        <div class="field"><label>Lesson code</label><input id="f_lesson_code" placeholder="e.g. DS.09.04" autocomplete="off" /></div>
-      </div>
-      <div class="row" id="field_module_row">
-        <div class="field"><label>Module</label><input id="f_module" autocomplete="off" /></div>
-        <div class="field"><label>Lesson</label><input id="f_lesson" autocomplete="off" /></div>
-      </div>
+      <div class="field"><label>Summary</label><textarea id="f_summary" rows="2"></textarea></div>
       <div class="row">
-        <div class="field">
-          <label>Issue type</label>
-          <select id="f_issue_type">
-            <option value="bug">bug</option>
-            <option value="content_error">content_error</option>
-            <option value="student_confusion">student_confusion</option>
-            <option value="access_problem">access_problem</option>
-            <option value="other">other</option>
-          </select>
-        </div>
         <div class="field">
           <label>Priority</label>
           <!-- Starts on "not set" so a failed extraction can't leave an issue
@@ -645,23 +583,136 @@
             <option value="low">Low</option>
           </select>
         </div>
+        <div class="field"><label>Priority reason</label><input id="f_priority_reason" name="ait-priority-note" autocomplete="off" /></div>
       </div>
-      <div class="field"><label>Summary</label><textarea id="f_summary" rows="2"></textarea></div>
-      <div class="field"><label>Priority reason</label><input id="f_priority_reason" name="ait-priority-note" autocomplete="off" /></div>
+
+      <details class="fgroup" id="grp_parcel">
+        <summary>The parcel <span class="gsum" id="gsum_parcel"></span></summary>
+        <div class="field hidden" id="field_shipping">
+          <label>The consignment</label>
+          <div class="row" style="gap:8px;">
+            <select id="f_courier" style="max-width:170px;"></select>
+            <input id="f_tracking_number" placeholder="Tracking number" autocomplete="off" oninput="checkTracking()" style="flex:1;min-width:0;text-transform:uppercase;" />
+          </div>
+          <div class="small muted" style="margin-top:4px;">The tracking number is what joins the threads. Paste a second or third email about the same parcel and it folds into the existing issue instead of starting a new one.</div>
+          <div class="small" id="trackingMatch" style="margin-top:4px;"></div>
+        </div>
+        <div class="field hidden" id="field_chase">
+          <label>Chase it on</label>
+          <input id="f_chase_at" type="date" />
+          <div class="small muted" style="margin-top:4px;">Left blank it defaults to three days. You get a Slack nudge on the day, and the date clears once it fires.</div>
+        </div>
+      </details>
+
+      <details class="fgroup" id="grp_student">
+        <summary>The student <span class="gsum" id="gsum_student"></span></summary>
+        <div class="row" id="field_student_row">
+          <div class="field"><label>Student name</label><input id="f_student_name" autocomplete="off" /></div>
+          <div class="field"><label>Student contact</label><input id="f_student_contact" autocomplete="off" /></div>
+        </div>
+        <div class="field" id="field_device"><label>Device / OS / browser (student's setup)</label><input id="f_device_info" placeholder="e.g. iPad, iOS 17, Safari" autocomplete="off" /></div>
+        <div class="field" id="field_double_checked">
+          <label style="display:inline;color:var(--text);"><input type="checkbox" id="f_double_checked" style="width:auto;margin-right:6px;vertical-align:-1px;" />I've double-checked this myself, not just taken the student's word for it</label>
+        </div>
+      </details>
+
+      <details class="fgroup" id="grp_lesson">
+        <summary>The lesson <span class="gsum" id="gsum_lesson"></span></summary>
+        <div class="row" id="field_course_row">
+          <div class="field">
+            <label>Course</label>
+            <select id="f_course">
+              <option value="">—</option>
+              <option>Essential Navigation</option>
+              <option>Day Skipper</option>
+              <option>Yachtmaster</option>
+              <option>Fast Track</option>
+              <option>SRC</option>
+              <option>PPR</option>
+            </select>
+          </div>
+          <div class="field"><label>Lesson code</label><input id="f_lesson_code" placeholder="e.g. DS.09.04" autocomplete="off" /></div>
+        </div>
+        <div class="row" id="field_module_row">
+          <div class="field"><label>Module</label><input id="f_module" autocomplete="off" /></div>
+          <div class="field"><label>Lesson</label><input id="f_lesson" autocomplete="off" /></div>
+        </div>
+        <div class="field" id="field_media">
+          <label>Which part of the lesson? (auto-detected, change if wrong)</label>
+          <select id="f_media_kind">
+            <option value="">—</option>
+            <option value="video">Video / animation</option>
+            <option value="text">Text / diagram / quiz</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+      </details>
+
+      <details class="fgroup" id="grp_filing">
+        <summary>How it's filed <span class="gsum" id="gsum_filing"></span></summary>
+        <div class="field" id="field_platform"><label>Where does the bug show?</label>
+          <div class="row" style="gap:16px;align-items:center;">
+            <label style="font-size:13px;color:var(--text);"><input type="checkbox" id="f_plat_browser" style="width:auto;margin-right:6px;vertical-align:-1px;"> Browser</label>
+            <label style="font-size:13px;color:var(--text);"><input type="checkbox" id="f_plat_app" style="width:auto;margin-right:6px;vertical-align:-1px;"> App</label>
+          </div>
+        </div>
+        <div class="field" id="field_section">
+          <label>Part of the platform</label>
+          <select id="f_section">
+            <option value="">—</option>
+            <option value="website">Website</option>
+            <option value="instructor_portal">Instructor portal</option>
+            <option value="partner_portal">Partner portal</option>
+            <option value="course_player">Course player</option>
+            <option value="app">App</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="field" id="field_reqkind">
+          <label>Type of report (auto-detected, change if wrong)</label>
+          <div class="seg" id="reqKindSeg">
+            <button type="button" id="rk_fix" class="active" onclick="setRequestKind('fix')">Fix</button>
+            <button type="button" id="rk_improvement" onclick="setRequestKind('improvement')">Improvement</button>
+          </div>
+          <div class="small muted" id="reqKindHint" style="margin-top:4px;"></div>
+        </div>
+        <div class="field" id="field_issue_type">
+          <label>Issue type</label>
+          <select id="f_issue_type">
+            <option value="bug">bug</option>
+            <option value="content_error">content_error</option>
+            <option value="student_confusion">student_confusion</option>
+            <option value="access_problem">access_problem</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+        <div class="field" id="field_impact">
+          <label>Impact of this improvement</label>
+          <select id="f_impact">
+            <option value="">—</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+      </details>
 
       <div id="checklistPanel" class="checklist hidden"></div>
 
-      <div class="field">
-        <label>Where did this end up? (optional)</label>
-        <textarea id="f_outcome" rows="2" placeholder="e.g. Could not fix over chat, raised with the devs; student has a workaround for now."></textarea>
-        <div class="small muted" style="margin-top:4px;">For anything that happened after the pasted conversation. It's saved into the issue's record.
-          <button type="button" class="ghost small" id="outcomeSuggestBtn" style="padding:3px 10px;margin-left:6px;" onclick="useOutcomeSuggestion()">Use suggested text</button>
+      <details class="fgroup" id="grp_outcome">
+        <summary>Where did this end up? <span class="gsum" id="gsum_outcome">optional</span></summary>
+        <div class="field">
+          <textarea id="f_outcome" rows="2" placeholder="e.g. Could not fix over chat, raised with the devs; student has a workaround for now."></textarea>
+          <div class="small muted" style="margin-top:4px;">For anything that happened after the pasted conversation. It's saved into the issue's record.
+            <button type="button" class="ghost small" id="outcomeSuggestBtn" style="padding:3px 10px;margin-left:6px;" onclick="useOutcomeSuggestion()">Use suggested text</button>
+          </div>
         </div>
-      </div>
+      </details>
 
       <div class="row submit-row" style="margin-top:6px;">
         <button class="primary" id="submitBtn" onclick="submitIssue()">Submit issue</button>
         <button class="ghost" id="submitResolvedBtn" onclick="submitResolved()">Submit and resolve</button>
+        <button class="ghost" id="submitParkedBtn" onclick="submitParked()">Submit and park</button>
         <button class="ghost" id="resetBtn" onclick="resetForm()">Clear / new</button>
         <button class="ghost" id="deleteBtn" onclick="deleteFromForm()" style="display:none;color:var(--high);">Delete</button>
       </div>
@@ -1158,7 +1209,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r29 · 2026-08-01";  // bump this with each round, it lands on every feedback report
+var BUILD = "r30 · 2026-08-01";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1607,6 +1658,19 @@ function platformBadge(i) {
 }
 // A short bold title for cards: the first clause of the summary, so a full
 // board can be scanned with a couple of words per issue.
+// The full summary as it should be READ anywhere: the real one when there is
+// one, otherwise the report's own words. Two rows in the sheet were logged
+// before the blank-summary guard went in, and a card reading "(no summary)"
+// tells nobody anything when the report itself is sitting right there
+// (Edd, FB-0132). cardTitle is the short one-line version of the same idea.
+function summaryText(i, marker) {
+  var s = String((i && i.summary) || "").trim();
+  if (s) return s;
+  var raw = String((i && i.raw_text) || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "(no summary)";
+  var cut = raw.length > 220 ? raw.slice(0, 220).replace(/\s+\S*$/, "") + "…" : raw;
+  return marker === false ? cut : cut + " (no summary written)";
+}
 function cardTitle(i) {
   var s = String((i && i.summary) || "").trim();
   // Blank summary (an extraction that came back empty, or an old import):
@@ -1690,6 +1754,12 @@ function init() {
   if (cs) cs.innerHTML = COURIERS.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("");
   updateThemeBtn();
   updateAdaptiveFields();
+  // Keep each fold's preview line honest as things are typed or picked.
+  var details = $("detailsSection");
+  if (details) {
+    details.addEventListener("input", updateGroupSummaries);
+    details.addEventListener("change", updateGroupSummaries);
+  }
   var params = new URLSearchParams(window.location.search);
   var invite = params.get("invite");
   if (invite) { startInvite(invite); return; }
@@ -1709,7 +1779,7 @@ function init() {
 function hideBoot() { var b = $("bootLoader"); if (b) b.style.display = "none"; }
 // The extracted-details fields stay hidden until there's something to show:
 // after an extract, when editing an existing issue, or in manual internal mode.
-function showDetails() { var d = $("detailsSection"); if (d) d.classList.remove("hidden"); scheduleViewAsLift(); }
+function showDetails() { var d = $("detailsSection"); if (d) d.classList.remove("hidden"); updateGroups(); scheduleViewAsLift(); }
 function hideDetails() { var d = $("detailsSection"); if (d) d.classList.add("hidden"); scheduleViewAsLift(); }
 function onAuthed(user) {
   hideBoot();
@@ -2262,6 +2332,73 @@ function updateAdaptiveFields() {
   // Section is most useful for tech and internal problems; course errors are
   // located by their lesson code instead.
   showField("field_section", !isCourse);
+  showField("field_issue_type", true);
+  updateGroups();
+}
+
+// The folded groups on the log form. Two jobs: a group whose fields have all
+// been hidden for this kind of report shouldn't sit there as an empty heading,
+// and each heading carries a preview of what's inside so nothing is really
+// hidden, it just isn't all shouting at once.
+var FIELD_GROUPS = {
+  grp_parcel: ["field_shipping", "field_chase"],
+  grp_student: ["field_student_row", "field_device", "field_double_checked"],
+  grp_lesson: ["field_course_row", "field_module_row", "field_media"],
+  grp_filing: ["field_platform", "field_section", "field_reqkind", "field_issue_type", "field_impact"],
+  grp_outcome: []
+};
+function updateGroups() {
+  Object.keys(FIELD_GROUPS).forEach(function (gid) {
+    var group = $(gid);
+    if (!group) return;
+    var fields = FIELD_GROUPS[gid];
+    var anyVisible = !fields.length || fields.some(function (f) {
+      var el = $(f); return el && !el.classList.contains("hidden");
+    });
+    group.classList.toggle("hidden", !anyVisible);
+  });
+  updateGroupSummaries();
+}
+function updateGroupSummaries() {
+  var val = function (id) { var el = $(id); return el ? String(el.value || "").trim() : ""; };
+  var join = function (parts) { return parts.filter(Boolean).join(" · "); };
+
+  setGroupSummary("gsum_parcel", join([
+    val("f_courier"), val("f_tracking_number"), val("f_chase_at") ? "chase " + val("f_chase_at") : ""
+  ]), "nothing yet");
+
+  // A tech fix with no student email can't be followed up when it's mended, so
+  // that gap is worth flagging on the closed heading rather than hiding it.
+  var contact = val("f_student_contact");
+  var needsEmail = state.formMode !== "internal" && state.category === "tech_issue" &&
+    state.requestKind !== "improvement" && !state.noStudent && !isEmail(contact);
+  setGroupSummary("gsum_student", join([val("f_student_name"), contact, val("f_device_info")]),
+    needsEmail ? "no email yet, and a tech fix needs one" : "nothing yet", needsEmail);
+
+  setGroupSummary("gsum_lesson", join([
+    val("f_course"), val("f_lesson_code"), val("f_lesson") || val("f_module"), mediaLabel(val("f_media_kind"))
+  ]), "not pinned to a lesson");
+
+  var typeEl = $("f_issue_type");
+  var plat = [];
+  if ($("f_plat_browser") && $("f_plat_browser").checked) plat.push("browser");
+  if ($("f_plat_app") && $("f_plat_app").checked) plat.push("app");
+  setGroupSummary("gsum_filing", join([
+    plat.join(" + "),
+    SECTION_LABEL[val("f_section")] || "",
+    state.requestKind === "improvement" ? "improvement" : "fix",
+    typeEl ? String(typeEl.value || "").replace(/_/g, " ") : "",
+    val("f_impact") ? val("f_impact") + " impact" : ""
+  ]), "");
+
+  var outcome = val("f_outcome");
+  setGroupSummary("gsum_outcome", outcome ? outcome.slice(0, 70) + (outcome.length > 70 ? "…" : "") : "", "optional");
+}
+function setGroupSummary(id, text, fallback, flag) {
+  var el = $(id);
+  if (!el) return;
+  el.textContent = text || fallback || "";
+  el.classList.toggle("needed", !!flag);
 }
 
 function onFilesPicked(ev) {
@@ -2301,6 +2438,13 @@ function extractFailed() { return !!state.extractError; }
 function focusField(id) {
   var el = $(id);
   if (!el) return;
+  // A field inside a closed fold can't be focused into view, so open its group
+  // first. Being sent to a field you can't see is worse than no hint at all.
+  var parent = el.parentElement;
+  while (parent && parent !== document.body) {
+    if (parent.tagName === "DETAILS") parent.open = true;
+    parent = parent.parentElement;
+  }
   if (el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
   el.focus();
 }
@@ -2341,8 +2485,11 @@ function runExtract() {
     } else if (state.formMode === "internal" && f.likely_internal === false) {
       setFormMode("student");
     }
-    setField("f_student_name", f.student_name);
-    setField("f_student_contact", f.student_contact);
+    // The Chatwoot contact record beats anything read out of the words, so it
+    // is only overwritten when the extraction actually found something.
+    var cw = state.chatwootContact || {};
+    if (f.student_name || !cw.name) setField("f_student_name", f.student_name);
+    if (f.student_contact || !cw.contact) setField("f_student_contact", f.student_contact);
     setField("f_device_info", f.device_info);
     setField("f_section", f.section || "");
     setField("f_course", f.course || "");
@@ -2419,6 +2566,10 @@ function chatwootImport(value) {
     // whatever the AI can infer from the text.
     if (res.student_name) setField("f_student_name", res.student_name);
     if (res.student_contact) setField("f_student_contact", res.student_contact);
+    // Remember what the contact record gave us. Extraction runs next and reads
+    // only the transcript, where the email almost never appears, so without
+    // this it would blank both fields again a moment later (Edd, 1 Aug).
+    state.chatwootContact = { name: res.student_name || "", contact: res.student_contact || "" };
     $("cwStatus").innerHTML = 'Imported ' + res.message_count + ' message' + (res.message_count === 1 ? '' : 's') +
       (res.student_name ? ' from ' + esc(res.student_name) : '') + '. Press Extract when you\'re ready.' +
       (res.link ? ' <a href="' + esc(res.link) + '" target="_blank" style="color:var(--accent);">Open in Chatwoot</a>' : '');
@@ -2816,7 +2967,7 @@ function showSplitSuggestion(subIssues) {
       var resolved = s.resolution_status === 'resolved' || s.resolution_status === 'tbc';
       return '<label style="display:block;margin:4px 0;font-size:13px;color:var(--text);">' +
         '<input type="checkbox" checked data-sub="' + i + '" style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="onSubIssueToggle(' + i + ',this.checked);">' +
-        esc(s.summary || "") +
+        esc(summaryText(s)) +
         (s.issue_type ? ' <span class="badge type-badge">' + esc(s.issue_type) + '</span>' : '') +
         (resolved ? ' <span class="badge" style="background:var(--low);color:#fff;">' + (s.resolution_status === 'tbc' ? 'resolved - TBC' : 'resolved') + '</span>' : '') + '</label>';
     }).join("") +
@@ -2970,7 +3121,7 @@ function showExisting(matches) {
         '<div>' + priBadge(m.priority) + ' ' + statusBadge(m.status) +
           (m.lesson_code ? ' <span class="code">' + esc(m.lesson_code) + '</span>' : '') +
           ' <span class="recTag small" style="display:none;color:var(--medium);font-weight:600;">recommended</span></div>' +
-        '<div style="margin-top:4px;">' + esc(m.summary || "(no summary)") + '</div>' +
+        '<div style="margin-top:4px;">' + esc(summaryText(m)) + '</div>' +
         '<div class="small muted" style="margin-top:2px;">logged ' + fmtDate(m.submitted_at) +
           (fmtDate(m.updated_at) && fmtDate(m.updated_at) !== fmtDate(m.submitted_at) ? ', last update ' + fmtDate(m.updated_at) : '') + '</div>' +
       '</div>';
@@ -3006,6 +3157,7 @@ function highlightChosen() {
   });
   if ($("newModeBtn")) $("newModeBtn").className = state.updateTargetId ? "ghost small" : "primary small";
   $("submitBtn").textContent = state.updateTargetId ? "Add update" : "Submit issue";
+  if ($("submitParkedBtn")) $("submitParkedBtn").textContent = state.updateTargetId ? "Update and park" : "Submit and park";
 }
 function recommendUpdateTarget(matches) {
   var cands = matches.map(function (m) { return { id: m.issue_id, summary: m.summary || "", lesson_code: m.lesson_code || "" }; });
@@ -3224,10 +3376,26 @@ function submitResolved() {
              (state.resolution && state.resolution.note) || "";
   if (!note) {
     toast("Put what actually fixed it in 'Where did this end up?' first, then press this again.");
-    if ($("f_outcome")) $("f_outcome").focus();
+    focusField("f_outcome");   // opens the fold it now lives in
     return;
   }
   state.forceResolve = note;
+  submitIssue();
+}
+
+// Parked is for the ones that stall rather than finish: the student goes quiet,
+// so we never get to the bottom of it and there's no way to push it forward.
+// The status has existed since the board went in, but there was no way to reach
+// it from the form, so these sat "open" forever and skewed everything that
+// counts open issues (Edd, FB-0134).
+function submitParked() {
+  var note = String(getField("f_outcome") || "").trim();
+  if (!note) {
+    toast("Say why it's parked in 'Where did this end up?' first, e.g. student stopped replying. Then press this again.");
+    focusField("f_outcome");
+    return;
+  }
+  state.forcePark = note;
   submitIssue();
 }
 
@@ -3263,7 +3431,7 @@ function submitIssue() {
   }
   var btn = $("submitBtn");
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> saving…';
-  var wasTbc = false, wasUpdate = false, wasResolvedUpdate = false, wasResolvedNew = false;
+  var wasTbc = false, wasUpdate = false, wasResolvedUpdate = false, wasResolvedNew = false, wasParked = false;
   // A resolution the extractor read out of the pasted chat (edited note if the
   // instructor touched it), applied at submit unless they unticked it.
   var resNoteVal = $("resNote") ? $("resNote").value.trim() : "";
@@ -3294,6 +3462,15 @@ function submitIssue() {
     data.resolved_by = state.selectedInstructor;
     applyRes = false;
     wasResolvedNew = true;
+  }
+  // "Submit and park" / "Update and park": stalled rather than finished, so it
+  // keeps its reason but doesn't go into anyone's fix queue.
+  if (state.forcePark) {
+    data.parked = true;
+    data.park = true;                       // the addUpdate path reads this one
+    data.resolution_note = state.forcePark;
+    applyRes = false;
+    wasParked = true;
   }
   if (state.troubleshootSteps && state.troubleshootSteps.length) data.recommended_steps = state.troubleshootSteps;
   if (checklistJson) data.checklist_json = checklistJson;
@@ -3395,6 +3572,9 @@ function submitIssue() {
 
   request.then(function (res) {
     btn.disabled = false; btn.textContent = state.editingId ? "Update issue" : "Submit issue";
+    // Both intents are spent now, whether or not the save worked. Leaving one
+    // set meant a later plain Submit could quietly resolve or park something.
+    state.forceResolve = null; state.forcePark = null;
     if (!res || !res.ok) { toast("Save failed: " + ((res && res.error) || "unknown")); return; }
     // When this was an update to an existing issue, carry the checklist over too
     // (addUpdate doesn't take it directly, so save it separately).
@@ -3403,10 +3583,13 @@ function submitIssue() {
     }
     if (wasUpdate) toast(wasResolvedUpdate === "resolved" ? "Update added and the issue marked resolved."
       : wasResolvedUpdate === "tbc" ? "Update added; issue set to Resolved - TBC."
+      : wasParked ? "Update added and the issue parked."
       : "Update added to the existing issue.");
     else if (res.split) toast("Logged as " + res.split + " separate issues.");
     else if (res.merged) toast("Already reported - added to the existing one (now " + (res.report_count || "") + " reports)." + (wasTbc ? " Marked Resolved - TBC." : ""));
-    else toast(wasResolvedNew ? "Logged as Resolved." : (wasTbc ? "Logged as Resolved - TBC." : (state.editingId ? "Issue updated." : "Issue logged.")));
+    else toast(wasResolvedNew ? "Logged as Resolved."
+      : wasParked ? "Logged as Parked. It'll wake up on its own if anyone else reports it."
+      : (wasTbc ? "Logged as Resolved - TBC." : (state.editingId ? "Issue updated." : "Issue logged.")));
     // Work out where any pending screenshots belong, then let them upload in
     // the background: the save itself is already done.
     var targetIds = state.editingId ? [state.editingId]
@@ -3467,6 +3650,8 @@ function resetForm() {
   state.lastExtract = null;
   state.extractError = false;
   state.forceResolve = null;
+  state.forcePark = null;
+  state.chatwootContact = null;
   state.chatwootConvId = null;
   state.chatwootLink = "";
   if ($("cwInput")) $("cwInput").value = "";
@@ -3569,7 +3754,7 @@ function renderPrev() {
         (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
       '</div>' +
       (i.student_name ? '<div class="small" style="margin:2px 0;color:var(--text);font-weight:600;">' + esc(i.student_name) + '</div>' : '') +
-      '<div class="summary">' + esc(i.summary || "(no summary)") + '</div>' +
+      '<div class="summary">' + esc(summaryText(i)) + '</div>' +
     '</div>';
   }).join("") + (mine.length > shown.length
     ? '<div class="row" style="margin-top:8px;">' +
@@ -3745,7 +3930,7 @@ function renderAdmin() {
         (i.assignee ? '<span class="badge type-badge">→ ' + esc(i.assignee) + '</span>' : '') +
         '<span class="who">' + esc(i.instructor_name) + ' · ' + fmtDate(i.submitted_at) + '</span>' +
       '</div>' +
-      '<div class="sum clamp4">' + esc(i.summary || "(no summary)") + '</div>' +
+      '<div class="sum clamp4">' + esc(summaryText(i)) + '</div>' +
     '</div>';
   }).join("") + moreBar : '<p class="muted">No issues match these filters.</p>';
   markActiveCard();
@@ -3779,7 +3964,7 @@ function kanbanHtml(list) {
             (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
             (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') + '</div>' +
           '<div class="ktitle">' + esc(cardTitle(i)) + '</div>' +
-          '<div class="ksum clamp4">' + esc(i.summary || "") + '</div>' +
+          '<div class="ksum clamp4">' + esc(summaryText(i)) + '</div>' +
           '<div class="small muted" style="margin-top:4px;">' + esc(i.instructor_name || "") + ' · ' + fmtDate(i.submitted_at) +
             (i.assignee ? ' · → ' + esc(i.assignee) : '') + '</div>' +
         '</div>';
@@ -3920,9 +4105,12 @@ function openDetail(issue) {
   }
 
   // The full summary, below the students (the title up top is the short form).
-  if (issue.summary) {
-    html += '<h3>Summary</h3><div style="font-size:13.5px;margin-bottom:4px;">' + esc(issue.summary) + '</div>';
-  }
+  // Always show the heading. The two pre-guard rows have no summary of their
+  // own, and hiding it made them look like there was nothing to read at all.
+  // No point repeating the report back here though, it's in full further down.
+  html += '<h3>Summary</h3><div style="font-size:13.5px;margin-bottom:4px;' +
+    (issue.summary ? '' : 'color:var(--muted);') + '">' +
+    (issue.summary ? esc(issue.summary) : 'No summary was written for this one. The report itself is below.') + '</div>';
 
   html += '<div class="kv">' +
     kv("Submitted by", issue.instructor_name) +
@@ -4230,7 +4418,7 @@ function openLinkPicker(id) {
     .sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
   if (!others.length) { toast("No other open issues in this area to link to."); return; }
   var opts = others.map(function (o) {
-    return '<option value="' + esc(o.issue_id) + '">' + esc((o.lesson_code ? o.lesson_code + " · " : "") + (o.summary || "(no summary)")) + '</option>';
+    return '<option value="' + esc(o.issue_id) + '">' + esc((o.lesson_code ? o.lesson_code + " · " : "") + cardTitle(o)) + '</option>';
   }).join("");
   $("linkPicker").innerHTML = '<div class="small muted" style="margin-bottom:4px;">Merge this report into:</div>' +
     '<div class="row"><select id="linkTarget">' + opts + '</select>' +
@@ -4500,7 +4688,7 @@ function renderQueue(cat, ids, filterVal) {
         (i.assignee ? '<span class="badge type-badge">→ ' + esc(i.assignee) + '</span>' : '') +
         '<span class="who">by ' + esc(i.instructor_name || "—") + ' · passed ' + fmtDate(i.dev_passed_at) + ' · ' + age + ' ago</span>' +
       '</div>' +
-      '<div class="sum">' + esc(i.summary || "(no summary)") + '</div>' +
+      '<div class="sum">' + esc(summaryText(i)) + '</div>' +
     '</div>';
   }).join("") : '<p class="muted">Nothing here.</p>';
   markActiveCard();
@@ -4572,7 +4760,7 @@ function courseCardHtml(i) {
     '</div>' +
     (lessonLine ? '<div class="small muted" style="margin-bottom:2px;">' + esc(lessonLine) + '</div>' : '') +
     '<div class="sum"><strong>' + esc(cardTitle(i)) + '</strong></div>' +
-    '<div class="sum clamp4 small" style="color:var(--muted);">' + esc(i.summary || "") + '</div>' +
+    '<div class="sum clamp4 small" style="color:var(--muted);">' + esc(summaryText(i)) + '</div>' +
   '</div>';
 }
 
@@ -4780,9 +4968,12 @@ function openDevDetail(id) {
   }
 
   // The real summary, in full, now the students are out of the way.
-  if (issue.summary) {
-    html += '<h3>Summary</h3><div style="font-size:13.5px;margin-bottom:4px;">' + esc(issue.summary) + '</div>';
-  }
+  // Always show the heading. The two pre-guard rows have no summary of their
+  // own, and hiding it made them look like there was nothing to read at all.
+  // No point repeating the report back here though, it's in full further down.
+  html += '<h3>Summary</h3><div style="font-size:13.5px;margin-bottom:4px;' +
+    (issue.summary ? '' : 'color:var(--muted);') + '">' +
+    (issue.summary ? esc(issue.summary) : 'No summary was written for this one. The report itself is below.') + '</div>';
 
   if (issue.raw_text) {
     html += '<h3>Report</h3><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' +
@@ -5244,7 +5435,7 @@ function loadSuggestions() {
 }
 function suggestionRowHtml(s) {
   return '<div class="card" style="margin-bottom:8px;border-color:var(--accent);">' +
-    '<div class="small muted" style="margin-bottom:4px;">From a resolved issue: ' + esc(s.summary || "") + (s.section ? ' · ' + esc(s.section) : '') + '</div>' +
+    '<div class="small muted" style="margin-bottom:4px;">From a resolved issue: ' + esc(summaryText(s, false)) + (s.section ? ' · ' + esc(s.section) : '') + '</div>' +
     '<div style="margin-bottom:8px;"><strong>Suggested addition:</strong> ' + esc(s.suggestion || "") + '</div>' +
     '<div class="row">' +
       '<button class="primary small" onclick="resolveSuggestion(\'' + esc(s.id) + '\', true)">Approve and add</button>' +
