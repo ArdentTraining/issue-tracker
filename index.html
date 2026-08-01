@@ -5469,7 +5469,7 @@ function openFeedback() {
   // one-liner when they can see the report is carrying the detail for them.
   var extras = [];
   if (state.fbContext.errors) extras.push(state.fbContext.errors.length + " recent error" + (state.fbContext.errors.length > 1 ? "s" : ""));
-  if (state.fbContext.api) extras.push("your last " + state.fbContext.api.length + " actions");
+  if (state.fbContext.api) extras.push(state.fbContext.api.length === 1 ? "the last thing you did" : "the last " + state.fbContext.api.length + " things you did");
   $("fbContextNote").textContent = "This report will include where you are: " + describeContext(state.fbContext) +
     (extras.length ? ". It'll also attach " + extras.join(" and ") + ", plus a picture of the screen." : ", plus a picture of the screen.");
   renderFbThumbs();
