@@ -3156,8 +3156,13 @@ function addFeedback_(data) {
   if (!data.message && !data.image_urls) return { ok: false, error: 'Add a message first.' };
   ensureFeedbackHeaders_(sheet);
   var u = data._user || {};
-  var kind = String(data.kind || 'bug').toLowerCase();
+  // Nobody should have to classify their own bug report before they can send
+  // it, so the box no longer asks and this works it out from what they wrote
+  // (Edd, FB-0136). An explicit value still wins if one ever gets sent.
+  var judged = (data.kind || data.urgency) ? null : classifyFeedback_(data.message);
+  var kind = String(data.kind || (judged && judged.kind) || 'bug').toLowerCase();
   if (FEEDBACK_KINDS.indexOf(kind) < 0) kind = 'bug';
+  var urgency = String(data.urgency || (judged && judged.urgency) || 'normal');
   var row = {
     id: Utilities.getUuid(),
     created_at: new Date().toISOString(),
@@ -3169,13 +3174,45 @@ function addFeedback_(data) {
     context: typeof data.context === 'string' ? data.context : (data.context ? JSON.stringify(data.context) : ''),
     ref: nextFeedbackRef_(sheet),
     kind: kind,
-    urgency: String(data.urgency || '') === 'blocking' ? 'blocking' : 'normal'
+    urgency: urgency === 'blocking' ? 'blocking' : 'normal'
   };
   sheet.appendRow(FEEDBACK_HEADERS.map(function (k) { return row[k]; }));
   // Issues ping Slack, so feedback about the tracker should too - otherwise a
   // blocked instructor waits for somebody to happen to open the Admin tab.
   try { sendFeedbackSlack_(row, getAppUrl_()); } catch (e) {}
   return { ok: true, ref: row.ref };
+}
+
+// Read the message and decide what it is and how urgent it sounds. Kept to a
+// tiny prompt and a short answer because it sits in the path of pressing Send.
+// Anything unreadable falls back to a plain bug at normal urgency, which is
+// what the box used to default to anyway, so a bad model day costs nothing.
+function classifyFeedback_(message) {
+  var msg = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!msg) return null;
+  var prompt = [
+    'Classify this feedback about an internal issue-tracking tool, written by a colleague who works on it.',
+    '',
+    'kind:',
+    '- "bug" = something is broken, wrong, or not doing what it should.',
+    '- "idea" = a suggestion, improvement, or request for something new. Wording like "we could do with", "how about", "better to", "it would be nice" is an idea, not a bug.',
+    '- "question" = they are asking how something works rather than reporting or proposing anything.',
+    '',
+    'urgency:',
+    '- "blocking" ONLY if they cannot get their work done right now: something is unusable, they have lost work, or they say they are stuck or it is urgent.',
+    '- "normal" for everything else, including annoyances and things with a workaround. When in doubt use normal.',
+    '',
+    'Return ONLY {"kind":"...","urgency":"..."} with no other text.',
+    '',
+    'The feedback:',
+    msg.slice(0, 1500)
+  ].join('\n');
+  var out = anthropicJson_(ANTHROPIC_MODEL, prompt, 60);
+  if (!out || FEEDBACK_KINDS.indexOf(String(out.kind || '').toLowerCase()) < 0) return null;
+  return {
+    kind: String(out.kind).toLowerCase(),
+    urgency: String(out.urgency || '').toLowerCase() === 'blocking' ? 'blocking' : 'normal'
+  };
 }
 
 function sendFeedbackSlack_(fb, appUrl) {
@@ -3471,7 +3508,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r30 · 2026-08-01';
+var CODE_STAMP = 'r31 · 2026-08-02';
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();

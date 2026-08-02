@@ -1148,19 +1148,16 @@
   <div class="modal" style="width:520px;max-width:94vw;">
     <h3>Suggest an improvement</h3>
     <p class="small muted">Found a bug, or got an idea to improve this tracker? Tell us. Add a screenshot if it helps.</p>
-    <div class="field"><label>What is this?</label>
-      <select id="fbKind">
-        <option value="bug">Something's broken</option>
-        <option value="idea">An idea to improve it</option>
-        <option value="question">A question about how it works</option>
-      </select>
-    </div>
+    <!-- No "what is this?" picker and no "is it blocking you" tick. Both are
+         answerable from what's written, so the backend works them out rather
+         than making somebody classify their own bug report before they can
+         send it (Edd, FB-0136). -->
     <div class="field"><textarea id="fbMessage" rows="4" placeholder="Describe the bug or improvement…"></textarea></div>
-    <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
-      <input type="checkbox" id="fbBlocking" style="width:auto;margin:0;">
-      <span>This is stopping me working right now</span>
-    </label></div>
     <div class="field"><label>Screenshots (optional, up to 5)</label>
+      <div class="row" style="gap:8px;margin-bottom:6px;">
+        <button type="button" class="ghost" id="fbShotBtn" onclick="takeFreshShot()">Take a screenshot now</button>
+        <span class="small muted" id="fbShotMsg" style="align-self:center;"></span>
+      </div>
       <input type="file" id="fbFileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple onchange="onFbFilesPicked(event)">
       <div class="thumbs" id="fbThumbs"></div>
     </div>
@@ -1211,7 +1208,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r30 · 2026-08-01";  // bump this with each round, it lands on every feedback report
+var BUILD = "r31 · 2026-08-02";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1426,7 +1423,9 @@ function checklistBody(map, handler, arg) {
 function renderFormChecklist() {
   var panel = $("checklistPanel");
   if (!panel) return;
-  if (state.category !== "tech_issue" || state.requestKind === "improvement") {
+  // Nothing to hand the developers if this is going in already answered, so
+  // the pre-dev checklist is just noise on that path (Edd, FB-0137).
+  if (state.category !== "tech_issue" || state.requestKind === "improvement" || loggingAsResolved()) {
     panel.classList.add("hidden"); panel.innerHTML = ""; return;
   }
   var map = state.checklist || {};
@@ -3070,15 +3069,19 @@ function showResolutionSuggestion(f) {
     '<label class="small" style="display:block;">Resolution note' +
       '<textarea id="resNote" rows="2" style="width:100%;margin-top:4px;">' + esc(f.resolution_note || "") + '</textarea></label>' +
     '<label style="display:block;margin-top:8px;font-size:13px;color:var(--text);">' +
-      '<input type="checkbox" id="resTick" checked style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="if(state.resolution)state.resolution.apply=this.checked;">' +
+      '<input type="checkbox" id="resTick" checked style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="if(state.resolution)state.resolution.apply=this.checked; updateSubmitRow(); renderFormChecklist();">' +
       'Log as ' + (isResolved ? "Resolved" : "Resolved - TBC") + '</label>' +
     '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="hideResolutionSuggestion()">Dismiss</button>';
   $("resolutionPanel").classList.remove("hidden");
+  updateSubmitRow();
+  renderFormChecklist();
 }
 function hideResolutionSuggestion() {
   var p = $("resolutionPanel");
   if (p) { p.classList.add("hidden"); p.innerHTML = ""; }
   state.resolution = null;
+  updateSubmitRow();
+  renderFormChecklist();
 }
 function hideSplitSuggestion() {
   $("splitModal").classList.remove("show");
@@ -3165,6 +3168,7 @@ function highlightChosen() {
   if ($("newModeBtn")) $("newModeBtn").className = state.updateTargetId ? "ghost small" : "primary small";
   $("submitBtn").textContent = state.updateTargetId ? "Add update" : "Submit issue";
   if ($("submitParkedBtn")) $("submitParkedBtn").textContent = state.updateTargetId ? "Update and park" : "Submit and park";
+  updateSubmitRow();
 }
 function recommendUpdateTarget(matches) {
   var cands = matches.map(function (m) { return { id: m.issue_id, summary: m.summary || "", lesson_code: m.lesson_code || "" }; });
@@ -3388,6 +3392,33 @@ function submitResolved() {
   }
   state.forceResolve = note;
   submitIssue();
+}
+
+// Is this one going in already sorted out? True while the "Log as Resolved"
+// (or Resolved - TBC) tick from the extraction is on. It changes what the form
+// should even offer: there is no fix queue to join, so no checklist and no
+// plain Submit.
+function loggingAsResolved() {
+  return !!(state.resolution && state.resolution.apply);
+}
+// With that tick on, Submit and resolve is the only sensible button, so the
+// others go away rather than sitting there inviting the wrong press.
+function updateSubmitRow() {
+  var resolved = loggingAsResolved();
+  var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? "" : "none"; };
+  show("submitBtn", !resolved);
+  show("submitParkedBtn", !resolved);
+  show("resetBtn", true);
+  var rb = $("submitResolvedBtn");
+  if (rb) {
+    rb.style.display = "";
+    // It's the only way forward now, so it should look like the main action.
+    rb.classList.toggle("primary", resolved);
+    rb.classList.toggle("ghost", !resolved);
+    rb.textContent = state.resolution && state.resolution.status === "tbc"
+      ? (resolved ? "Submit as Resolved - TBC" : "Submit and resolve")
+      : "Submit and resolve";
+  }
 }
 
 // Parked is for the ones that stall rather than finish: the student goes quiet,
@@ -3639,6 +3670,7 @@ function resetForm() {
   state.editingId = null;
   state.attachedImages = [];
   state.checklist = {};
+  state.resolution = null;   // so the submit row comes back to full strength
   state.requestKind = "fix";
   state.noStudent = false;
   setFormMode("student");
@@ -5659,8 +5691,7 @@ function packContext(ctx) {
 function openFeedback() {
   $("fbMessage").value = "";
   $("fbMsg").textContent = "";
-  $("fbKind").value = "bug";
-  $("fbBlocking").checked = false;
+  if ($("fbShotMsg")) $("fbShotMsg").textContent = "";
   state.fbImages = [];
   state.fbContext = captureFeedbackContext();
   // Say plainly what's being attached. People are more willing to send a
@@ -5709,6 +5740,36 @@ function captureFbShot() {
   s.onload = go;
   s.onerror = done;
   document.head.appendChild(s);
+}
+
+// "Take a screenshot now": the quiet capture happens as the box opens, which
+// is the right moment most of the time. This is for when it isn't: hide the
+// box, catch what's actually behind it, and put the box back with the picture
+// attached as a normal thumbnail so it can be seen and removed (Edd, FB-0136).
+function takeFreshShot() {
+  if (state.fbImages.length >= MAX_IMAGES) { toast("Up to " + MAX_IMAGES + " images."); return; }
+  var btn = $("fbShotBtn"), msg = $("fbShotMsg"), modal = $("feedbackModal");
+  btn.disabled = true;
+  msg.textContent = "hiding this box…";
+  modal.classList.remove("show");
+  // A moment for the box to actually be gone before the page is drawn.
+  setTimeout(function () {
+    state.fbShot = null;
+    captureFbShot();
+    (state.fbShotPromise || Promise.resolve()).then(function () {
+      modal.classList.add("show");
+      btn.disabled = false;
+      if (state.fbShot) {
+        state.fbImages.push({ name: "screenshot.jpg", dataUrl: state.fbShot, mimeType: "image/jpeg", uploaded: false });
+        renderFbThumbs();
+        msg.textContent = "got it, attached below.";
+        // It's a picked image now, so don't also send it as the silent one.
+        state.fbShot = null;
+      } else {
+        msg.textContent = "couldn't draw the page, use the file picker instead.";
+      }
+    });
+  }, 250);
 }
 
 function onFbFilesPicked(ev) {
@@ -5772,8 +5833,6 @@ function submitFeedback() {
     if (diag.clicks.length) ctx.clicks = diag.clicks.slice();
     return apiPost({
       action: "addFeedback", message: msg, image_urls: urls,
-      kind: $("fbKind") ? $("fbKind").value : "bug",
-      urgency: ($("fbBlocking") && $("fbBlocking").checked) ? "blocking" : "normal",
       context: packContext(ctx)
     });
   }).then(function (res) {
