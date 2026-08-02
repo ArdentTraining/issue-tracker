@@ -221,6 +221,7 @@ function doPost(e) {
     // Self-deploy: gated by its own DEPLOY_KEY (script property), not a user
     // session — same pattern as the mirror. See deployBackend_ below.
     if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
+    if (action === 'getManifest') return jsonOut(getManifest_(body));
     if (action === 'deployBackend') return jsonOut(deployBackend_(body));
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
     if (action === 'setChatwootConfig') return jsonOut(setChatwootConfig_(body));
@@ -2276,6 +2277,25 @@ function chatScanReview_(data) {
 // Safety: gated by DEPLOY_KEY (a leak means code-deploy rights, so rotate it
 // like a password); sanity checks stop a truncated or self-locking file going
 // live; the manifest is never touched, only the code file.
+// Read-only look at the project manifest, DEPLOY_KEY gated. Added 2 Aug while
+// chasing "Permission denied while enabling APIs: drive": when appsscript.json
+// lists oauthScopes by hand, Apps Script stops working them out from the code,
+// so a scope missing from that list is exactly how DriveApp starts failing.
+// Reading it beats guessing, and this never writes anything.
+function getManifest_(data) {
+  var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  try {
+    var res = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + ScriptApp.getScriptId() + '/content', {
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true
+    });
+    var files = (JSON.parse(res.getContentText() || '{}').files || []);
+    var manifest = files.filter(function (f) { return f.type === 'JSON'; })[0];
+    return { ok: true, manifest: manifest ? manifest.source : '(no JSON file found)',
+             files: files.map(function (f) { return f.name + '.' + f.type; }) };
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
+
 function deployBackend_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
