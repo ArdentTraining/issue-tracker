@@ -570,20 +570,17 @@
       </div>
 
       <div class="field"><label>Summary</label><textarea id="f_summary" rows="2"></textarea></div>
-      <div class="row">
-        <div class="field">
-          <label>Priority</label>
-          <!-- Starts on "not set" so a failed extraction can't leave an issue
-               sitting on High by accident. High routes straight to the devs and
-               pings Slack, so it needs to be something we chose. -->
-          <select id="f_priority">
-            <option value="">Not set yet</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
-        </div>
-        <div class="field"><label>Priority reason</label><input id="f_priority_reason" name="ait-priority-note" autocomplete="off" /></div>
+      <div class="field">
+        <label>Priority</label>
+        <!-- Starts on "not set" so a failed extraction can't leave an issue
+             sitting on High by accident. High routes straight to the devs and
+             pings Slack, so it needs to be something we chose. -->
+        <select id="f_priority">
+          <option value="">Not set yet</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
       </div>
 
       <details class="fgroup" id="grp_parcel">
@@ -685,6 +682,11 @@
             <option value="access_problem">access_problem</option>
             <option value="other">other</option>
           </select>
+        </div>
+        <div class="field" id="field_priority_reason">
+          <label>Priority reason</label>
+          <input id="f_priority_reason" name="ait-priority-note" autocomplete="off" />
+          <div class="small muted" style="margin-top:4px;">Written by the extraction. It's here if it needs correcting, but it doesn't need reading every time (Edd, FB-0135).</div>
         </div>
         <div class="field" id="field_impact">
           <label>Impact of this improvement</label>
@@ -2344,7 +2346,7 @@ var FIELD_GROUPS = {
   grp_parcel: ["field_shipping", "field_chase"],
   grp_student: ["field_student_row", "field_device", "field_double_checked"],
   grp_lesson: ["field_course_row", "field_module_row", "field_media"],
-  grp_filing: ["field_platform", "field_section", "field_reqkind", "field_issue_type", "field_impact"],
+  grp_filing: ["field_platform", "field_section", "field_reqkind", "field_issue_type", "field_priority_reason", "field_impact"],
   grp_outcome: []
 };
 function updateGroups() {

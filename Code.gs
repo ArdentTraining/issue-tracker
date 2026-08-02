@@ -2657,27 +2657,76 @@ function uploadImage_(data) {
   var bytes = Utilities.base64Decode(base64);
   var blob = Utilities.newBlob(bytes, mimeType, filename);
 
-  // Drive access needs its own OAuth grant. If the script was redeployed
-  // without re-authorising, this is where it fails, so give a clear error the
-  // front-end can show instead of a bare exception.
-  var folder, file;
+  // Two ways in. DriveApp is the simple one, but it leans on the Drive API
+  // being enabled in the script's Cloud project, and since about 10 July that
+  // has been failing here with "Permission denied while enabling APIs: drive",
+  // which quietly killed every screenshot upload in the app. So try DriveApp,
+  // and if it throws, go straight at the Drive REST API with the script's own
+  // OAuth token: the drive scope is granted either way, and this path doesn't
+  // ask the runtime to enable anything.
+  var id = '', how = 'driveapp', driveAppError = '';
   try {
-    folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
-    file = folder.createFile(blob);
+    var file = DriveApp.getFolderById(DRIVE_FOLDER_ID).createFile(blob);
+    // Sharing can be blocked by a Workspace policy even when the upload worked.
+    // Keep the file either way; a private link is better than losing the image.
+    try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+    id = file.getId();
   } catch (e) {
-    return { ok: false, error: 'Drive access is not authorised for this deployment. An admin needs to open the Apps Script editor, run authorizeDrive() once, approve the permission, and redeploy. (' + String(e) + ')' };
+    driveAppError = String(e);
+    var rest = driveRestUpload_(blob, filename);
+    if (!rest.ok) {
+      return { ok: false, error: 'Could not save the screenshot to Drive. DriveApp said: ' + driveAppError +
+        ' The direct upload then said: ' + rest.error +
+        ' If both mention enabling APIs, switch the Google Drive API on for the script\'s Cloud project.' };
+    }
+    id = rest.id;
+    how = 'rest';
   }
-  // Sharing can be blocked by a Workspace policy even when the upload worked.
-  // Keep the file either way; a private link is better than losing the image.
-  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
 
-  var id = file.getId();
   return {
     ok: true,
     file_id: id,
+    via: how,
     url: 'https://drive.google.com/uc?export=view&id=' + id,
     open_url: 'https://drive.google.com/file/d/' + id + '/view'
   };
+}
+
+// Upload straight to the Drive REST API with the script's OAuth token. Used
+// only when DriveApp has thrown. Multipart so the file and its metadata (name
+// and parent folder) go up in one request.
+function driveRestUpload_(blob, filename) {
+  var boundary = '----aitUpload' + new Date().getTime();
+  var meta = JSON.stringify({ name: filename, parents: [DRIVE_FOLDER_ID] });
+  var head = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta +
+    '\r\n--' + boundary + '\r\nContent-Type: ' + blob.getContentType() + '\r\n\r\n';
+  var tail = '\r\n--' + boundary + '--\r\n';
+  var body = Utilities.newBlob(head).getBytes()
+    .concat(blob.getBytes())
+    .concat(Utilities.newBlob(tail).getBytes());
+  var token = ScriptApp.getOAuthToken();
+  var res;
+  try {
+    res = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true', {
+      method: 'post', contentType: 'multipart/related; boundary=' + boundary,
+      payload: body, headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true
+    });
+  } catch (e) { return { ok: false, error: String(e) }; }
+  var code = res.getResponseCode();
+  if (code < 200 || code >= 300) return { ok: false, error: 'HTTP ' + code + ': ' + res.getContentText().slice(0, 300) };
+  var id = '';
+  try { id = JSON.parse(res.getContentText()).id || ''; } catch (e) {}
+  if (!id) return { ok: false, error: 'upload returned no file id' };
+  // Anyone-with-the-link, so the image renders on a card. A Workspace policy
+  // can refuse this; the file still exists, so don't fail the upload over it.
+  try {
+    UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '/permissions?supportsAllDrives=true', {
+      method: 'post', contentType: 'application/json',
+      payload: JSON.stringify({ role: 'reader', type: 'anyone' }),
+      headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true
+    });
+  } catch (e) {}
+  return { ok: true, id: id };
 }
 
 // Run this once from the Apps Script editor (Run > authorizeDrive) to grant
