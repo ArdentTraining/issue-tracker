@@ -2955,7 +2955,7 @@ var DEFAULT_PLAYBOOK = [
 // and suggest the next steps from the playbook (pointing out anything missed).
 function troubleshoot_(data) {
   var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
-  if (!apiKey) return { ok: true, found: false };
+  if (!apiKey) return fallbackSteps_();
   var raw = data.raw_text || '';
   if (!raw) return { ok: true, found: false };
 
@@ -2990,21 +2990,21 @@ function troubleshoot_(data) {
     res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 600, messages: [{ role: 'user', content: prompt }] })
+      payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
     });
-  } catch (e) { return { ok: true, found: false }; }
-  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return { ok: true, found: false };
+  } catch (e) { return fallbackSteps_(); }
+  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return fallbackSteps_();
 
-  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { ok: true, found: false }; }
+  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return fallbackSteps_(); }
   var text = '';
   if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
     if (parsed.content[i].type === 'text') text += parsed.content[i].text;
   }
   text = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  var out; try { out = JSON.parse(text); } catch (e) { return { ok: true, found: false }; }
+  var out; try { out = JSON.parse(text); } catch (e) { return fallbackSteps_(); }
   var checklist = normaliseChecklist_(out.checklist);
   var steps = (out && out.found && out.steps && out.steps.length) ? out.steps : stepsFromChecklist_(checklist);
-  if (!steps.length) return { ok: true, found: false, checklist: checklist };
+  if (!steps.length) return { ok: true, found: true, steps: FALLBACK_STEPS, note: '', escalate: false, checklist: checklist };
   return { ok: true, found: true, steps: steps, escalate: !!(out && out.escalate), note: (out && out.note) || '', checklist: checklist };
 }
 
@@ -3014,6 +3014,24 @@ function troubleshoot_(data) {
 // "todo", which left the form silent on a case where plenty was untried. So
 // when that happens, build the steps straight from the todo items instead, in
 // playbook order, and hand back the first few.
+// What we say when the AI helper cannot answer at all: the key was missing, the
+// call failed, or the reply came back as something other than JSON. That used
+// to leave the form silent, which is how a completely untried login problem
+// reached the developers with nothing tried (Edd, FB-0143). These are the first
+// moves from the playbook and they are worth making on almost any tech issue,
+// so an unhelpful helper is better than a mute one.
+var FALLBACK_STEPS = [
+  'Refresh the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a Mac). On the app, swipe it fully out of the recent apps list and reopen it.',
+  'Try the same course, lesson and portal yourself, on your own account and device, so we know whether it is just them.',
+  'Get them to log out and back in.',
+  'Try an incognito or private window, or a different browser, and see whether that gets them going.'
+];
+function fallbackSteps_() {
+  return { ok: true, found: true, steps: FALLBACK_STEPS, escalate: false,
+           note: 'Standard first steps. Work through the rest of the playbook from here if these do not do it.',
+           checklist: {} };
+}
+
 function stepsFromChecklist_(checklist) {
   if (!checklist) return [];
   var out = [];
