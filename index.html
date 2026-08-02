@@ -527,6 +527,7 @@
       <div class="field">
         <label>Paste transcript</label>
         <textarea id="rawText" rows="6" placeholder="Paste the email, chat transcript, or your own notes here - or pull it from a live chat above."></textarea>
+        <div class="small muted" style="margin-top:4px;">Coming back to something already logged? Paste the new part of the conversation in the same way and we'll offer to add it as an update to the existing report.</div>
       </div>
 
       <div class="field">
@@ -711,6 +712,13 @@
         </div>
       </details>
 
+      <div id="sortedRow" class="field hidden" style="margin-top:6px;">
+        <label style="display:inline;font-size:13px;color:var(--text);">
+          <input type="checkbox" id="f_student_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;">
+          This student is sorted, no follow-up needed</label>
+        <div class="small muted" style="margin-top:4px;">For when we've worked round it by hand and they have what they need. The issue stays open for the developers, we just stop chasing this student about it.</div>
+      </div>
+
       <div class="row submit-row" style="margin-top:6px;">
         <button class="primary" id="submitBtn" onclick="submitIssue()">Submit issue</button>
         <button class="ghost" id="submitResolvedBtn" onclick="submitResolved()">Submit and resolve</button>
@@ -722,18 +730,13 @@
       </div><!-- /detailsSection -->
     </div>
 
-    <!-- PREVIOUS SUBMISSIONS -->
-    <div class="card">
-      <h2>Your previous submissions</h2>
-      <div id="prevList"><p class="muted small">Loading your submissions…</p></div>
-    </div>
   </div>
 </div>
 
 <!-- ===================== ACTIONS VIEW (instructor to-dos) ===================== -->
 <div id="actionsView" class="wrap hidden">
   <h2 style="margin-top:0;">Actions</h2>
-  <p class="small muted" style="margin-top:-6px;">The things waiting on an instructor. Everything else lives in Track and your previous submissions.</p>
+  <p class="small muted" style="margin-top:-6px;">The things waiting on an instructor. Everything else lives in Track.</p>
   <div class="split-host" id="actionsSplitHost">
     <div class="list-col" id="actionsList"></div>
     <div class="split-dock" id="actionsDock" style="display:none;"></div>
@@ -1193,6 +1196,11 @@ function audienceOf(i) {
 function audienceBadge(i) {
   return audienceOf(i) === "internal" ? '<span class="badge cat cat-internal">Internal</span>' : "";
 }
+// An open issue whose student is already sorted. Worth showing on the card so
+// nobody picks it up thinking somebody is sitting there waiting on us.
+function sortedBadge(i) {
+  return isTrue(i && i.student_sorted) ? '<span class="badge type-badge" title="This student needs no follow-up. The fault is still open for the developers.">Student sorted</span>' : "";
+}
 var SECTION_LABEL = { website: "Website", instructor_portal: "Instructor portal", partner_portal: "Partner portal", course_player: "Course player", app: "App", other: "Other" };
 function sectionBadge(s) {
   if (!s) return "";
@@ -1208,7 +1216,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r32 · 2026-08-02";  // bump this with each round, it lands on every feedback report
+var BUILD = "r33 · 2026-08-02";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1344,7 +1352,6 @@ var state = {
   subKeep: null,              // per-problem tick state, same order as subIssuesAll
   splitMode: false,           // instructor ticked "log these as separate issues"
   trackView: "list",          // Track tab: "list" or "board" (kanban)
-  prevShown: 5,               // "Your previous submissions": how many are visible (Show more raises it)
   adminShown: 20,             // Track list: how many cards are visible (Show more raises it)
   _adminFilterSig: "",        // last-seen filter combination; a change resets adminShown
   courseRefFilter: "all",     // legacy field, kept for the feedback context snapshot
@@ -1371,10 +1378,12 @@ var COURIERS = ["DHL", "Royal Mail", "Parcelforce", "UPS", "FedEx", "DPD", "Evri
 var CHECKLIST = [
   { id: "confirm_error",          group: "Identify and record", label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)" },
   { id: "noted_device",           group: "Identify and record", label: "Noted device make, model, OS version, and browser or app" },
+  { id: "replicated",             group: "Identify and record", label: "Tried the same course, lesson and portal yourself, on your own account and device" },
   { id: "right_place",            group: "Account and login",   label: "Logging in via the right place (correct partner portal vs ardent-training.com)" },
   { id: "email_correct",          group: "Account and login",   label: "Email spelled correctly, and it's the one they registered with" },
   { id: "password_reset",         group: "Account and login",   label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' },
   { id: "social_signin_password", group: "Account and login",   label: 'Social sign-in: created a password via "organisation → forgot password"' },
+  { id: "refreshed",              group: "Standard fixes",      label: "Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)" },
   { id: "logout_login",           group: "Standard fixes",      label: "Logged out and back in" },
   { id: "restart_device",         group: "Standard fixes",      label: "Restarted the device (or closed and reopened the app/browser)" },
   { id: "clear_cache",            group: "Standard fixes",      label: "Cleared cache / tried an incognito or private window" },
@@ -1925,7 +1934,6 @@ function applyPerms(user) {
   var first = "instructor";
   for (var i = 0; i < order.length; i++) { if (p[order[i][0]]) { first = order[i][1]; break; } }
   setView(first);
-  renderPrev(); // issues may still be loading, but the name is known now
   updateViewAsBar();
 }
 
@@ -1933,17 +1941,14 @@ function loadIssues(isRetry) {
   return apiGet("getIssues").then(function (res) {
     if (!res || !res.ok) {
       console.warn("getIssues failed", res);
-      // A silent failure used to leave stale content sitting on the page (an
-      // empty "previous submissions" box, for one). Retry once, then say so.
+      // A silent failure used to leave stale content sitting on the page.
+      // Retry once, then say so.
       if (!isRetry) { setTimeout(function () { loadIssues(true); }, 2000); return; }
-      var box = $("prevList");
-      if (box) box.innerHTML = '<p class="muted small">Could not load your submissions. ' +
-        '<a href="#" onclick="loadIssues();return false;" style="color:var(--accent);">Try again</a></p>';
+      toast("Could not load the issue list. Reload the page to try again.");
       return;
     }
     state.issues = res.issues || [];
     state._issuesLoaded = true;
-    renderPrev();
     updateActionsTabCount();
     if (state.view === "actions") renderActions();
     if (state.view === "admin") renderAdmin();
@@ -1981,7 +1986,7 @@ function myActionItems() {
     var chatResolved = st === "resolved" && i.resolved_at &&
       (new Date(i.resolved_at) - new Date(i.submitted_at)) < 2 * 60 * 1000;
     if ((st === "dev_fixed" || st === "resolved") && !isTrue(i.notified_students) && !chatResolved &&
-        (i.student_contact || i.student_name)) out.notify.push(i);
+        !isTrue(i.student_sorted) && (i.student_contact || i.student_name)) out.notify.push(i);
     if (st === "resolved_tbc" && (now - new Date(i.updated_at || i.submitted_at)) > ACTIONS_TBC_FOLLOWUP_DAYS * day) out.followups.push(i);
     // Parcels due a chase. The date is the whole point of a shipping issue, so
     // it belongs in Actions on the day rather than only in Slack.
@@ -1995,7 +2000,7 @@ function myActionItems() {
         (st === "open" || st === "in_progress" || st === "with_dev") &&
         (now - new Date(i.submitted_at)) > ACTIONS_LONG_OPEN_DAYS * day &&
         (now - new Date(i.updated_at || i.submitted_at)) > 7 * day &&
-        (i.student_contact || i.student_name)) out.longOpen.push(i);
+        !isTrue(i.student_sorted) && (i.student_contact || i.student_name)) out.longOpen.push(i);
   });
   return out;
 }
@@ -2310,6 +2315,7 @@ function showField(id, show) {
   if (el) el.classList.toggle("hidden", !show);
 }
 function updateAdaptiveFields() {
+  updateSortedRow();
   var isInternal = state.formMode === "internal";
   var isCourse = !isInternal && state.category === "course_error";
   var isShipping = !isInternal && state.category === "shipping";
@@ -2511,6 +2517,9 @@ function runExtract() {
     // on the website" was in a browser, so tick it for them rather than making
     // them read the transcript again (Edd, 30 Jul).
     setPlatformTicks(f.platform);
+    // The instructor worked round it by hand, so the student needs nothing more
+    // even though the fault is still live. Pre-tick it, they can untick.
+    if ($("f_student_sorted")) $("f_student_sorted").checked = (f.student_sorted === true || f.student_sorted === "true");
     if (f.category === "shipping") {
       if (f.courier) setField("f_courier", matchCourier(f.courier));
       if (f.tracking_number) { setField("f_tracking_number", String(f.tracking_number).toUpperCase()); checkTracking(); }
@@ -2717,7 +2726,7 @@ function showLoading(msg) {
 }
 function hideLoading() { $("loadingOverlay").classList.remove("show"); }
 
-function requestTroubleshoot() {
+function requestTroubleshoot(checklistOnly) {
   hideTroubleshoot();
   if (state.category !== "tech_issue") return;
   var raw = getField("rawText");
@@ -2733,7 +2742,7 @@ function requestTroubleshoot() {
       state.checklist = (res.checklist && typeof res.checklist === "object") ? res.checklist : {};
       renderFormChecklist();
     }
-    if (res && res.ok && res.found && res.steps && res.steps.length) {
+    if (!checklistOnly && res && res.ok && res.found && res.steps && res.steps.length) {
       showTroubleshoot(res.steps, res.escalate, res.note);
     }
   }).catch(function (e) { hideLoading(); console.error(e); });
@@ -2873,10 +2882,15 @@ function afterExtractReady() {
   // improvement is a feature request, so there's nothing to fix or try. And if
   // the conversation was already sorted out in the chat, there's nothing left to
   // try with the student either, so don't offer steps for a solved problem.
-  var alreadyResolved = state.resolution && (state.resolution.status === "resolved" || state.resolution.status === "tbc");
-  if (state.requestKind !== "improvement" && !alreadyResolved) {
-    requestSuggestion();
-    requestTroubleshoot();
+  // A conversation that was genuinely sorted in the chat has nothing left to
+  // try. A "tbc" is different: that is a workaround, so the fault is still
+  // there and the pre-dev checklist still needs filling in. Run it quietly for
+  // those, without the popup, since the student has already gone.
+  var chatResolved = state.resolution && state.resolution.status === "resolved";
+  var workedAround = state.resolution && state.resolution.status === "tbc";
+  if (state.requestKind !== "improvement" && !chatResolved) {
+    if (!workedAround) requestSuggestion();
+    requestTroubleshoot(workedAround);
   }
 }
 function showEmailModal() {
@@ -3195,6 +3209,7 @@ function showTroubleshoot(steps, escalate, note) {
   state.troubleshootAck = false;
   var inner =
     (escalate ? '<div class="small" style="color:var(--high);font-weight:600;margin-bottom:4px;">' + esc(note || "Escalate this to Edd or Stu now.") + '</div>' : '') +
+    '<div class="small" style="margin-bottom:6px;">Give these to the student one at a time, and confirm the result before moving on to the next. That way we know which step made the difference, which is what the developers need.</div>' +
     '<ol>' + steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol>' +
     (note && !escalate ? '<div class="small muted" style="margin-top:6px;">' + esc(note) + '</div>' : '');
   // Inline reminder that stays on the form for reference.
@@ -3254,8 +3269,21 @@ function collectForm() {
     platform: collectPlatform(),
     courier: state.category === "shipping" ? getField("f_courier") : "",
     tracking_number: state.category === "shipping" ? getField("f_tracking_number") : "",
-    chase_at: state.category === "shipping" ? getField("f_chase_at") : ""
+    chase_at: state.category === "shipping" ? getField("f_chase_at") : "",
+    // The person is fine even though the fault is not: keeps them out of the
+    // notify and "still on it" queues without closing the issue (Edd, FB-0138).
+    student_sorted: !isInternal && $("f_student_sorted") ? $("f_student_sorted").checked : false
   };
+}
+
+// The tick only makes sense where there is a student to stop chasing, so it
+// stays hidden on internal work and on improvements.
+function updateSortedRow() {
+  var row = $("sortedRow");
+  if (!row) return;
+  var show = state.formMode !== "internal" && state.requestKind !== "improvement";
+  row.classList.toggle("hidden", !show);
+  if (!show && $("f_student_sorted")) $("f_student_sorted").checked = false;
 }
 // The "where does the bug show" tick boxes: browser, app, both, or unstated.
 function collectPlatform() {
@@ -3404,6 +3432,7 @@ function loggingAsResolved() {
 // With that tick on, Submit and resolve is the only sensible button, so the
 // others go away rather than sitting there inviting the wrong press.
 function updateSubmitRow() {
+  updateSortedRow();
   var resolved = loggingAsResolved();
   var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? "" : "none"; };
   show("submitBtn", !resolved);
@@ -3564,6 +3593,7 @@ function submitIssue() {
         }
         if (sub.priority) d.priority = String(sub.priority).toLowerCase();
         if (sub.priority_reason) d.priority_reason = sub.priority_reason;
+        if (sub.student_sorted != null) d.student_sorted = (sub.student_sorted === true || sub.student_sorted === "true");
         var rfSub = resolutionFields(sub.resolution_status, sub.resolution_note, sub.resolved_at);
         for (var ks in rfSub) d[ks] = rfSub[ks];
         return apiPost(d).then(function (r) {
@@ -3680,6 +3710,7 @@ function resetForm() {
     .forEach(function (id) { $(id).value = ""; });
   if ($("f_plat_browser")) $("f_plat_browser").checked = false;
   if ($("f_plat_app")) $("f_plat_app").checked = false;
+  if ($("f_student_sorted")) $("f_student_sorted").checked = false;
   $("f_course").value = "";
   $("f_section").value = "";
   $("f_issue_type").value = "bug";
@@ -3734,6 +3765,7 @@ function loadIntoForm(issue) {
   setField("f_media_kind", issue.media_kind || "");
   setField("f_impact", issue.impact || "");
   setPlatformTicks(issue.platform);
+  if ($("f_student_sorted")) $("f_student_sorted").checked = isTrue(issue.student_sorted);
   if ($("f_double_checked")) $("f_double_checked").checked = (issue.double_checked === true || issue.double_checked === "true" || issue.double_checked === "TRUE");
   updateAdaptiveFields();
   state.checklist = checklistMapOf(issue);
@@ -3746,7 +3778,6 @@ function loadIntoForm(issue) {
   $("editingNote").textContent = "Editing an existing submission. Saving updates this issue, it will not create a new one. Changing the category moves it to the other sheet.";
   $("submitBtn").textContent = "Update issue";
   $("deleteBtn").style.display = "";
-  renderPrev();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -3793,39 +3824,11 @@ function reportCount(issue) {
   return reps.length || 1;
 }
 
-// ============================ INSTRUCTOR: PREVIOUS ============================
-function renderPrev() {
-  var box = $("prevList");
-  if (!state.selectedInstructor) {
-    box.innerHTML = '<p class="muted small">Log in to see your past issues.</p>';
-    return;
-  }
-  if (!state._issuesLoaded) {
-    box.innerHTML = '<p class="muted small">Loading your submissions…</p>';
-    return;
-  }
-  var mine = state.issues.filter(isMine)
-    .sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
-  if (!mine.length) { box.innerHTML = '<p class="muted small">No issues logged yet under this name.</p>'; return; }
-  // Keep the list short: the most recent few, with the rest behind Show more —
-  // with the imported history in the sheet this would otherwise run to hundreds.
-  var shown = mine.slice(0, state.prevShown);
-  box.innerHTML = shown.map(function (i) {
-    return '<div class="sub-item" onclick="openIssueById(\'' + esc(i.issue_id) + '\', true)">' +
-      '<div class="meta">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + reqBadge(kindOf(i)) + typeBadge(i.issue_type) +
-        '<span class="date">' + fmtDate(i.submitted_at) + '</span>' +
-        (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
-      '</div>' +
-      (i.student_name ? '<div class="small" style="margin:2px 0;color:var(--text);font-weight:600;">' + esc(i.student_name) + '</div>' : '') +
-      '<div class="summary">' + esc(summaryText(i)) + '</div>' +
-    '</div>';
-  }).join("") + (mine.length > shown.length
-    ? '<div class="row" style="margin-top:8px;">' +
-        '<button class="ghost small" onclick="state.prevShown += 15; renderPrev();">Show more (' + (mine.length - shown.length) + ' hidden)</button>' +
-      '</div>'
-    : "");
-}
+// The "Your previous submissions" list is gone (Edd, FB-0141). It was a wall of
+// rows nobody acted on, and everything it showed lives in Track. Coming back to
+// an issue now works the way instructors already work: paste the new bit of the
+// conversation in, and the existing-issue detection offers to add it as an
+// update to the report it belongs to.
 
 function openIssueById(id, intoForm) {
   var issue = state.issues.filter(function (i) { return i.issue_id === id; })[0];
@@ -3987,7 +3990,7 @@ function renderAdmin() {
     var imgs = parseImageUrls(i.image_urls).length;
     return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + sortedBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
@@ -4140,7 +4143,7 @@ function openDetail(issue) {
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
     '<div style="margin-bottom:12px;">' +
       '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
-      priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
+      priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + sortedBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
 
@@ -4300,6 +4303,9 @@ function openDetail(issue) {
 
   sideCol += '<div class="field" style="margin-top:14px;"><label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
     (String(issue.notified_students) === "true" ? " checked" : "") + '> Students notified</label></div>';
+  sideCol += '<div class="field" style="margin-top:8px;"><label style="display:inline;"><input type="checkbox" id="d_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
+    (isTrue(issue.student_sorted) ? " checked" : "") + '> Student sorted, no follow-up needed</label>' +
+    '<div class="small muted" style="margin-top:3px;">The fault stays open for the developers, this student just doesn\'t need chasing.</div></div>';
 
   // Full reports/updates text and screenshots, kept at the bottom for reference.
   if (reps.length) {
@@ -4415,7 +4421,8 @@ function saveDetail() {
     issue_id: state.detailId,
     status: status,
     resolution_note: note,
-    notified_students: $("d_notified").checked
+    notified_students: $("d_notified").checked,
+    student_sorted: $("d_sorted") ? $("d_sorted").checked : false
   };
   if ($("d_priority")) payload.priority = $("d_priority").value;
   apiPost(payload).then(function (res) {
@@ -4745,7 +4752,7 @@ function renderQueue(cat, ids, filterVal) {
     var age = i.dev_passed_at ? fmtDuration(Date.now() - new Date(i.dev_passed_at)) : "";
     return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + sortedBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +

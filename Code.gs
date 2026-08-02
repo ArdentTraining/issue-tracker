@@ -145,7 +145,13 @@ var HEADERS = [
   // same consignment, so threads two, three and four fold into one issue.
   'courier',           // AP DHL | Royal Mail | ...
   'tracking_number',   // AQ the consignment reference, uppercased, spaces stripped
-  'chase_at'           // AR ISO date when this needs poking again (blank = not waiting on anyone)
+  'chase_at',          // AR ISO date when this needs poking again (blank = not waiting on anyone)
+  // The student is sorted even though the fault is not (Edd, 2 Aug). A missing
+  // Extend button that we worked round by extending the account by hand leaves
+  // a real bug for the developers, but nobody to chase or update. Kept separate
+  // from status so the issue can stay open without the student sitting in the
+  // notify and "still on it" queues.
+  'student_sorted'     // AS true = no further contact needed with this student
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -155,10 +161,12 @@ var HEADERS = [
 var CHECKLIST_ITEMS = [
   { id: 'confirm_error',          group: 'Identify and record', scope: 'both',    label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)" },
   { id: 'noted_device',           group: 'Identify and record', scope: 'both',    label: 'Noted device make, model, OS version, and browser or app' },
+  { id: 'replicated',             group: 'Identify and record', scope: 'both',    label: 'Tried the same course, lesson and portal yourself, on your own account and device' },
   { id: 'right_place',            group: 'Account and login',   scope: 'both',    label: 'Logging in via the right place (correct partner portal vs ardent-training.com)' },
   { id: 'email_correct',          group: 'Account and login',   scope: 'both',    label: "Email spelled correctly, and it's the one they registered with" },
   { id: 'password_reset',         group: 'Account and login',   scope: 'both',    label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' },
   { id: 'social_signin_password', group: 'Account and login',   scope: 'app',     label: 'Social sign-in: created a password via "organisation -> forgot password"' },
+  { id: 'refreshed',              group: 'Standard fixes',      scope: 'browser', label: 'Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)' },
   { id: 'logout_login',           group: 'Standard fixes',      scope: 'both',    label: 'Logged out and back in' },
   { id: 'restart_device',         group: 'Standard fixes',      scope: 'both',    label: 'Restarted the device (or closed and reopened the app/browser)' },
   { id: 'clear_cache',            group: 'Standard fixes',      scope: 'browser', label: 'Cleared cache / tried an incognito or private window' },
@@ -932,6 +940,7 @@ function addIssue_(data) {
     audience: audience,
     courier: category === 'shipping' ? (data.courier || '') : '',
     tracking_number: category === 'shipping' ? normaliseTracking_(data.tracking_number) : '',
+    student_sorted: (data.student_sorted === true || data.student_sorted === 'true') ? true : '',
     // Default to chasing in three working-ish days if nobody said otherwise:
     // an unchased parcel problem is the one that goes quiet for a fortnight.
     chase_at: category === 'shipping'
@@ -2889,6 +2898,8 @@ function suggestFix_(data) {
 var DEFAULT_PLAYBOOK = [
   'ARDENT TECH TROUBLESHOOTING PLAYBOOK (for the instructor helping a student):',
   '',
+  'HOW TO USE IT: work through the steps in order, ONE AT A TIME, and confirm the result with the student before moving on to the next. Doing that keeps it clear which step actually made the difference, which is the bit the developers need.',
+  '',
   'KNOWN ACCOUNT ISSUES (check these first, each has a specific fix):',
   '- Cannot purchase a course / error at purchase: they probably already have an account from a free trial. Get them to log in first (search their email), then purchase.',
   '- Login not recognising email / login problems: they likely bought through a partner school but are trying to log in at ardent-training.com. Check the instructor portal (services.ardent-training.com) and send them to the correct partner portal.',
@@ -2897,26 +2908,47 @@ var DEFAULT_PLAYBOOK = [
   '- If still stuck: get them to use "forgot password" to reset, then type email and password manually (no copy-paste).',
   '- Still cannot log in: reset their password yourself in the students tab of the instructor portal and try logging in as them. If you can log in, it is a device/browser issue on their end, move to the step-by-step list.',
   '- APP login for practical partner students: if they signed up with a social sign-in (Google/Facebook) they may have no password, and social sign-in does not work on the app for partner-school bookings. They must tap "organisation", find their school, then "forgot password" to create a password (or do it for them).',
+  '- Missing RYA ebooks / e-pack: ask them to check their junk mail first, the email comes from publications@rya.org.uk. If it is genuinely not there it can be re-sent from trade.rya.org.uk, so pass it to Edd, Charly, or Charlie. Day Skipper students sometimes think the shorebased notes, exercises and Enav slides are missing from the pack when they are meant to be ebooks.',
   '',
-  'BROWSER (web) ISSUES, in order, confirming each step with the student:',
-  '1. Log out of Ardent Training and log back in.',
-  '2. Try an incognito/private window. If that works, clear cache and/or disable extensions for a permanent fix.',
-  '3. Try a different browser. If that works, clear cache and/or disable extensions.',
-  '4. Try a different device. If that works, note the make, model and OS version of the one with the problem.',
-  '5. Try a different internet connection/wifi. If that works, note their ISP.',
-  '6. Still stuck: get screenshots and note device make/model/browser/OS, then log it here so it reaches the team. Tell the student it is with the developers and apologise.',
+  'BROWSER (web) ISSUES, in order, confirming each step with the student before the next:',
+  '1. Refresh the page. If that does nothing, get them to do a hard refresh: Ctrl + Shift + R on Windows, Command + Shift + R on Mac.',
+  '2. Try the same course, lesson and portal yourself, on your own account and device. If it fails for you too, say so ("Thanks, I have been able to replicate the issue, I am going to work through a few troubleshooting steps from my side") and work the rest of the list on your own machine first, which is far quicker than asking the student to do each one. If it works fine for you, carry on through the list with the student.',
+  '3. Log out of Ardent Training and log back in.',
+  '4. Try an incognito/private window. If that works, fully quit and reopen the browser; if the problem comes back, clear the cache; if that does not do it, turn off browser extensions.',
+  '5. Try a different browser. If that works, update the original browser and note which one was misbehaving and what extensions they have.',
+  '6. Try a different device. If that works, note the make, model and OS version of the one with the problem.',
+  '7. Try a different internet connection (mobile data, a phone hotspot, or another wifi are all one and the same step). If that works, note their ISP and whether they were on a VPN, a work network, or a school network, since those often block parts of the course.',
+  '8. Still stuck: gather the details listed below and log it here so it reaches the team.',
   '',
   'APP (mobile app) ISSUES, in order:',
-  '1. Check on your own device. If it fails for you too, try the web version; if it only fails on the app, tell them to use the web version and flag it.',
-  '2. Log out and back in.',
-  '3. Restart the device.',
-  '4. Check the app is up to date.',
-  '5. Try a different device.',
-  '6. Try a different network (mobile data, a phone hotspot, or another wifi are all the same step). A "check network connection" message often means something on that network or device is blocking the app, not that the internet is down.',
-  '7. Turn off any VPN, ad blocker, or content/parental filter on the device.',
-  '8. If it is about downloading lessons, check there is free space on the device.',
-  '9. Read the pattern: if it works on some of their devices or networks but not others (e.g. fine on a phone, failing on tablets), it is more likely a setting on the failing device or network than a bug in our app, so rule the above out before escalating.',
-  '10. Still stuck after genuinely trying all of the above: get screenshots and note device make/model/OS, then log it here so it reaches the team. Tell the student it is with the developers and apologise.'
+  '1. Fully close the app and reopen it. It has to be swiped out of the open/recent apps list, not just backing out to the home screen.',
+  '2. Try the same course and lesson yourself, on your own account and app. If it fails for you too, work the rest of the list from your side first and tell them you have replicated it.',
+  '3. Try the web version of the same lesson. If the website works, that gets them moving again while the app problem is looked at, so say so, but log it as still open because the app fault is still there.',
+  '4. Log out and back in.',
+  '5. Restart the device.',
+  '6. Check the app is up to date (App Store on iPhone or iPad, Google Play on Android). If there is an update, install it, reopen and try again.',
+  '7. Try a different device.',
+  '8. Try a different network (mobile data, a phone hotspot, or another wifi are all the same step). A "check network connection" message usually means something on that network or device is blocking the app rather than the internet being down.',
+  '9. Turn off any VPN, ad blocker, or content/parental filter on the device.',
+  '10. If it is about downloading lessons, check there is free space on the device.',
+  '11. Read the pattern: if it works on some of their devices or networks but not others (fine on a phone, failing on tablets), it is more likely a setting on the failing device or network than a bug in our app, so rule those out before escalating.',
+  '12. Still stuck after genuinely trying the above: gather the details listed below and log it here so it reaches the team.',
+  '',
+  'WHAT TO GATHER BEFORE IT GOES TO THE DEVELOPERS:',
+  '- A screenshot or a short screen recording.',
+  '- The course, module and lesson affected.',
+  '- The device make and model.',
+  '- The operating system and version.',
+  '- The browser (or the app and its version).',
+  '- The exact wording of any error message.',
+  '',
+  'AFTER LOGGING IT:',
+  '- Tell the student it is with our developers, apologise properly, and let them know we will come back to them.',
+  '- Snooze the Chatwoot conversation for 2 days with a private note holding the summary, so somebody sends them an update rather than leaving them wondering.',
+  '',
+  'STRAIGHT TO A BOSS, DO NOT WORK THE LIST FIRST:',
+  '- A 404 "page not found" on a lesson. Edd or Stu need to know immediately; Edd is happy to be WhatsApped about this one even on his days off.',
+  '- Anything that looks like it is hitting every student rather than one (a page, video host, or the site itself down or erroring for everyone). User-side steps cannot fix a server that is down.'
 ].join('\n');
 
 // Read the conversation the instructor pasted, work out what has been tried,
@@ -2971,8 +3003,25 @@ function troubleshoot_(data) {
   text = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   var out; try { out = JSON.parse(text); } catch (e) { return { ok: true, found: false }; }
   var checklist = normaliseChecklist_(out.checklist);
-  if (!out || !out.found || !out.steps || !out.steps.length) return { ok: true, found: false, checklist: checklist };
-  return { ok: true, found: true, steps: out.steps, escalate: !!out.escalate, note: out.note || '', checklist: checklist };
+  var steps = (out && out.found && out.steps && out.steps.length) ? out.steps : stepsFromChecklist_(checklist);
+  if (!steps.length) return { ok: true, found: false, checklist: checklist };
+  return { ok: true, found: true, steps: steps, escalate: !!(out && out.escalate), note: (out && out.note) || '', checklist: checklist };
+}
+
+// The instructor should always come away with something to try where anything
+// is genuinely still outstanding (Edd, FB-0143). The model sometimes returns
+// found:false while its own checklist still has half a dozen items sitting at
+// "todo", which left the form silent on a case where plenty was untried. So
+// when that happens, build the steps straight from the todo items instead, in
+// playbook order, and hand back the first few.
+function stepsFromChecklist_(checklist) {
+  if (!checklist) return [];
+  var out = [];
+  CHECKLIST_ITEMS.forEach(function (it) {
+    if (out.length >= 4) return;
+    if (checklist[it.id] === 'todo') out.push(it.label);
+  });
+  return out;
 }
 
 // A compact, numbered list of the checklist items for the AI prompt, with a
@@ -3330,9 +3379,10 @@ function buildExtractionPrompt_(rawText) {
     '- resolution_status: "resolved" if the pasted conversation shows this problem was ALREADY sorted out in the chat itself (an instructor gave a definitive answer or fix, the thread says "Conversation was marked resolved by ...", or the student confirms it works now, e.g. "that solved it", "thanks, working now", "all good"). "tbc" if a fix or answer was given but the student has not yet confirmed it worked. "open" if it is still unresolved, or was only logged to hand to the developers. When in doubt, "open".',
     '- IMPORTANT exception to the above: a WORKAROUND is not a fix. If the only thing that got the student going was a way round the fault rather than a correction of it (switching browser, incognito or private mode, clearing cache or cookies, disabling extensions, reinstalling the app, switching device, switching to mobile data), return "tbc" even when the student confirms it works now. The student is unblocked but the fault is still there, and someone needs to decide whether it was a one-off or is hitting everyone. This does NOT apply to a support question that was simply answered, or to a change that genuinely corrected the cause (a corrected username, an account re-enrolled, a lesson republished, a payment taken): those stay "resolved".',
     '- resolution_note: when resolution_status is "resolved" or "tbc", one or two sentences stating the actual answer or fix that was given (what resolved it), otherwise null.',
+    '- student_sorted: true when THIS student has everything they need and nobody has to go back to them, even though the fault itself is still there for the developers. Typical shape: the instructor worked around it by hand (extended the account manually because the Extend button was missing, enrolled them themselves, sent the file directly), or the student is happily using another route that works. It is about the person, not the bug, so it can be true while resolution_status is still "open". Return false when the student is still waiting on us, is still blocked, or was promised an update.',
     '- resolved_by: the staff member who resolved it or gave the answer (from "marked resolved by X", or whoever replied with the fix), or null.',
     '- resolved_at: the date the resolution happened if it can be read from the text (ISO 8601 if possible, otherwise the date as written), or null.',
-    '- sub_issues: a single pasted thread can hold SEVERAL separate problems raised over time (different pages, features, slides, or topics, each fixed independently, and each possibly at a different date or already resolved). If it holds more than one, return an array with one FULL entry per distinct problem, each carrying the SAME fields as above (category, likely_internal, section, student_name, student_contact, device_info, course, module, lesson, lesson_code, issue_type, request_kind, media_kind, impact, summary, priority, priority_reason, resolution_status, resolution_note, resolved_by, resolved_at). Put the primary or most urgent problem in the top-level fields AND as the FIRST array entry, so the array is the complete set. If it is really one problem (or one problem with knock-on effects), return null. Never split a single problem, and never blend unrelated topics into one entry.',
+    '- sub_issues: a single pasted thread can hold SEVERAL separate problems raised over time (different pages, features, slides, or topics, each fixed independently, and each possibly at a different date or already resolved). If it holds more than one, return an array with one FULL entry per distinct problem, each carrying the SAME fields as above (category, likely_internal, section, student_name, student_contact, device_info, course, module, lesson, lesson_code, issue_type, request_kind, media_kind, impact, summary, priority, priority_reason, resolution_status, resolution_note, resolved_by, resolved_at, student_sorted). Put the primary or most urgent problem in the top-level fields AND as the FIRST array entry, so the array is the complete set. If it is really one problem (or one problem with knock-on effects), return null. Never split a single problem, and never blend unrelated topics into one entry.',
     '',
     'What counts as a SEPARATE issue for sub_issues, so nothing gets dropped:',
     '- A distinct bug, error, or confusing piece of content counts even when it is only mentioned in passing inside a longer message (for example a login email field that auto-capitalises the first letter). Give it its own entry rather than absorbing it into a bigger one.',
@@ -3343,9 +3393,9 @@ function buildExtractionPrompt_(rawText) {
     'Category guidance: content_error and student_confusion are usually course_error; bug and access_problem are usually tech_issue. But judge from what the report actually describes.',
     '',
     'Priority rules. For tech issues, do NOT jump to high until the fixes RELEVANT to this case have actually been tried:',
-    '- high: a factual or safety-critical content error; OR a tech issue where the troubleshooting steps relevant to this situation have genuinely been tried and the student is still completely blocked with no workaround. Judge relevance by the case: for a browser/website problem the relevant fixes are things like clearing cache, an incognito window, a different browser, a different network; for a mobile-app problem they are reinstalling or updating the app, restarting, a different device, a different network. Do NOT expect app-only fixes for a browser problem or browser-only fixes for an app problem, and do not hold back from high just because an irrelevant fix was not tried.',
+    '- high: a factual or safety-critical content error; OR a tech issue where the student cannot get into or use the course they have paid for and has no workaround that is working right now. Being locked out IS the test. A student who cannot log in, cannot load their course, cannot reach a lesson, or cannot sit an exam is high from the moment it is reported, so do NOT hold it at medium just because the troubleshooting steps have not been worked through yet. The steps are how we go about fixing it, not a bar the student has to clear before the problem counts.',
     '- high ALSO covers an outage that hits everyone rather than one student: a page, resource, video host, or the site itself down or erroring for all users (e.g. a resource page returning an error). User-side troubleshooting cannot fix a down server, so never hold one of these at medium because steps were not tried.',
-    '- medium: a real problem but the student is not fully blocked, has a workaround, or the relevant fixes have not all been tried yet.',
+    '- medium: a real problem where the student can still get on with their course. They have a workaround that is working (the website while the app misbehaves, a different browser, another device), or the fault is a nuisance rather than a blocker.',
     '- low: minor or cosmetic, a one-off, or something very likely solved by a simple relevant step the student has not tried yet.',
     '',
     'Raw text:',
