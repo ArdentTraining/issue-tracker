@@ -1208,7 +1208,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r31 · 2026-08-02";  // bump this with each round, it lands on every feedback report
+var BUILD = "r32 · 2026-08-02";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2429,7 +2429,7 @@ function onFilesPicked(ev) {
 
 function renderThumbs() {
   $("thumbs").innerHTML = state.attachedImages.map(function (img, i) {
-    var src = img.uploaded ? img.url : img.dataUrl;
+    var src = img.uploaded ? driveImg(img.url, 400) : img.dataUrl;
     return '<div class="thumb"><img src="' + esc(src) + '" />' +
       '<div class="x" onclick="removeImage(' + i + ')">&times;</div></div>';
   }).join("");
@@ -3755,6 +3755,31 @@ function parseImageUrls(v) {
   return String(v).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
 }
 
+// Google stopped serving drive.google.com/uc?export=view as an image, which is
+// the shape every screenshot we have ever stored was saved in. So all 182 of
+// them have been showing as broken pictures, separately from the upload outage
+// (2 Aug). Pull the file id out of whatever shape the stored link is and hand
+// back one that still renders. The stored value is left alone: rewriting 900
+// rows to fix a display problem is the wrong trade, and this covers new links
+// and old ones the same way.
+function driveFileId(url) {
+  var u = String(url || "");
+  var m = /[?&]id=([\w-]{10,})/.exec(u) || /\/file\/d\/([\w-]{10,})/.exec(u) ||
+          /\/thumbnail\?id=([\w-]{10,})/.exec(u) || /googleusercontent\.com\/d\/([\w-]{10,})/.exec(u);
+  return m ? m[1] : "";
+}
+// For an <img src>. sz is a width hint, so a card thumbnail doesn't pull down
+// a full-size screenshot.
+function driveImg(url, width) {
+  var id = driveFileId(url);
+  return id ? "https://drive.google.com/thumbnail?id=" + id + "&sz=w" + (width || 1000) : url;
+}
+// For the link you click to see it properly.
+function driveOpen(url) {
+  var id = driveFileId(url);
+  return id ? "https://drive.google.com/file/d/" + id + "/view" : url;
+}
+
 // Each issue can hold several reports (the same bug hit by several students).
 function parseReports(issue) {
   if (!issue.reports_json) return [];
@@ -4301,7 +4326,7 @@ function openDetail(issue) {
   '<div id="linkPicker" class="hidden" style="margin-bottom:10px;"></div>';
   if (images.length) {
     html += '<h3>Screenshots</h3><div class="thumbs">' + images.map(function (u) {
-      return '<a class="thumb" href="' + esc(u) + '" target="_blank"><img src="' + esc(u) + '" /></a>';
+      return '<a class="thumb" href="' + esc(driveOpen(u)) + '" target="_blank"><img src="' + esc(driveImg(u, 600)) + '" /></a>';
     }).join("") + '</div>';
   }
 
@@ -5020,7 +5045,7 @@ function openDevDetail(id) {
   }
   if (images.length) {
     html += '<h3>Screenshots</h3><div class="thumbs">' + images.map(function (u) {
-      return '<a class="thumb" href="' + esc(u) + '" target="_blank"><img src="' + esc(u) + '" /></a>';
+      return '<a class="thumb" href="' + esc(driveOpen(u)) + '" target="_blank"><img src="' + esc(driveImg(u, 600)) + '" /></a>';
     }).join("") + '</div>';
   }
 
@@ -5790,7 +5815,7 @@ function onFbFilesPicked(ev) {
 }
 function renderFbThumbs() {
   $("fbThumbs").innerHTML = state.fbImages.map(function (img, i) {
-    var src = img.uploaded ? img.url : img.dataUrl;
+    var src = img.uploaded ? driveImg(img.url, 400) : img.dataUrl;
     return '<div class="thumb"><img src="' + esc(src) + '" /><div class="x" onclick="removeFbImage(' + i + ')">&times;</div></div>';
   }).join("");
 }
@@ -5940,7 +5965,7 @@ function feedbackRowHtml(f) {
     (buildBits.length ? '<div class="small muted" style="margin-top:6px;">' + esc(buildBits.join(" · ")) + '</div>' : '') +
     diagBlock +
     (imgs.length ? '<div class="thumbs" style="margin-top:8px;">' + imgs.map(function (u) {
-      return '<a class="thumb" href="' + esc(u) + '" target="_blank"><img src="' + esc(u) + '" /></a>';
+      return '<a class="thumb" href="' + esc(driveOpen(u)) + '" target="_blank"><img src="' + esc(driveImg(u, 600)) + '" /></a>';
     }).join("") + '</div>' : '') +
     '<div class="row" style="margin-top:8px;">' + buttons +
       '<button class="ghost small" style="color:var(--high);margin-left:auto;" onclick="deleteFeedback(\'' + esc(f.id) + '\')">Delete</button>' +

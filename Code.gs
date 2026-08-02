@@ -2687,7 +2687,10 @@ function uploadImage_(data) {
     ok: true,
     file_id: id,
     via: how,
-    url: 'https://drive.google.com/uc?export=view&id=' + id,
+    // uc?export=view is the shape we used to store and Google no longer serves
+    // it as an image, so new uploads get one that renders. The front end
+    // normalises whatever is already in the sheet the same way.
+    url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w1600',
     open_url: 'https://drive.google.com/file/d/' + id + '/view'
   };
 }
@@ -3508,7 +3511,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r31 · 2026-08-02';
+var CODE_STAMP = 'r32 · 2026-08-02';
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();
