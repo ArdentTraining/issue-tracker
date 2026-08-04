@@ -167,6 +167,12 @@
 
   .two-col { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 18px; align-items: start; }
   @media (max-width: 860px) { .two-col { grid-template-columns: 1fr; } }
+  /* The Log page lost its second column when "previous submissions" went, and
+     a half-empty grid is worse than no grid (Edd, FB-0144). The form takes the
+     width now, which the folded field groups and the split tabs all wanted
+     anyway. Capped so the text inputs don't run the length of a wide monitor. */
+  .log-col { max-width: 1100px; }
+  .log-col .field textarea, .log-col .field input[type="text"] { max-width: 100%; }
 
   .row { display: flex; gap: 10px; }
   .row > * { flex: 1; }
@@ -503,7 +509,7 @@
 
 <!-- ===================== INSTRUCTOR VIEW ===================== -->
 <div id="instructorView" class="wrap">
-  <div class="two-col">
+  <div class="log-col">
     <!-- INPUT PANEL -->
     <div class="card">
       <h2>Log a new issue</h2>
@@ -670,7 +676,7 @@
         </div>
         <div class="field" id="field_section">
           <label>Part of the platform</label>
-          <select id="f_section">
+          <select id="f_section" onchange="onSectionChange()">
             <option value="">—</option>
             <option value="website">Website</option>
             <option value="instructor_portal">Instructor portal</option>
@@ -1230,7 +1236,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r35 · 2026-08-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r36 · 2026-08-04";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1367,6 +1373,7 @@ var state = {
   subFold: null,              // the "fold" subset: no issue of their own, summary rides on the first
   subEdits: null,             // one editable copy of the per-issue fields per logged issue (the tabs)
   subActive: 0,               // which of those tabs is on screen
+  scanConvId: null,           // chat-scan suggestion pulled into the form, marked logged only once it saves
   splitMode: false,           // instructor ticked "log these as separate issues"
   trackView: "list",          // Track tab: "list" or "board" (kanban)
   adminShown: 20,             // Track list: how many cards are visible (Show more raises it)
@@ -1451,7 +1458,8 @@ function renderFormChecklist() {
   if (!panel) return;
   // Nothing to hand the developers if this is going in already answered, so
   // the pre-dev checklist is just noise on that path (Edd, FB-0137).
-  if (state.category !== "tech_issue" || state.requestKind === "improvement" || loggingAsResolved()) {
+  if (state.category !== "tech_issue" || state.requestKind === "improvement" || loggingAsResolved() ||
+      formIsOurOwnSystem()) {
     panel.classList.add("hidden"); panel.innerHTML = ""; return;
   }
   var map = state.checklist || {};
@@ -2299,6 +2307,13 @@ function onCategoryChange() {
   renderFormChecklist(); // hides itself for course errors, shows for tech
   updateAdaptiveFields();
 }
+// Picking "Instructor portal" by hand means there is no student to work the
+// steps through with, so the checklist and the things-to-try go away, and come
+// back if it turns out to be a student-facing part of the platform after all.
+function onSectionChange() {
+  if (formIsOurOwnSystem()) { hideTroubleshoot(); hideSuggestion(); }
+  renderFormChecklist();
+}
 
 // Fix vs Improvement (feature request). An improvement is a calmer backlog item:
 // no troubleshooting checklist, no "things to try", no high-priority Slack, and
@@ -2521,6 +2536,9 @@ function runExtract() {
     if (f.student_contact || !cw.contact) setField("f_student_contact", f.student_contact);
     setField("f_device_info", f.device_info);
     setField("f_section", f.section || "");
+    // The section only arrives with the extraction, and it is what decides
+    // whether any of the student-troubleshooting machinery applies.
+    renderFormChecklist();
     setField("f_course", f.course || "");
     setField("f_module", f.module);
     setField("f_lesson", f.lesson);
@@ -2746,6 +2764,7 @@ function hideLoading() { $("loadingOverlay").classList.remove("show"); }
 function requestTroubleshoot(checklistOnly) {
   hideTroubleshoot();
   if (state.category !== "tech_issue") return;
+  if (formIsOurOwnSystem()) return;
   var raw = getField("rawText");
   if (!raw) return;
   var payload = { action: "troubleshoot", raw_text: raw };
@@ -2905,6 +2924,7 @@ function afterExtractReady() {
   // those, without the popup, since the student has already gone.
   var chatResolved = state.resolution && state.resolution.status === "resolved";
   var workedAround = state.resolution && state.resolution.status === "tbc";
+  if (formIsOurOwnSystem()) { hideTroubleshoot(); hideSuggestion(); return; }
   if (state.requestKind !== "improvement" && !chatResolved) {
     if (!workedAround) requestSuggestion();
     requestTroubleshoot(workedAround);
@@ -3688,7 +3708,7 @@ function submitIssue() {
   var applyRes = state.resolution && state.resolution.apply;
   // The pre-dev checklist only applies to tech fixes, not improvements or
   // internal tasks.
-  var checklistJson = (!isInternal && state.category === "tech_issue" && state.requestKind !== "improvement")
+  var checklistJson = (!isInternal && !formIsOurOwnSystem() && state.category === "tech_issue" && state.requestKind !== "improvement")
     ? JSON.stringify(state.checklist || {}) : null;
   var updateTarget = state.updateTargetId;
   var outcomeText = String(getField("f_outcome") || "").trim();
@@ -3907,6 +3927,8 @@ function submitIssue() {
       : res.issue_ids ? res.issue_ids
       : (res.issue && res.issue.issue_id) ? [res.issue.issue_id] : [];
     uploadImagesInBackground(targetIds);
+    // A suggestion from the chat scan is only spent once something saved.
+    if (targetIds.length) markScanLogged(targetIds[0]);
     // A workaround was handed over and this landed as Resolved - TBC: check
     // whether that was verified as a one-off or needs a proper look. If the
     // instructor can't check now, requestRecheck books a Slack reminder.
@@ -3965,6 +3987,8 @@ function resetForm() {
   state.forcePark = null;
   state.chatwootContact = null;
   state.chatwootConvId = null;
+  // Abandoning the form leaves the scan suggestion where it was, unspent.
+  state.scanConvId = null;
   state.chatwootLink = "";
   if ($("cwInput")) $("cwInput").value = "";
   if ($("cwStatus")) $("cwStatus").innerHTML = "";
@@ -4330,9 +4354,27 @@ function clearLessonFilter(quiet) {
   renderAdmin();
 }
 
+// Our own systems have no student on the other end, so the whole
+// troubleshooting apparatus (the checklist, the "things to try" popup, the
+// known-fix suggestion) is noise on them (Charlie, FB-0147 and FB-0148).
+// Internal work is one case; the instructor portal is the other, because it is
+// staff-only whoever logs it and whichever audience it was filed under. The
+// partner portal deliberately is NOT here: partner-school students log in
+// there, so those reports do have someone to work through the steps with.
+function isOurOwnSystem(mode, section) {
+  return mode === "internal" || String(section || "") === "instructor_portal";
+}
+function formIsOurOwnSystem() {
+  return isOurOwnSystem(state.formMode, getField("f_section"));
+}
+function issueIsOurOwnSystem(issue) {
+  return isOurOwnSystem(audienceOf(issue) === "internal" ? "internal" : "student", issue && issue.section);
+}
+
 // ---- pre-dev checklist inside a detail drawer (Track + Developers) ----
 function detailChecklistHtml(issue) {
   if (catOf(issue) !== "tech_issue") return "";
+  if (issueIsOurOwnSystem(issue)) return "";
   var map = checklistMapOf(issue);
   var cleared = checklistCleared(map);
   return '<h3>Troubleshooting checklist</h3>' +
@@ -5668,12 +5710,26 @@ function renderChatScan(targetId) {
 }
 // Send it to the log form, pre-filled from the conversation, and mark the
 // suggestion as acted on. The normal extraction and duplicate checks then run.
+// "Log it" only pulls the conversation into the form. It used to mark the
+// suggestion "logged" on the button press, so walking away from the form (to
+// come back to it later, say) lost the suggestion for good even though no issue
+// was ever created (Edd, FB-0145). It is now marked once an issue actually
+// saves, so an abandoned one stays in the queue where it can be picked up again.
 function chatScanLogIt(convId) {
-  apiPost({ action: "chatScanReview", conversation_id: convId, status: "logged" }).catch(function () {});
+  state.scanConvId = convId;
   setView("instructor");
   if ($("cwInput")) $("cwInput").value = convId;
   chatwootImport(convId);
-  toast("Pulled into the form - press Extract, then Submit as normal.");
+  toast("Pulled into the form - press Extract, then Submit as normal. It stays in the list until you do.");
+}
+// Called once a submit has actually saved something.
+function markScanLogged(issueId) {
+  var convId = state.scanConvId;
+  if (!convId) return;
+  state.scanConvId = null;
+  apiPost({ action: "chatScanReview", conversation_id: convId, status: "logged", issue_id: issueId || "" })
+    .then(function () { refreshScanViews(); })
+    .catch(function () {});
 }
 // Apply an update the scan found: pull the conversation, add it to the issue
 // as an update, and optionally resolve or reopen off the back of it.
