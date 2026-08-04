@@ -90,6 +90,14 @@ var EXTRACTION_MODEL = 'claude-sonnet-5';
 // trigger created by ensureTriggers_.
 var TBC_AUTO_RESOLVE_DAYS = 14;
 
+// One student sorted out by switching browser is a one-off. Three in a week all
+// sorted the same way is a fault everyone is hitting, and each one closing
+// quietly on its own is exactly how we miss it (31 Jul: six went by in a single
+// morning before anyone joined the dots). So we watch the workarounds going out
+// and shout once when the same one keeps working.
+var SHARED_WORKAROUND_DAYS = 7;   // rolling window we look back over
+var SHARED_WORKAROUND_MIN = 3;    // how many before it stops being coincidence
+
 // Column order for both issue sheets (A..V). Both tabs use the same columns
 // so the code can treat them the same.
 var HEADERS = [
@@ -989,6 +997,12 @@ function addIssue_(data) {
     try { sendSlack_(issue, data.app_url || getAppUrl_()); } catch (slackErr) {}
   }
 
+  // Closed on a workaround: see whether this is the third one this week going
+  // the same way, in which case it isn't a workaround any more, it's a fault.
+  if (String(issue.status).toLowerCase() === 'resolved_tbc') {
+    try { checkSharedWorkaround_(issue, data.app_url || getAppUrl_()); } catch (e) {}
+  }
+
   // Imported from a live chat: leave an internal note on that conversation so
   // the two systems stay joined up.
   if (data.chatwoot_conversation_id) {
@@ -1078,6 +1092,10 @@ function addReportToIssue_(id, data, report) {
   if (String(rec.priority).toLowerCase() === 'high' &&
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
+  }
+
+  if (String(rec.status).toLowerCase() === 'resolved_tbc') {
+    try { checkSharedWorkaround_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
   return { ok: true, issue: rec, merged: true, report_count: rec.report_count };
@@ -1407,6 +1425,9 @@ function addUpdate_(data) {
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
+  if (String(rec.status).toLowerCase() === 'resolved_tbc') {
+    try { checkSharedWorkaround_(rec, data.app_url || getAppUrl_()); } catch (e) {}
+  }
   return { ok: true, issue_id: id, updated: true };
 }
 
@@ -1506,7 +1527,7 @@ function sendNotifyStudentSlack_(issue, appUrl) {
   var text = [
     ':white_check_mark: *' + (isCourse ? 'Course fix done' : 'Fix done') + ' - student to notify*',
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
-    '*Summary:* ' + (issue.summary || '-'),
+    '*Summary:* ' + slackSummary_(issue),
     '*Fix notes:* ' + (issue.dev_notes || '-'),
     '*Student:* ' + (student || '-'),
     '*Logged by:* ' + (issue.instructor_name || '-'),
@@ -1573,7 +1594,7 @@ function sendQueryRaisedSlack_(issue, appUrl) {
     ':grey_question: *' + (issue.dev_query_by || 'Someone') + ' has a question for ' +
       (toInstructor ? (issue.instructor_name || 'the instructor') : 'the admins') + '*',
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
-    '*Summary:* ' + (issue.summary || '-'),
+    '*Summary:* ' + slackSummary_(issue),
     '*Question:* ' + (issue.dev_query || '-'),
     '',
     toInstructor
@@ -1639,7 +1660,7 @@ function sendQueryAnsweredSlack_(issue, question, reply, asker, appUrl) {
   var text = [
     ':speech_balloon: *Question answered*' + (asker ? ' - ' + asker + ', this one\'s for you' : ''),
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
-    '*Summary:* ' + (issue.summary || '-'),
+    '*Summary:* ' + slackSummary_(issue),
     '*Question:* ' + (question || '-'),
     '*Reply:* ' + (reply || '-'),
     '',
@@ -1673,7 +1694,7 @@ function sendRecheckSlack_(rec, appUrl) {
   var text = [
     ':alarm_clock: *Workaround needs a double-check*',
     '*Lesson:* ' + (rec.lesson || '-') + ' (' + (rec.lesson_code || '-') + ')',
-    '*Summary:* ' + (rec.summary || '-'),
+    '*Summary:* ' + slackSummary_(rec),
     '*Workaround given:* ' + (rec.resolution_note || '-'),
     '',
     (rec.instructor_name || 'Whoever logged this') + " couldn't check at the time: is this a one-off for that student, or a fault for everyone? " +
@@ -1683,6 +1704,114 @@ function sendRecheckSlack_(rec, appUrl) {
   UrlFetchApp.fetch(slackWebhook_(), {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     payload: JSON.stringify({ text: text })
+  });
+}
+
+// ---- Shared workaround watch ----------------------------------------------
+
+// Sort a workaround note into one of a handful of things we actually tell
+// students to try. Keyword matching rather than anything clever, because the
+// notes are written by hand and we only need them grouped, not understood.
+// Returns null when the note is something one-off (a wrong username, a payment
+// chased up), since those genuinely are individual and shouldn't be counted.
+// First match wins, so a note that mentions two things lands in the first
+// bucket. That is fine here: we are looking for a pattern, not an audit.
+// Checked against the 166 resolution notes on the sheet (4 Aug): it picks up
+// the 10 real workarounds and leaves the genuine fixes alone.
+function workaroundKind_(text) {
+  var t = String(text || '').toLowerCase();
+  if (!t) return null;
+  var kinds = [
+    ['incognito',        /incognito|private (window|browsing)|inprivate/],
+    ['a different browser', /(different|another|other|alternative) browser|(switch|swap|mov)(ed|ing)? (from [a-z ]{0,25})?to (google |mozilla |microsoft |apple )?(chrome|firefox|safari|edge)|(worked|works|logged in|got in|tried|opened) [a-z ]{0,15}?(in|on|with|using) (google |mozilla |microsoft |apple )?(chrome|firefox|safari|edge)|us(ed|ing) (google |mozilla |microsoft |apple )?(chrome|firefox|safari|edge) instead/],
+    ['clearing the cache', /clear(ed|ing)?( the)? (cache|cookies|browsing data)|hard refresh|ctrl ?\+ ?f5/],
+    ['turning off extensions', /extension|ad ?block|plug-?in blocking/],
+    ['a reinstall',      /re-?install|delete(d)? and (re-?)?install|uninstall/],
+    ['a different device', /(different|another|other) (device|computer|laptop|phone|tablet|ipad|machine)|tried it on (his|her|their) (phone|laptop|ipad|tablet)/],
+    ['a different network', /(mobile|cellular) data|different (network|wifi|wi-?fi)|off (the )?(work|office|school) (wifi|wi-?fi|network)|hotspot|vpn/],
+    ['logging out and back in', /log(ged|ging)? out and (back )?in|sign(ed|ing)? out and (back )?in|fresh login/]
+  ];
+  for (var i = 0; i < kinds.length; i++) {
+    if (kinds[i][1].test(t)) return kinds[i][0];
+  }
+  return null;
+}
+
+// Called whenever an issue lands at Resolved - TBC. If enough recent TBCs share
+// the same workaround, ping Slack once so somebody can look at the pattern
+// rather than at eight separate closed tickets. Never allowed to break a save,
+// so every caller wraps it in a try/catch and it swallows its own errors too.
+function checkSharedWorkaround_(rec, appUrl) {
+  var kind = workaroundKind_(rec && rec.resolution_note);
+  if (!kind) return { ok: true, kind: null };
+
+  var cutoff = Date.now() - SHARED_WORKAROUND_DAYS * 24 * 3600 * 1000;
+  var matches = [];
+  var seen = {};
+  ISSUE_SHEETS.forEach(function (name) {
+    var sheet = sheetByName_(name);
+    if (!sheet) return;
+    var values = sheet.getDataRange().getValues();
+    if (values.length < 2) return;
+    var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
+    for (var r = 1; r < values.length; r++) {
+      var row = values[r];
+      var id = row[idx['issue_id']];
+      if (!id || seen[id]) continue;
+      if (String(row[idx['status']]).toLowerCase() !== 'resolved_tbc') continue;
+      var when = new Date(row[idx['updated_at']] || row[idx['submitted_at']]);
+      if (isNaN(when.getTime()) || when.getTime() < cutoff) continue;
+      if (workaroundKind_(row[idx['resolution_note']]) !== kind) continue;
+      seen[id] = true;
+      matches.push({
+        issue_id: id,
+        lesson: row[idx['lesson']],
+        lesson_code: row[idx['lesson_code']],
+        summary: row[idx['summary']],
+        raw_text: row[idx['raw_text']],
+        instructor_name: row[idx['instructor_name']],
+        student_name: row[idx['student_name']]
+      });
+    }
+  });
+
+  if (matches.length < SHARED_WORKAROUND_MIN) return { ok: true, kind: kind, count: matches.length };
+
+  // Only shout once per workaround per window. Otherwise every close after the
+  // third one pings again and the channel learns to ignore it.
+  var props = PropertiesService.getScriptProperties();
+  var log = {};
+  try { log = JSON.parse(props.getProperty('SHARED_WORKAROUND_PINGED') || '{}'); } catch (e) { log = {}; }
+  var last = new Date(log[kind] || 0).getTime();
+  if (last && last >= cutoff) return { ok: true, kind: kind, count: matches.length, skipped: 'already flagged' };
+
+  try {
+    sendSharedWorkaroundSlack_(kind, matches, appUrl || getAppUrl_());
+    log[kind] = new Date().toISOString();
+    props.setProperty('SHARED_WORKAROUND_PINGED', JSON.stringify(log));
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+  return { ok: true, kind: kind, count: matches.length, flagged: true };
+}
+
+function sendSharedWorkaroundSlack_(kind, matches, appUrl) {
+  var lines = [
+    ':mag: *' + matches.length + ' issues this week all sorted by ' + kind + '*',
+    'Each one closed as Resolved - TBC on its own, so nothing looks wrong until you put them side by side. That many students needing the same workaround usually means the underlying fault is still there for everybody else.',
+    ''
+  ];
+  matches.slice(0, 6).forEach(function (m) {
+    var where = m.lesson_code ? ' (' + m.lesson_code + ')' : '';
+    lines.push('• ' + slackSummary_(m) + where + ' - logged by ' + (m.instructor_name || 'someone') +
+      ' - ' + issueLink_(m, appUrl));
+  });
+  if (matches.length > 6) lines.push('• plus ' + (matches.length - 6) + ' more');
+  lines.push('');
+  lines.push('Worth one of us reopening the clearest one and sending it to the developers, rather than waiting for the next report.');
+  UrlFetchApp.fetch(slackWebhook_(), {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    payload: JSON.stringify({ text: lines.join('\n') })
   });
 }
 
@@ -3579,7 +3708,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r32 · 2026-08-02';
+var CODE_STAMP = 'r34 · 2026-08-04';
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();
