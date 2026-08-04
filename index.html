@@ -172,6 +172,14 @@
   .row > * { flex: 1; }
 
   /* segmented control (category + admin area) */
+  .subtabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .subtabs button { background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 9px; padding: 7px 12px; font-size: 13px; text-align: left; max-width: 320px; }
+  .subtabs button .n { font-weight: 700; margin-right: 6px; }
+  .subtabs button.active { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
+  .subtabs button .tick { color: var(--low); margin-left: 6px; }
+  .subdisp { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 3px; margin-left: 4px; vertical-align: middle; }
+  .subdisp button { background: transparent; color: var(--muted); padding: 4px 9px; font-size: 12px; border-radius: 6px; }
+  .subdisp button.active { background: var(--surface-2); color: var(--text); }
   .seg { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
   .seg button { background: transparent; color: var(--muted); padding: 8px 14px; }
   .seg button.active { background: var(--surface-2); color: var(--text); }
@@ -552,8 +560,14 @@
       <div id="resolutionPanel" class="suggest hidden"></div>
       <div id="troubleshootPanel" class="tshoot hidden"></div>
 
+      <div id="subTabsWrap" class="hidden" style="margin-bottom:12px;">
+        <div class="small muted" id="subTabsIntro" style="margin-bottom:6px;"></div>
+        <div id="subTabs" class="subtabs"></div>
+        <div class="small muted" id="subTabsHint" style="margin-top:6px;"></div>
+      </div>
+
       <div id="detailsSection" class="hidden">
-      <h3>Extracted details</h3>
+      <h3 id="detailsHeading">Extracted details</h3>
 
       <!-- The four that everything downstream reads sit at the top, open. The
            rest keeps every field it always had, grouped into folds so the page
@@ -1216,7 +1230,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r34 · 2026-08-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r35 · 2026-08-04";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1347,9 +1361,12 @@ var state = {
   assignees: [],              // people an issue can be assigned to (name/email + course/dev flags)
   formMode: "student",        // "student" (support report) or "internal" (admin-only internal task/bug)
   noStudent: false,           // instructor confirmed there is no student for this issue, so no email is chased
-  subIssues: null,            // the ticked subset actually being logged: [{summary, issue_type}]
+  subIssues: null,            // the "split" subset actually being logged as their own issues
   subIssuesAll: null,         // every separate problem the AI found in one report
-  subKeep: null,              // per-problem tick state, same order as subIssuesAll
+  subDisp: null,              // per-problem disposition, same order as subIssuesAll: split | fold | drop
+  subFold: null,              // the "fold" subset: no issue of their own, summary rides on the first
+  subEdits: null,             // one editable copy of the per-issue fields per logged issue (the tabs)
+  subActive: 0,               // which of those tabs is on screen
   splitMode: false,           // instructor ticked "log these as separate issues"
   trackView: "list",          // Track tab: "list" or "board" (kanban)
   adminShown: 20,             // Track list: how many cards are visible (Show more raises it)
@@ -2970,64 +2987,200 @@ function skipSlideRef() {
 }
 
 // ---- one report, several problems: offer to log them separately ----
+// Each detected problem gets one of three dispositions (Edd, 2 Aug):
+//   split - log it as its own issue
+//   fold  - don't open an issue, but carry its summary onto the main one so
+//           the detail lives on a record rather than only in the pasted text
+//   drop  - not worth tracking at all (the parcel that has since turned up)
+// The main issue is the FIRST one marked split; folded summaries land on it.
+var SUB_DISP = [
+  { id: "split", label: "Separate" },
+  { id: "fold",  label: "Fold in" },
+  { id: "drop",  label: "Drop" }
+];
 function showSplitSuggestion(subIssues) {
   hideSplitSuggestion();
   if (!Array.isArray(subIssues) || subIssues.length < 2) return; // guard a malformed model value
   if (state.editingId || state.updateTargetId) return; // only for brand-new reports
   state.subIssuesAll = subIssues.slice();
-  state.subKeep = subIssues.map(function () { return true; });
+  // Default: everything gets its own issue, which is what a multi-topic thread
+  // usually wants. Anything else is a deliberate choice.
+  state.subDisp = subIssues.map(function () { return "split"; });
   state.subIssues = subIssues.slice();
-  // Default to splitting, with everything ticked: a multi-topic thread should
-  // fan out into separate issues unless the instructor says otherwise.
   state.splitMode = true;
   $("splitPanel").innerHTML =
     '<div class="h">This looks like ' + subIssues.length + ' separate issues</div>' +
-    '<div class="small" style="margin-bottom:6px;">Each would be fixed independently, so logging them apart keeps the trails clean. The same pasted text and screenshots go on every one, and each keeps its own category, lesson, priority, and resolution. Untick anything that does not need logging, like a delivery that has already turned up.</div>' +
-    subIssues.map(function (s, i) {
-      var resolved = s.resolution_status === 'resolved' || s.resolution_status === 'tbc';
-      return '<label style="display:block;margin:4px 0;font-size:13px;color:var(--text);">' +
-        '<input type="checkbox" checked data-sub="' + i + '" style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="onSubIssueToggle(' + i + ',this.checked);">' +
-        esc(summaryText(s)) +
-        (s.issue_type ? ' <span class="badge type-badge">' + esc(s.issue_type) + '</span>' : '') +
-        (resolved ? ' <span class="badge" style="background:var(--low);color:#fff;">' + (s.resolution_status === 'tbc' ? 'resolved - TBC' : 'resolved') + '</span>' : '') + '</label>';
-    }).join("") +
-    '<label style="display:block;margin-top:8px;font-size:13px;color:var(--text);">' +
+    '<div class="small" style="margin-bottom:8px;">Each would be fixed independently, so logging them apart keeps the trails clean. The same pasted text, screenshots and student details go on every one, and each keeps its own category, lesson, priority, and resolution. You get to check and edit every one before anything is saved.</div>' +
+    '<div class="small muted" style="margin-bottom:8px;"><b>Separate</b> opens its own issue. <b>Fold in</b> opens no issue but writes this line onto the first one, so it is still on the record. <b>Drop</b> logs nothing at all, for something that needs no follow-up, like a parcel that has since turned up.</div>' +
+    subIssues.map(function (sub, i) { return splitRowHtml(sub, i); }).join("") +
+    '<label style="display:block;margin-top:10px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="splitTick" checked style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="onSplitToggle(this.checked);">' +
       '<span id="splitTickLabel">Log these as ' + subIssues.length + ' separate issues when I submit</span></label>' +
-    '<div class="small hidden" id="splitNoneNote" style="margin-top:6px;color:var(--high);">Tick at least one to log, or untick the box above to log the whole report as a single issue.</div>' +
+    '<div class="small hidden" id="splitNoneNote" style="margin-top:6px;color:var(--high);">Mark at least one as Separate, or untick the box above to log the whole report as a single issue.</div>' +
     '<div class="row" style="margin-top:10px;">' +
       '<button class="primary" id="splitContinue" onclick="closeSplitModal()">Continue</button>' +
       '<button class="ghost" onclick="dismissSplit()">Dismiss</button></div>';
+  syncSubIssues();
   wizardShow("splitModal");
 }
-// Unticking a single problem drops it from the submit, so a bit of the report
-// that needs no follow-up (a parcel that has since arrived, say) does not open
-// an issue nobody will ever close.
-function onSubIssueToggle(i, on) {
-  if (!state.subKeep) return;
-  state.subKeep[i] = !!on;
+function splitRowHtml(sub, i) {
+  var resolved = sub.resolution_status === "resolved" || sub.resolution_status === "tbc";
+  var cur = (state.subDisp || [])[i] || "split";
+  return '<div class="exrow" data-sub="' + i + '" style="cursor:default;margin:6px 0;">' +
+    '<div style="font-size:13px;color:var(--text);">' + esc(summaryText(sub)) +
+      (sub.issue_type ? ' <span class="badge type-badge">' + esc(sub.issue_type) + '</span>' : '') +
+      (resolved ? ' <span class="badge" style="background:var(--low);color:#fff;">' + (sub.resolution_status === "tbc" ? "resolved - TBC" : "resolved") + '</span>' : '') +
+    '</div>' +
+    '<div class="subdisp" style="margin-top:6px;margin-left:0;">' +
+      SUB_DISP.map(function (d) {
+        return '<button type="button" class="' + (cur === d.id ? "active" : "") + '" ' +
+          'onclick="onSubDisp(' + i + ',\'' + d.id + '\')">' + d.label + '</button>';
+      }).join("") +
+    '</div></div>';
+}
+function onSubDisp(i, disp) {
+  if (!state.subDisp) return;
+  state.subDisp[i] = disp;
+  var row = document.querySelector('#splitPanel .exrow[data-sub="' + i + '"]');
+  if (row) {
+    var btns = row.querySelectorAll(".subdisp button");
+    Array.prototype.forEach.call(btns, function (b, n) {
+      b.classList.toggle("active", SUB_DISP[n].id === disp);
+    });
+  }
   syncSubIssues();
 }
-// state.subIssues is what actually gets logged, so keep it as the ticked
-// subset, in the order the AI found them.
+// state.subIssues is what actually gets logged, so keep it as the "split"
+// subset, in the order the AI found them. state.subFold is everything whose
+// summary rides along on the first of those.
 function syncSubIssues() {
   var all = state.subIssuesAll || [];
-  var keep = state.subKeep || [];
-  state.subIssues = all.filter(function (s, i) { return keep[i]; });
-  var n = state.subIssues.length;
+  var disp = state.subDisp || [];
+  state.subIssues = all.filter(function (s, i) { return (disp[i] || "split") === "split"; });
+  state.subFold = all.filter(function (s, i) { return disp[i] === "fold"; });
+  var n = state.subIssues.length, f = state.subFold.length;
   var lbl = $("splitTickLabel");
   if (lbl) {
     lbl.textContent = (n === all.length)
-      ? 'Log these as ' + all.length + ' separate issues when I submit'
-      : (n === 1
-        ? 'Log the ticked one as its own issue when I submit'
-        : 'Log the ' + n + ' ticked ones as separate issues when I submit');
+      ? "Log these as " + all.length + " separate issues when I submit"
+      : (n === 1 ? "Log 1 separate issue when I submit" : "Log " + n + " separate issues when I submit") +
+        (f ? ", with " + f + " folded in" : "");
   }
   var none = $("splitNoneNote");
   if (none) none.classList.toggle("hidden", !(state.splitMode && n === 0));
   var go = $("splitContinue");
   if (go) go.disabled = !!(state.splitMode && n === 0);
 }
+
+// ============================ SPLIT: REVIEW TABS ============================
+// Logging three issues off the back of one paste used to mean the instructor
+// only ever saw the fields of the FIRST one; the other two went in on the
+// strength of a one-line summary in the modal, and any edit made on the form
+// was quietly overwritten by the AI's own values for that sub (Edd, 2 Aug).
+// So each issue now gets a tab. The form shows one issue at a time, edits are
+// held per issue, and Submit saves the lot.
+
+// The fields that belong to ONE issue. Everything else on the form (student,
+// contact, device, platform, checklist, outcome, courier) is shared, so an
+// edit to those applies to every issue being logged.
+var SUB_FIELD_IDS = ["f_category", "f_summary", "f_priority", "f_priority_reason", "f_issue_type",
+                     "f_section", "f_course", "f_module", "f_lesson", "f_lesson_code",
+                     "f_media_kind", "f_impact"];
+
+// Build the editable copy of one detected problem, starting from what the AI
+// read and falling back to whatever the form already holds for the primary.
+function subEditFromEntry(sub, isPrimary) {
+  var e = { vals: {}, requestKind: sub.request_kind || (isPrimary ? state.requestKind : "fix"),
+            student_sorted: sub.student_sorted === true || sub.student_sorted === "true",
+            resolution_status: sub.resolution_status || "", resolution_note: sub.resolution_note || "",
+            resolved_at: sub.resolved_at || "" };
+  var from = {
+    f_category: (sub.category === "course_error" || sub.category === "tech_issue" || sub.category === "shipping") ? sub.category : null,
+    f_summary: sub.summary, f_priority: sub.priority ? String(sub.priority).toLowerCase() : null,
+    f_priority_reason: sub.priority_reason, f_issue_type: sub.issue_type,
+    f_section: sub.section, f_course: sub.course, f_module: sub.module,
+    f_lesson: sub.lesson, f_lesson_code: sub.lesson_code,
+    f_media_kind: sub.media_kind, f_impact: sub.impact
+  };
+  SUB_FIELD_IDS.forEach(function (id) {
+    e.vals[id] = (from[id] != null && from[id] !== "") ? String(from[id]) : (isPrimary ? getField(id) : "");
+  });
+  return e;
+}
+// Read the form back into the issue currently on screen.
+function captureActiveSub() {
+  var e = state.subEdits && state.subEdits[state.subActive];
+  if (!e) return;
+  SUB_FIELD_IDS.forEach(function (id) { e.vals[id] = getField(id); });
+  e.requestKind = state.requestKind;
+  e.student_sorted = $("f_student_sorted") ? $("f_student_sorted").checked : false;
+}
+// And put an issue on screen.
+function loadSubIntoForm(i) {
+  var e = state.subEdits && state.subEdits[i];
+  if (!e) return;
+  state.subActive = i;
+  setCategory(e.vals.f_category || state.category);
+  SUB_FIELD_IDS.forEach(function (id) { if (id !== "f_category") setField(id, e.vals[id] || ""); });
+  state.requestKind = e.requestKind === "improvement" ? "improvement" : "fix";
+  renderRequestKind();
+  if ($("f_student_sorted")) $("f_student_sorted").checked = !!e.student_sorted;
+  updateAdaptiveFields();
+  renderSubTabs();
+}
+function switchSubTab(i) {
+  if (i === state.subActive) return;
+  captureActiveSub();
+  loadSubIntoForm(i);
+  var w = $("subTabsWrap");
+  if (w) w.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function renderSubTabs() {
+  var wrap = $("subTabsWrap");
+  if (!wrap) return;
+  var edits = state.subEdits || [];
+  if (!isSplitting() || edits.length < 2) { wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  $("subTabsIntro").innerHTML = "Logging <b>" + edits.length + " separate issues</b> from this one report. " +
+    "Check each tab before submitting, they all save together." +
+    ((state.subFold || []).length ? " " + state.subFold.length + " more will be folded onto the first one." : "");
+  $("subTabs").innerHTML = edits.map(function (e, i) {
+    var t = (e.vals.f_summary || "(no summary yet)").replace(/\s+/g, " ").trim();
+    if (t.length > 46) t = t.slice(0, 46) + "…";
+    return '<button type="button" class="' + (i === state.subActive ? "active" : "") + '" onclick="switchSubTab(' + i + ')">' +
+      '<span class="n">' + (i + 1) + '</span>' + esc(t) +
+      (e.resolution_status === "resolved" || e.resolution_status === "tbc"
+        ? '<span class="tick"> · ' + (e.resolution_status === "tbc" ? "Resolved - TBC" : "Resolved") + '</span>' : "") +
+      '</button>';
+  }).join("");
+  var cur = edits[state.subActive] || {};
+  $("subTabsHint").textContent = "Editing issue " + (state.subActive + 1) + " of " + edits.length +
+    ". Student name, contact, device, screenshots, the checklist and the outcome box are shared across all of them." +
+    ((cur.resolution_status === "resolved" || cur.resolution_status === "tbc")
+      ? " This one saves as " + (cur.resolution_status === "tbc" ? "Resolved - TBC" : "Resolved") + "."
+      : "");
+  var h = $("detailsHeading");
+  if (h) h.textContent = "Extracted details - issue " + (state.subActive + 1) + " of " + edits.length;
+}
+// The lines the instructor chose to fold in: no issue of their own, but they
+// get written onto the first issue so they are on a record and searchable.
+function foldedNoteText() {
+  var f = state.subFold || [];
+  if (!f.length) return "";
+  return "\n\n--- Also raised in this thread, folded into this issue (no separate issue opened) ---\n" +
+    f.map(function (sub) { return "- " + summaryText(sub); }).join("\n");
+}
+function hideSubTabs() {
+  var w = $("subTabsWrap");
+  if (w) { w.classList.add("hidden"); $("subTabs").innerHTML = ""; }
+  var h = $("detailsHeading");
+  if (h) h.textContent = "Extracted details";
+  state.subEdits = null;
+  state._subEditKeys = null;
+  state.subActive = 0;
+  updateSubmitRow();
+}
+
 // Continue keeps whatever the tick says; the note under the extract button
 // carries the choice so it can't be forgotten by submit time.
 function closeSplitModal() {
@@ -3035,16 +3188,40 @@ function closeSplitModal() {
   var n = $("splitNote");
   var all = (state.subIssuesAll || []).length;
   var kept = (state.subIssues || []).length;
+  var folded = (state.subFold || []).length;
   if (n && all > 1) {
     n.innerHTML = ((!state.splitMode || !kept)
       ? 'Multi-issue split is OFF (logging as one)'
       : (kept === all
         ? 'Logging as ' + all + ' separate issues on submit'
-        : 'Logging ' + kept + ' of the ' + all + ' detected issues on submit')) +
+        : 'Logging ' + kept + ' separate issue' + (kept === 1 ? '' : 's') +
+          (folded ? ', ' + folded + ' folded in' : '') +
+          ', of the ' + all + ' detected')) +
       ' - <a href="#" onclick="wizardShow(\'splitModal\');return false;" style="color:var(--accent);">change</a>';
     n.classList.remove("hidden");
   }
+  buildSubEdits();
   wizardClosed();
+}
+// Each issue that is going to be logged gets its own editable copy of the
+// per-issue fields, and the first one goes on screen. Without this the form
+// only ever showed the primary problem and the rest went in unseen.
+function buildSubEdits() {
+  // Whatever is on screen belongs to the tab that was last open, so bank it
+  // before rebuilding: the modal can be reopened from the "change" link.
+  captureActiveSub();
+  if (!isSplitting()) { hideSubTabs(); return; }
+  var prevKeys = state._subEditKeys || [];
+  var prevEdits = state.subEdits || [];
+  var subs = state.subIssues || [];
+  state.subEdits = subs.map(function (sub, i) {
+    var k = prevKeys.indexOf(sub);
+    return (k > -1 && prevEdits[k]) ? prevEdits[k] : subEditFromEntry(sub, i === 0);
+  });
+  state._subEditKeys = subs.slice();
+  state.subActive = 0;
+  loadSubIntoForm(0);
+  updateSubmitRow();
 }
 // Splitting and "add as an update to an existing issue" are mutually exclusive:
 // one paste can't both fan out into new issues and fold into one old one. When
@@ -3102,8 +3279,10 @@ function hideSplitSuggestion() {
   $("splitPanel").innerHTML = "";
   state.subIssues = null;
   state.subIssuesAll = null;
-  state.subKeep = null;
+  state.subDisp = null;
+  state.subFold = null;
   state.splitMode = false;
+  hideSubTabs();
   var n = $("splitNote"); if (n) { n.classList.add("hidden"); n.innerHTML = ""; }
 }
 function findOpenIssuesByEmail(email) {
@@ -3433,6 +3612,10 @@ function loggingAsResolved() {
 // others go away rather than sitting there inviting the wrong press.
 function updateSubmitRow() {
   updateSortedRow();
+  var nSubs = (state.subEdits || []).length;
+  if ($("submitBtn") && !state.editingId && !state.updateTargetId) {
+    $("submitBtn").textContent = nSubs > 1 ? "Submit all " + nSubs + " issues" : "Submit issue";
+  }
   var resolved = loggingAsResolved();
   var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? "" : "none"; };
   show("submitBtn", !resolved);
@@ -3560,6 +3743,65 @@ function submitIssue() {
       else if (rfUp.tbc) wasResolvedUpdate = "tbc";
     }
     request = apiPost(data);
+  } else if (subIssues && state.subEdits && state.subEdits.length === subIssues.length) {
+    // Reviewed-tab path: everything on screen has been seen, so the edits win.
+    captureActiveSub();
+    var edits = state.subEdits.slice();
+    var foldNote = foldedNoteText();
+    request = edits.reduce(function (chain, e, idx) {
+      return chain.then(function (acc) {
+        if (acc.failed) return acc;
+        var d = collectForm();
+        d.image_urls = alreadyUploaded;
+        d.action = "addIssue"; d.app_url = APP_URL;
+        // Per-issue fields come from this tab, not from whatever tab happens to
+        // be on screen. Shared fields (student, device, platform, outcome) stay
+        // as collectForm read them.
+        if (e.vals.f_category) d.category = e.vals.f_category;
+        d.summary = e.vals.f_summary || d.summary;
+        d.priority = String(e.vals.f_priority || "").toLowerCase() || d.priority;
+        d.priority_reason = e.vals.f_priority_reason || "";
+        d.issue_type = e.vals.f_issue_type || d.issue_type;
+        d.section = e.vals.f_section || "";
+        d.course = e.vals.f_course || "";
+        d.module = e.vals.f_module || "";
+        d.lesson = e.vals.f_lesson || "";
+        d.lesson_code = e.vals.f_lesson_code || "";
+        d.request_kind = e.requestKind === "improvement" ? "improvement" : "fix";
+        d.student_sorted = !!e.student_sorted;
+        d.media_kind = (d.category === "course_error") ? (e.vals.f_media_kind || "") : "";
+        d.impact = e.requestKind === "improvement" ? (e.vals.f_impact || "") : "";
+        // These three only exist on a shipping issue and the tick only on a
+        // course error, so a tab of a different category must not inherit them
+        // from whichever tab happened to be on screen at submit time.
+        if (d.category === "shipping") {
+          d.courier = getField("f_courier"); d.tracking_number = getField("f_tracking_number"); d.chase_at = getField("f_chase_at");
+        } else { d.courier = ""; d.tracking_number = ""; d.chase_at = ""; }
+        if (d.category !== "course_error") d.double_checked = false;
+        if (checklistJson && (d.category === "tech_issue" || state.formMode === "internal")) d.checklist_json = checklistJson;
+        else d.checklist_json = "";
+        var rfSub = resolutionFields(e.resolution_status, e.resolution_note, e.resolved_at);
+        for (var ks in rfSub) d[ks] = rfSub[ks];
+        // Anything marked "fold in" rides on the first issue, so the detail is
+        // on a record somewhere rather than only in the pasted transcript.
+        if (idx === 0 && foldNote) d.raw_text = (d.raw_text || "") + foldNote;
+        return apiPost(d).then(function (r) {
+          if (!r || !r.ok) { acc.failed = r || { ok: false, error: "unknown" }; return acc; }
+          acc.ok.push(r); return acc;
+        });
+      });
+    }, Promise.resolve({ ok: [], failed: null })).then(function (acc) {
+      if (acc.failed) {
+        // Keep only the not-yet-saved ones so a resubmit continues from here.
+        state.subEdits = edits.slice(acc.ok.length);
+        state.subIssues = subIssues.slice(acc.ok.length);
+        state.subActive = 0;
+        if (state.subEdits.length) loadSubIntoForm(0);
+        return { ok: false, error: (acc.failed.error || "save failed") +
+          " (saved " + acc.ok.length + " of " + edits.length + " - press Submit again to finish the rest)" };
+      }
+      return { ok: true, split: acc.ok.length, issue_ids: acc.ok.map(function (r) { return r.issue && r.issue.issue_id; }) };
+    });
   } else if (subIssues) {
     // One report, several problems: log one issue per problem, sharing the
     // pasted text and screenshots, each with its own category, lesson, priority,
@@ -3606,7 +3848,7 @@ function submitIssue() {
         // Keep only the not-yet-saved subs so a resubmit continues from here.
         state.subIssues = subIssues.slice(acc.ok.length);
         state.subIssuesAll = state.subIssues.slice();
-        state.subKeep = state.subIssues.map(function () { return true; });
+        state.subDisp = state.subIssues.map(function () { return "split"; });
         return { ok: false, error: (acc.failed.error || "save failed") +
           " (saved " + acc.ok.length + " of " + subIssues.length + " - press Submit again to finish the rest)" };
       }
