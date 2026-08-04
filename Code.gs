@@ -166,25 +166,33 @@ var HEADERS = [
 // can end up done (tried), na (not relevant, e.g. an app-only step on a browser
 // issue), or todo (relevant but not yet done). The AI pre-fills these from the
 // conversation; a person can adjust any of them. Order here is the order shown.
+// staff: does the step still apply when one of us hits a fault on our own
+// systems, with no student anywhere? A hard refresh does; checking a student's
+// email spelling does not. staffLabel rewords the survivors that are phrased at
+// a student. Keep this list in step with CHECKLIST in index.html.
 var CHECKLIST_ITEMS = [
-  { id: 'confirm_error',          group: 'Identify and record', scope: 'both',    label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)" },
-  { id: 'noted_device',           group: 'Identify and record', scope: 'both',    label: 'Noted device make, model, OS version, and browser or app' },
-  { id: 'replicated',             group: 'Identify and record', scope: 'both',    label: 'Tried the same course, lesson and portal yourself, on your own account and device' },
+  { id: 'confirm_error',          group: 'Identify and record', scope: 'both',    label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)", staff: true, staffLabel: "Confirmed exactly what's failing and what you're seeing (screenshot if useful)" },
+  { id: 'noted_device',           group: 'Identify and record', scope: 'both',    label: 'Noted device make, model, OS version, and browser or app', staff: true, staffLabel: 'Noted which browser, device and OS version you were on' },
+  { id: 'replicated',             group: 'Identify and record', scope: 'both',    label: 'Tried the same course, lesson and portal yourself, on your own account and device', staff: true, staffLabel: "Asked someone else on the team to try the same thing, to see if it's just you" },
   { id: 'right_place',            group: 'Account and login',   scope: 'both',    label: 'Logging in via the right place (correct partner portal vs ardent-training.com)' },
   { id: 'email_correct',          group: 'Account and login',   scope: 'both',    label: "Email spelled correctly, and it's the one they registered with" },
   { id: 'password_reset',         group: 'Account and login',   scope: 'both',    label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' },
   { id: 'social_signin_password', group: 'Account and login',   scope: 'app',     label: 'Social sign-in: created a password via "organisation -> forgot password"' },
-  { id: 'refreshed',              group: 'Standard fixes',      scope: 'browser', label: 'Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)' },
-  { id: 'logout_login',           group: 'Standard fixes',      scope: 'both',    label: 'Logged out and back in' },
-  { id: 'restart_device',         group: 'Standard fixes',      scope: 'both',    label: 'Restarted the device (or closed and reopened the app/browser)' },
-  { id: 'clear_cache',            group: 'Standard fixes',      scope: 'browser', label: 'Cleared cache / tried an incognito or private window' },
+  { id: 'refreshed',              group: 'Standard fixes',      scope: 'browser', label: 'Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)', staff: true },
+  { id: 'logout_login',           group: 'Standard fixes',      scope: 'both',    label: 'Logged out and back in', staff: true },
+  { id: 'restart_device',         group: 'Standard fixes',      scope: 'both',    label: 'Restarted the device (or closed and reopened the app/browser)', staff: true },
+  { id: 'clear_cache',            group: 'Standard fixes',      scope: 'browser', label: 'Cleared cache / tried an incognito or private window', staff: true },
   { id: 'app_updated',            group: 'Standard fixes',      scope: 'app',     label: 'Checked the app is up to date' },
-  { id: 'different_browser',      group: 'Standard fixes',      scope: 'browser', label: 'Tried a different browser' },
-  { id: 'different_device',       group: 'Standard fixes',      scope: 'both',    label: 'Tried a different device' },
-  { id: 'different_network',      group: 'Standard fixes',      scope: 'both',    label: 'Tried a different network (mobile data, hotspot, or another wifi)' },
-  { id: 'vpn_adblock',            group: 'Standard fixes',      scope: 'both',    label: 'Turned off any VPN, ad blocker, or content/parental filter' },
+  { id: 'different_browser',      group: 'Standard fixes',      scope: 'browser', label: 'Tried a different browser', staff: true },
+  { id: 'different_device',       group: 'Standard fixes',      scope: 'both',    label: 'Tried a different device', staff: true },
+  { id: 'different_network',      group: 'Standard fixes',      scope: 'both',    label: 'Tried a different network (mobile data, hotspot, or another wifi)', staff: true },
+  { id: 'vpn_adblock',            group: 'Standard fixes',      scope: 'both',    label: 'Turned off any VPN, ad blocker, or content/parental filter', staff: true },
   { id: 'storage_space',          group: 'Standard fixes',      scope: 'app',     label: "Checked there's free storage on the device (download/save problems)" }
 ];
+function checklistItemsFor_(staff) {
+  return staff ? CHECKLIST_ITEMS.filter(function (it) { return it.staff; }) : CHECKLIST_ITEMS;
+}
+function checklistLabel_(it, staff) { return (staff && it.staffLabel) ? it.staffLabel : it.label; }
 
 var INSTRUCTORS = [
   { name: 'Edd', email: 'ehewett@ardent-training.com' },
@@ -3075,6 +3083,11 @@ var DEFAULT_PLAYBOOK = [
   '- Tell the student it is with our developers, apologise properly, and let them know we will come back to them.',
   '- Snooze the Chatwoot conversation for 2 days with a private note holding the summary, so somebody sends them an update rather than leaving them wondering.',
   '',
+  'OUR OWN SYSTEMS (the instructor portal, internal tools), where the person hitting it is one of us and there is no student:',
+  '- The standard fixes still apply to you. Hard refresh, an incognito window or another browser, log out and back in, another device, another network. Staff hit stale caches and bad extensions like anybody else.',
+  '- Get a colleague to load the same thing. If it fails for them too it is server-side and the developers need it now; if it is only you, it is your session, cache, or extensions, and that is worth knowing before anyone goes looking.',
+  '- A 500 or another server error is ours, not yours, so log it either way. Note the exact time, what you were doing, and whether a hard refresh cleared it, because that is what narrows it down.',
+  '',
   'STRAIGHT TO A BOSS, DO NOT WORK THE LIST FIRST:',
   '- A 404 "page not found" on a lesson. Edd or Stu need to know immediately; Edd is happy to be WhatsApped about this one even on his days off.',
   '- Anything that looks like it is hitting every student rather than one (a page, video host, or the site itself down or erroring for everyone). User-side steps cannot fix a server that is down.'
@@ -3084,11 +3097,17 @@ var DEFAULT_PLAYBOOK = [
 // and suggest the next steps from the playbook (pointing out anything missed).
 function troubleshoot_(data) {
   var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
-  if (!apiKey) return fallbackSteps_();
+  if (!apiKey) return fallbackSteps_(data && (data.staff === true || data.staff === 'true'));
   var raw = data.raw_text || '';
   if (!raw) return { ok: true, found: false };
+  // Our own systems (an internal task, or anything on the instructor portal)
+  // have no student on the other end, so the steps are addressed to whoever is
+  // sitting there and the student-account ones drop out.
+  var staff = (data.staff === true || data.staff === 'true');
 
-  var prompt = 'You are helping an Ardent Training instructor troubleshoot a student tech issue. ' +
+  var prompt = (staff
+    ? 'You are helping an Ardent Training staff member troubleshoot a fault they have hit on one of OUR OWN systems (the instructor portal, or an internal task). There is NO student involved: the person reporting it is the person sitting in front of it. Address every step to them directly ("try a hard refresh", "ask someone else on the team to load it"), never "get the student to". Skip anything about a student\'s account, their email address, their password, or a partner portal login, because none of it applies. Everything else still counts: staff hit stale caches, bad extensions and flaky networks like anyone else, and knowing whether a hard refresh or another browser clears it tells the developers whether it is everyone or one session. '
+    : 'You are helping an Ardent Training instructor troubleshoot a student tech issue. ') +
     'Below is the troubleshooting playbook, then the conversation or notes the instructor pasted. ' +
     'Work out what has ALREADY been tried in the conversation, then list the NEXT things the instructor should get the student to try, in the playbook order, skipping anything already done. ' +
     'Only count a step as already tried if it is EXPLICITLY described in the conversation or history. Do not assume or infer that a step was tried. In particular, the app working on another device (such as their phone) does NOT mean a different network was tried, so never list "a different network" as already tried unless the student actually says they tried one. ' +
@@ -3103,7 +3122,7 @@ function troubleshoot_(data) {
     'Keep each suggestion short and practical, addressed to the instructor. Do not mention filling out any external form.\n\n' +
     'PLAYBOOK:\n' + getPlaybook_() + '\n\n' +
     'CHECKLIST ITEMS (the team ticks these off before an issue reaches the developers). For each one, decide its state from the conversation:\n' +
-    checklistItemsForPrompt_() + '\n' +
+    checklistItemsForPrompt_(staff) + '\n' +
     'State rules: "done" only if the conversation EXPLICITLY says that step was tried (same strict rule as the steps above; the same network caveat applies). ' +
     '"na" if the step is not relevant to THIS issue, for example app-only steps (app up to date, social sign-in password, free storage) on a browser/web issue, browser-only steps (cleared cache/incognito, a different browser) on a mobile-app issue, the login/account steps when it is not a login problem, or free storage when it is not a download/save problem. ' +
     'Universal steps are NEVER "na": restarting the device, logging out and back in, trying a different device, and trying a different network apply to every platform and every kind of issue, so they can only be "done" or "todo". ' +
@@ -3121,19 +3140,19 @@ function troubleshoot_(data) {
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
     });
-  } catch (e) { return fallbackSteps_(); }
-  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return fallbackSteps_();
+  } catch (e) { return fallbackSteps_(staff); }
+  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return fallbackSteps_(staff);
 
-  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return fallbackSteps_(); }
+  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return fallbackSteps_(staff); }
   var text = '';
   if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
     if (parsed.content[i].type === 'text') text += parsed.content[i].text;
   }
   text = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  var out; try { out = JSON.parse(text); } catch (e) { return fallbackSteps_(); }
-  var checklist = normaliseChecklist_(out.checklist);
-  var steps = (out && out.found && out.steps && out.steps.length) ? out.steps : stepsFromChecklist_(checklist);
-  if (!steps.length) return { ok: true, found: true, steps: FALLBACK_STEPS, note: '', escalate: false, checklist: checklist };
+  var out; try { out = JSON.parse(text); } catch (e) { return fallbackSteps_(staff); }
+  var checklist = normaliseChecklist_(out.checklist, staff);
+  var steps = (out && out.found && out.steps && out.steps.length) ? out.steps : stepsFromChecklist_(checklist, staff);
+  if (!steps.length) return { ok: true, found: true, steps: (staff ? FALLBACK_STEPS_STAFF : FALLBACK_STEPS), note: '', escalate: false, checklist: checklist };
   return { ok: true, found: true, steps: steps, escalate: !!(out && out.escalate), note: (out && out.note) || '', checklist: checklist };
 }
 
@@ -3155,38 +3174,49 @@ var FALLBACK_STEPS = [
   'Get them to log out and back in.',
   'Try an incognito or private window, or a different browser, and see whether that gets them going.'
 ];
-function fallbackSteps_() {
-  return { ok: true, found: true, steps: FALLBACK_STEPS, escalate: false,
+// The same idea for one of us hitting a fault on our own systems. Edd's point
+// (4 Aug): staff need reminding of the simple fixes too, and a hard refresh on
+// a 500 at least tells the developers whether it is everyone or just a stale
+// session. What changes is who the steps are addressed to, not whether we give
+// any.
+var FALLBACK_STEPS_STAFF = [
+  'Refresh the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a Mac).',
+  'Try it in an incognito or private window, or a different browser, to rule out your cache and extensions.',
+  'Log out and back in.',
+  'Ask someone else on the team to load the same thing, so we know whether it is everyone or just you.'
+];
+function fallbackSteps_(staff) {
+  return { ok: true, found: true, steps: staff ? FALLBACK_STEPS_STAFF : FALLBACK_STEPS, escalate: false,
            note: 'Standard first steps. Work through the rest of the playbook from here if these do not do it.',
            checklist: {} };
 }
 
-function stepsFromChecklist_(checklist) {
+function stepsFromChecklist_(checklist, staff) {
   if (!checklist) return [];
   var out = [];
-  CHECKLIST_ITEMS.forEach(function (it) {
+  checklistItemsFor_(staff).forEach(function (it) {
     if (out.length >= 4) return;
-    if (checklist[it.id] === 'todo') out.push(it.label);
+    if (checklist[it.id] === 'todo') out.push(checklistLabel_(it, staff));
   });
   return out;
 }
 
 // A compact, numbered list of the checklist items for the AI prompt, with a
 // scope hint so it can mark app/browser-only steps "na" on the wrong platform.
-function checklistItemsForPrompt_() {
-  return CHECKLIST_ITEMS.map(function (it) {
+function checklistItemsForPrompt_(staff) {
+  return checklistItemsFor_(staff).map(function (it) {
     var scope = it.scope === 'app' ? ' [app only]' : it.scope === 'browser' ? ' [browser/web only]' : '';
-    return '- ' + it.id + ': ' + it.label + scope;
+    return '- ' + it.id + ': ' + checklistLabel_(it, staff) + scope;
   }).join('\n');
 }
 
 // Keep only known item ids and valid states, so a wobbly AI reply cannot put
 // junk in the checklist. Anything missing or odd is left out (the front-end
 // treats a missing item as "todo").
-function normaliseChecklist_(obj) {
+function normaliseChecklist_(obj, staff) {
   var clean = {};
   if (!obj || typeof obj !== 'object') return clean;
-  CHECKLIST_ITEMS.forEach(function (it) {
+  checklistItemsFor_(staff).forEach(function (it) {
     var v = String(obj[it.id] || '').toLowerCase();
     if (v === 'done' || v === 'na' || v === 'todo') clean[it.id] = v;
   });
@@ -3708,7 +3738,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r34 · 2026-08-04';
+var CODE_STAMP = 'r37 · 2026-08-04';
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();

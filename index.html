@@ -1236,7 +1236,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r36 · 2026-08-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r37 · 2026-08-04";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1399,35 +1399,46 @@ var COURIERS = ["DHL", "Royal Mail", "Parcelforce", "UPS", "FedEx", "DPD", "Evri
 
 // The pre-developer troubleshooting checklist for tech issues. Order and ids
 // must match CHECKLIST_ITEMS in the Apps Script so the AI pre-fill lines up.
+// staff: does this step still make sense when the person hitting the fault is
+// one of us on our own systems, with no student involved? A hard refresh does;
+// checking a student's spelling of their email does not. staffLabel rewords the
+// ones that survive but are phrased at a student (Edd, 4 Aug: "staff also need
+// reminding of simple fixes sometimes").
 var CHECKLIST = [
-  { id: "confirm_error",          group: "Identify and record", label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)" },
-  { id: "noted_device",           group: "Identify and record", label: "Noted device make, model, OS version, and browser or app" },
-  { id: "replicated",             group: "Identify and record", label: "Tried the same course, lesson and portal yourself, on your own account and device" },
+  { id: "confirm_error",          group: "Identify and record", label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)", staff: true, staffLabel: "Confirmed exactly what's failing and what you're seeing (screenshot if useful)" },
+  { id: "noted_device",           group: "Identify and record", label: "Noted device make, model, OS version, and browser or app", staff: true, staffLabel: "Noted which browser, device and OS version you were on" },
+  { id: "replicated",             group: "Identify and record", label: "Tried the same course, lesson and portal yourself, on your own account and device", staff: true, staffLabel: "Asked someone else on the team to try the same thing, to see if it's just you" },
   { id: "right_place",            group: "Account and login",   label: "Logging in via the right place (correct partner portal vs ardent-training.com)" },
   { id: "email_correct",          group: "Account and login",   label: "Email spelled correctly, and it's the one they registered with" },
   { id: "password_reset",         group: "Account and login",   label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' },
   { id: "social_signin_password", group: "Account and login",   label: 'Social sign-in: created a password via "organisation → forgot password"' },
-  { id: "refreshed",              group: "Standard fixes",      label: "Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)" },
-  { id: "logout_login",           group: "Standard fixes",      label: "Logged out and back in" },
-  { id: "restart_device",         group: "Standard fixes",      label: "Restarted the device (or closed and reopened the app/browser)" },
-  { id: "clear_cache",            group: "Standard fixes",      label: "Cleared cache / tried an incognito or private window" },
+  { id: "refreshed",              group: "Standard fixes",      label: "Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)", staff: true },
+  { id: "logout_login",           group: "Standard fixes",      label: "Logged out and back in", staff: true },
+  { id: "restart_device",         group: "Standard fixes",      label: "Restarted the device (or closed and reopened the app/browser)", staff: true },
+  { id: "clear_cache",            group: "Standard fixes",      label: "Cleared cache / tried an incognito or private window", staff: true },
   { id: "app_updated",            group: "Standard fixes",      label: "Checked the app is up to date" },
-  { id: "different_browser",      group: "Standard fixes",      label: "Tried a different browser" },
-  { id: "different_device",       group: "Standard fixes",      label: "Tried a different device" },
-  { id: "different_network",      group: "Standard fixes",      label: "Tried a different network (mobile data, hotspot, or another wifi)" },
-  { id: "vpn_adblock",            group: "Standard fixes",      label: "Turned off any VPN, ad blocker, or content/parental filter" },
+  { id: "different_browser",      group: "Standard fixes",      label: "Tried a different browser", staff: true },
+  { id: "different_device",       group: "Standard fixes",      label: "Tried a different device", staff: true },
+  { id: "different_network",      group: "Standard fixes",      label: "Tried a different network (mobile data, hotspot, or another wifi)", staff: true },
+  { id: "vpn_adblock",            group: "Standard fixes",      label: "Turned off any VPN, ad blocker, or content/parental filter", staff: true },
   { id: "storage_space",          group: "Standard fixes",      label: "Checked there's free storage on the device (download/save problems)" }
 ];
+// The list that applies to this report, and the wording that suits it.
+function checklistFor(staff) {
+  return staff ? CHECKLIST.filter(function (it) { return it.staff; }) : CHECKLIST;
+}
+function checklistLabel(it, staff) { return (staff && it.staffLabel) ? it.staffLabel : it.label; }
 
 // Parse the saved checklist map off an issue row.
 function checklistMapOf(issue) {
   try { return issue && issue.checklist_json ? JSON.parse(issue.checklist_json) : {}; }
   catch (e) { return {}; }
 }
-// "9 of 15 cleared" style progress (done or na both count as cleared).
-function checklistCleared(map) {
+// "9 of 17 cleared" style progress (done or na both count as cleared), counted
+// over the list that actually applies rather than always all seventeen.
+function checklistCleared(map, staff) {
   var n = 0;
-  CHECKLIST.forEach(function (it) { var s = map[it.id]; if (s === "done" || s === "na") n++; });
+  checklistFor(staff).forEach(function (it) { var s = map[it.id]; if (s === "done" || s === "na") n++; });
   return n;
 }
 function clBtn(val, label, cur, handler, arg, itemId) {
@@ -1436,13 +1447,13 @@ function clBtn(val, label, cur, handler, arg, itemId) {
     handler + "('" + arg + "','" + itemId + "','" + val + "')\">" + label + "</button>";
 }
 // Build the grouped checklist body. handler(arg, itemId, val) is called on click.
-function checklistBody(map, handler, arg) {
+function checklistBody(map, handler, arg, staff) {
   var last = null, html = "";
-  CHECKLIST.forEach(function (it) {
+  checklistFor(staff).forEach(function (it) {
     if (it.group !== last) { html += '<div class="clGroup">' + esc(it.group) + "</div>"; last = it.group; }
     var cur = map[it.id] || "todo";
     html += '<div class="clRow ' + cur + '">' +
-      '<div class="clLabel">' + esc(it.label) + "</div>" +
+      '<div class="clLabel">' + esc(checklistLabel(it, staff)) + "</div>" +
       '<div class="clBtns">' +
         clBtn("done", "Tried", cur, handler, arg, it.id) +
         clBtn("na", "N/A", cur, handler, arg, it.id) +
@@ -1458,17 +1469,20 @@ function renderFormChecklist() {
   if (!panel) return;
   // Nothing to hand the developers if this is going in already answered, so
   // the pre-dev checklist is just noise on that path (Edd, FB-0137).
-  if (state.category !== "tech_issue" || state.requestKind === "improvement" || loggingAsResolved() ||
-      formIsOurOwnSystem()) {
+  if (state.category !== "tech_issue" || state.requestKind === "improvement" || loggingAsResolved()) {
     panel.classList.add("hidden"); panel.innerHTML = ""; return;
   }
+  var staff = formIsOurOwnSystem();
   var map = state.checklist || {};
-  var cleared = checklistCleared(map);
+  var items = checklistFor(staff);
+  var cleared = checklistCleared(map, staff);
   panel.innerHTML =
     '<div class="h">Before the developers: troubleshooting checklist</div>' +
-    '<div class="small muted" style="margin-bottom:2px;">Pre-filled from the conversation. Mark anything that does not apply as N/A. ' +
-      cleared + " of " + CHECKLIST.length + " cleared.</div>" +
-    checklistBody(map, "setFormChecklist", "");
+    '<div class="small muted" style="margin-bottom:2px;">' +
+      (staff ? "The account and student steps don't apply here, so this is the short list. Mark anything else that doesn't fit as N/A. "
+             : "Pre-filled from the conversation. Mark anything that does not apply as N/A. ") +
+      cleared + " of " + items.length + " cleared.</div>" +
+    checklistBody(map, "setFormChecklist", "", staff);
   panel.classList.remove("hidden");
 }
 function setFormChecklist(_arg, itemId, val) {
@@ -2311,7 +2325,6 @@ function onCategoryChange() {
 // steps through with, so the checklist and the things-to-try go away, and come
 // back if it turns out to be a student-facing part of the platform after all.
 function onSectionChange() {
-  if (formIsOurOwnSystem()) { hideTroubleshoot(); hideSuggestion(); }
   renderFormChecklist();
 }
 
@@ -2764,10 +2777,12 @@ function hideLoading() { $("loadingOverlay").classList.remove("show"); }
 function requestTroubleshoot(checklistOnly) {
   hideTroubleshoot();
   if (state.category !== "tech_issue") return;
-  if (formIsOurOwnSystem()) return;
   var raw = getField("rawText");
   if (!raw) return;
-  var payload = { action: "troubleshoot", raw_text: raw };
+  // On our own systems the steps are for whoever is sitting there, which is
+  // one of us, so the backend words them in the second person and skips the
+  // student-account ones.
+  var payload = { action: "troubleshoot", raw_text: raw, staff: formIsOurOwnSystem() };
   var target = (state.existingMatches || []).filter(function (m) { return m.issue_id === state.updateTargetId; })[0];
   if (target && target.raw_text) payload.existing_history = target.raw_text;
   showLoading("Checking what to try with the student…");
@@ -2779,7 +2794,7 @@ function requestTroubleshoot(checklistOnly) {
       renderFormChecklist();
     }
     if (!checklistOnly && res && res.ok && res.found && res.steps && res.steps.length) {
-      showTroubleshoot(res.steps, res.escalate, res.note);
+      showTroubleshoot(res.steps, res.escalate, res.note, payload.staff);
     }
   }).catch(function (e) { hideLoading(); console.error(e); });
 }
@@ -2924,7 +2939,6 @@ function afterExtractReady() {
   // those, without the popup, since the student has already gone.
   var chatResolved = state.resolution && state.resolution.status === "resolved";
   var workedAround = state.resolution && state.resolution.status === "tbc";
-  if (formIsOurOwnSystem()) { hideTroubleshoot(); hideSuggestion(); return; }
   if (state.requestKind !== "improvement" && !chatResolved) {
     if (!workedAround) requestSuggestion();
     requestTroubleshoot(workedAround);
@@ -3403,16 +3417,18 @@ function hideExisting() {
   state.existingMatches = null;
   state.updateTargetId = null;
 }
-function showTroubleshoot(steps, escalate, note) {
+function showTroubleshoot(steps, escalate, note, staff) {
   state.troubleshootSteps = steps;
   state.troubleshootAck = false;
   var inner =
     (escalate ? '<div class="small" style="color:var(--high);font-weight:600;margin-bottom:4px;">' + esc(note || "Escalate this to Edd or Stu now.") + '</div>' : '') +
-    '<div class="small" style="margin-bottom:6px;">Give these to the student one at a time, and confirm the result before moving on to the next. That way we know which step made the difference, which is what the developers need.</div>' +
+    '<div class="small" style="margin-bottom:6px;">' + (staff
+      ? "Worth a go before this reaches the developers. One at a time, checking after each, so we know which one made the difference."
+      : "Give these to the student one at a time, and confirm the result before moving on to the next. That way we know which step made the difference, which is what the developers need.") + '</div>' +
     '<ol>' + steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol>' +
     (note && !escalate ? '<div class="small muted" style="margin-top:6px;">' + esc(note) + '</div>' : '');
   // Inline reminder that stays on the form for reference.
-  $("troubleshootPanel").innerHTML = '<div class="h">Things to try with the student</div>' + inner +
+  $("troubleshootPanel").innerHTML = '<div class="h">' + (staff ? "Things to try yourself" : "Things to try with the student") + '</div>' + inner +
     '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="openTroubleshootModal()">Show again</button>';
   $("troubleshootPanel").classList.remove("hidden");
   // And the popup, which must be dismissed before the issue can be submitted.
@@ -3680,7 +3696,7 @@ function submitIssue() {
     toast("Add the student's email first."); showEmailModal(); return;
   }
   // Make the instructor see the "things to try" popup before they can submit.
-  if (!isInternal && state.troubleshootSteps && !state.troubleshootAck) { openTroubleshootModal(); return; }
+  if (state.troubleshootSteps && !state.troubleshootAck) { openTroubleshootModal(); return; }
   // An issue with no summary and no priority is how a failed extraction used to
   // get saved: the fields are revealed on failure so they can be filled in by
   // hand, and pressing Submit straight through saved a blank row that then read
@@ -3708,7 +3724,7 @@ function submitIssue() {
   var applyRes = state.resolution && state.resolution.apply;
   // The pre-dev checklist only applies to tech fixes, not improvements or
   // internal tasks.
-  var checklistJson = (!isInternal && !formIsOurOwnSystem() && state.category === "tech_issue" && state.requestKind !== "improvement")
+  var checklistJson = (state.category === "tech_issue" && state.requestKind !== "improvement")
     ? JSON.stringify(state.checklist || {}) : null;
   var updateTarget = state.updateTargetId;
   var outcomeText = String(getField("f_outcome") || "").trim();
@@ -4374,14 +4390,15 @@ function issueIsOurOwnSystem(issue) {
 // ---- pre-dev checklist inside a detail drawer (Track + Developers) ----
 function detailChecklistHtml(issue) {
   if (catOf(issue) !== "tech_issue") return "";
-  if (issueIsOurOwnSystem(issue)) return "";
+  var staff = issueIsOurOwnSystem(issue);
   var map = checklistMapOf(issue);
-  var cleared = checklistCleared(map);
+  var items = checklistFor(staff);
+  var cleared = checklistCleared(map, staff);
   return '<h3>Troubleshooting checklist</h3>' +
     '<div class="checklist" style="margin:0 0 12px;">' +
       '<div class="small muted" style="margin-bottom:2px;">What has been ruled out before this reaches the developers. ' +
-        cleared + " of " + CHECKLIST.length + " cleared.</div>" +
-      checklistBody(map, "setDetailChecklist", issue.issue_id) +
+        cleared + " of " + items.length + " cleared.</div>" +
+      checklistBody(map, "setDetailChecklist", issue.issue_id, staff) +
     "</div>";
 }
 // Toggle one checklist item from a detail drawer: update locally, re-render the
