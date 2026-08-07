@@ -3029,6 +3029,21 @@ function suggestFix_(data) {
   return { ok: true, found: true, fix: String(out.fix), based_on: String(out.based_on || '') };
 }
 
+// Pull a JSON object out of a model reply. Requiring the WHOLE reply to parse
+// meant one stray sentence of preamble, or a fence the regex did not match,
+// threw the lot away and dropped us into the fallback (Edd, FB-0150). Take the
+// outermost braces instead, which survives anything wrapped around them.
+function parseModelJson_(text) {
+  if (!text) return null;
+  var t = String(text).trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  try { return JSON.parse(t); } catch (e) {}
+  var a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a > -1 && b > a) {
+    try { return JSON.parse(t.slice(a, b + 1)); } catch (e2) {}
+  }
+  return null;
+}
+
 // The default tech troubleshooting playbook. The live one is stored as a script
 // property (PLAYBOOK_TEXT) so it can be edited from the Admin page and grow as
 // we learn from resolved issues; this constant is the fallback / starting point.
@@ -3133,26 +3148,42 @@ function troubleshoot_(data) {
     'Include every checklist item id in the checklist object. ' +
     'Set found false only if there is genuinely nothing useful to suggest. No prose, no markdown fences.';
 
-  var res;
-  try {
-    res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
-    });
-  } catch (e) { return fallbackSteps_(staff); }
-  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return fallbackSteps_(staff);
+  // Anything longer than a couple of thousand characters of transcript was
+  // silently failing and dropping into the generic fallback, which is how an
+  // instructor got told to log the student out when logging in was the problem
+  // (Edd, FB-0150; Charly, FB-0149). 2000 output tokens did not cover 17
+  // checklist entries plus the steps once the model started writing at length.
+  // Matched to what extract already uses, and the whole call retries once.
+  var attempt = function () {
+    var res;
+    try {
+      res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 8000, messages: [{ role: 'user', content: prompt }] })
+      });
+    } catch (e) { return { why: 'fetch failed: ' + e }; }
+    var code = res.getResponseCode();
+    if (code < 200 || code >= 300) return { why: 'api ' + code + ': ' + String(res.getContentText()).slice(0, 200) };
+    var parsed = parseModelJson_(res.getContentText());
+    if (!parsed) return { why: 'api reply was not JSON' };
+    var text = '';
+    if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
+      if (parsed.content[i].type === 'text') text += parsed.content[i].text;
+    }
+    var stop = parsed.stop_reason || '';
+    var obj = parseModelJson_(text);
+    if (!obj) return { why: 'model output unparseable (stop_reason ' + (stop || 'none') + ', ' + text.length + ' chars)' };
+    return { obj: obj, stop: stop };
+  };
 
-  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return fallbackSteps_(staff); }
-  var text = '';
-  if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
-    if (parsed.content[i].type === 'text') text += parsed.content[i].text;
-  }
-  text = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  var out; try { out = JSON.parse(text); } catch (e) { return fallbackSteps_(staff); }
+  var got = attempt();
+  if (!got.obj) got = attempt();          // one retry: most of these are transient
+  if (!got.obj) return fallbackSteps_(staff, got.why);
+  var out = got.obj;
   var checklist = normaliseChecklist_(out.checklist, staff);
   var steps = (out && out.found && out.steps && out.steps.length) ? out.steps : stepsFromChecklist_(checklist, staff);
-  if (!steps.length) return { ok: true, found: true, steps: (staff ? FALLBACK_STEPS_STAFF : FALLBACK_STEPS), note: '', escalate: false, checklist: checklist };
+  if (!steps.length) return fallbackSteps_(staff, 'the helper returned no steps');
   return { ok: true, found: true, steps: steps, escalate: !!(out && out.escalate), note: (out && out.note) || '', checklist: checklist };
 }
 
@@ -3185,9 +3216,16 @@ var FALLBACK_STEPS_STAFF = [
   'Log out and back in.',
   'Ask someone else on the team to load the same thing, so we know whether it is everyone or just you.'
 ];
-function fallbackSteps_(staff) {
-  return { ok: true, found: true, steps: staff ? FALLBACK_STEPS_STAFF : FALLBACK_STEPS, escalate: false,
-           note: 'Standard first steps. Work through the rest of the playbook from here if these do not do it.',
+// IMPORTANT: this is generic advice that has NOT read the conversation, so it
+// has to announce itself. Round 33 returned it looking exactly like a considered
+// answer, and the result was an instructor being told to log a student out when
+// not being able to log in was the whole problem, with everything already tried
+// sitting there in the transcript (Edd, FB-0150). Better a visible "I couldn't
+// read this one" than confident advice that contradicts the notes.
+function fallbackSteps_(staff, why) {
+  return { ok: true, found: true, degraded: true, reason: why || 'the helper did not answer',
+           steps: staff ? FALLBACK_STEPS_STAFF : FALLBACK_STEPS, escalate: false,
+           note: 'These are the standard first steps, NOT read off this conversation. Check them against what has already been tried before passing any on.',
            checklist: {} };
 }
 
@@ -3738,7 +3776,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r37 · 2026-08-04';
+var CODE_STAMP = 'r38 · 2026-08-06';
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();

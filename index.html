@@ -1092,6 +1092,15 @@
   </div>
 </div>
 
+<!-- SAME STUDENT, ALREADY HAS AN OPEN ISSUE. Inline it was being scrolled past
+     (Edd, FB-0152), and quietly attaching a report to the wrong issue is worse
+     than a click. The panel stays on the form afterwards as the reminder. -->
+<div class="modal-bg" id="existingModal">
+  <div class="modal" style="max-width:600px;">
+    <div id="existingModalBody" class="existing" style="margin:0;"></div>
+  </div>
+</div>
+
 <!-- CHATWOOT CONVERSATION PICKER -->
 <div class="modal-bg" id="cwModal">
   <div class="modal" style="max-width:620px;">
@@ -1236,7 +1245,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r37 · 2026-08-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r38 · 2026-08-06";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2794,7 +2803,7 @@ function requestTroubleshoot(checklistOnly) {
       renderFormChecklist();
     }
     if (!checklistOnly && res && res.ok && res.found && res.steps && res.steps.length) {
-      showTroubleshoot(res.steps, res.escalate, res.note, payload.staff);
+      showTroubleshoot(res.steps, res.escalate, res.note, payload.staff, res.degraded, res.reason);
     }
   }).catch(function (e) { hideLoading(); console.error(e); });
 }
@@ -3367,8 +3376,20 @@ function showExisting(matches) {
       '<button class="primary small" id="confirmSameBtn" onclick="confirmSameIssue()">Confirm same issue - add as update</button>' +
       '<button class="ghost small" id="newModeBtn" onclick="chooseExisting(null)">Log as a new issue instead</button>' +
     '</div>';
-  $("existingPanel").innerHTML = html;
+  $("existingPanel").innerHTML = html +
+    '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="openExistingModal()">Show again</button>';
   $("existingPanel").classList.remove("hidden");
+  // Same content in the popup, so the choice is made rather than scrolled past.
+  $("existingModalBody").innerHTML = html +
+    '<div class="row" style="margin-top:10px;"><button class="primary" onclick="closeExistingModal()">Continue</button></div>';
+  wizardShow("existingModal");
+}
+function openExistingModal() {
+  if (state.existingMatches && state.existingMatches.length) wizardShow("existingModal");
+}
+function closeExistingModal() {
+  $("existingModal").classList.remove("show");
+  wizardClosed();
 }
 // Explicit confirm (Edd, 24 Jul): locks the selected match in as the update
 // target and points at the submit button; the things-to-try suggestions run on
@@ -3378,17 +3399,19 @@ function confirmSameIssue() {
     state.updateTargetId = state.existingMatches[0].issue_id;
   }
   highlightChosen();
+  closeExistingModal();
   toast("Same issue confirmed - press Add update when the fields look right.");
 }
 function chooseExisting(id) {
   state.updateTargetId = id || null;
+  if (id === null) closeExistingModal();   // "log as new" is a decision, so let them get on
   // Picking an existing issue to update rules out splitting this same paste into
   // new issues, so clear the split so the two can't contradict each other.
   if (id && state.splitMode) hideSplitSuggestion();
   highlightChosen();
 }
 function highlightChosen() {
-  var rows = document.querySelectorAll('#existingPanel .exrow');
+  var rows = document.querySelectorAll('#existingPanel .exrow, #existingModalBody .exrow');
   Array.prototype.forEach.call(rows, function (r) {
     r.classList.toggle("sel", r.getAttribute("data-id") === state.updateTargetId);
   });
@@ -3406,29 +3429,40 @@ function recommendUpdateTarget(matches) {
     if (res && res.ok && res.match_id) {
       state.updateTargetId = res.match_id;
       highlightChosen();
-      var row = document.querySelector('#existingPanel .exrow[data-id="' + res.match_id + '"]');
-      if (row) { var t = row.querySelector(".recTag"); if (t) t.style.display = ""; }
+      var rows2 = document.querySelectorAll('#existingPanel .exrow[data-id="' + res.match_id + '"], #existingModalBody .exrow[data-id="' + res.match_id + '"]');
+      Array.prototype.forEach.call(rows2, function (row) { var t = row.querySelector(".recTag"); if (t) t.style.display = ""; });
     }
   }).catch(function (e) { console.error(e); });
 }
 function hideExisting() {
   $("existingPanel").classList.add("hidden");
   $("existingPanel").innerHTML = "";
+  if ($("existingModal")) $("existingModal").classList.remove("show");
+  if ($("existingModalBody")) $("existingModalBody").innerHTML = "";
   state.existingMatches = null;
   state.updateTargetId = null;
 }
-function showTroubleshoot(steps, escalate, note, staff) {
+function showTroubleshoot(steps, escalate, note, staff, degraded, reason) {
   state.troubleshootSteps = steps;
   state.troubleshootAck = false;
-  var inner =
+  // A fallback list has not read the conversation, so say so plainly rather
+  // than dressing it up as an answer (Edd, FB-0150).
+  var warn = degraded
+    ? '<div class="small" style="color:var(--high);font-weight:600;margin-bottom:6px;">' +
+        'Heads up: these are the standard first steps, not read off this conversation. ' +
+        'The helper could not read the transcript this time, so check them against what has already been tried before passing any on.' +
+        (reason ? '<div class="small muted" style="font-weight:400;margin-top:3px;">(' + esc(reason) + ')</div>' : '') +
+      '</div>'
+    : '';
+  var inner = warn +
     (escalate ? '<div class="small" style="color:var(--high);font-weight:600;margin-bottom:4px;">' + esc(note || "Escalate this to Edd or Stu now.") + '</div>' : '') +
-    '<div class="small" style="margin-bottom:6px;">' + (staff
+    (degraded ? '' : '<div class="small" style="margin-bottom:6px;">' + (staff
       ? "Worth a go before this reaches the developers. One at a time, checking after each, so we know which one made the difference."
-      : "Give these to the student one at a time, and confirm the result before moving on to the next. That way we know which step made the difference, which is what the developers need.") + '</div>' +
+      : "Give these to the student one at a time, and confirm the result before moving on to the next. That way we know which step made the difference, which is what the developers need.") + '</div>') +
     '<ol>' + steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol>' +
     (note && !escalate ? '<div class="small muted" style="margin-top:6px;">' + esc(note) + '</div>' : '');
   // Inline reminder that stays on the form for reference.
-  $("troubleshootPanel").innerHTML = '<div class="h">' + (staff ? "Things to try yourself" : "Things to try with the student") + '</div>' + inner +
+  $("troubleshootPanel").innerHTML = '<div class="h">' + (degraded ? "Standard first steps (not tailored)" : (staff ? "Things to try yourself" : "Things to try with the student")) + '</div>' + inner +
     '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="openTroubleshootModal()">Show again</button>';
   $("troubleshootPanel").classList.remove("hidden");
   // And the popup, which must be dismissed before the issue can be submitted.
