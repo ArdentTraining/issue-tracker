@@ -2265,12 +2265,29 @@ function scanChatwoot() {
   });
   SCAN_STATS.updatesConfirmed = updatesConfirmed.length;
 
+  // Auto-apply confirmed updates (Edd, FB-0155): both AIs agree this is news
+  // on a known open issue, so it lands on the issue itself rather than waiting
+  // in a review queue. Status never changes automatically - a "fixed" still
+  // surfaces in Actions for a human to verify and resolve. Anything that fails
+  // to apply stays 'suggested' so the old review path catches it.
+  var updApplied = 0;
   if (updatesConfirmed.length) {
     var ush = scanSheet_();
     var unow = new Date().toISOString();
+    var VLABEL = { fixed: 'Student says it now works', still_broken: 'Student says it is still happening', new_detail: 'New detail from the student' };
     updatesConfirmed.slice(0, SCAN_MAX_SUGGESTIONS).forEach(function (u) {
+      var applied = false;
+      try {
+        var vLabel = VLABEL[u.verdict] || 'Update from the student';
+        var r = addUpdate_({ issue_id: u.issue.issue_id, instructor_name: 'Overnight scan',
+          summary: vLabel + ': ' + u.summary,
+          raw_text: '[Overnight chat scan, Chatwoot conversation ' + u.id + ']\n' + vLabel + '.\n' + u.summary });
+        applied = !!(r && r.ok);
+      } catch (e) {}
+      if (applied) updApplied++;
       ush.appendRow([u.id, unow, 'high', u.summary, catOf_(u.issue), u.issue.lesson_code || '',
-                     u.name, u.contact, 'suggested', u.issue.issue_id, '', '', '', 'update', u.verdict]);
+                     u.name, u.contact, applied ? 'logged' : 'suggested', u.issue.issue_id,
+                     applied ? 'Overnight scan' : '', applied ? unow : '', '', 'update', u.verdict]);
     });
   }
 
@@ -2278,7 +2295,7 @@ function scanChatwoot() {
   prepared = newCandidates;
   if (!prepared.length) {
     props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now()));
-    if (updatesConfirmed.length) scanSlack_(0, updatesConfirmed.length);
+    if (updatesConfirmed.length) scanSlack_(0, updApplied, updatesConfirmed.length - updApplied);
     return;
   }
 
@@ -2340,15 +2357,47 @@ function scanChatwoot() {
   SCAN_STATS.confirmed = confirmed.length;
   SCAN_STATS.queued = fresh.length;
 
+  // Auto-log confirmed new issues (Edd, FB-0155): every one of these was
+  // reaching the queue and being logged by hand anyway, so log them now. The
+  // full transcript goes through the same extraction and addIssue path the
+  // form uses, which keeps the dedupe, the Slack ping on high priority, and
+  // the split-guard: a transcript the extraction reads as MORE than one issue
+  // stays 'suggested', because the split review (Round 35) is a human step.
+  var newLogged = 0;
   if (fresh.length) {
     var sh = scanSheet_();
     var now = new Date().toISOString();
     fresh.forEach(function (c) {
-      sh.appendRow([c.id, now, c.confidence, c.summary, c.category, c.lesson_code,
-                    c.name, c.contact, 'suggested', '', '', '', c.note, 'new', '']);
+      var row = [c.id, now, c.confidence, c.summary, c.category, c.lesson_code,
+                 c.name, c.contact, 'suggested', '', '', '', c.note, 'new', ''];
+      try {
+        if (Date.now() - started <= SCAN_BUDGET_MS) {
+          var imp = chatwootImport_({ conversation: c.id });
+          var transcript = (imp && imp.ok && imp.transcript) ? String(imp.transcript) : '';
+          if (transcript) {
+            var ex = extract_({ raw_text: transcript });
+            var f = ex && ex.ok ? ex.fields : null;
+            var list = f ? (f.issues && f.issues.length ? f.issues : [f]) : [];
+            if (list.length === 1) {
+              var one = list[0];
+              one.category = one.category || c.category;
+              one.lesson_code = one.lesson_code || c.lesson_code;
+              one.student_name = one.student_name || c.name;
+              one.student_contact = one.student_contact || c.contact;
+              one.summary = one.summary || c.summary;
+              one.raw_text = transcript;
+              one.instructor_name = 'Overnight scan';
+              var add = addIssue_(one);
+              var newId = add && add.ok ? ((add.issue && add.issue.issue_id) || add.issue_id || '') : '';
+              if (newId) { newLogged++; row[8] = 'logged'; row[9] = newId; row[10] = 'Overnight scan'; row[11] = now; }
+            }
+          }
+        }
+      } catch (e) {}
+      sh.appendRow(row);
     });
   }
-  if (fresh.length || updatesConfirmed.length) scanSlack_(fresh.length, updatesConfirmed.length);
+  if (fresh.length || updatesConfirmed.length) scanSlack_(newLogged, updApplied, (fresh.length - newLogged) + (updatesConfirmed.length - updApplied));
   props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now()));
   Logger.log('scanChatwoot: ' + prepared.length + ' read, ' + found.length + ' flagged, ' + confirmed.length + ' confirmed, ' + fresh.length + ' queued.');
 }
@@ -2367,17 +2416,20 @@ function runChatScan_(data) {
   return { ok: true, queued: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }).length, stats: SCAN_STATS };
 }
 
-// One Slack line covering both halves of the scan.
-function scanSlack_(newCount, updateCount) {
+// One Slack line covering both halves of the scan. Since FB-0155 the sure
+// ones are logged automatically, so the line says what was done and what is
+// still waiting, rather than "none of it logged".
+function scanSlack_(newLogged, updatesApplied, waiting) {
   var bits = [];
-  if (newCount) bits.push(newCount + ' possible new issue' + (newCount === 1 ? '' : 's'));
-  if (updateCount) bits.push(updateCount + ' update' + (updateCount === 1 ? '' : 's') + ' on open issues');
+  if (newLogged) bits.push(newLogged + ' new issue' + (newLogged === 1 ? '' : 's') + ' logged automatically');
+  if (updatesApplied) bits.push(updatesApplied + ' update' + (updatesApplied === 1 ? '' : 's') + ' added to open issues');
+  if (waiting) bits.push(waiting + ' left for a human eye');
   if (!bits.length) return;
   try {
     UrlFetchApp.fetch(slackWebhook_(), {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      payload: JSON.stringify({ text: ':mag: *Spotted in yesterday\'s chats:* ' + bits.join(' and ') +
-        ', none of it logged.\nReview in the tracker: ' + (getAppUrl_() || '') })
+      payload: JSON.stringify({ text: ':mag: *Spotted in yesterday\'s chats:* ' + bits.join(', ') +
+        '.\nReview in the tracker: ' + (getAppUrl_() || '') })
     });
   } catch (e) {}
 }
@@ -3776,7 +3828,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r38 · 2026-08-06';
+var CODE_STAMP = 'r39 · 2026-08-08';
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();

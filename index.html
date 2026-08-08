@@ -171,7 +171,9 @@
      a half-empty grid is worse than no grid (Edd, FB-0144). The form takes the
      width now, which the folded field groups and the split tabs all wanted
      anyway. Capped so the text inputs don't run the length of a wide monitor. */
-  .log-col { max-width: 1100px; }
+  /* Centred, and wider on big screens - the form hugged the left on a 2514px
+     monitor with a third of the screen empty (Edd, FB-0153). */
+  .log-col { max-width: 1500px; margin: 0 auto; }
   .log-col .field textarea, .log-col .field input[type="text"] { max-width: 100%; }
 
   .row { display: flex; gap: 10px; }
@@ -354,6 +356,12 @@
   .split-host.split-on > .list-col .badge { font-size: 10px; padding: 1px 6px; }
   .split-host.split-on > .split-dock { display: block !important; flex: 1; min-width: 0; position: sticky; top: 12px; }
   .split-dock .drawer { position: static; height: auto; max-height: 88vh; width: 100%; max-width: none; border: 1px solid var(--line); border-radius: 12px; }
+  /* Folded sections in the issue detail (Edd, FB-0156): the key facts stay on
+     top, the reference material tucks away until it's wanted. */
+  details.acc { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0 0 8px; background: var(--bg); }
+  details.acc > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); }
+  details.acc[open] > summary { margin-bottom: 6px; }
+  details.acc h3 { margin-top: 6px; }
   /* The list column is narrow when a detail is docked, so action rows stack
      instead of squeezing into three columns (Edd, 27 Jul). */
   .split-host.split-on .act-row { grid-template-columns: 1fr; gap: 6px; }
@@ -445,7 +453,9 @@
   .action-empty { color: var(--muted); font-size: 13px; margin: 4px 0 14px; }
   /* Cards (and their buttons) keep a sensible width instead of stretching
      across a full-width screen; buttons size to their label on any screen. */
-  #actionsList { max-width: 900px; }
+  /* Same treatment as the log form: centred, with more of a wide screen used
+     (Edd, FB-0154). */
+  #actionsList { max-width: 1300px; margin: 0 auto; }
   .action-card .row { flex-direction: row; flex-wrap: wrap; gap: 8px; }
   .action-card .row button { width: auto; align-self: flex-start; flex: 0 0 auto; }
   /* Opening an action docks the detail beside the list, same as Track. */
@@ -761,7 +771,7 @@
     <div class="list-col" id="actionsList"></div>
     <div class="split-dock" id="actionsDock" style="display:none;"></div>
   </div>
-  <div id="actionsScan" style="max-width:900px;margin-top:18px;"></div>
+  <div id="actionsScan" style="max-width:1300px;margin:18px auto 0;"></div>
 </div>
 
 <!-- ===================== ADMIN VIEW ===================== -->
@@ -993,7 +1003,7 @@
   <div id="usec_chatscan" class="hidden">
     <div class="card">
       <h2>Spotted in chat</h2>
-      <p class="small muted" style="margin-top:-6px;">Problems students mentioned in live chat that nobody logged. Found overnight, then re-checked by a second AI before anything appears here, so this list should be short and mostly right. Logging one pulls the conversation into the normal form.</p>
+      <p class="small muted" style="margin-top:-6px;">Problems students mentioned in live chat. Anything the overnight scan and its second-AI check both agreed on is now logged automatically (as "Overnight scan") and sits in Actions and Track like any other issue. What appears here is only what needs a human eye: the ones the scan couldn't log cleanly, or wasn't sure about. Logging one pulls the conversation into the normal form.</p>
       <div class="row" style="margin-bottom:10px;">
         <button class="ghost small" id="scanNowBtn" style="padding:5px 12px;" onclick="runChatScanNow()">Scan now</button>
         <button class="ghost small" style="padding:5px 12px;" onclick="renderChatScan()">Refresh</button>
@@ -1245,7 +1255,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r38 · 2026-08-06";  // bump this with each round, it lands on every feedback report
+var BUILD = "r39 · 2026-08-08";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4451,6 +4461,26 @@ function setDetailChecklist(issueId, itemId, val) {
 }
 
 // ============================ ADMIN: DETAIL DRAWER ============================
+// One plain sentence on what this issue is waiting for (Edd, FB-0156): the
+// same judgement the Actions tab makes, written out for the detail pane so
+// nobody has to reconstruct it from the status badge and the history.
+function nextActionFor(i) {
+  var s = String(i.status || "open").toLowerCase();
+  if (i.dev_query_at) return "Answer the question below - it is holding up the fix.";
+  if (catOf(i) === "shipping" && (s === "open" || s === "in_progress")) return "Chase the courier, then set the next reminder.";
+  if (s === "dev_fixed") return "Check the fix actually works, then resolve it and tell the students.";
+  if (s === "resolved_tbc") return isTrue(i.student_sorted)
+    ? "Waiting to see if it recurs. Nothing needed unless it comes back."
+    : "Check the workaround stuck with the student, then resolve.";
+  if (s === "with_dev") return "With the " + (catOf(i) === "course_error" ? "course team" : "developers") + ". Nothing needed from us right now.";
+  if (s === "parked") return "Parked. Reopen it if it happens again.";
+  if (s === "resolved" || s === "past") return String(i.notified_students) === "true"
+    ? "Done." : "Done - if students were affected, let them know.";
+  return catOf(i) === "course_error"
+    ? "Confirm the error, then pass it to the course team."
+    : "Work the checklist below, then pass it to the developers.";
+}
+
 function openDetail(issue) {
   state.detailId = issue.issue_id;
   state.detailKind = "admin";
@@ -4514,7 +4544,18 @@ function openDetail(issue) {
     (issue.summary ? '' : 'color:var(--muted);') + '">' +
     (issue.summary ? esc(issue.summary) : 'No summary was written for this one. The report itself is below.') + '</div>';
 
-  html += '<div class="kv">' +
+  // What someone needs off the bat: the latest news and what to do next
+  // (Edd, FB-0156). The reference material folds away below.
+  var topReps = parseReports(issue);
+  var lastRep = topReps.length ? topReps[topReps.length - 1] : null;
+  html += '<h3>Last update</h3><div class="small" style="margin-bottom:4px;">' +
+    (lastRep
+      ? esc(lastRep.summary || String(lastRep.raw_text || '').slice(0, 140) || 'Entry') +
+        ' <span class="muted">(' + esc(lastRep.instructor_name || '—') + (lastRep.date ? ' · ' + fmtDate(lastRep.date) : '') + ')</span>'
+      : '<span class="muted">Nothing since it was logged ' + fmtDate(issue.submitted_at) + '.</span>') + '</div>';
+  html += '<h3>Next action</h3><div class="small" style="margin-bottom:10px;">' + esc(nextActionFor(issue)) + '</div>';
+
+  html += '<details class="acc"><summary>Details</summary><div class="kv">' +
     kv("Submitted by", issue.instructor_name) +
     kv("Logged", fmtDate(issue.submitted_at)) +
     kv("Assigned to", issue.assignee) +
@@ -4533,13 +4574,15 @@ function openDetail(issue) {
     kv("Affects", audienceOf(issue) === "internal" ? "Us (internal)" : "Students") +
     (audienceOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "—") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
     kv("Priority reason", issue.priority_reason) +
-  '</div>';
+  '</div></details>';
 
   // Handoff section: developers for tech issues, the course team for course errors.
+  // Folded unless something in it needs an answer (a fixed claim or a question).
   if (catOf(issue) === "tech_issue" || catOf(issue) === "course_error") {
     var isCourseIssue = catOf(issue) === "course_error";
     var whoTeam = isCourseIssue ? "course team" : "developers";
-    html += '<h3>' + (isCourseIssue ? "Course fixes" : "Developers") + '</h3>';
+    var devActionable = !!(issue.dev_query_at || String(issue.status || "").toLowerCase() === "dev_fixed");
+    html += '<details class="acc"' + (devActionable ? ' open' : '') + '><summary>' + (isCourseIssue ? "Course fixes" : "Developers") + '</summary>';
     if (!issue.dev_passed_at) {
       html += '<div class="small muted" style="margin-bottom:6px;">Not passed to the ' + whoTeam + ' yet.</div>' +
         ((state.perms && state.perms.users) ? '<button class="ghost small" style="padding:5px 12px;" onclick="adminPassToDev(\'' + esc(issue.issue_id) + '\')">Pass to ' + whoTeam + '</button>' : '');
@@ -4587,10 +4630,12 @@ function openDetail(issue) {
         '<div class="field"><textarea id="d_ask_logger" rows="2" placeholder="Ask ' + esc(issue.instructor_name) + ' for more detail on this report..."></textarea></div>' +
         '<button class="ghost small" style="margin-bottom:10px;padding:4px 10px;" onclick="askLoggerFromTrack(\'' + esc(issue.issue_id) + '\')">Ask ' + esc(issue.instructor_name) + '</button>';
     }
+    html += '</details>';
   }
 
-  // Pre-dev troubleshooting checklist (tech issues only).
-  html += detailChecklistHtml(issue);
+  // Pre-dev troubleshooting checklist (tech issues only), folded away.
+  var ckHtml = detailChecklistHtml(issue).replace('<h3>Troubleshooting checklist</h3>', '');
+  if (ckHtml) html += '<details class="acc"><summary>Troubleshooting checklist</summary>' + ckHtml + '</details>';
 
   var reps = parseReports(issue);
 
@@ -4600,9 +4645,9 @@ function openDetail(issue) {
     if (reps[ri].recommended_steps && reps[ri].recommended_steps.length) { recSteps = reps[ri].recommended_steps; break; }
   }
   if (recSteps && recSteps.length) {
-    html += '<h3>Steps suggested at submission</h3>' +
-      '<div class="tshoot" style="margin:0 0 12px;"><ol>' +
-      recSteps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol></div>';
+    html += '<details class="acc"><summary>Steps suggested at submission</summary>' +
+      '<div class="tshoot" style="margin:0 0 4px;"><ol>' +
+      recSteps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol></div></details>';
   }
 
   sideCol += '<h3>Post an update</h3>' +
@@ -4644,7 +4689,7 @@ function openDetail(issue) {
 
   // Full reports/updates text and screenshots, kept at the bottom for reference.
   if (reps.length) {
-    html += '<h3>Reports &amp; updates (' + reps.length + ')</h3>';
+    html += '<details class="acc"><summary>Reports &amp; updates (' + reps.length + ')</summary>';
     reps.forEach(function (rp, i) {
       var kindLabel = { update: "Update", question: "Question", answer: "Reply" }[rp.kind] || "Report";
       var meta = kindLabel +
@@ -4657,8 +4702,9 @@ function openDetail(issue) {
         '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px;">' + esc(rp.raw_text || rp.summary || "") + '</div>' +
       '</details>';
     });
+    html += '</details>';
   } else if (issue.raw_text) {
-    html += '<h3>Report</h3><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' + esc(issue.raw_text) + '</div>';
+    html += '<details class="acc"><summary>Report</summary><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' + esc(issue.raw_text) + '</div></details>';
   }
   html += '<div class="row" style="margin:4px 0 10px;">' +
     (reportCount(issue) > 1 ? '<button class="ghost small" onclick="splitIssueAction(\'' + esc(issue.issue_id) + '\')">Split apart</button>' : '') +
@@ -4666,9 +4712,9 @@ function openDetail(issue) {
   '</div>' +
   '<div id="linkPicker" class="hidden" style="margin-bottom:10px;"></div>';
   if (images.length) {
-    html += '<h3>Screenshots</h3><div class="thumbs">' + images.map(function (u) {
+    html += '<details class="acc"><summary>Screenshots (' + images.length + ')</summary><div class="thumbs">' + images.map(function (u) {
       return '<a class="thumb" href="' + esc(driveOpen(u)) + '" target="_blank"><img src="' + esc(driveImg(u, 600)) + '" /></a>';
-    }).join("") + '</div>';
+    }).join("") + '</div></details>';
   }
 
   sideCol += '<div class="row" style="margin-top:10px;">' +
@@ -5711,7 +5757,7 @@ function renderChatScan(targetId) {
 
     var html = "";
     if (inActions) html += '<h3 style="margin-top:0;">Spotted in the live chats</h3>' +
-      '<p class="small muted" style="margin-top:-6px;">Found overnight and checked by a second AI. Nobody logged these.</p>';
+      '<p class="small muted" style="margin-top:-6px;">Found overnight. The sure ones are already logged automatically - these are the ones that need a human eye.</p>';
     html += '<h3>Updates on open issues</h3>';
     html += ups.length ? ups.map(function (r) {
       var v = VERDICT[String(r.verdict || "")] || { label: String(r.verdict || "update"), colour: "var(--muted)" };
