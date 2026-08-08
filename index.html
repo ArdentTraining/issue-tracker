@@ -476,7 +476,15 @@
   .action-card .row { flex-direction: row; flex-wrap: wrap; gap: 8px; }
   .action-card .row button { width: auto; align-self: flex-start; flex: 0 0 auto; }
   /* Opening an action docks the detail beside the list, same as Track. */
-  #actionsSplitHost.split-on > .list-col { width: 360px; }
+  /* The list width is the user's to set (Edd, FB-0170): draggable handle,
+     remembered per browser in localStorage. */
+  #actionsSplitHost.split-on > .list-col { width: var(--listw, 360px); }
+  .col-drag { display: none; }
+  .split-host.split-on > .col-drag { display: block; width: 6px; cursor: col-resize; align-self: stretch; border-radius: 3px; background: var(--line); flex-shrink: 0; }
+  .split-host.split-on > .col-drag:hover { background: var(--accent); }
+  /* And the detail uses the whole dock, no cap leaving dead space on the
+     right (Edd, FB-0170). The width cap stays for the overlay drawer only. */
+  .split-dock .detail-main { max-width: none; }
   #actionsSplitHost.split-on .action-card .small { display: none; }
 
   /* view-as bar: super-admin testing tool, bottom-left so it stays clear of the Feedback fab */
@@ -786,6 +794,7 @@
   <p class="small muted" style="margin-top:-6px;">The things waiting on an instructor. Everything else lives in Track.</p>
   <div class="split-host" id="actionsSplitHost">
     <div class="list-col" id="actionsList"></div>
+    <div class="col-drag" title="Drag to resize the list"></div>
     <div class="split-dock" id="actionsDock" style="display:none;"></div>
   </div>
   <div id="actionsScan" style="max-width:1300px;margin:18px auto 0;"></div>
@@ -1272,7 +1281,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r42 · 2026-08-08";  // bump this with each round, it lands on every feedback report
+var BUILD = "r43 · 2026-08-08";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4753,11 +4762,13 @@ function openDetail(issue) {
       : '') +
     (issue.resolved_at ? '<div class="small muted" style="margin-bottom:10px;">Resolved at ' + fmtDate(issue.resolved_at) + '</div>' : '');
 
-  sideCol += '<div class="field" style="margin-top:14px;"><label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
-    (String(issue.notified_students) === "true" ? " checked" : "") + '> Students notified</label></div>';
-  sideCol += '<div class="field" style="margin-top:8px;"><label style="display:inline;"><input type="checkbox" id="d_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
-    (isTrue(issue.student_sorted) ? " checked" : "") + '> Student sorted, no follow-up needed</label>' +
-    '<div class="small muted" style="margin-top:3px;">The fault stays open for the developers, this student just doesn\'t need chasing.</div></div>';
+  // One row for the two ticks (Edd, FB-0171).
+  sideCol += '<div class="field" style="margin-top:12px;display:flex;gap:20px;flex-wrap:wrap;align-items:center;">' +
+    '<label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
+    (String(issue.notified_students) === "true" ? " checked" : "") + '> Students notified</label>' +
+    '<label style="display:inline;"><input type="checkbox" id="d_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
+    (isTrue(issue.student_sorted) ? " checked" : "") + '> Student sorted, no follow-up needed</label></div>' +
+    '<div class="small muted" style="margin-top:3px;">"Sorted" keeps the fault open for the developers, this student just doesn\'t need chasing.</div>';
 
   // Full reports/updates text and screenshots, kept at the bottom for reference.
   if (reps.length) {
@@ -4848,6 +4859,33 @@ function closeSplit() {
   if (drawer && drawer.parentElement !== $("overlay")) $("overlay").appendChild(drawer);
   state._splitOpen = false;
 }
+// Draggable list column (Edd, FB-0170): grab the bar between the list and
+// the detail, set the split how you like it, and it's remembered per browser.
+function initSplitDrag(hostId, storeKey) {
+  var host = $(hostId);
+  if (!host) return;
+  var handle = host.querySelector(".col-drag");
+  if (!handle) return;
+  var saved = Number(localStorage.getItem(storeKey) || 0);
+  if (saved) host.style.setProperty("--listw", saved + "px");
+  handle.addEventListener("pointerdown", function (e) {
+    e.preventDefault();
+    var move = function (ev) {
+      var rect = host.getBoundingClientRect();
+      var w = Math.min(Math.max(ev.clientX - rect.left, 220), rect.width * 0.6);
+      host.style.setProperty("--listw", Math.round(w) + "px");
+      try { localStorage.setItem(storeKey, Math.round(w)); } catch (err) {}
+    };
+    var up = function () {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  });
+}
+initSplitDrag("actionsSplitHost", "ait_actions_listw");
+
 function markActiveCard() {
   Array.prototype.forEach.call(document.querySelectorAll(".issue-card.active, .action-card.active, .act-row.active"), function (el) { el.classList.remove("active"); });
   if (!state.detailId) return;
@@ -5832,9 +5870,8 @@ function renderChatScan(targetId) {
     };
     var chatLink = function (id) { return "https://app.chatwoot.com/app/accounts/100142/conversations/" + esc(String(id)); };
 
+    // No umbrella heading (Edd, FB-0172) - the two sub-headings say it all.
     var html = "";
-    if (inActions) html += '<h3 style="margin-top:0;">Spotted in the live chats</h3>' +
-      '<p class="small muted" style="margin-top:-6px;">Found overnight. The sure ones are already logged automatically - these are the ones that need a human eye.</p>';
     html += '<h3>Updates on open issues</h3>';
     html += ups.length ? ups.map(function (r) {
       var v = VERDICT[String(r.verdict || "")] || { label: String(r.verdict || "update"), colour: "var(--muted)" };
