@@ -306,6 +306,8 @@ function doPost(e) {
     if (action === 'troubleshoot') return jsonOut(troubleshoot_(body));
     if (action === 'draftStudentMessage') return jsonOut(draftStudentMessage_(body));
     if (action === 'chatwootContactUrl') return jsonOut(chatwootContactUrl_(body));
+    if (action === 'setVoiceGuide') return jsonOut(setVoiceGuide_(body));
+    if (action === 'listVoiceGuides') return jsonOut(listVoiceGuides_());
     if (action === 'matchUpdate') return jsonOut(matchUpdate_(body));
     if (action === 'inviteUser') return jsonOut(inviteUser_(body));
     if (action === 'updateUser') return jsonOut(updateUser_(body));
@@ -412,7 +414,7 @@ function reqPerm_(action) {
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':
-    case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': return 'users';
+    case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
     // uploadImage and addFeedback are available to any logged-in user (feedback
     // screenshots, etc.), handled by the default below.
     case 'getIssues': case 'getInstructors': case 'me': return 'any';
@@ -3830,7 +3832,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r42 · 2026-08-08';
+var CODE_STAMP = 'r42.1 · 2026-08-08';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -3844,10 +3846,43 @@ function voiceGuideFor_(name) {
   var sh = sheetByName_('VoiceGuides');
   if (!sh) return '';
   var v = sh.getDataRange().getValues();
+  var want = String(name).trim().toLowerCase();
+  var wantFirst = want.split(/\s+/)[0];
+  var firstHit = '';
   for (var r = 0; r < v.length; r++) {
-    if (String(v[r][0] || '').trim().toLowerCase() === String(name).trim().toLowerCase()) return String(v[r][1] || '');
+    var got = String(v[r][0] || '').trim().toLowerCase();
+    if (!got) continue;
+    if (got === want) return String(v[r][1] || '');
+    // "Holly" matches "Holly Vint" and vice versa - guides are stored by
+    // first name, but some accounts log in with a full name.
+    if (!firstHit && got.split(/\s+/)[0] === wantFirst) firstHit = String(v[r][1] || '');
   }
-  return '';
+  return firstHit;
+}
+
+// Upsert a voice guide (used by Claude to load the team's guides in bulk).
+function setVoiceGuide_(data) {
+  var name = String(data.name || '').trim();
+  var guide = String(data.guide || '');
+  if (!name || !guide) return { ok: false, error: 'need name and guide' };
+  var sh = sheetByName_('VoiceGuides');
+  if (!sh) { sh = ss_().insertSheet('VoiceGuides'); sh.appendRow(['name', 'guide']); }
+  var v = sh.getDataRange().getValues();
+  for (var r = 0; r < v.length; r++) {
+    if (String(v[r][0] || '').trim().toLowerCase() === name.toLowerCase()) {
+      sh.getRange(r + 1, 2).setValue(guide);
+      return { ok: true, updated: name };
+    }
+  }
+  sh.appendRow([name, guide]);
+  return { ok: true, added: name };
+}
+function listVoiceGuides_() {
+  var sh = sheetByName_('VoiceGuides');
+  if (!sh) return { ok: true, guides: [] };
+  return { ok: true, guides: sh.getDataRange().getValues().slice(1).map(function (r) {
+    return { name: String(r[0] || ''), chars: String(r[1] || '').length };
+  }).filter(function (g) { return g.name; }) };
 }
 
 function draftStudentMessage_(data) {
