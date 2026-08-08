@@ -78,6 +78,9 @@ function ensureFeedbackHeaders_(sheet) {
 // seconds per call. Volume is small, so the cost difference is pennies.
 var ANTHROPIC_MODEL = 'claude-sonnet-5';
 var EXTRACTION_MODEL = 'claude-sonnet-5';
+// Student-facing drafts use the strongest model: they carry an instructor's
+// name and voice, so quality beats cost (Edd, 8 Aug).
+var DRAFT_MODEL = 'claude-opus-5';
 
 // Deploys: pushing a change to Code.gs on main now auto-deploys the backend
 // via .github/workflows/deploy-backend.yml (GitHub Action -> deployBackend).
@@ -3832,7 +3835,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r42.1 · 2026-08-08';
+var CODE_STAMP = 'r42.2 · 2026-08-08';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -3896,6 +3899,8 @@ function draftStudentMessage_(data) {
 
   var reps = [];
   try { reps = i.reports_json ? JSON.parse(i.reports_json) : []; } catch (e) {}
+  // Getting the voice right matters more than the pennies here (Edd, 8 Aug):
+  // the whole guide goes in, and the draft uses the strongest model we have.
   var last = reps.length ? reps[reps.length - 1] : null;
   var guide = voiceGuideFor_(who);
   var goal = kind === 'fixed'
@@ -3913,7 +3918,7 @@ function draftStudentMessage_(data) {
       student_first_name: String(i.student_name || '').split(' ')[0]
     }) + '\n' +
     (last && (last.summary || last.raw_text) ? 'LATEST UPDATE ON THE ISSUE: ' + String(last.summary || last.raw_text).slice(0, 400) + '\n' : '') +
-    (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 8000) + '\n"""\n' : '') +
+    (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n' : '') +
     '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name, ' +
     'sign off as "' + (who || 'The Ardent team') + '". Promise no dates unless the fix notes give one. ' +
     'Return ONLY the email text, nothing else.';
@@ -3922,7 +3927,7 @@ function draftStudentMessage_(data) {
     var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      payload: JSON.stringify({ model: EXTRACTION_MODEL, max_tokens: 1000, messages: [{ role: 'user', content: prompt }] })
+      payload: JSON.stringify({ model: DRAFT_MODEL, max_tokens: 1500, messages: [{ role: 'user', content: prompt }] })
     });
     if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return { ok: false, error: 'API error ' + res.getResponseCode() };
     var parsed = JSON.parse(res.getContentText() || '{}');
