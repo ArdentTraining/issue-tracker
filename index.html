@@ -150,6 +150,8 @@
 
   /* Full-width app (Edd, 21 Jul): no artificial cap, just breathing room. */
   .wrap { max-width: none; margin: 0 auto; padding: 20px 28px; }
+  /* Breathing room at the edges on big monitors (Edd, FB-0157). */
+  @media (min-width: 1600px) { .wrap { padding: 20px 56px; } }
 
   /* Slim, theme-matched scrollbars instead of the browser defaults. */
   * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -338,7 +340,10 @@
   .detail-side { }
   @media (min-width: 761px) {
     .drawer { width: min(1080px, 68vw); max-width: 96vw; }
-    .detail-cols { grid-template-columns: minmax(0, 1fr) 320px; }
+    /* Wider side column and a capped centre (Edd, FB-0157): on a very wide
+       screen the middle was swallowing everything while the sides squeezed. */
+    .detail-cols { grid-template-columns: minmax(0, 1fr) 400px; }
+    .detail-main { max-width: 980px; }
     .detail-side { position: sticky; top: 0; border-left: 1px solid var(--line); padding-left: 20px; }
   }
   .drawer .close { position: absolute; top: 14px; right: 16px; background: transparent; font-size: 20px; color: var(--muted); padding: 4px 8px; }
@@ -459,7 +464,7 @@
   .action-card .row { flex-direction: row; flex-wrap: wrap; gap: 8px; }
   .action-card .row button { width: auto; align-self: flex-start; flex: 0 0 auto; }
   /* Opening an action docks the detail beside the list, same as Track. */
-  #actionsSplitHost.split-on > .list-col { width: 300px; }
+  #actionsSplitHost.split-on > .list-col { width: 360px; }
   #actionsSplitHost.split-on .action-card .small { display: none; }
 
   /* view-as bar: super-admin testing tool, bottom-left so it stays clear of the Feedback fab */
@@ -1255,7 +1260,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r39 · 2026-08-08";  // bump this with each round, it lands on every feedback report
+var BUILD = "r40 · 2026-08-08";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4650,7 +4655,9 @@ function openDetail(issue) {
       recSteps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol></div></details>';
   }
 
-  sideCol += '<h3>Post an update</h3>' +
+  // Post an update lives in the centre column now the accordion has made room
+  // there (Edd, FB-0158), just above the history it will land in.
+  html += '<h3>Post an update</h3>' +
     '<div class="field"><textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
     '<button class="ghost small" style="margin-bottom:6px;padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button>';
 

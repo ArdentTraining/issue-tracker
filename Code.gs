@@ -88,7 +88,7 @@ var EXTRACTION_MODEL = 'claude-sonnet-5';
 // further reports or objections). The timer is the issue's updated_at, so any
 // new activity resets it. 14 days per Edd (21 Jul); the sweep runs on a daily
 // trigger created by ensureTriggers_.
-var TBC_AUTO_RESOLVE_DAYS = 14;
+var TBC_AUTO_RESOLVE_DAYS = 7;  // aligned with what the drawer has always promised ("auto-resolves after 7 days"); it sat at 14 while the copy said 7, which is why TBCs looked stuck in Actions (Edd's sweep, 8 Aug)
 
 // One student sorted out by switching browser is a one-off. Three in a week all
 // sorted the same way is a fault everyone is hitting, and each one closing
@@ -3828,7 +3828,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r39 · 2026-08-08';
+var CODE_STAMP = 'r40 · 2026-08-08';
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();
