@@ -304,6 +304,8 @@ function doPost(e) {
     if (action === 'askIssues') return jsonOut(askIssues_(body));
     if (action === 'suggestFix') return jsonOut(suggestFix_(body));
     if (action === 'troubleshoot') return jsonOut(troubleshoot_(body));
+    if (action === 'draftStudentMessage') return jsonOut(draftStudentMessage_(body));
+    if (action === 'chatwootContactUrl') return jsonOut(chatwootContactUrl_(body));
     if (action === 'matchUpdate') return jsonOut(matchUpdate_(body));
     if (action === 'inviteUser') return jsonOut(inviteUser_(body));
     if (action === 'updateUser') return jsonOut(updateUser_(body));
@@ -385,7 +387,7 @@ function hasPerm_(user, req) {
 }
 function reqPerm_(action) {
   switch (action) {
-    case 'addIssue': case 'addUpdate': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': return 'log';
+    case 'addIssue': case 'addUpdate': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'chatwootContactUrl': return 'log';
     // updateIssue is 'work' so the dev/course team can retune priority from
     // their drawer; anything beyond priority still needs manage (checked
     // inside updateIssue_ itself).
@@ -3828,7 +3830,87 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r40 · 2026-08-08';
+var CODE_STAMP = 'r41 · 2026-08-08';
+
+// ---- draft a message to the student (Edd, FB-0161) -------------------------
+// The Actions "next action" line offers a draft whenever the action is any
+// kind of message to the student. Written in the instructor's own voice when
+// a guide is on file: the VoiceGuides sheet (tab in the same spreadsheet),
+// column A = instructor name exactly as they log in, column B = the style
+// guide text. No sheet, no matching row, or no API key all mean the front end
+// quietly falls back to the fixed house templates, so the button always works.
+function voiceGuideFor_(name) {
+  if (!name) return '';
+  var sh = sheetByName_('VoiceGuides');
+  if (!sh) return '';
+  var v = sh.getDataRange().getValues();
+  for (var r = 0; r < v.length; r++) {
+    if (String(v[r][0] || '').trim().toLowerCase() === String(name).trim().toLowerCase()) return String(v[r][1] || '');
+  }
+  return '';
+}
+
+function draftStudentMessage_(data) {
+  var found = findRow_(data.issue_id);
+  if (!found) return { ok: false, error: 'No issue found with that id.' };
+  var i = found.record;
+  var kind = String(data.kind || 'longopen');
+  var who = (data._user && data._user.name) || '';
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) return { ok: false, error: 'no api key' };
+
+  var reps = [];
+  try { reps = i.reports_json ? JSON.parse(i.reports_json) : []; } catch (e) {}
+  var last = reps.length ? reps[reps.length - 1] : null;
+  var guide = voiceGuideFor_(who);
+  var goal = kind === 'fixed'
+    ? 'Tell the student the problem they reported has been fixed, and invite them to try again and shout if anything still looks off.'
+    : kind === 'followup'
+      ? 'Check in on whether the workaround they were given is still doing the job, without pestering.'
+      : 'Reassure the student their report is not forgotten and is still being worked on. Do not invent progress that is not in the notes.';
+
+  var prompt = 'Draft a short, warm email from an instructor at Ardent Training (an online RYA sailing school) to a student.\n\n' +
+    'GOAL: ' + goal + '\n\n' +
+    'THE ISSUE:\n' + JSON.stringify({
+      summary: i.summary, status: i.status,
+      lesson: i.lesson || i.lesson_code || '',
+      fix_notes: i.dev_notes || i.resolution_note || '',
+      student_first_name: String(i.student_name || '').split(' ')[0]
+    }) + '\n' +
+    (last && (last.summary || last.raw_text) ? 'LATEST UPDATE ON THE ISSUE: ' + String(last.summary || last.raw_text).slice(0, 400) + '\n' : '') +
+    (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 8000) + '\n"""\n' : '') +
+    '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name, ' +
+    'sign off as "' + (who || 'The Ardent team') + '". Promise no dates unless the fix notes give one. ' +
+    'Return ONLY the email text, nothing else.';
+
+  try {
+    var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({ model: EXTRACTION_MODEL, max_tokens: 1000, messages: [{ role: 'user', content: prompt }] })
+    });
+    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return { ok: false, error: 'API error ' + res.getResponseCode() };
+    var parsed = JSON.parse(res.getContentText() || '{}');
+    var text = '';
+    (parsed.content || []).forEach(function (c) { if (c.type === 'text') text += c.text; });
+    text = text.trim();
+    if (!text) return { ok: false, error: 'empty draft' };
+    return { ok: true, text: text, voiced: !!guide };
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
+
+// ---- jump to a contact in Chatwoot (Edd, FB-0162) --------------------------
+function chatwootContactUrl_(data) {
+  var email = String(data.email || '').trim().toLowerCase();
+  if (!email) return { ok: false, error: 'need an email' };
+  try {
+    var out = chatwootCall_('/contacts/search?q=' + encodeURIComponent(email));
+    var list = (out && out.payload) || [];
+    var hit = list.filter(function (c) { return String(c.email || '').toLowerCase() === email; })[0] || list[0];
+    if (!hit || !hit.id) return { ok: false, error: 'No Chatwoot contact matches ' + email };
+    return { ok: true, url: CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/contacts/' + hit.id };
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
 
 function backendInfo_() {
   var p = PropertiesService.getScriptProperties();

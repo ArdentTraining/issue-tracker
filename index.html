@@ -1260,7 +1260,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r40 · 2026-08-08";  // bump this with each round, it lands on every feedback report
+var BUILD = "r41 · 2026-08-08";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2086,6 +2086,25 @@ function actionOpen(id) { openIssueById(id, false); }
 // Pre-written student emails for the update moments (Edd, 24 Jul): one click
 // copies a draft the instructor can paste and tweak, rather than composing
 // from scratch every time.
+// AI draft in the instructor's own voice where a guide is on file (Edd,
+// FB-0161); falls straight back to the house templates below if the call
+// fails, so there is always a draft on the clipboard either way.
+function draftStudentMessage(id, kind) {
+  toast("Drafting…");
+  apiPost({ action: "draftStudentMessage", issue_id: id, kind: kind }).then(function (res) {
+    if (res && res.ok && res.text) { copyText(res.text); toast("Draft copied" + (res.voiced ? " - in your voice" : "") + "."); }
+    else draftEmailFor(id, kind);
+  }).catch(function () { draftEmailFor(id, kind); });
+}
+// Jump from a contact to their Chatwoot record (Edd, FB-0162). The lookup is
+// server-side because the contact id isn't stored here.
+function openInChatwoot(email) {
+  toast("Looking up the contact…");
+  apiPost({ action: "chatwootContactUrl", email: email }).then(function (res) {
+    if (res && res.ok && res.url) window.open(res.url, "_blank");
+    else toast((res && res.error) || "No Chatwoot contact found.");
+  }).catch(function () { toast("Chatwoot lookup failed."); });
+}
 function draftEmailFor(id, kind) {
   var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
   if (!i) { toast("Issue not found."); return; }
@@ -4521,7 +4540,8 @@ function openDetail(issue) {
   // the resolve/act controls collected on the right (sideCol). Stacks to one
   // column on mobile via CSS.
   var sideCol = '';
-  html += '<div class="detail-cols"><div class="detail-main">';
+  // Single column since FB-0159; .detail-main keeps the readable width cap.
+  html += '<div class="detail-main">';
 
   if (otherOpen.length) {
     html += '<div class="batch"><strong>' + otherOpen.length + ' other open issue' +
@@ -4534,7 +4554,9 @@ function openDetail(issue) {
   html += '<h3>Affected students' + (studentArr.length ? ' (' + studentArr.length + ')' : '') + '</h3>';
   if (studentArr.length) {
     html += '<div class="students">' + studentArr.map(function (s) {
-      return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") + '</span></div>';
+      return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") +
+        (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\')">Chatwoot</button>' : '') +
+        '</span></div>';
     }).join("") + '</div>' +
     '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>';
   } else {
@@ -4553,12 +4575,25 @@ function openDetail(issue) {
   // (Edd, FB-0156). The reference material folds away below.
   var topReps = parseReports(issue);
   var lastRep = topReps.length ? topReps[topReps.length - 1] : null;
-  html += '<h3>Last update</h3><div class="small" style="margin-bottom:4px;">' +
+  // Date on the heading itself (Edd, FB-0160), who in the body.
+  html += '<h3>Last update' + (lastRep && lastRep.date ? ' - ' + fmtDate(lastRep.date) : '') + '</h3><div class="small" style="margin-bottom:4px;">' +
     (lastRep
       ? esc(lastRep.summary || String(lastRep.raw_text || '').slice(0, 140) || 'Entry') +
-        ' <span class="muted">(' + esc(lastRep.instructor_name || '—') + (lastRep.date ? ' · ' + fmtDate(lastRep.date) : '') + ')</span>'
+        ' <span class="muted">(' + esc(lastRep.instructor_name || '—') + ')</span>'
       : '<span class="muted">Nothing since it was logged ' + fmtDate(issue.submitted_at) + '.</span>') + '</div>';
-  html += '<h3>Next action</h3><div class="small" style="margin-bottom:10px;">' + esc(nextActionFor(issue)) + '</div>';
+  // When the next action is any kind of message to the student, offer the
+  // draft there and then (Edd, FB-0161). Written in the instructor's own
+  // voice if a guide is on file, otherwise the house templates.
+  var draftKind = null;
+  var s0 = String(issue.status || "open").toLowerCase();
+  if ((issue.student_contact || issue.student_name) && audienceOf(issue) !== "internal") {
+    if (s0 === "dev_fixed" || s0 === "resolved") draftKind = "fixed";
+    else if (s0 === "resolved_tbc") draftKind = "followup";
+    else if (s0 === "open" || s0 === "in_progress" || s0 === "with_dev") draftKind = "longopen";
+  }
+  html += '<h3>Next action</h3><div class="small" style="margin-bottom:10px;">' + esc(nextActionFor(issue)) +
+    (draftKind ? ' <button class="ghost small" style="padding:3px 10px;margin-left:8px;" onclick="draftStudentMessage(\'' + esc(issue.issue_id) + '\',\'' + draftKind + '\')">Draft message to student</button>' : '') + '</div>';
+  html += '<!--CONTROLS-->';
 
   html += '<details class="acc"><summary>Details</summary><div class="kv">' +
     kv("Submitted by", issue.instructor_name) +
@@ -4661,15 +4696,15 @@ function openDetail(issue) {
     '<div class="field"><textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
     '<button class="ghost small" style="margin-bottom:6px;padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button>';
 
-  sideCol += '<h3>Update status &amp; priority</h3>' +
-    '<div class="field"><select id="d_status" onchange="onStatusChange()">' +
+  sideCol += '<h3 style="margin-top:2px;">Update status &amp; priority</h3>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;">' +
+    '<div class="field"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Status</label><select id="d_status" onchange="onStatusChange()">' +
       ['open','in_progress','with_dev','dev_fixed','parked','resolved_tbc','resolved','past'].map(function (s) {
         var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
         return '<option value="' + s + '"' + sel + '>' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + '</option>';
       }).join("") +
     '</select></div>' +
-    '<label class="small" style="display:block;margin:-2px 0 2px;color:var(--muted);">Priority</label>' +
-    '<div class="field"><select id="d_priority">' +
+    '<div class="field"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Priority</label><select id="d_priority">' +
       // Only for an issue that somehow has no priority saved: without this the
       // select would land on High and the next save would stamp that in without
       // anyone choosing it.
@@ -4678,7 +4713,7 @@ function openDetail(issue) {
         var sel = (issue.priority || "").toLowerCase() === p ? " selected" : "";
         return '<option value="' + p + '"' + sel + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
       }).join("") +
-    '</select></div>' +
+    '</select></div></div>' +
     '<div class="field' + (/^(resolved|past)/.test((issue.status || "").toLowerCase()) ? '' : ' hidden') + '" id="d_resnote_wrap">' +
       '<label>Resolution note</label><textarea id="d_resolution_note" rows="3">' + esc(issue.resolution_note || "") + '</textarea>' +
     '</div>' +
@@ -4730,8 +4765,11 @@ function openDetail(issue) {
     (canDelete(issue) ? '<button class="ghost" style="color:var(--high);" onclick="deleteIssueAction(\'' + esc(issue.issue_id) + '\')">Delete</button>' : '') +
   '</div>';
 
-  // Close the left column, drop in the collected right-hand action column, close both.
-  html += '</div><div class="detail-side">' + sideCol + '</div></div>';
+  // One column now (Edd, FB-0159): the act controls sit in a neat card up top,
+  // right under the next action they belong to, instead of a right-hand panel.
+  html += '</div>';
+  html = html.replace('<!--CONTROLS-->',
+    '<div style="border:1px solid var(--line);border-radius:10px;padding:6px 14px 12px;margin:0 0 14px;background:var(--bg);">' + sideCol + '</div>');
 
   $("drawer").innerHTML = html;
   presentDetail("admin");
@@ -5417,7 +5455,9 @@ function openDevDetail(id) {
   if (devStudentArr.length) {
     html += '<h3>Affected students' + (catOf(issue) === "tech_issue" ? ' (test accounts)' : '') + '</h3>' +
       '<div class="students">' + devStudentArr.map(function (s) {
-        return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") + '</span></div>';
+        return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") +
+        (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\')">Chatwoot</button>' : '') +
+        '</span></div>';
       }).join("") + '</div>' +
       '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>';
     state._copyContacts = devStudentArr.filter(function (s) { return s.contact; })
