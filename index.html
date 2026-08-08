@@ -367,6 +367,18 @@
   details.acc > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); }
   details.acc[open] > summary { margin-bottom: 6px; }
   details.acc h3 { margin-top: 6px; }
+  /* Tighter rhythm in the detail pane so it fits without scrolling on a
+     normal screen (Edd, FB-0167). */
+  .drawer h3 { margin: 12px 0 5px; }
+  .drawer .kv { row-gap: 3px; }
+  /* Use the enormous screen properly, with breathing room at the edges
+     (Edd, FB-0166). */
+  @media (min-width: 2000px) {
+    .wrap { padding: 20px 110px; }
+    .detail-main { max-width: 1280px; }
+    #actionsList { max-width: 1500px; }
+    #actionsScan { max-width: 1500px !important; }
+  }
   /* The list column is narrow when a detail is docked, so action rows stack
      instead of squeezing into three columns (Edd, 27 Jul). */
   .split-host.split-on .act-row { grid-template-columns: 1fr; gap: 6px; }
@@ -1260,7 +1272,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r41 · 2026-08-08";  // bump this with each round, it lands on every feedback report
+var BUILD = "r42 · 2026-08-08";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2086,15 +2098,30 @@ function actionOpen(id) { openIssueById(id, false); }
 // Pre-written student emails for the update moments (Edd, 24 Jul): one click
 // copies a draft the instructor can paste and tweak, rather than composing
 // from scratch every time.
-// AI draft in the instructor's own voice where a guide is on file (Edd,
-// FB-0161); falls straight back to the house templates below if the call
-// fails, so there is always a draft on the clipboard either way.
+// Busy overlay helpers (Edd, FB-0169). Show for anything slow enough that a
+// corner toast gets missed.
+function busyShow(msg) { $("busyMsg").textContent = msg || "Working…"; $("busyOverlay").style.display = "flex"; }
+function busyHide() { $("busyOverlay").style.display = "none"; }
+
+// The one draft path (Edd, FB-0161 + FB-0168): AI in the instructor's own
+// voice where a guide is on file, house template if the call fails, and the
+// result always opens in an editable popup with Copy and a Chatwoot jump.
 function draftStudentMessage(id, kind) {
-  toast("Drafting…");
+  busyShow("Drafting the message…");
   apiPost({ action: "draftStudentMessage", issue_id: id, kind: kind }).then(function (res) {
-    if (res && res.ok && res.text) { copyText(res.text); toast("Draft copied" + (res.voiced ? " - in your voice" : "") + "."); }
-    else draftEmailFor(id, kind);
-  }).catch(function () { draftEmailFor(id, kind); });
+    busyHide();
+    if (res && res.ok && res.text) openDraftModal(id, res.text, !!res.voiced);
+    else openDraftModal(id, draftTemplateFor(id, kind), false);
+  }).catch(function () { busyHide(); openDraftModal(id, draftTemplateFor(id, kind), false); });
+}
+function openDraftModal(id, text, voiced) {
+  var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
+  $("draftText").value = text || "";
+  $("draftVoiced").textContent = voiced ? "· in your voice" : "";
+  var b = $("draftChatwootBtn"), c = String(i.student_contact || "");
+  if (c.indexOf("@") > 0) { b.style.display = ""; b.onclick = function () { openInChatwoot(c); }; }
+  else b.style.display = "none";
+  $("draftOverlay").style.display = "flex";
 }
 // Jump from a contact to their Chatwoot record (Edd, FB-0162). The lookup is
 // server-side because the contact id isn't stored here.
@@ -2105,9 +2132,12 @@ function openInChatwoot(email) {
     else toast((res && res.error) || "No Chatwoot contact found.");
   }).catch(function () { toast("Chatwoot lookup failed."); });
 }
-function draftEmailFor(id, kind) {
+// Every draft button now goes through the popup flow above.
+function draftEmailFor(id, kind) { draftStudentMessage(id, kind); }
+// The house templates, kept as the offline fallback.
+function draftTemplateFor(id, kind) {
   var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
-  if (!i) { toast("Issue not found."); return; }
+  if (!i) { toast("Issue not found."); return ""; }
   var name = (i.student_name || "").split(" ")[0] || "there";
   var lesson = dispLesson(i) || i.lesson_code || "the course";
   var me = state.selectedInstructor || "The Ardent team";
@@ -2124,7 +2154,7 @@ function draftEmailFor(id, kind) {
     text = "Hi " + name + ",\n\nA quick note about the issue you reported on " + lesson + ": we're still on it. " +
       "It's not forgotten, and we'll let you know the moment it's sorted. Thanks for bearing with us.\n\n" + me;
   }
-  copyText(text);
+  return text;
 }
 function renderActions() {
   var a = myActionItems();
@@ -4690,11 +4720,11 @@ function openDetail(issue) {
       recSteps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol></div></details>';
   }
 
-  // Post an update lives in the centre column now the accordion has made room
-  // there (Edd, FB-0158), just above the history it will land in.
-  html += '<h3>Post an update</h3>' +
-    '<div class="field"><textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
-    '<button class="ghost small" style="margin-bottom:6px;padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button>';
+  // Post an update lives in the centre column (Edd, FB-0158), folded until
+  // wanted so the whole pane fits without scrolling (Edd, FB-0167).
+  html += '<details class="acc"><summary>Post an update</summary>' +
+    '<div class="field" style="margin-top:6px;"><textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
+    '<button class="ghost small" style="margin-bottom:6px;padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button></details>';
 
   sideCol += '<h3 style="margin-top:2px;">Update status &amp; priority</h3>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;">' +
@@ -6475,5 +6505,26 @@ function markFeedback(id, status) {
 // ============================ GO ============================
 init();
 </script>
+<!-- Busy overlay (Edd, FB-0169): a proper can't-miss "working on it" while a
+     slow call runs, instead of a small toast in the corner. -->
+<div id="busyOverlay" style="display:none;position:fixed;inset:0;background:rgba(2,10,20,0.65);z-index:300;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:24px 34px;text-align:center;">
+    <span class="spinner" style="width:26px;height:26px;border-width:3px;"></span>
+    <div id="busyMsg" class="small" style="margin-top:10px;">Working…</div>
+  </div>
+</div>
+<!-- Draft message popup (Edd, FB-0168): editable, with Copy and a jump to
+     the student's Chatwoot record. -->
+<div id="draftOverlay" style="display:none;position:fixed;inset:0;background:rgba(2,10,20,0.65);z-index:300;align-items:center;justify-content:center;">
+  <div class="modal" style="width:660px;max-width:94vw;">
+    <h3 style="margin-top:0;">Draft message to student <span id="draftVoiced" class="small muted"></span></h3>
+    <textarea id="draftText" rows="12" style="width:100%;font-size:13.5px;"></textarea>
+    <div class="row" style="margin-top:10px;">
+      <button class="primary" onclick="copyText($('draftText').value)">Copy</button>
+      <button class="ghost" id="draftChatwootBtn">Open in Chatwoot</button>
+      <button class="ghost" onclick="$('draftOverlay').style.display='none'">Close</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
