@@ -309,6 +309,17 @@ function doPost(e) {
     if (action === 'bulkAssign') return jsonOut(bulkAssign_(body));
     if (action === 'courseReview') return jsonOut(courseReview_(body));
     if (action === 'fetchStudentUpdate') return jsonOut(fetchStudentUpdate_(body));
+    if (action === 'listLiveCases') return jsonOut(listLiveCases_(body));
+    if (action === 'caseBrief') return jsonOut(caseBrief_(body));
+    if (action === 'caseCheckReply') return jsonOut(caseCheckReply_(body));
+    if (action === 'caseDraftReply') return jsonOut(caseDraftReply_(body));
+    if (action === 'caseCheckpoint') return jsonOut(caseCheckpoint_(body));
+    if (action === 'caseClose') return jsonOut(caseClose_(body));
+    if (action === 'caseTouch') return jsonOut(caseTouch_(body));
+    if (action === 'batchStudentDrafts') return jsonOut(batchStudentDrafts_(body));
+    if (action === 'listContentSuggestions') return jsonOut(listContentSuggestions_());
+    if (action === 'resolveContentSuggestion') return jsonOut(resolveContentSuggestion_(body));
+    if (action === 'runConfusionReview') return jsonOut(runConfusionReview_(body));
     if (action === 'uploadImage') return jsonOut(uploadImage_(body));
     if (action === 'attachImages') return jsonOut(attachImages_(body));
     if (action === 'extract') return jsonOut(extract_(body));
@@ -428,6 +439,12 @@ function reqPerm_(action) {
     // other update paths.
     case 'bulkAssign': case 'courseReview': return 'work';
     case 'fetchStudentUpdate': return 'log';
+    // The Live Case workspace (Round 45): visible to every instructor-level
+    // user, and cases are shared - anyone can pick one up and carry on.
+    case 'listLiveCases': case 'caseBrief': case 'caseCheckReply': case 'caseDraftReply':
+    case 'caseCheckpoint': case 'caseClose': case 'caseTouch': case 'batchStudentDrafts': return 'log';
+    // Confusion -> content-tweak suggestions sit with anyone who works a queue.
+    case 'listContentSuggestions': case 'resolveContentSuggestion': case 'runConfusionReview': return 'work';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':
     case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
@@ -2590,6 +2607,10 @@ function scanChatwoot() {
   if (fresh.length || updatesConfirmed.length) scanSlack_(newLogged, updApplied, (fresh.length - newLogged) + (updatesConfirmed.length - updApplied));
   props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now()));
   Logger.log('scanChatwoot: ' + prepared.length + ' read, ' + found.length + ' flagged, ' + confirmed.length + ' confirmed, ' + fresh.length + ' queued.');
+  // Piggyback on the nightly run: when a lesson has collected three or more
+  // open student-confusion reports, draft a content-tweak suggestion for the
+  // course team's queue (suggestions only, never applied - Round 45).
+  try { confusionReview_(); } catch (e) {}
 }
 
 // Run the scan on demand (admin button), so it can be tried without waiting
@@ -4018,7 +4039,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r44 · 2026-08-09';
+var CODE_STAMP = 'r45 · 2026-08-09';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4260,6 +4281,665 @@ function fetchStudentUpdate_(data) {
     conversation: imp.link,
     images: (imp.images || []).length
   };
+}
+
+// ============================ LIVE CASES (Round 45) ==========================
+// The instructor-first workspace (Edd, 9 Aug): a student's in touch, what do
+// we say? A case is one pulled-in Chatwoot conversation, shared across the
+// whole team via the LiveCases sheet tab so anyone can pick it up mid-flow.
+// The AI plays the conversation back (summary, what's been tried, the next
+// step, any known fix), drafts go out copy-paste, and the bug report falls out
+// of the conversation as a "checkpoint" rather than being the way in.
+
+var LIVECASES_SHEET = 'LiveCases';
+var LIVECASE_HEADERS = ['conversation_id', 'student_name', 'student_contact', 'opened_by', 'opened_at',
+  'last_activity', 'last_touched_by', 'status', 'issue_id', 'summary', 'brief_json', 'draft_count', 'unread'];
+
+function liveCasesSheet_(create) {
+  var sh = sheetByName_(LIVECASES_SHEET);
+  if (!sh && create) {
+    sh = ss_().insertSheet(LIVECASES_SHEET);
+    sh.getRange(1, 1, 1, LIVECASE_HEADERS.length).setValues([LIVECASE_HEADERS]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+function liveCaseRows_() {
+  var sh = liveCasesSheet_(false);
+  if (!sh) return [];
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var head = values[0];
+  var out = [];
+  for (var r = 1; r < values.length; r++) {
+    if (!values[r][0]) continue;
+    var rec = {};
+    for (var c = 0; c < head.length; c++) rec[head[c]] = values[r][c];
+    rec.conversation_id = String(rec.conversation_id);
+    rec._rowNum = r + 1;
+    out.push(rec);
+  }
+  return out;
+}
+function liveCaseFind_(convId) {
+  var id = String(convId || '');
+  if (!id) return null;
+  var rows = liveCaseRows_();
+  for (var i = 0; i < rows.length; i++) if (rows[i].conversation_id === id) return rows[i];
+  return null;
+}
+function liveCaseSave_(rec) {
+  var sh = liveCasesSheet_(true);
+  var row = LIVECASE_HEADERS.map(function (h) { return rec[h] != null ? rec[h] : ''; });
+  if (rec._rowNum) sh.getRange(rec._rowNum, 1, 1, LIVECASE_HEADERS.length).setValues([row]);
+  else { sh.appendRow(row); rec._rowNum = sh.getLastRow(); }
+  return rec;
+}
+function caseBriefJson_(rec) {
+  try { return rec.brief_json ? JSON.parse(rec.brief_json) : {}; } catch (e) { return {}; }
+}
+function isTrueLike_(v) { return v === true || String(v).toLowerCase() === 'true'; }
+
+// The open case list, most recent activity first. Also runs the leave rule:
+// a case drops off once its issue is reported AND the student is sorted (or
+// the issue resolved), cross-checked against Chatwoot's own conversation
+// status - still open there and the case stays, flagged "chat still open".
+// The peek is a check, never a gate, so any Chatwoot hiccup just skips it.
+function listLiveCases_(data) {
+  var rows = liveCaseRows_().filter(function (r) { return String(r.status || 'open') === 'open'; });
+  // One read of the issue sheets, not one per case.
+  var issueById = {};
+  if (rows.some(function (r) { return r.issue_id; })) {
+    (getIssues_().issues || []).forEach(function (i) { issueById[i.issue_id] = i; });
+  }
+  var peeks = 0;
+  rows.forEach(function (r) {
+    r._brief = caseBriefJson_(r);
+    if (!r.issue_id) return;
+    var iss = issueById[r.issue_id];
+    if (!iss) return;
+    r.issue_status = String(iss.status || 'open').toLowerCase();
+    var sorted = r.issue_status === 'resolved' || r.issue_status === 'resolved_tbc' || isTrueLike_(iss.student_sorted);
+    if (!sorted || peeks >= 8) return;
+    peeks++;
+    var cwStatus = '';
+    try {
+      var conv = chatwootCall_('/conversations/' + r.conversation_id);
+      cwStatus = String((conv && conv.status) || (conv && conv.payload && conv.payload.status) || '');
+    } catch (e) { cwStatus = ''; }
+    if (cwStatus === 'resolved') {
+      r.status = 'closed';
+      var b = r._brief; b.auto_closed = new Date().toISOString();
+      r.brief_json = JSON.stringify(b);
+      liveCaseSave_(r);
+    } else if (cwStatus) {
+      r.chat_still_open = true;
+    }
+  });
+  var open = rows.filter(function (r) { return String(r.status) === 'open'; });
+  open.sort(function (a, b) { return new Date(b.last_activity || 0) - new Date(a.last_activity || 0); });
+  return { ok: true, cases: open.map(function (r) {
+    return {
+      conversation_id: r.conversation_id,
+      student_name: r.student_name || '',
+      student_contact: r.student_contact || '',
+      opened_by: r.opened_by || '',
+      opened_at: r.opened_at || '',
+      last_activity: r.last_activity || '',
+      last_touched_by: r.last_touched_by || '',
+      issue_id: r.issue_id || '',
+      issue_status: r.issue_status || '',
+      summary: r.summary || '',
+      draft_count: Number(r.draft_count) || 0,
+      unread: isTrueLike_(r.unread),
+      chat_still_open: !!r.chat_still_open,
+      brief: r._brief || {}
+    };
+  }) };
+}
+
+// One AI read of the whole conversation: who and what (so the instructor can
+// confirm it's the right chat), what's been tried in plain English, and the
+// single next step out of the playbook. Same strictness rules as the
+// troubleshoot helper: only count a step as tried if the conversation says so.
+function briefAi_(transcript) {
+  var prompt = 'You are helping an Ardent Training instructor (online RYA sailing school) pick up a live student support conversation mid-flow. ' +
+    'Read the conversation and play it back, so whoever opens it next knows exactly where things stand without reading the whole thread.\n\n' +
+    'OUR TROUBLESHOOTING PLAYBOOK (for choosing the next step):\n' + getPlaybook_() + '\n\n' +
+    'THE CONVERSATION:\n"""\n' + String(transcript || '').slice(0, 14000) + '\n"""\n\n' +
+    'Rules: only count a step as already tried if it is EXPLICITLY described in the conversation - never assume. ' +
+    'The app working on another device does NOT mean a different network was tried. ' +
+    'The next step is ONE step, the most useful one, chosen from the playbook order and skipping anything already done; ' +
+    'if it matches a known account issue in the playbook, that specific fix IS the next step. ' +
+    'If the conversation is not a tech problem (a content question, an admin query, a shipping problem), the next step is whatever genuinely helps the student, playbook or not. ' +
+    'Keep everything in plain English an untechnical instructor can act on.\n\n' +
+    'Return ONLY JSON, no prose, no fences:\n' +
+    '{"summary": "<one or two plain sentences: who the student is, what is going wrong, and on what device or platform if known>",\n' +
+    ' "device": "<their device / OS / browser or app if mentioned, else empty string>",\n' +
+    ' "tried": ["<each thing already tried, one short plain-English entry each - empty list if nothing yet>"],\n' +
+    ' "next": "<the single recommended next step, short and practical, addressed to the instructor>"}';
+  return anthropicRaw_(ANTHROPIC_MODEL, prompt, 16000);
+}
+
+// Server-side stand-in for the form's candidate ranking: past resolved issues
+// that genuinely share words with this conversation, most overlap first, so
+// suggestFix_ gets a shortlist rather than an invitation to stretch.
+var FIX_STOPWORDS = { 'the': 1, 'and': 1, 'that': 1, 'this': 1, 'with': 1, 'have': 1, 'from': 1, 'your': 1, 'their': 1,
+  'they': 1, 'there': 1, 'been': 1, 'were': 1, 'will': 1, 'would': 1, 'could': 1, 'course': 1, 'student': 1,
+  'ardent': 1, 'training': 1, 'lesson': 1, 'hello': 1, 'thanks': 1, 'thank': 1, 'please': 1, 'just': 1,
+  'what': 1, 'when': 1, 'where': 1, 'which': 1, 'again': 1, 'then': 1, 'them': 1, 'some': 1, 'also': 1,
+  'because': 1, 'about': 1, 'into': 1, 'over': 1, 'after': 1, 'before': 1, 'really': 1, 'still': 1,
+  'issue': 1, 'problem': 1, 'working': 1, 'works': 1, 'tried': 1, 'trying': 1, 'resolved': 1, 'sorted': 1 };
+function fixCandidatesFor_(text) {
+  var words = {};
+  String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
+    if (w.length > 3 && !FIX_STOPWORDS[w]) words[w] = true;
+  });
+  var keys = Object.keys(words);
+  if (!keys.length) return [];
+  var scored = [];
+  (getIssues_().issues || []).forEach(function (i) {
+    if (String(i.status || '').toLowerCase() !== 'resolved') return;
+    if (!i.resolution_note) return;
+    var hay = ((i.summary || '') + ' ' + (i.resolution_note || '') + ' ' + (i.lesson_code || '')).toLowerCase();
+    var score = 0;
+    for (var k = 0; k < keys.length; k++) if (hay.indexOf(keys[k]) > -1) score++;
+    if (score >= 3) scored.push({ score: score, i: i });
+  });
+  scored.sort(function (a, b) { return b.score - a.score; });
+  return scored.slice(0, 12).map(function (x) {
+    return { summary: x.i.summary || '', resolution_note: x.i.resolution_note || '',
+      lesson_code: x.i.lesson_code || '', section: x.i.section || '', issue_type: x.i.issue_type || '' };
+  });
+}
+
+// The shared "read it all back" core: brief + known-fix lookup off one import.
+function caseBriefCore_(imp) {
+  var got = briefAi_(imp.transcript);
+  if (!got.json) return { error: 'The AI read of the conversation failed: ' + got.why + '. Try again in a minute.' };
+  var brief = got.json;
+  var fix = { found: false };
+  try {
+    var cands = fixCandidatesFor_((brief.summary || '') + ' ' + String(imp.transcript || '').slice(0, 3000));
+    if (cands.length) {
+      fix = suggestFix_({ new_issue: { summary: brief.summary || '', raw_text: String(imp.transcript || '').slice(0, 4000) },
+        candidates: cands }) || { found: false };
+    }
+  } catch (e) { fix = { found: false }; }
+  return { bj: {
+    summary: String(brief.summary || ''),
+    device: String(brief.device || ''),
+    tried: (brief.tried || []).map(function (t) { return String(t); }).slice(0, 12),
+    next: String(brief.next || ''),
+    fix: fix && fix.found ? String(fix.fix) : '',
+    fix_based_on: fix && fix.found ? String(fix.based_on || '') : '',
+    message_count: imp.message_count,
+    images: imp.images || [],
+    link: imp.link || '',
+    transcript: String(imp.transcript || '').slice(0, 15000)
+  } };
+}
+
+// One composed round-trip (Edd's call - the app is slow enough already,
+// FB-0169): import the conversation (screenshots included since r43.4), then
+// return the summary, the tried list, the next step, AND the known-fix lookup
+// together. Opens the case if it isn't open yet; re-briefs it if it is.
+function caseBrief_(data) {
+  var id = chatwootConvId_(data.conversation || data.conversation_id);
+  if (!id) return { ok: false, error: 'Pass a Chatwoot conversation link or number.' };
+  var imp = chatwootImport_({ conversation: id });
+  if (!imp || !imp.ok) return { ok: false, error: (imp && imp.error) || 'Could not read that conversation.' };
+  if (!imp.message_count) return { ok: false, error: 'That conversation has no readable messages.' };
+
+  var who = (data._user && data._user.name) || '';
+  var now = new Date().toISOString();
+  var rec = liveCaseFind_(id);
+  if (!rec) rec = { conversation_id: id, opened_by: who, opened_at: now, status: 'open', issue_id: '', draft_count: 0 };
+  rec.status = 'open';
+
+  var core = caseBriefCore_(imp);
+  if (core.error) return { ok: false, error: core.error };
+  var prev = caseBriefJson_(rec);
+  core.bj.note_posted = !!prev.note_posted;
+
+  rec.student_name = imp.student_name || rec.student_name || '';
+  rec.student_contact = imp.student_contact || rec.student_contact || '';
+  rec.last_activity = now;
+  rec.last_touched_by = who;
+  rec.summary = core.bj.summary;
+  rec.unread = false;
+  rec.brief_json = JSON.stringify(core.bj);
+  liveCaseSave_(rec);
+  return { ok: true, conversation_id: id, brief: core.bj,
+    student_name: rec.student_name || '', student_contact: rec.student_contact || '',
+    issue_id: rec.issue_id || '', opened_by: rec.opened_by || '', last_touched_by: who };
+}
+
+// "Check for new reply": re-read the case's own conversation. Anything new
+// re-runs the whole brief (Edd: freshness beats pennies), marks the case
+// unread for everyone else, and - once an issue is linked - lands as an update
+// on it through the same strict two-model verdict the scan and Fetch update
+// use, so a wrong "it's fixed" can't slip in.
+function caseCheckReply_(data) {
+  var id = chatwootConvId_(data.conversation_id || data.conversation);
+  var rec = liveCaseFind_(id);
+  if (!rec) return { ok: false, error: 'No live case for that conversation.' };
+  var prev = caseBriefJson_(rec);
+  var imp = chatwootImport_({ conversation: id });
+  if (!imp || !imp.ok) return { ok: false, error: (imp && imp.error) || 'Could not read the conversation.' };
+  var before = Number(prev.message_count) || 0;
+  if (imp.message_count <= before) {
+    return { ok: true, found: false, message: 'Nothing new from ' + (rec.student_name || 'the student') + ' yet.' };
+  }
+
+  var who = (data._user && data._user.name) || '';
+  var core = caseBriefCore_(imp);
+  if (core.error) return { ok: false, error: 'New messages arrived, but the re-read failed: ' + core.error };
+  core.bj.note_posted = !!prev.note_posted;
+
+  var verdict = '', vNote = '';
+  if (rec.issue_id) {
+    var found = findRow_(rec.issue_id);
+    if (found) {
+      var iss = found.record;
+      var p = 'A student with an OPEN issue on our sailing course platform has been in touch again. ' +
+        'Decide what this conversation says about THAT issue, and nothing else.\n\n' +
+        'THE OPEN ISSUE:\n' + JSON.stringify({ summary: iss.summary, status: iss.status, lesson_code: iss.lesson_code, logged: iss.submitted_at }) + '\n\n' +
+        'THE CONVERSATION:\n' + String(imp.transcript || '').slice(0, 12000) + '\n\n' +
+        'Choose one verdict:\n' +
+        '- "fixed": the student says it now works, or confirms the fix or workaround did the job.\n' +
+        '- "still_broken": the student says it is still happening, happening again, or worse.\n' +
+        '- "new_detail": genuinely new information about the same problem (another device, steps to reproduce, when it started, more students affected).\n' +
+        '- "nothing_new": the conversation is about something else entirely, or adds nothing. This is the common answer - use it freely.\n\n' +
+        'Return ONLY JSON: {"verdict":"fixed|still_broken|new_detail|nothing_new","note":"<one sentence of what the student actually said>"}. No prose, no fences.';
+      var first = anthropicJson_(FINDER_MODEL, p, 400);
+      if (first && first.verdict && first.verdict !== 'nothing_new') {
+        var vp = 'A first-pass AI read a support conversation and concluded it is an update on a known open issue. Disagree if it is wrong.\n\n' +
+          'OPEN ISSUE: ' + JSON.stringify({ summary: iss.summary, status: iss.status }) + '\n' +
+          'CLAIMED VERDICT: ' + first.verdict + ' - ' + (first.note || '') + '\n\n' +
+          'CONVERSATION:\n' + String(imp.transcript || '').slice(0, 12000) + '\n\n' +
+          'Be strict. "fixed" requires the student actually confirming it works now, not an instructor hoping so. ' +
+          'If the conversation is really about a different problem, disagree.\n' +
+          'Return ONLY JSON: {"agree":true or false,"verdict":"fixed|still_broken|new_detail","note":"<corrected one sentence>"}. No prose, no fences.';
+        var second = anthropicJson_(VERIFIER_MODEL, vp, 400);
+        if (second && second.agree === true) {
+          verdict = second.verdict || first.verdict;
+          vNote = second.note || first.note || '';
+          var VLABEL = { fixed: 'Student says it now works', still_broken: 'Student says it is still happening', new_detail: 'New detail from the student' };
+          try {
+            addUpdate_({ issue_id: rec.issue_id, instructor_name: 'Live case',
+              summary: (VLABEL[verdict] || 'Update from the student') + ': ' + vNote,
+              raw_text: '[Live case reply, Chatwoot conversation ' + id + ']\n' + (VLABEL[verdict] || 'Update') + '.\n' + vNote +
+                '\n\nLatest transcript:\n' + String(imp.transcript || '').slice(0, 5000),
+              student_name: imp.student_name || '', student_contact: imp.student_contact || '',
+              image_urls: (imp.images && imp.images.length) ? imp.images.join(',') : '',
+              app_url: data.app_url || getAppUrl_() });
+          } catch (e) {}
+        }
+      }
+    }
+  }
+
+  rec.last_activity = new Date().toISOString();
+  rec.last_touched_by = who;
+  rec.summary = core.bj.summary;
+  rec.unread = true;
+  rec.brief_json = JSON.stringify(core.bj);
+  liveCaseSave_(rec);
+  var newN = imp.message_count - before;
+  return { ok: true, found: true, new_messages: newN, verdict: verdict, note: vNote, brief: core.bj,
+    student_name: rec.student_name || '', student_contact: rec.student_contact || '', issue_id: rec.issue_id || '',
+    message: newN + ' new message' + (newN === 1 ? '' : 's') + ' from ' + (rec.student_name || 'the student') +
+      (verdict ? '. ' + (vNote || verdict.replace(/_/g, ' ')) : '.') };
+}
+
+// Draft the next reply in the conversation, in the logged-in instructor's own
+// voice where a guide is on file. Copy-paste out (Edd's call): the tracker
+// never posts drafts into the Chatwoot thread.
+function caseDraftReply_(data) {
+  var id = chatwootConvId_(data.conversation_id || data.conversation);
+  var rec = liveCaseFind_(id);
+  if (!rec) return { ok: false, error: 'No live case for that conversation.' };
+  var who = (data._user && data._user.name) || '';
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) return { ok: false, error: 'no api key' };
+  var b = caseBriefJson_(rec);
+  var guide = voiceGuideFor_(who);
+  var tail = String(b.transcript || '').slice(-2500);
+
+  var prompt = 'Draft the next reply in a live support conversation, from an instructor at Ardent Training (an online RYA sailing school) to a student.\n\n' +
+    'WHERE THE CONVERSATION STANDS:\n' + JSON.stringify({
+      summary: b.summary || rec.summary || '', device: b.device || '',
+      already_tried: b.tried || [], recommended_next_step: b.next || '',
+      known_fix_from_a_past_issue: b.fix || '',
+      student_first_name: String(rec.student_name || '').split(' ')[0]
+    }) + '\n\n' +
+    'THE MOST RECENT MESSAGES:\n"""\n' + tail + '\n"""\n\n' +
+    (guide ? 'Write it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n\n' : '') +
+    'Rules: plain text only, no subject line, 50-140 words. If this reads as the first reply in a while, greet the student by first name; otherwise carry the conversation on naturally. ' +
+    'If there is a known fix from a past issue, lead with that. Otherwise walk them through the recommended next step - one step only, in plain English, and never a wall of steps. ' +
+    'Never promise dates, never invent progress. ' +
+    (guide
+      ? 'Sign off the way this instructor signs off in the style guide (their name: "' + (who || 'The Ardent team') + '"). '
+      : 'Sign off as "' + (who || 'The Ardent team') + '". ') +
+    'Return ONLY the message text, nothing else.';
+
+  try {
+    var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({ model: DRAFT_MODEL, max_tokens: 1500, messages: [{ role: 'user', content: prompt }] })
+    });
+    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return { ok: false, error: 'API error ' + res.getResponseCode() };
+    var parsed = JSON.parse(res.getContentText() || '{}');
+    var text = '';
+    (parsed.content || []).forEach(function (c) { if (c.type === 'text') text += c.text; });
+    text = text.trim();
+    if (!text) return { ok: false, error: 'empty draft' };
+    rec.draft_count = (Number(rec.draft_count) || 0) + 1;
+    rec.last_touched_by = who;
+    liveCaseSave_(rec);
+    return { ok: true, text: text, voiced: !!guide };
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
+
+// The checkpoint files the issue WITHOUT closing the case - identical
+// behaviour to a normal submit (dedupe, routing, Slack on high), and every
+// later checkpoint lands as an update on the same issue so the devs get moving
+// while the conversation keeps adding detail. When the AI matches an open case
+// the team already has, we ask first (needs_confirm) rather than merging
+// silently - same pattern as the same-issue popup on the form.
+function caseCheckpoint_(data) {
+  var id = chatwootConvId_(data.conversation_id || data.conversation);
+  var rec = liveCaseFind_(id);
+  if (!rec) return { ok: false, error: 'No live case for that conversation.' };
+  var who = (data._user && data._user.name) || '';
+  var imp = chatwootImport_({ conversation: id });
+  if (!imp || !imp.ok) return { ok: false, error: (imp && imp.error) || 'Could not read the conversation.' };
+  var now = new Date().toISOString();
+  var bj = caseBriefJson_(rec);
+
+  // Later checkpoints: the issue exists, so the fresh state lands as an update.
+  if (rec.issue_id) {
+    var r0 = addUpdate_({
+      issue_id: rec.issue_id, instructor_name: who,
+      summary: 'Checkpoint from the live case' + (bj.summary ? ': ' + String(bj.summary).slice(0, 140) : ''),
+      raw_text: '[Live case checkpoint, Chatwoot conversation ' + id + ']\n' + (bj.summary || '') +
+        '\n\nLatest transcript:\n' + String(imp.transcript || '').slice(0, 5000),
+      student_name: imp.student_name || '', student_contact: imp.student_contact || '',
+      image_urls: (imp.images && imp.images.length) ? imp.images.join(',') : '',
+      app_url: data.app_url || getAppUrl_(), _user: data._user });
+    if (!r0 || !r0.ok) return { ok: false, error: 'Could not add the update: ' + ((r0 && r0.error) || 'unknown') };
+    bj.message_count = imp.message_count;
+    rec.brief_json = JSON.stringify(bj);
+    rec.last_activity = now; rec.last_touched_by = who;
+    liveCaseSave_(rec);
+    return { ok: true, updated: true, issue_id: rec.issue_id };
+  }
+
+  // First checkpoint: extract, check for an open case the team is already on
+  // (ask before merging), then file through the normal submit path.
+  var ex = extract_({ raw_text: imp.transcript });
+  if (!ex || !ex.ok) return { ok: false, error: 'The extraction failed: ' + ((ex && ex.error) || 'unknown') };
+  var f = ex.fields || {};
+  var category = String(f.category || 'tech_issue').toLowerCase();
+  var payload = {
+    _user: data._user,
+    category: category,
+    raw_text: imp.transcript || '',
+    student_name: f.student_name || imp.student_name || '',
+    student_contact: f.student_contact || imp.student_contact || '',
+    device_info: f.device_info || '',
+    course: f.course || '', module: f.module || '', lesson: f.lesson || '',
+    lesson_code: f.lesson_code || '',
+    issue_type: f.issue_type || '',
+    summary: f.summary || bj.summary || '',
+    priority: f.priority || 'medium',
+    priority_reason: f.priority_reason || '',
+    image_urls: (imp.images || []).join(','),
+    section: f.section || '',
+    platform: f.platform || '',
+    media_kind: f.media_kind || '',
+    request_kind: f.request_kind === 'improvement' ? 'improvement' : 'fix',
+    chatwoot_conversation_id: id,
+    app_url: data.app_url || getAppUrl_()
+  };
+
+  if (data.merge_into) {
+    payload.merge_into = data.merge_into;
+  } else if (data.no_merge) {
+    payload.no_merge = true;
+  } else {
+    var matchId = null;
+    try { matchId = aiMatchIssue_(payload, category); } catch (e) { matchId = null; }
+    if (matchId) {
+      var m = findRow_(matchId);
+      if (m) {
+        return { ok: true, needs_confirm: true, match: {
+          issue_id: matchId, summary: m.record.summary || '', status: m.record.status || '',
+          lesson_code: m.record.lesson_code || '', priority: m.record.priority || '',
+          report_count: Number(m.record.report_count) || 1
+        }, fields: { summary: payload.summary, priority: payload.priority } };
+      }
+    }
+    payload.no_merge = true; // the matcher already said no; no point running it twice inside addIssue_
+  }
+
+  var r = addIssue_(payload);
+  if (!r || !r.ok) return { ok: false, error: 'Could not file the issue: ' + ((r && r.error) || 'unknown') };
+  var issueId = (r.issue && r.issue.issue_id) || '';
+  rec.issue_id = issueId;
+  // A new issue logged from a chat gets the one private note at submit time; a
+  // merge doesn't, so the close step knows whether it still owes the note.
+  bj.note_posted = !r.merged;
+  bj.message_count = imp.message_count;
+  rec.summary = payload.summary || rec.summary;
+  rec.brief_json = JSON.stringify(bj);
+  rec.last_activity = now; rec.last_touched_by = who;
+  liveCaseSave_(rec);
+  return { ok: true, filed: true, merged: !!r.merged, issue_id: issueId,
+    summary: payload.summary, priority: String((r.issue && r.issue.priority) || payload.priority || '') };
+}
+
+// Manual close - for the conversations that fizzle out, or once everything is
+// wrapped. Close-with-issue leaves the single private note on the Chatwoot
+// conversation as the record, unless the checkpoint already posted it (one
+// note, never two).
+function caseClose_(data) {
+  var id = chatwootConvId_(data.conversation_id || data.conversation);
+  var rec = liveCaseFind_(id);
+  if (!rec) return { ok: false, error: 'No live case for that conversation.' };
+  var who = (data._user && data._user.name) || '';
+  var bj = caseBriefJson_(rec);
+  if (rec.issue_id && !bj.note_posted) {
+    var found = findRow_(rec.issue_id);
+    if (found) {
+      try { chatwootNote_(id, found.record, data.app_url || getAppUrl_()); bj.note_posted = true; } catch (e) {}
+    }
+  }
+  rec.status = 'closed';
+  rec.last_activity = new Date().toISOString();
+  rec.last_touched_by = who;
+  rec.brief_json = JSON.stringify(bj);
+  liveCaseSave_(rec);
+  return { ok: true, closed: true, issue_id: rec.issue_id || '' };
+}
+
+// Opening a case clears the sheet-level unread flag (the per-person dot is
+// handled in the browser). Deliberately does NOT count as touching the case.
+function caseTouch_(data) {
+  var rec = liveCaseFind_(chatwootConvId_(data.conversation_id || data.conversation));
+  if (!rec) return { ok: true };
+  if (isTrueLike_(rec.unread)) { rec.unread = false; liveCaseSave_(rec); }
+  return { ok: true };
+}
+
+// ---- batch "tell the students" (Round 45) ----------------------------------
+// One click on a resolved issue drafts the "it's fixed" message for EVERY
+// affected student across the merged reports, each in the resolving
+// instructor's voice. Drafts only - nothing sends itself, ever.
+function batchStudentDrafts_(data) {
+  var found = findRow_(data.issue_id);
+  if (!found) return { ok: false, error: 'No issue found with that id.' };
+  var i = found.record;
+  var who = (data._user && data._user.name) || '';
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) return { ok: false, error: 'no api key' };
+
+  var seen = {};
+  var students = [];
+  function addSt(name, contact) {
+    name = String(name || '').trim(); contact = String(contact || '').trim();
+    if (!name && !contact) return;
+    var key = (name + '|' + contact).toLowerCase();
+    if (seen[key]) return;
+    seen[key] = true;
+    students.push({ name: name || 'there', contact: contact });
+  }
+  addSt(i.student_name, i.student_contact);
+  var reps = []; try { reps = i.reports_json ? JSON.parse(i.reports_json) : []; } catch (e) { reps = []; }
+  reps.forEach(function (rp) {
+    if (rp.kind === 'question' || rp.kind === 'answer') return;
+    addSt(rp.student_name, rp.student_contact);
+  });
+  if (!students.length) return { ok: false, error: 'No student names or contacts on this issue.' };
+  var capped = students.length > 10;
+  students = students.slice(0, 10);
+
+  var guide = voiceGuideFor_(who);
+  var fixNotes = i.dev_notes || i.resolution_note || '';
+  var drafts = [];
+  for (var s = 0; s < students.length; s++) {
+    var st = students[s];
+    var prompt = 'Draft a short, warm email from an instructor at Ardent Training (an online RYA sailing school) to a student.\n\n' +
+      'GOAL: Tell the student the problem they reported has been fixed, and invite them to try again and shout if anything still looks off.\n\n' +
+      'THE ISSUE:\n' + JSON.stringify({ summary: i.summary, lesson: i.lesson || i.lesson_code || '', fix_notes: fixNotes,
+        student_first_name: String(st.name).split(' ')[0] }) + '\n' +
+      (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n' : '') +
+      '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name. ' +
+      (guide
+        ? 'Sign off exactly the way this instructor signs off in the style guide (their name: "' + (who || 'The Ardent team') + '"). '
+        : 'Sign off as "' + (who || 'The Ardent team') + '". ') +
+      'Promise no dates unless the fix notes give one. Return ONLY the email text, nothing else.';
+    var text = '';
+    try {
+      var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        payload: JSON.stringify({ model: DRAFT_MODEL, max_tokens: 1500, messages: [{ role: 'user', content: prompt }] })
+      });
+      if (res.getResponseCode() >= 200 && res.getResponseCode() < 300) {
+        var parsed = JSON.parse(res.getContentText() || '{}');
+        (parsed.content || []).forEach(function (c) { if (c.type === 'text') text += c.text; });
+        text = text.trim();
+      }
+    } catch (e) { text = ''; }
+    drafts.push({ name: st.name, contact: st.contact, text: text, failed: !text });
+  }
+  return { ok: true, voiced: !!guide, capped: capped, total_students: Object.keys(seen).length, drafts: drafts };
+}
+
+// ---- confusion -> content tweak (Round 45) ---------------------------------
+// Three or more open student-confusion reports on one lesson is not three
+// confused students, it is a sentence in the lesson doing the confusing.
+// Draft what would stop it - as a SUGGESTION the course team can accept or
+// dismiss, never applied by itself (same rule as the playbook suggestions).
+function contentSuggestions_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('CONTENT_SUGGESTIONS');
+  if (!raw) return [];
+  try { var a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function saveContentSuggestions_(arr) {
+  PropertiesService.getScriptProperties().setProperty('CONTENT_SUGGESTIONS', JSON.stringify((arr || []).slice(-30)));
+}
+function contentSeen_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('CONTENT_SUGG_SEEN');
+  if (!raw) return {};
+  try { return JSON.parse(raw) || {}; } catch (e) { return {}; }
+}
+function confusionReview_() {
+  var byLesson = {};
+  (getIssues_().issues || []).forEach(function (i) {
+    if (String(i.issue_type || '') !== 'student_confusion') return;
+    var st = String(i.status || 'open').toLowerCase();
+    if (st !== 'open' && st !== 'in_progress' && st !== 'with_dev') return;
+    var code = String(i.lesson_code || '').trim();
+    if (!code) return;
+    (byLesson[code] = byLesson[code] || []).push(i);
+  });
+  var pending = contentSuggestions_();
+  var seen = contentSeen_();
+  var added = 0, hotspots = 0;
+  Object.keys(byLesson).forEach(function (code) {
+    var group = byLesson[code];
+    if (group.length < 3) return;
+    hotspots++;
+    var already = pending.some(function (s) { return s.lesson_code === code; });
+    if (already) return;
+    // Only re-suggest once the pile has grown past the last accept/dismiss.
+    if (seen[code] && group.length <= Number(seen[code])) return;
+    var items = group.slice(0, 6).map(function (i) {
+      return { summary: String(i.summary || '').slice(0, 200), detail: String(i.raw_text || '').slice(0, 600) };
+    });
+    var prompt = 'You are reviewing a lesson (code ' + code + ') in an online RYA sailing theory course for Ardent Training. ' +
+      group.length + ' separate students have reported being confused by this lesson. Their reports:\n' +
+      JSON.stringify(items) + '\n\n' +
+      'Work out what the students keep misreading, and draft ONE practical content tweak the course team could make. ' +
+      'The shape is: "students keep reading X as Y - a sentence on Z would stop it". Be concrete about the fix ' +
+      '(what to add, reword, or illustrate) and keep it to two or three sentences. ' +
+      'If the reports are genuinely about different things and no single tweak would help, return found false.\n' +
+      'Return ONLY JSON, no prose, no fences: {"found": true or false, "suggestion": "<the drafted tweak>", "why": "<one sentence on the pattern in the reports>"}';
+    var got = anthropicRaw_(ANTHROPIC_MODEL, prompt, 16000);
+    var out = got.json;
+    if (!out || !out.found || !out.suggestion) return;
+    pending.push({ id: Utilities.getUuid(), lesson_code: code, count: group.length,
+      suggestion: String(out.suggestion), why: String(out.why || ''),
+      issue_ids: group.map(function (i) { return i.issue_id; }).slice(0, 12),
+      created_at: new Date().toISOString() });
+    added++;
+  });
+  if (added) saveContentSuggestions_(pending);
+  return { ok: true, hotspots: hotspots, added: added, pending: pending.length };
+}
+function runConfusionReview_(data) {
+  var r = confusionReview_();
+  r.suggestions = contentSuggestions_();
+  return r;
+}
+function listContentSuggestions_() { return { ok: true, suggestions: contentSuggestions_() }; }
+function resolveContentSuggestion_(body) {
+  var arr = contentSuggestions_();
+  var kept = [], matched = null;
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i].id === body.id) matched = arr[i]; else kept.push(arr[i]);
+  }
+  if (!matched) return { ok: false, error: 'Suggestion not found (it may have already been actioned).' };
+  var issueId = '';
+  if (body.accept) {
+    // Accepting queues the tweak as a course improvement on that lesson, so it
+    // lands in the same course-fixes queue as everything else. Making the
+    // change is still a human job - nothing touches lesson content from here.
+    var r = addIssue_({
+      _user: body._user,
+      category: 'course_error',
+      request_kind: 'improvement',
+      lesson_code: matched.lesson_code,
+      issue_type: 'student_confusion',
+      summary: 'Content tweak: ' + String(matched.suggestion).slice(0, 240),
+      raw_text: 'Drafted from ' + matched.count + ' student-confusion reports on ' + matched.lesson_code + '.\n\n' +
+        'Suggested tweak: ' + matched.suggestion + '\n\nWhy: ' + (matched.why || '') +
+        '\n\nSource issues: ' + (matched.issue_ids || []).join(', '),
+      priority: 'medium',
+      priority_reason: matched.count + ' students confused by the same lesson',
+      no_merge: true
+    });
+    issueId = (r && r.ok && r.issue && r.issue.issue_id) || '';
+  }
+  var seen = contentSeen_();
+  seen[matched.lesson_code] = matched.count;
+  PropertiesService.getScriptProperties().setProperty('CONTENT_SUGG_SEEN', JSON.stringify(seen));
+  saveContentSuggestions_(kept);
+  return { ok: true, accepted: !!body.accept, issue_id: issueId };
 }
 
 function backendInfo_() {

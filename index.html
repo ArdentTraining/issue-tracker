@@ -513,6 +513,15 @@
   .hidden { display: none !important; }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: -2px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* Live cases (Round 45): the unread dot and the who's-holding-it chip. */
+  .live-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 1px; flex-shrink: 0; }
+  .name-chip { display: inline-block; font-size: 10.5px; padding: 1px 8px; border-radius: 999px; background: rgba(94,114,235,0.14); color: var(--accent); border: 1px solid rgba(94,114,235,0.35); white-space: nowrap; }
+  .chat-badge { background: rgba(94,114,235,0.14); color: var(--accent); border: 1px solid rgba(94,114,235,0.4); }
+  .live-brief h3 { margin: 14px 0 6px; }
+  .live-brief ul { margin: 4px 0 8px 18px; padding: 0; }
+  .live-brief li { margin-bottom: 4px; font-size: 13.5px; }
+  #liveSplitHost:not(.split-on) > .split-dock { display: block; margin-top: 14px; }
+  #liveSplitHost:not(.split-on) > .col-drag { display: none; }
 </style>
 </head>
 <body>
@@ -527,6 +536,7 @@
     <div class="switcher">
       <button id="tabInstructor" class="active" onclick="setView('instructor')">Log an issue</button>
       <button id="tabActions" onclick="setView('actions')">Actions</button>
+      <button id="tabLive" onclick="setView('live')">Open conversations</button>
       <button id="tabAdmin" onclick="setView('admin')">Track</button>
       <button id="tabAnalytics" onclick="setView('analytics')">Analytics</button>
       <button id="tabDev" onclick="setView('dev')">Developers</button>
@@ -804,6 +814,22 @@
   <div id="actionsScan" style="max-width:1300px;margin:18px auto 0;"></div>
 </div>
 
+<!-- ===================== LIVE CASES (Round 45) ===================== -->
+<div id="liveView" class="wrap hidden">
+  <h2 style="margin-top:0;">Open conversations</h2>
+  <p class="small muted" style="margin-top:-6px;">A student's in touch - what do we say? Pull the chat in, see where it stands, and the bug report falls out of the conversation. Cases are shared: anyone can pick one up and carry on.</p>
+  <div class="row" style="margin-bottom:14px;gap:8px;">
+    <input id="liveCwInput" placeholder="Chatwoot link or number" autocomplete="off" style="flex:1;min-width:0;max-width:340px;" onkeydown="if(event.key==='Enter'){event.preventDefault();openLiveCase();}" />
+    <button type="button" class="primary" style="white-space:nowrap;" onclick="openLiveCase()">Open a case</button>
+    <button type="button" class="ghost" style="white-space:nowrap;" onclick="openChatwootPicker(openLiveCaseFromPicker)">Browse recent</button>
+  </div>
+  <div class="split-host" id="liveSplitHost">
+    <div class="list-col" id="liveList"></div>
+    <div class="col-drag" title="Drag to resize the list"></div>
+    <div class="split-dock" id="liveDock" style="display:none;"></div>
+  </div>
+</div>
+
 <!-- ===================== ADMIN VIEW ===================== -->
 <div id="adminView" class="wrap hidden">
   <div class="area-toggle" style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -976,6 +1002,7 @@
   </div>
   <div class="area-toggle" id="courseFilters" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
   <div class="area-toggle" id="courseTools" style="flex-wrap:wrap;gap:8px 10px;align-items:center;"></div>
+  <div id="contentSuggPanel"></div>
   <div id="courseReviewPanel"></div>
   <div class="split-host" id="courseSplitHost">
     <div class="list-col" id="courseList"></div>
@@ -1138,6 +1165,20 @@
   </div>
 </div>
 
+<!-- LIVE CASES: checkpoint found a case the team is already on - ask first. -->
+<div class="modal-bg" id="liveMergeModal">
+  <div class="modal" style="max-width:540px;">
+    <div id="liveMergePanel" class="suggest" style="margin:0;"></div>
+  </div>
+</div>
+
+<!-- BATCH "TELL THE STUDENTS": one draft per affected student, copy out. -->
+<div class="modal-bg" id="batchDraftModal">
+  <div class="modal" style="max-width:680px;">
+    <div id="batchDraftPanel" class="suggest" style="margin:0;max-height:82vh;overflow-y:auto;"></div>
+  </div>
+</div>
+
 <!-- SAME STUDENT, ALREADY HAS AN OPEN ISSUE. Inline it was being scrolled past
      (Edd, FB-0152), and quietly attaching a report to the wrong issue is worse
      than a click. The panel stays on the form afterwards as the reminder. -->
@@ -1291,7 +1332,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r44 · 2026-08-09";  // bump this with each round, it lands on every feedback report
+var BUILD = "r45 · 2026-08-09";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1450,7 +1491,14 @@ var state = {
   courseLesson: "all",        // selected lesson code, or "all"
   courseType: "all",          // all | lesson | kc | ma (from the code suffix .K / .M)
   coursePart: "all",          // all | text | video | other (which part of the lesson)
-  courseAssignee: "all"       // all | unassigned | <person's name>
+  courseAssignee: "all",      // all | unassigned | <person's name>
+  // Live cases (Round 45): the shared Open-conversations workspace.
+  liveCases: [],              // open cases from the LiveCases sheet, newest activity first
+  liveSelected: null,         // conversation_id of the case on screen
+  liveLoaded: false,          // has the first listLiveCases come back yet?
+  cwPickHandler: null,        // where the Chatwoot picker sends its pick (form import by default)
+  contentSuggs: [],           // confusion -> content-tweak suggestions for the course team
+  batchDrafts: null           // last batch "tell the students" result
 };
 
 // Issue type options per form mode. Internal tasks get their own vocabulary;
@@ -2016,6 +2064,7 @@ function applyPerms(user) {
   var p = state.perms;
   $("tabInstructor").style.display = p.log ? "" : "none";
   $("tabActions").style.display = p.log ? "" : "none";
+  $("tabLive").style.display = p.log ? "" : "none";
   $("tabAdmin").style.display = p.manage ? "" : "none";
   $("tabAnalytics").style.display = p.analytics ? "" : "none";
   $("tabDev").style.display = p.dev ? "" : "none";
@@ -2053,6 +2102,7 @@ function loadIssues(isRetry) {
     state.issues = res.issues || [];
     state._issuesLoaded = true;
     updateActionsTabCount();
+    loadLiveCases();  // the "chat open" badges and the case list ride along
     if (state.view === "actions") renderActions();
     if (state.view === "admin") renderAdmin();
     else if (state.view === "analytics") renderAnalytics();
@@ -2237,13 +2287,401 @@ function renderActions() {
 
     return '<div class="act-row" data-id="' + id + '" onclick="actionOpen(\'' + id + '\')">' +
         '<span class="act-word" style="background:' + r.colour + ';color:#02121f;">' + esc(r.word) + '</span>' +
-        '<div><div class="act-title">' + esc(cardTitle(i)) + '</div>' +
+        '<div><div class="act-title">' + esc(cardTitle(i)) + chatOpenBadge(i) + '</div>' +
           (sub.length ? '<div class="act-sub">' + esc(sub.join(" · ")) + '</div>' : '') + '</div>' +
         '<div><span class="act-do">' + esc(r.act) + '</span>' + btn + '</div>' +
       '</div>';
   }).join("");
   markActiveCard();
   renderChatScan("actionsScan");
+}
+
+// ============================ LIVE CASES (Round 45) ============================
+// The instructor-first workspace: pull a Chatwoot chat in, see where it
+// stands (summary, tried, next step, known fix), draft the reply, and let the
+// bug report fall out of the conversation as a checkpoint. Cases are shared -
+// whoever is free picks one up and carries on.
+function loadLiveCases() {
+  if (!state.perms || !state.perms.log) return;
+  if (state._liveLoading) return;
+  state._liveLoading = true;
+  apiPost({ action: "listLiveCases" }).then(function (res) {
+    state._liveLoading = false;
+    if (!res || !res.ok) return;
+    state.liveCases = res.cases || [];
+    state.liveLoaded = true;
+    if (state.view === "live") renderLive();
+    // The "chat open" badges ride on Track and Actions rows.
+    else if (state.view === "admin") renderAdmin();
+    else if (state.view === "actions") renderActions();
+  }).catch(function () { state._liveLoading = false; });
+}
+function loadLiveCasesThenRender() {
+  apiPost({ action: "listLiveCases" }).then(function (res) {
+    if (res && res.ok) { state.liveCases = res.cases || []; state.liveLoaded = true; }
+    renderLive();
+  }).catch(function () { renderLive(); });
+}
+function liveCaseById(conv) {
+  return (state.liveCases || []).filter(function (c) { return String(c.conversation_id) === String(conv); })[0] || null;
+}
+function hasOpenChat(issueId) {
+  return !!(issueId && (state.liveCases || []).some(function (c) { return c.issue_id === issueId; }));
+}
+function chatOpenBadge(i) {
+  return hasOpenChat(i && i.issue_id) ? '<span class="badge chat-badge">Chat open</span>' : "";
+}
+// Per-browser "when did I last open this case" map, for the unread dots:
+// news for me is anything newer than my own last look, not anyone else's.
+function liveSeenMap() { try { return JSON.parse(localGet("ait_live_seen") || "{}") || {}; } catch (e) { return {}; } }
+function liveMarkSeen(conv) {
+  var m = liveSeenMap();
+  m[String(conv)] = new Date().toISOString();
+  localSet("ait_live_seen", JSON.stringify(m));
+}
+function liveIsUnread(c) {
+  var seen = liveSeenMap()[String(c.conversation_id)];
+  if (!seen) return !!c.unread;  // never opened here: dot it only when a fetched reply is waiting
+  return !!(c.last_activity && new Date(c.last_activity) > new Date(seen));
+}
+
+function renderLive() {
+  var el = $("liveList");
+  if (!el) return;
+  var cases = state.liveCases || [];
+  if (!state.liveLoaded) {
+    el.innerHTML = '<p class="muted small"><span class="spinner"></span> loading the case list…</p>';
+    return;
+  }
+  if (!cases.length) {
+    el.innerHTML = '<p class="muted small">No open cases. Paste a Chatwoot link above, or Browse recent, to open one.</p>';
+  } else {
+    el.innerHTML = cases.map(function (c) {
+      var first = String(c.last_touched_by || c.opened_by || "").split(" ")[0];
+      return '<div class="issue-card" data-conv="' + esc(c.conversation_id) + '" onclick="selectLiveCase(\'' + esc(c.conversation_id) + '\')">' +
+        '<div class="top">' +
+          (liveIsUnread(c) ? '<span class="live-dot" title="New activity since you last looked"></span>' : '') +
+          '<strong>' + esc(c.student_name || ("Conversation #" + c.conversation_id)) + '</strong>' +
+          (first ? '<span class="name-chip" title="Last touched by ' + esc(c.last_touched_by || c.opened_by || "") + '">' + esc(first) + '</span>' : '') +
+          (c.issue_id ? '<span class="badge type-badge">issue filed</span>' : '') +
+          (c.chat_still_open ? '<span class="badge chat-badge" title="The issue is wrapped up, but the conversation is still open in Chatwoot">chat still open in Chatwoot</span>' : '') +
+          '<span class="who">' + fmtDate(c.last_activity) + '</span>' +
+        '</div>' +
+        (c.summary ? '<div class="sum clamp4">' + esc(c.summary) + '</div>' : '') +
+      '</div>';
+    }).join("");
+  }
+  markLiveActive();
+  if (state.liveSelected) {
+    if (liveCaseById(state.liveSelected)) renderLiveDetail();
+    else { state.liveSelected = null; hideLiveDetail(); }
+  }
+}
+function markLiveActive() {
+  Array.prototype.forEach.call(document.querySelectorAll("#liveList .issue-card"), function (el) {
+    el.classList.toggle("active", el.getAttribute("data-conv") === String(state.liveSelected || ""));
+  });
+}
+function hideLiveDetail() {
+  var host = $("liveSplitHost");
+  if (!host) return;
+  host.classList.remove("split-on");
+  $("liveDock").style.display = "none";
+}
+function selectLiveCase(conv) {
+  state.liveSelected = String(conv);
+  liveMarkSeen(conv);
+  // Clears the sheet-level "fetched reply waiting" flag; the per-person dots
+  // clear on their own next look.
+  apiPost({ action: "caseTouch", conversation_id: String(conv) }).catch(function () {});
+  renderLiveDetail();
+  markLiveActive();
+}
+
+function renderLiveDetail() {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) { hideLiveDetail(); return; }
+  var host = $("liveSplitHost"), dock = $("liveDock");
+  if (window.innerWidth >= 900) host.classList.add("split-on");
+  dock.style.display = "";
+  var b = c.brief || {};
+  var linkedIssue = c.issue_id ? (state.issues || []).filter(function (i) { return i.issue_id === c.issue_id; })[0] : null;
+
+  var html = '<div class="card live-brief" style="position:relative;">' +
+    '<button class="close" onclick="state.liveSelected=null;hideLiveDetail();markLiveActive();">&times;</button>' +
+    '<h2 style="margin:0 0 4px;">' + esc(c.student_name || ("Conversation #" + c.conversation_id)) + '</h2>' +
+    '<div class="small muted" style="margin-bottom:10px;">' +
+      (c.student_contact ? esc(c.student_contact) + ' · ' : '') +
+      'opened by ' + esc(c.opened_by || "—") +
+      (c.last_touched_by && c.last_touched_by !== c.opened_by ? ' · last touched by ' + esc(c.last_touched_by) : '') +
+      (b.link ? ' · <a href="' + esc(b.link) + '" target="_blank" style="color:var(--accent);">open in Chatwoot</a>' : '') +
+    '</div>';
+
+  if (c.issue_id) {
+    html += '<div class="small" style="margin-bottom:10px;">' +
+      '<span class="badge chat-badge">issue filed</span> ' +
+      (linkedIssue
+        ? '<a href="#" onclick="liveOpenIssue(\'' + esc(c.issue_id) + '\');return false;" style="color:var(--accent);">' + esc(shortId(linkedIssue)) + '</a> ' +
+          statusBadge(linkedIssue.status) + ' ' + priBadge(linkedIssue.priority)
+        : '') +
+      (c.chat_still_open ? ' <span class="badge chat-badge">chat still open in Chatwoot</span>' : '') +
+    '</div>';
+  }
+
+  html += '<h3>Where this stands</h3>' +
+    '<div style="font-size:13.5px;">' + esc(b.summary || c.summary || "No summary yet - press Refresh the brief.") + '</div>' +
+    (b.device ? '<div class="small muted" style="margin-top:3px;">' + esc(b.device) + '</div>' : '');
+
+  html += '<h3>What\'s been tried</h3>' +
+    ((b.tried && b.tried.length)
+      ? '<ul>' + b.tried.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join("") + '</ul>'
+      : '<div class="small muted">Nothing tried yet, as far as the conversation shows.</div>');
+
+  html += '<h3>Recommended next step</h3>' +
+    '<div style="font-size:13.5px;">' + (b.next ? esc(b.next) : '<span class="muted">Nothing to suggest right now - refresh the brief if the conversation has moved on.</span>') + '</div>';
+
+  if (b.fix) {
+    html += '<div class="batch" style="margin-top:12px;background:rgba(70,192,138,0.10);border-color:var(--low);">' +
+      '<strong>We\'ve seen this before</strong>' +
+      '<div class="small" style="margin:4px 0 2px;">' + esc(b.fix) + '</div>' +
+      (b.fix_based_on ? '<div class="small muted">Based on: ' + esc(b.fix_based_on) + '</div>' : '') +
+    '</div>';
+  }
+
+  html += '<div class="row" style="margin-top:14px;flex-wrap:wrap;">' +
+    '<button class="primary" onclick="liveDraftReply()">Draft a reply</button>' +
+    '<button class="ghost" onclick="liveCheckReply()">Check for new reply</button>' +
+    '<button class="ghost" onclick="liveCheckpoint()">' + (c.issue_id ? 'Checkpoint - add an update' : 'Checkpoint - file the issue') + '</button>' +
+    '<button class="ghost" onclick="liveRefreshBrief()">Refresh the brief</button>' +
+    '<button class="ghost" style="color:var(--high);" onclick="liveCloseCase()">Close case</button>' +
+  '</div>';
+
+  if (b.images && b.images.length) {
+    html += '<details class="acc" style="margin-top:14px;"><summary>Screenshots (' + b.images.length + ')</summary><div class="thumbs">' +
+      b.images.map(function (u) {
+        return '<a class="thumb" href="' + esc(driveOpen(u)) + '" target="_blank"><img src="' + esc(driveImg(u, 600)) + '" /></a>';
+      }).join("") + '</div></details>';
+  }
+  if (b.transcript) {
+    html += '<details class="acc" style="margin-top:8px;"><summary>The conversation</summary>' +
+      '<div style="white-space:pre-wrap;font-size:13px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;">' + esc(b.transcript) + '</div></details>';
+  }
+  html += '</div>';
+  dock.innerHTML = html;
+}
+function liveOpenIssue(id) { openIssueById(id, false); }
+
+function openLiveCase(convInput) {
+  var v = convInput || ($("liveCwInput") ? $("liveCwInput").value.trim() : "");
+  if (!v) { toast("Paste a Chatwoot link or number first."); return; }
+  busyShow("Reading the conversation and putting the brief together…");
+  apiPost({ action: "caseBrief", conversation: String(v) }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Could not open it: " + ((res && res.error) || "unknown")); return; }
+    if ($("liveCwInput")) $("liveCwInput").value = "";
+    state.liveSelected = String(res.conversation_id);
+    liveMarkSeen(res.conversation_id);
+    loadLiveCasesThenRender();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+function openLiveCaseFromPicker(id) {
+  if (state.view !== "live") setView("live");
+  openLiveCase(String(id));
+}
+function liveRefreshBrief() {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  busyShow("Re-reading the conversation…");
+  apiPost({ action: "caseBrief", conversation: c.conversation_id }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Refresh failed: " + ((res && res.error) || "unknown")); return; }
+    loadLiveCasesThenRender();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+function liveCheckReply() {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  busyShow("Checking Chatwoot for a new reply…");
+  apiPost({ action: "caseCheckReply", conversation_id: c.conversation_id, app_url: APP_URL }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Check failed: " + ((res && res.error) || "unknown")); return; }
+    toast(res.message || (res.found ? "Something new came in." : "Nothing new yet."));
+    if (res.found) {
+      liveMarkSeen(c.conversation_id);
+      loadLiveCasesThenRender();
+      if (c.issue_id) loadIssues();
+    }
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+function liveDraftReply() {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  busyShow("Drafting the reply…");
+  apiPost({ action: "caseDraftReply", conversation_id: c.conversation_id }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok || !res.text) { toast("Draft failed: " + ((res && res.error) || "unknown")); return; }
+    openLiveDraftModal(res.text, !!res.voiced, c.student_contact);
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+// The same editable popup the issue drafts use, fed by a case instead.
+function openLiveDraftModal(text, voiced, contact) {
+  $("draftText").value = text || "";
+  $("draftVoiced").textContent = voiced ? "· in your voice" : "";
+  var btn = $("draftChatwootBtn");
+  if (contact && String(contact).indexOf("@") > 0) { btn.style.display = ""; btn.onclick = function () { openInChatwoot(contact); }; }
+  else btn.style.display = "none";
+  $("draftOverlay").style.display = "flex";
+}
+function liveCheckpoint(decision) {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  var payload = { action: "caseCheckpoint", conversation_id: c.conversation_id, app_url: APP_URL };
+  if (decision && decision.merge_into) payload.merge_into = decision.merge_into;
+  if (decision && decision.no_merge) payload.no_merge = true;
+  busyShow(c.issue_id ? "Adding the checkpoint to the issue…" : "Reading it back and filing the issue…");
+  apiPost(payload).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Checkpoint failed: " + ((res && res.error) || "unknown")); return; }
+    if (res.needs_confirm && res.match) { showLiveMergeConfirm(res.match); return; }
+    if (res.updated) toast("Checkpoint added to the issue.");
+    else if (res.merged) toast("Rolled into the case the team is already on. This case stays open here.");
+    else toast("Issue filed" + (String(res.priority || "").toLowerCase() === "high" ? " - high priority, so the team has been pinged." : "."));
+    loadLiveCasesThenRender();
+    loadIssues();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+// Merge asks first (Edd's call): one click to confirm it's the case the team
+// is already on, or to log it as new - same pattern as the same-issue popup.
+function showLiveMergeConfirm(m) {
+  $("liveMergePanel").innerHTML =
+    '<div class="h">This looks like a case the team is already on</div>' +
+    '<div style="font-size:13.5px;margin-bottom:4px;">' + esc(m.summary || "(no summary)") + '</div>' +
+    '<div class="small muted" style="margin-bottom:10px;">' +
+      (m.lesson_code ? esc(m.lesson_code) + ' · ' : '') + esc(m.status || 'open') +
+      (m.report_count > 1 ? ' · ×' + m.report_count + ' reports' : '') + '</div>' +
+    '<div class="btns">' +
+      '<button class="primary" onclick="closeLiveMerge();liveCheckpoint({merge_into:\'' + esc(m.issue_id) + '\'})">Yes - add this student to it</button>' +
+      '<button class="ghost" onclick="closeLiveMerge();liveCheckpoint({no_merge:true})">No - log it as new</button>' +
+    '</div>' +
+    '<div class="small" style="margin-top:8px;"><a href="#" onclick="closeLiveMerge();return false;" style="color:var(--muted);">Cancel - decide later</a></div>';
+  $("liveMergeModal").classList.add("show");
+}
+function closeLiveMerge() { $("liveMergeModal").classList.remove("show"); }
+function liveCloseCase() {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  var msg = c.issue_id
+    ? "Close this case? The issue stays open in Track as normal, and the private note goes on the Chatwoot conversation if it isn't there already."
+    : "Close this case without filing an issue? Fine for a conversation that fizzled out or was sorted on the spot.";
+  if (!confirm(msg)) return;
+  busyShow("Closing the case…");
+  apiPost({ action: "caseClose", conversation_id: c.conversation_id, app_url: APP_URL }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Close failed: " + ((res && res.error) || "unknown")); return; }
+    state.liveSelected = null;
+    hideLiveDetail();
+    toast("Case closed.");
+    loadLiveCasesThenRender();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+
+// ---- batch "tell the students" (Round 45) ----------------------------------
+// One button on a fixed issue drafts the it's-fixed message for every affected
+// student across the merged reports, each in your voice. Nothing sends itself.
+function batchDraftsRun(issueId) {
+  busyShow("Drafting a message for every affected student… this can take a minute.");
+  apiPost({ action: "batchStudentDrafts", issue_id: issueId }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Drafting failed: " + ((res && res.error) || "unknown")); return; }
+    state.batchDrafts = res;
+    showBatchDrafts();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+function showBatchDrafts() {
+  var r = state.batchDrafts;
+  if (!r || !r.drafts) return;
+  var html = '<div class="h">Tell the students - ' + r.drafts.length + ' draft' + (r.drafts.length === 1 ? '' : 's') +
+      (r.voiced ? ' <span class="small muted" style="font-weight:normal;">(in your voice)</span>' : '') + '</div>' +
+    '<div class="small muted" style="margin-bottom:10px;">Nothing sends itself: copy each one into Chatwoot or email and tweak as you like.' +
+      (r.capped ? ' Capped at 10 students this run - run it again for the rest once these have gone.' : '') + '</div>' +
+    r.drafts.map(function (d, n) {
+      return '<div style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--bg);">' +
+        '<div class="small" style="margin-bottom:6px;"><strong>' + esc(d.name) + '</strong>' +
+          (d.contact ? ' <span class="muted">' + esc(d.contact) + '</span>' : '') +
+          (d.contact && String(d.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;" onclick="openInChatwoot(\'' + esc(d.contact) + '\')">Chatwoot</button>' : '') +
+        '</div>' +
+        (d.failed
+          ? '<div class="small" style="color:var(--high);">This one failed to draft - use the single Draft button on the issue for ' + esc(d.name) + '.</div>'
+          : '<textarea id="bd_' + n + '" rows="6" style="width:100%;font-size:13px;">' + esc(d.text) + '</textarea>' +
+            '<button class="ghost small" style="margin-top:6px;padding:4px 12px;" onclick="copyText($(\'bd_' + n + '\').value)">Copy</button>') +
+      '</div>';
+    }).join("") +
+    '<div class="btns">' +
+      '<button class="primary" onclick="batchDraftsCopyAll()">Copy all</button>' +
+      '<button class="ghost" onclick="$(\'batchDraftModal\').classList.remove(\'show\')">Close</button>' +
+    '</div>';
+  $("batchDraftPanel").innerHTML = html;
+  $("batchDraftModal").classList.add("show");
+}
+function batchDraftsCopyAll() {
+  var r = state.batchDrafts;
+  if (!r || !r.drafts) return;
+  var all = [];
+  r.drafts.forEach(function (d, n) {
+    if (d.failed) return;
+    var el = $("bd_" + n);
+    all.push("--- " + d.name + (d.contact ? " (" + d.contact + ")" : "") + " ---\n" + (el ? el.value : d.text));
+  });
+  copyText(all.join("\n\n"));
+}
+
+// ---- confusion -> content tweak (Round 45) ---------------------------------
+function loadContentSuggestions() {
+  state._contentSuggsLoaded = true;
+  apiPost({ action: "listContentSuggestions" }).then(function (res) {
+    if (res && res.ok) { state.contentSuggs = res.suggestions || []; renderContentSuggestions(); }
+  }).catch(function () {});
+}
+function runConfusionReview() {
+  busyShow("Reading the confusion hotspots… this can take a minute.");
+  apiPost({ action: "runConfusionReview" }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Review failed: " + ((res && res.error) || "unknown")); return; }
+    state.contentSuggs = res.suggestions || [];
+    renderContentSuggestions();
+    toast(res.added
+      ? "Drafted " + res.added + " new content suggestion" + (res.added === 1 ? "" : "s") + "."
+      : res.hotspots
+        ? "Looked at " + res.hotspots + " hotspot" + (res.hotspots === 1 ? "" : "s") + " - nothing new to suggest."
+        : "No lesson has 3 or more open confusion reports right now.");
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+function renderContentSuggestions() {
+  var el = $("contentSuggPanel");
+  if (!el) return;
+  var list = state.contentSuggs || [];
+  if (!list.length) { el.innerHTML = ""; return; }
+  el.innerHTML = '<div class="card" style="margin-bottom:14px;">' +
+    '<h3 style="margin-top:2px;">Confusion hotspots: ' + list.length + ' drafted content tweak' + (list.length === 1 ? '' : 's') +
+      ' <span class="small muted" style="font-weight:normal;">(3+ students confused by the same lesson - nothing changes until someone accepts one)</span></h3>' +
+    list.map(function (s) {
+      return '<div class="act-row" data-id="' + esc(s.id) + '">' +
+        '<span class="act-word" style="background:var(--medium);color:#02121f;">' + esc(s.lesson_code) + '</span>' +
+        '<div><div class="act-title">' + esc(s.suggestion) + '</div>' +
+          '<div class="act-sub">' + esc(s.why || "") + ' · ' + (Number(s.count) || 0) + ' reports</div></div>' +
+        '<div><button class="primary small" style="padding:5px 12px;" onclick="contentSuggResolve(\'' + esc(s.id) + '\', true)">Accept - queue the tweak</button>' +
+        ' <button class="ghost small" style="padding:5px 12px;" onclick="contentSuggResolve(\'' + esc(s.id) + '\', false)">Dismiss</button></div>' +
+      '</div>';
+    }).join("") + '</div>';
+}
+function contentSuggResolve(id, accept) {
+  apiPost({ action: "resolveContentSuggestion", id: id, accept: !!accept }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    state.contentSuggs = (state.contentSuggs || []).filter(function (s) { return s.id !== id; });
+    renderContentSuggestions();
+    if (accept) { toast("Queued as a course improvement on that lesson."); loadIssues(); }
+    else toast("Dismissed - it only comes back if more students hit it.");
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 
 // Status change straight from a detail drawer banner, no scrolling to the
@@ -2349,6 +2787,7 @@ function setView(v) {
   state.view = v;
   $("tabInstructor").classList.toggle("active", v === "instructor");
   $("tabActions").classList.toggle("active", v === "actions");
+  $("tabLive").classList.toggle("active", v === "live");
   $("tabAdmin").classList.toggle("active", v === "admin");
   $("tabAnalytics").classList.toggle("active", v === "analytics");
   $("tabDev").classList.toggle("active", v === "dev");
@@ -2356,12 +2795,14 @@ function setView(v) {
   $("tabUsers").classList.toggle("active", v === "users");
   $("instructorView").classList.toggle("hidden", v !== "instructor");
   $("actionsView").classList.toggle("hidden", v !== "actions");
+  $("liveView").classList.toggle("hidden", v !== "live");
   $("adminView").classList.toggle("hidden", v !== "admin");
   $("analyticsView").classList.toggle("hidden", v !== "analytics");
   $("devView").classList.toggle("hidden", v !== "dev");
   $("courseView").classList.toggle("hidden", v !== "course");
   $("usersView").classList.toggle("hidden", v !== "users");
   if (v === "actions") renderActions();
+  if (v === "live") { renderLive(); loadLiveCases(); }
   if (v === "admin") renderAdmin();
   if (v === "analytics") renderAnalytics();
   if (v === "dev") renderDev();
@@ -2756,11 +3197,20 @@ function chatwootImport(value) {
     closeChatwootPicker();
   }).catch(function (e) { $("cwStatus").textContent = "Import error. See console."; console.error(e); });
 }
-function openChatwootPicker() {
+// The picker serves two homes now: the log form (default) and the Live cases
+// tab, which passes its own handler for the picked conversation id.
+function openChatwootPicker(handler) {
+  state.cwPickHandler = (typeof handler === "function") ? handler : null;
   $("cwModal").classList.add("show");
   loadChatwootList();
 }
 function closeChatwootPicker() { $("cwModal").classList.remove("show"); }
+function cwPick(id) {
+  var h = state.cwPickHandler;
+  state.cwPickHandler = null;
+  if (h) { closeChatwootPicker(); h(id); }
+  else chatwootImport(id);
+}
 function loadChatwootList() {
   var status = $("cwStatusSel") ? $("cwStatusSel").value : "open";
   $("cwList").innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
@@ -2768,7 +3218,7 @@ function loadChatwootList() {
     if (!res || !res.ok) { $("cwList").innerHTML = '<p class="muted small">Could not load: ' + esc((res && res.error) || "unknown") + '</p>'; return; }
     var rows = res.conversations || [];
     $("cwList").innerHTML = rows.length ? rows.map(function (c) {
-      return '<div class="issue-card" style="margin-bottom:8px;" onclick="chatwootImport(\'' + esc(String(c.id)) + '\')">' +
+      return '<div class="issue-card" style="margin-bottom:8px;" onclick="cwPick(\'' + esc(String(c.id)) + '\')">' +
         '<div class="top"><span class="code">#' + esc(String(c.id)) + '</span>' +
           (c.student_name ? '<strong>' + esc(c.student_name) + '</strong>' : '') +
           (c.student_contact ? '<span class="small muted">' + esc(c.student_contact) + '</span>' : '') +
@@ -4414,7 +4864,7 @@ function renderAdmin() {
     var imgs = parseImageUrls(i.image_urls).length;
     return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + sortedBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
+        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + sortedBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) + chatOpenBadge(i) +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
@@ -4606,7 +5056,7 @@ function openDetail(issue) {
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
     '<div style="margin-bottom:12px;">' +
       '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
-      priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + sortedBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
+      priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + sortedBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) + chatOpenBadge(issue) +
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
 
@@ -4632,7 +5082,12 @@ function openDetail(issue) {
         (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\')">Chatwoot</button>' : '') +
         '</span></div>';
     }).join("") + '</div>' +
-    '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>';
+    '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>' +
+    // Fixed and worth telling everyone: one click drafts the it's-fixed
+    // message for every student on the merged reports, each in your voice.
+    (["resolved", "dev_fixed"].indexOf(String(issue.status || "").toLowerCase()) > -1
+      ? ' <button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="batchDraftsRun(\'' + esc(issue.issue_id) + '\')">Draft "it\'s fixed" messages to all</button>'
+      : '');
   } else {
     html += '<p class="muted small">No student contacts recorded.</p>';
   }
@@ -4929,6 +5384,7 @@ initSplitDrag("actionsSplitHost", "ait_actions_listw");
 initSplitDrag("adminSplitHost", "ait_admin_listw");
 initSplitDrag("devSplitHost", "ait_dev_listw");
 initSplitDrag("courseSplitHost", "ait_course_listw");
+initSplitDrag("liveSplitHost", "ait_live_listw");
 
 function markActiveCard() {
   Array.prototype.forEach.call(document.querySelectorAll(".issue-card.active, .action-card.active, .act-row.active"), function (el) { el.classList.remove("active"); });
@@ -5528,6 +5984,10 @@ function renderCourse() {
     : '<p class="muted">Nothing here.</p>';
   renderCourseTools();
   renderCourseReview();
+  // Confusion -> content-tweak suggestions (Round 45): fetched once per
+  // session, refreshed by the button or the nightly run.
+  if (!state._contentSuggsLoaded) loadContentSuggestions();
+  else renderContentSuggestions();
   markActiveCard();
 }
 
@@ -5545,6 +6005,7 @@ function renderCourseTools() {
 
   $("courseTools").innerHTML =
     '<button class="ghost small" style="padding:7px 14px;" onclick="courseReviewRun()">AI review: check the priorities</button>' +
+    '<button class="ghost small" style="padding:7px 14px;" onclick="runConfusionReview()" title="Any lesson with 3+ open student-confusion reports gets a drafted content tweak to accept or dismiss">Confusion hotspots: draft content tweaks</button>' +
     '<span class="small muted" style="margin:0 2px 0 14px;">Assign all</span>' + kindSel +
     '<span class="small muted" style="margin:0 2px;">to</span>' + whoSel +
     '<button class="ghost small" style="padding:7px 14px;" onclick="courseBulkAssign()">Assign</button>';
