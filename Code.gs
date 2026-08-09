@@ -3835,7 +3835,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r43.2 · 2026-08-09';
+var CODE_STAMP = 'r43.3 · 2026-08-09';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -3919,8 +3919,11 @@ function draftStudentMessage_(data) {
     }) + '\n' +
     (last && (last.summary || last.raw_text) ? 'LATEST UPDATE ON THE ISSUE: ' + String(last.summary || last.raw_text).slice(0, 400) + '\n' : '') +
     (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n' : '') +
-    '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name, ' +
-    'sign off as "' + (who || 'The Ardent team') + '". Promise no dates unless the fix notes give one. ' +
+    '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name. ' +
+    (guide
+      ? 'Sign off exactly the way this instructor signs off in the style guide (their name: "' + (who || 'The Ardent team') + '"). '
+      : 'Sign off as "' + (who || 'The Ardent team') + '". ') +
+    'Promise no dates unless the fix notes give one. ' +
     'Return ONLY the email text, nothing else.';
 
   try {
