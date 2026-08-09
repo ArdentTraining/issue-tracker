@@ -955,6 +955,7 @@
       <button type="button" id="dev_all" onclick="setDevFilter('all')">All</button>
     </div>
   </div>
+  <div class="area-toggle" id="devFilters" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
   <div class="split-host" id="devSplitHost">
     <div class="list-col" id="devList"></div>
     <div class="col-drag" title="Drag to resize the list"></div>
@@ -970,6 +971,8 @@
     <div class="stat"><div class="n" id="courseStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
   <div class="area-toggle" id="courseFilters" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
+  <div class="area-toggle" id="courseTools" style="flex-wrap:wrap;gap:8px 10px;align-items:center;"></div>
+  <div id="courseReviewPanel"></div>
   <div class="split-host" id="courseSplitHost">
     <div class="list-col" id="courseList"></div>
     <div class="col-drag" title="Drag to resize the list"></div>
@@ -1284,7 +1287,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r43.4 · 2026-08-09";  // bump this with each round, it lands on every feedback report
+var BUILD = "r44 · 2026-08-09";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1401,7 +1404,16 @@ var state = {
   resolution: null,           // { status, note, by, at, apply } when the paste reads as already resolved
   lastExtract: null,          // last extract fields, so dismissing the split can fall back to one issue
   devFilter: "todo",          // developers view: todo / fixed / all
+  // Developers view sort and filters (Edd, FB-0164).
+  devSort: "priority",        // priority | longest | newest
+  devSection: "all",          // all | website | instructor_portal | partner_portal | course_player | app | other
+  devKind: "all",             // all | fix | improvement
+  devType: "all",             // all | <issue_type values present in the queue>
+  devSize: "all",             // all | small | medium | large | unsized
   courseFilter: "todo",       // course fixes view: todo / fixed / all
+  courseBulkKind: "kc",       // bulk assign: which kind of fix ("assign all X...")
+  courseBulkWho: "",          // bulk assign: ...to whom
+  courseReview: null,         // last AI review result: { reviewed, suggestions: [...] }
   anaArea: "all",             // analytics view area filter
   troubleshootSteps: null,    // current "things to try" list
   troubleshootAck: false,     // has the instructor dismissed the popup?
@@ -4748,13 +4760,10 @@ function openDetail(issue) {
       recSteps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol></div></details>';
   }
 
-  // Post an update lives in the centre column (Edd, FB-0158), folded until
-  // wanted so the whole pane fits without scrolling (Edd, FB-0167).
-  html += '<details class="acc"><summary>Post an update</summary>' +
-    '<div class="field" style="margin-top:6px;"><textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
-    '<button class="ghost small" style="margin-bottom:6px;padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button></details>';
-
-  sideCol += '<h3 style="margin-top:2px;">Update status &amp; priority</h3>' +
+  // One "Update" card now (Edd, FB-0173): status and priority up top, the
+  // update box right underneath (it used to hide in a fold further down), and
+  // a Fetch update button that goes and reads Chatwoot itself.
+  sideCol += '<h3 style="margin-top:2px;">Update</h3>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;">' +
     '<div class="field"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Status</label><select id="d_status" onchange="onStatusChange()">' +
       ['open','in_progress','with_dev','dev_fixed','parked','resolved_tbc','resolved','past'].map(function (s) {
@@ -4772,6 +4781,15 @@ function openDetail(issue) {
         return '<option value="' + p + '"' + sel + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
       }).join("") +
     '</select></div></div>' +
+    // The update box, right below the status row (Edd, FB-0173). "Fetch update"
+    // looks in Chatwoot for a conversation with this student newer than the
+    // issue's last activity and pulls the news in itself.
+    '<div class="field" style="margin-top:8px;"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Post an update</label>' +
+      '<textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
+    '<div class="row" style="margin-bottom:8px;">' +
+      '<button class="ghost small" style="padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button>' +
+      '<button class="ghost small" style="padding:5px 12px;" onclick="fetchUpdateFromDetail(\'' + esc(issue.issue_id) + '\')" title="Look in Chatwoot for a newer conversation with this student and pull anything relevant in">Fetch update</button>' +
+    '</div>' +
     '<div class="field' + (/^(resolved|past)/.test((issue.status || "").toLowerCase()) ? '' : ' hidden') + '" id="d_resnote_wrap">' +
       '<label>Resolution note</label><textarea id="d_resolution_note" rows="3">' + esc(issue.resolution_note || "") + '</textarea>' +
     '</div>' +
@@ -5025,6 +5043,22 @@ function doLink(sourceId) {
 
 // Paste a new conversation onto an existing issue from the Track detail: extract
 // the latest read of priority/device, then append it as an update.
+// "Fetch update" (Edd, FB-0173): the backend finds this student's newest
+// Chatwoot conversation since the issue last moved, reads it with the same
+// two-model check the overnight scan uses, and adds an update only if there is
+// real news. It never changes the status - a "fixed" verdict still comes back
+// to a human to verify.
+function fetchUpdateFromDetail(id) {
+  busyShow("Checking Chatwoot for anything new from this student…");
+  apiPost({ action: "fetchStudentUpdate", issue_id: id, app_url: APP_URL }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Fetch failed: " + ((res && res.error) || "unknown")); return; }
+    if (!res.found) { toast(res.message || "No new conversations with this student since the last update."); return; }
+    toast("Update added - " + res.message + (res.images ? " (" + res.images + " screenshot" + (res.images === 1 ? "" : "s") + " attached)" : ""));
+    closeDetail(); loadIssues();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+
 function postUpdateFromDetail(id) {
   var raw = $("d_update_text") ? $("d_update_text").value.trim() : "";
   if (!raw) { toast("Paste the new conversation first."); return; }
@@ -5235,57 +5269,135 @@ function devQueue(cats) {
   return state.issues.filter(function (i) { return i.dev_passed_at && cats.indexOf(catOf(i)) > -1; });
 }
 
-// Shared renderer for both the Developers queue (tech) and the Course fixes
-// queue (course), since the workflow is identical, only the category differs.
-function renderQueue(cat, ids, filterVal) {
-  var all = devQueue(cat);
-  $(ids.queue).textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "with_dev"; }).length;
-  $(ids.fixed).textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "dev_fixed"; }).length;
+// The Developers queue, given the same treatment as the Actions tab (Edd,
+// FB-0163): one flat list of calm rows - a status word, the title, a short
+// sub-line, and the one button that matters - with the full issue one click
+// away in the split pane. The old badge-heavy cards made every row shout;
+// these rows keep the noise in the sub-line where it can be skimmed.
+function renderDev() {
+  // Internal work is tech_issue now, so one category covers both halves of
+  // the dev queue (student-facing bugs and our own systems).
+  var all = devQueue(["tech_issue"]);
+  $("devStatQueue").textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "with_dev"; }).length;
+  $("devStatFixed").textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "dev_fixed"; }).length;
 
   var durations = all.filter(function (i) { return i.dev_passed_at && i.dev_fixed_at; })
     .map(function (i) { return new Date(i.dev_fixed_at) - new Date(i.dev_passed_at); })
     .filter(function (d) { return d >= 0; });
   var avg = durations.length ? durations.reduce(function (a, b) { return a + b; }, 0) / durations.length : null;
-  $(ids.avg).textContent = avg == null ? "–" : fmtDuration(avg);
+  $("devStatAvg").textContent = avg == null ? "–" : fmtDuration(avg);
 
-  var list = all.filter(function (i) {
+  var statusPool = all.filter(function (i) {
     var s = (i.status || "").toLowerCase();
-    if (filterVal === "todo") return s === "with_dev";
-    if (filterVal === "fixed") return s === "dev_fixed";
+    if (state.devFilter === "todo") return s === "with_dev";
+    if (state.devFilter === "fixed") return s === "dev_fixed";
     return s === "with_dev" || s === "dev_fixed";
   });
-  // Course fixes only: narrow to lessons / knowledge checks / module assessments.
-  if (cat === "course_error" && state.courseRefFilter && state.courseRefFilter !== "all") {
-    list = list.filter(function (i) { return refType(i) === state.courseRefFilter; });
-  }
-  list.sort(function (a, b) {
-    var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
-    if (pa !== pb) return pa - pb;
-    return new Date(a.dev_passed_at) - new Date(b.dev_passed_at); // oldest waiting first
+
+  renderDevFilters(statusPool);
+
+  // Dropdown filters (Edd, FB-0164): where it shows, fix vs improvement, the
+  // issue type, and how big the fix is estimated to be.
+  var list = statusPool.filter(function (i) {
+    if (state.devSection !== "all" && String(i.section || "other").toLowerCase() !== state.devSection) return false;
+    if (state.devKind !== "all" && kindOf(i) !== state.devKind) return false;
+    if (state.devType !== "all" && String(i.issue_type || "other").toLowerCase() !== state.devType) return false;
+    if (state.devSize !== "all") {
+      var sz = String(i.fix_size || "").toLowerCase();
+      if (state.devSize === "unsized") { if (sz) return false; }
+      else if (sz !== state.devSize) return false;
+    }
+    return true;
   });
 
-  $(ids.list).innerHTML = list.length ? list.map(function (i) {
-    var imgs = parseImageUrls(i.image_urls).length;
-    var age = i.dev_passed_at ? fmtDuration(Date.now() - new Date(i.dev_passed_at)) : "";
-    return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
-      '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + sortedBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) +
-        (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
-        (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') +
-        (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
-        (i.assignee ? '<span class="badge type-badge">→ ' + esc(i.assignee) + '</span>' : '') +
-        '<span class="who">by ' + esc(i.instructor_name || "—") + ' · passed ' + fmtDate(i.dev_passed_at) + ' · ' + age + ' ago</span>' +
-      '</div>' +
-      '<div class="sum">' + esc(summaryText(i)) + '</div>' +
-    '</div>';
-  }).join("") : '<p class="muted">Nothing here.</p>';
+  // Sort (Edd, FB-0164). "Longest open" uses when it was passed to the devs,
+  // falling back to when it was reported, so an imported row still has a clock.
+  var startOf = function (i) { return new Date(i.dev_passed_at || i.submitted_at || 0).getTime(); };
+  list.sort(function (a, b) {
+    if (state.devSort === "longest") return startOf(a) - startOf(b);   // oldest first
+    if (state.devSort === "newest") return startOf(b) - startOf(a);
+    var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
+    if (pa !== pb) return pa - pb;
+    return startOf(a) - startOf(b); // within a priority, oldest waiting first
+  });
+
+  if (!list.length) {
+    $("devList").innerHTML = '<p class="muted">Nothing here.</p>';
+    markActiveCard();
+    return;
+  }
+
+  $("devList").innerHTML = '<div class="small muted" style="margin:4px 0 10px;">' + list.length + ' issue' + (list.length === 1 ? "" : "s") + ' shown</div>' +
+    list.map(function (i) {
+      var id = esc(i.issue_id);
+      var s = (i.status || "").toLowerCase();
+      var fixed = s === "dev_fixed";
+      var stop = 'event.stopPropagation();';
+
+      // The sub-line: priority first (it drives the default sort), then just
+      // enough to place the issue without reopening it.
+      var sub = [];
+      var pri = String(i.priority || "").toLowerCase();
+      if (pri) sub.push(pri.charAt(0).toUpperCase() + pri.slice(1) + " priority");
+      sub.push(shortId(i));
+      if (i.section) sub.push(SECTION_LABEL[i.section] || i.section);
+      if (kindOf(i) === "improvement") sub.push("improvement");
+      if (i.fix_size) sub.push(String(i.fix_size).toLowerCase() + " fix");
+      if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
+      if (reportCount(i) > 1) sub.push("×" + reportCount(i) + " reports");
+      var days = Math.floor((Date.now() - new Date(i.dev_passed_at || i.submitted_at)) / 864e5);
+      if (days >= 1) sub.push(days + (days === 1 ? " day" : " days") + (fixed ? "" : " open"));
+      if (i.dev_query_at) sub.push("question open");
+      if (i.assignee) sub.push("→ " + i.assignee);
+
+      // One button that matters: a to-do row gets marked fixed (notes and the
+      // notify tick live in the detail, and the admin verify loop catches the
+      // student side); a fixed row is waiting on an admin, so just open it.
+      var word = fixed ? "Fixed" : "To do";
+      var colour = fixed ? "var(--low)" : "var(--medium)";
+      var act = fixed ? "Waiting on admin check" : "Fix it, then say so";
+      var btn = fixed
+        ? '<button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetail(\'' + id + '\')">Open notes</button>'
+        : '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'devMarkFixed(\'' + id + '\')">Mark fixed</button>';
+
+      return '<div class="act-row" data-id="' + id + '" onclick="openDevDetail(\'' + id + '\')">' +
+          '<span class="act-word" style="background:' + colour + ';color:#02121f;">' + esc(word) + '</span>' +
+          '<div><div class="act-title">' + esc(cardTitle(i)) + '</div>' +
+            (sub.length ? '<div class="act-sub">' + esc(sub.join(" · ")) + '</div>' : '') + '</div>' +
+          '<div><span class="act-do">' + esc(act) + '</span>' + btn + '</div>' +
+        '</div>';
+    }).join("");
   markActiveCard();
 }
 
-function renderDev() {
-  // Internal work is tech_issue now, so one category covers both halves of
-  // the dev queue (student-facing bugs and our own systems).
-  renderQueue(["tech_issue"], { queue: "devStatQueue", fixed: "devStatFixed", avg: "devStatAvg", list: "devList" }, state.devFilter);
+// The Developers filter/sort bar (Edd, FB-0164). Options are built from what is
+// actually in the current status view, so the dropdowns never offer a filter
+// that can only produce an empty list.
+function renderDevFilters(statusPool) {
+  var sections = courseUniq(statusPool, function (i) { return String(i.section || "").toLowerCase(); });
+  var types = courseUniq(statusPool, function (i) { return String(i.issue_type || "").toLowerCase(); });
+  if (state.devSection !== "all" && sections.indexOf(state.devSection) < 0) state.devSection = "all";
+  if (state.devType !== "all" && types.indexOf(state.devType) < 0) state.devType = "all";
+
+  var drop = function (key, options) {
+    var cur = state[key];
+    var opts = options.map(function (o) {
+      return '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>';
+    }).join("");
+    return '<select onchange="setDevSel(\'' + key + '\', this.value)" style="min-width:120px;padding:7px 8px;">' + opts + '</select>';
+  };
+
+  $("devFilters").innerHTML =
+    drop("devSort", [["priority", "Sort: priority"], ["longest", "Sort: longest open"], ["newest", "Sort: newest"]]) +
+    drop("devSection", [["all", "Where: all"]].concat(sections.map(function (s) { return [s, SECTION_LABEL[s] || s]; }))) +
+    drop("devKind", [["all", "Kind: all"], ["fix", "Fixes"], ["improvement", "Improvements"]]) +
+    drop("devType", [["all", "Type: all"]].concat(types.map(function (t) { return [t, t.replace(/_/g, " ")]; }))) +
+    drop("devSize", [["all", "Size: all"], ["small", "Small"], ["medium", "Medium"], ["large", "Large"], ["unsized", "Not sized yet"]]);
+}
+
+function setDevSel(key, value) {
+  state[key] = value;
+  renderDev();
 }
 // Every course fix that still needs doing or is awaiting verification. Unlike
 // the Developers queue this is NOT gated on dev_passed_at, so imported "open"
@@ -5410,7 +5522,109 @@ function renderCourse() {
     ? '<div class="small muted" style="margin:4px 0 10px;">' + list.length + ' fix' + (list.length === 1 ? "" : "es") + ' shown</div>' +
       list.map(courseCardHtml).join("")
     : '<p class="muted">Nothing here.</p>';
+  renderCourseTools();
+  renderCourseReview();
   markActiveCard();
+}
+
+// The queue tools (Edd, FB-0165): an AI pass over the priorities, and "assign
+// all X to Y" so a batch of knowledge checks or videos can land on one person
+// in one go rather than click-by-click.
+function renderCourseTools() {
+  var whos = (state.assignees || []).filter(function (a) { return a.course; }).map(function (a) { return a.name; });
+  var kindOpts = [["kc", "knowledge checks"], ["ma", "module assessments"], ["video", "video fixes"], ["text", "text fixes"], ["todo", "everything to do"]];
+  var kindSel = '<select onchange="state.courseBulkKind=this.value" style="min-width:150px;padding:7px 8px;">' +
+    kindOpts.map(function (o) { return '<option value="' + o[0] + '"' + (state.courseBulkKind === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") + '</select>';
+  var whoSel = '<select onchange="state.courseBulkWho=this.value" style="min-width:130px;padding:7px 8px;">' +
+    '<option value=""' + (state.courseBulkWho ? "" : " selected") + '>choose a person…</option>' +
+    whos.map(function (w) { return '<option value="' + esc(w) + '"' + (state.courseBulkWho === w ? " selected" : "") + '>' + esc(w) + '</option>'; }).join("") + '</select>';
+
+  $("courseTools").innerHTML =
+    '<button class="ghost small" style="padding:7px 14px;" onclick="courseReviewRun()">AI review: check the priorities</button>' +
+    '<span class="small muted" style="margin:0 2px 0 14px;">Assign all</span>' + kindSel +
+    '<span class="small muted" style="margin:0 2px;">to</span>' + whoSel +
+    '<button class="ghost small" style="padding:7px 14px;" onclick="courseBulkAssign()">Assign</button>';
+}
+
+// Which open fixes a bulk-assign kind covers. Knowledge checks and module
+// assessments live in the lesson-code suffix (refType); video and text are the
+// media_kind column; "todo" is the whole open queue.
+function courseBulkTargets(kind) {
+  var pool = courseQueueAll().filter(function (i) { return courseIsTodo(i.status); });
+  if (kind === "kc" || kind === "ma") return pool.filter(function (i) { return refType(i) === kind; });
+  if (kind === "video" || kind === "text") return pool.filter(function (i) { return String(i.media_kind || "").toLowerCase() === kind; });
+  return pool;
+}
+
+function courseBulkAssign() {
+  var who = state.courseBulkWho;
+  if (!who) { toast("Choose who to assign them to first."); return; }
+  var targets = courseBulkTargets(state.courseBulkKind);
+  if (!targets.length) { toast("Nothing in the open queue matches that kind."); return; }
+  if (!confirm("Assign " + targets.length + " open fix" + (targets.length === 1 ? "" : "es") + " to " + who + "?")) return;
+  busyShow("Assigning " + targets.length + " to " + who + "…");
+  apiPost({ action: "bulkAssign", issue_ids: targets.map(function (i) { return i.issue_id; }), assignee: who }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Assigned " + res.assigned + " to " + who + ".");
+    loadIssues();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+
+// Run the AI priority review over the open course-fix queue. Suggestions only:
+// each one gets its own Apply / dismiss, and nothing changes until a person
+// presses Apply (never auto-applied - a priority is a judgement call).
+function courseReviewRun() {
+  busyShow("Reading the open queue… this can take a minute.");
+  apiPost({ action: "courseReview" }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Review failed: " + ((res && res.error) || "unknown")); return; }
+    state.courseReview = res;
+    renderCourseReview();
+    toast(res.suggestions.length
+      ? "Looked at " + res.reviewed + " - " + res.suggestions.length + " suggestion" + (res.suggestions.length === 1 ? "" : "s") + "."
+      : "Looked at " + res.reviewed + " open fixes - the priorities all look right.");
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+
+function renderCourseReview() {
+  var el = $("courseReviewPanel");
+  if (!el) return;
+  var r = state.courseReview;
+  if (!r || !r.suggestions || !r.suggestions.length) { el.innerHTML = ""; return; }
+  el.innerHTML = '<div class="card" style="margin-bottom:14px;">' +
+    '<h3 style="margin-top:2px;">AI review: ' + r.suggestions.length + ' priority suggestion' + (r.suggestions.length === 1 ? "" : "s") +
+      ' <span class="small muted" style="font-weight:normal;">(from ' + r.reviewed + ' open fixes - nothing is applied until you say so)</span></h3>' +
+    r.suggestions.map(function (s, n) {
+      return '<div class="act-row" data-id="' + esc(s.issue_id) + '" onclick="openDevDetail(\'' + esc(s.issue_id) + '\')">' +
+        '<span class="act-word" style="background:' + (s.suggest === "high" ? "var(--high)" : s.suggest === "medium" ? "var(--medium)" : "var(--low)") + ';color:#02121f;">' + esc(s.current + " → " + s.suggest) + '</span>' +
+        '<div><div class="act-title">' + (s.lesson_code ? '<span class="code" style="margin-right:6px;">' + esc(s.lesson_code) + '</span>' : '') + esc(s.summary) + '</div>' +
+          '<div class="act-sub">' + esc(s.why) + '</div></div>' +
+        '<div><button class="primary small" style="padding:5px 12px;" onclick="event.stopPropagation();courseReviewApply(' + n + ')">Apply</button>' +
+        ' <button class="ghost small" style="padding:5px 12px;" onclick="event.stopPropagation();courseReviewDismiss(' + n + ')">Dismiss</button></div>' +
+      '</div>';
+    }).join("") + '</div>';
+}
+
+function courseReviewApply(n) {
+  var r = state.courseReview;
+  var s = r && r.suggestions && r.suggestions[n];
+  if (!s) return;
+  apiPost({ action: "updateIssue", issue_id: s.issue_id, priority: s.suggest, priority_reason: "AI review: " + s.why }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    var iss = state.issues.filter(function (i) { return i.issue_id === s.issue_id; })[0];
+    if (iss) { iss.priority = s.suggest; iss.priority_reason = "AI review: " + s.why; }
+    r.suggestions.splice(n, 1);
+    toast("Priority set to " + s.suggest + ".");
+    renderCourse();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+
+function courseReviewDismiss(n) {
+  var r = state.courseReview;
+  if (!r || !r.suggestions) return;
+  r.suggestions.splice(n, 1);
+  renderCourseReview();
 }
 
 // Build the dropdown filter bar from whatever is in the current status view.
@@ -5533,6 +5747,16 @@ function openDevDetail(id) {
         return '<option value="' + p + '"' + (p === curPri ? " selected" : "") + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
       }).join("") + '</select></div>';
 
+  // How big a job does the fix look? (Edd, FB-0164.) Rough is fine - it's for
+  // sorting and filtering the queue, not for holding anyone to an estimate.
+  var curSize = String(issue.fix_size || "").toLowerCase();
+  html += '<h3>Estimated size of fix</h3>' +
+    '<div class="field"><select id="devSizeSel" onchange="devSetSize(\'' + esc(issue.issue_id) + '\')">' +
+      '<option value=""' + (curSize ? "" : " selected") + '>Not sized yet</option>' +
+      ["small", "medium", "large"].map(function (z) {
+        return '<option value="' + z + '"' + (z === curSize ? " selected" : "") + '>' + z.charAt(0).toUpperCase() + z.slice(1) + '</option>';
+      }).join("") + '</select></div>';
+
   // Student details, so developers can reproduce account-specific problems and
   // test against the affected account.
   var devStudents = {};
@@ -5644,6 +5868,20 @@ function devMarkFixed(id) {
 }
 
 // Priority tweak from the Developers / Course fixes drawer.
+function devSetSize(id) {
+  var sel = $("devSizeSel");
+  if (!sel) return;
+  var v = sel.value;
+  apiPost({ action: "updateIssue", issue_id: id, fix_size: v }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    var iss = state.issues.filter(function (i) { return i.issue_id === id; })[0];
+    if (iss) iss.fix_size = v;
+    toast(v ? "Sized as " + v + "." : "Size cleared.");
+    if (state.view === "dev") renderDev();
+    else if (state.view === "course") renderCourse();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+
 function devSetPriority(id) {
   var sel = $("devPrioritySel");
   if (!sel) return;
@@ -6192,7 +6430,11 @@ function captureFeedbackContext() {
     });
     if (Object.keys(filters).length) ctx.filters = filters;
   }
-  if (state.view === "dev") ctx.dev_filter = state.devFilter;
+  if (state.view === "dev") {
+    ctx.dev_filter = state.devFilter;
+    ctx.dev_sort = state.devSort;
+    ctx.dev_drops = [state.devSection, state.devKind, state.devType, state.devSize].join("/");
+  }
   if (state.view === "course") ctx.course_filter = state.courseFilter;
   if (state.view === "analytics") { ctx.area = state.anaArea; ctx.metric = state.statMetric; }
   return ctx;

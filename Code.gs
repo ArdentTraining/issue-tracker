@@ -162,7 +162,12 @@ var HEADERS = [
   // a real bug for the developers, but nobody to chase or update. Kept separate
   // from status so the issue can stay open without the student sitting in the
   // notify and "still on it" queues.
-  'student_sorted'     // AS true = no further contact needed with this student
+  'student_sorted',    // AS true = no further contact needed with this student
+  // How big a job the fix looks (Edd, FB-0164): small | medium | large, set and
+  // edited by the developers from their detail pane, so the queue can be sorted
+  // and filtered by effort as well as priority. Blank = not sized yet.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'fix_size'           // AT small | medium | large | ''
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -301,6 +306,9 @@ function doPost(e) {
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
     if (action === 'saveChecklist') return jsonOut(saveChecklist_(body));
     if (action === 'assignIssue') return jsonOut(assignIssue_(body));
+    if (action === 'bulkAssign') return jsonOut(bulkAssign_(body));
+    if (action === 'courseReview') return jsonOut(courseReview_(body));
+    if (action === 'fetchStudentUpdate') return jsonOut(fetchStudentUpdate_(body));
     if (action === 'uploadImage') return jsonOut(uploadImage_(body));
     if (action === 'attachImages') return jsonOut(attachImages_(body));
     if (action === 'extract') return jsonOut(extract_(body));
@@ -415,6 +423,11 @@ function reqPerm_(action) {
     case 'chatScanList': case 'chatScanReview': return 'log';
     case 'runChatScan': return 'users';
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
+    // The queue tools (Edd, FB-0165): reviewing and bulk-assigning are for
+    // anyone who works a fix queue. Fetching a Chatwoot update sits with the
+    // other update paths.
+    case 'bulkAssign': case 'courseReview': return 'work';
+    case 'fetchStudentUpdate': return 'log';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':
     case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
@@ -1244,14 +1257,15 @@ function updateIssue_(data) {
   var record = found.record;
   var wasResolved = String(record.status || '').toLowerCase() === 'resolved';
 
-  // Without the manage permission (dev / course team), only the priority may
-  // be tweaked - that's the one edit their drawer offers (Edd, 21 Jul).
+  // Without the manage permission (dev / course team), only the priority and
+  // the estimated fix size may be tweaked - the two edits their drawer offers
+  // (Edd, 21 Jul; size added FB-0164).
   if (data._user && !hasPerm_(data._user, 'manage')) {
-    var allowedKeys = { priority: 1, priority_reason: 1 };
+    var allowedKeys = { priority: 1, priority_reason: 1, fix_size: 1 };
     var blocked = HEADERS.filter(function (k) {
       return data.hasOwnProperty(k) && !allowedKeys[k] && k !== 'issue_id';
     });
-    if (blocked.length) return { ok: false, error: 'Only priority can be edited from this queue.' };
+    if (blocked.length) return { ok: false, error: 'Only priority and fix size can be edited from this queue.' };
   }
 
   // Moving something INTO the dev queue by hand (including a kanban drag) is
@@ -1344,6 +1358,102 @@ function assignIssue_(data) {
   setCellOnIssue_(found, 'assignee', data.assignee || '');
   setCellOnIssue_(found, 'updated_at', new Date().toISOString());
   return { ok: true, issue_id: id, assignee: data.assignee || '' };
+}
+
+// Assign a whole set of issues to one person in a single call (Edd, FB-0165:
+// "assign all knowledge checks to one person"). The front end works out which
+// issues the chosen kind covers - knowledge checks and module assessments live
+// in the lesson-code suffix, which only the front end knows how to read - and
+// sends the ids; this end just walks the list. One round trip instead of one
+// per issue.
+function bulkAssign_(data) {
+  var ids = data.issue_ids;
+  if (!ids || !ids.length) return { ok: false, error: 'bulkAssign needs a list of issue_ids' };
+  if (ids.length > 200) return { ok: false, error: 'That is over 200 issues in one go - narrow it down first.' };
+  var assignee = String(data.assignee || '');
+  var now = new Date().toISOString();
+  var done = 0, missed = [];
+  ids.forEach(function (id) {
+    var found = findRow_(id);
+    if (!found) { missed.push(id); return; }
+    setCellOnIssue_(found, 'assignee', assignee);
+    setCellOnIssue_(found, 'updated_at', now);
+    done++;
+  });
+  return { ok: true, assigned: done, missed: missed, assignee: assignee };
+}
+
+// An AI pass over the open course-fix queue (Edd, FB-0165): does the stored
+// priority still look right? Returns suggestions only - nothing is applied
+// here. The admin gets a per-suggestion Apply button on the front end, because
+// a priority change is a judgement call and the AI only gets a vote, not a say.
+function courseReview_(data) {
+  var pool = getIssues_().issues.filter(function (i) {
+    if (String(i.category || '').toLowerCase() !== 'course_error') return false;
+    var s = String(i.status || '').toLowerCase();
+    return s === 'open' || s === 'with_dev';
+  });
+  if (!pool.length) return { ok: true, reviewed: 0, suggestions: [] };
+
+  // Priority first so a capped run still covers the queue that matters most.
+  var rank = { high: 0, medium: 1, low: 2 };
+  pool.sort(function (a, b) {
+    return (rank[String(a.priority || 'low').toLowerCase()] || 2) - (rank[String(b.priority || 'low').toLowerCase()] || 2);
+  });
+  pool = pool.slice(0, 90);
+
+  var byId = {};
+  pool.forEach(function (i) { byId[i.issue_id] = i; });
+
+  var suggestions = [];
+  var BATCH = 30;
+  for (var b = 0; b < pool.length; b += BATCH) {
+    var batch = pool.slice(b, b + BATCH).map(function (i) {
+      return {
+        issue_id: i.issue_id,
+        lesson_code: i.lesson_code || '',
+        summary: String(i.summary || '').slice(0, 220),
+        priority: String(i.priority || '').toLowerCase(),
+        reports: Number(i.report_count) || 1,
+        days_open: Math.max(0, Math.round((Date.now() - new Date(i.submitted_at || Date.now())) / 864e5)),
+        part: i.media_kind || '',
+        kind: i.request_kind || 'fix'
+      };
+    });
+    var prompt = 'You are reviewing the open course-fix queue for Ardent Training, an online RYA sailing theory school. ' +
+      'Each item is an error or problem reported in course content, with the priority it was given at the time.\n\n' +
+      'Priority rules:\n' +
+      '- high: blocks students completely, a factual error that could cause an exam failure, or safety-critical content being wrong.\n' +
+      '- medium: a confusing content error that is not blocking anyone, or something students need a workaround for.\n' +
+      '- low: a minor typo, a cosmetic issue, or a single confused student where the content is probably fine.\n\n' +
+      'Things that should nudge a priority UP: several separate reports of the same fix, or a factual error sitting open a long time. ' +
+      'Things that should nudge one DOWN: a lone cosmetic report marked high at logging time.\n\n' +
+      'THE QUEUE:\n' + JSON.stringify(batch) + '\n\n' +
+      'Return ONLY JSON, no prose, no fences: {"suggestions":[{"issue_id":"...","suggest_priority":"high|medium|low","why":"one plain sentence"}]}. ' +
+      'Include ONLY issues whose current priority looks wrong. An empty list is a perfectly good answer - most priorities are usually fine.';
+    var res = anthropicJson_(EXTRACTION_MODEL, prompt, 2500);
+    if (res === null) {
+      // Announce the failure rather than quietly returning a thin result
+      // (the silent-fallback lesson from the troubleshoot helper).
+      return { ok: false, error: 'The AI review call failed part-way (batch starting at ' + (b + 1) + ' of ' + pool.length + '). Try again in a minute.' };
+    }
+    (res.suggestions || []).forEach(function (s) {
+      var i = byId[s.issue_id];
+      if (!i) return;
+      var suggest = String(s.suggest_priority || '').toLowerCase();
+      if (['high', 'medium', 'low'].indexOf(suggest) < 0) return;
+      if (suggest === String(i.priority || '').toLowerCase()) return; // no-op "suggestion"
+      suggestions.push({
+        issue_id: i.issue_id,
+        lesson_code: i.lesson_code || '',
+        summary: String(i.summary || '').slice(0, 160),
+        current: String(i.priority || '').toLowerCase(),
+        suggest: suggest,
+        why: String(s.why || '').slice(0, 300)
+      });
+    });
+  }
+  return { ok: true, reviewed: pool.length, suggestions: suggestions };
 }
 
 // People an issue can be assigned to: active users who can work a fix queue.
@@ -3865,7 +3975,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r43.4 · 2026-08-09';
+var CODE_STAMP = 'r44 · 2026-08-09';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -3983,6 +4093,130 @@ function chatwootContactUrl_(data) {
     if (!hit || !hit.id) return { ok: false, error: 'No Chatwoot contact matches ' + email };
     return { ok: true, url: CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/contacts/' + hit.id };
   } catch (e) { return { ok: false, error: String(e) }; }
+}
+
+// "Fetch update" from the detail pane (Edd, FB-0173): go and look in Chatwoot
+// for any conversation with this issue's student that is NEWER than the issue's
+// last activity, read it, and if it genuinely says something about this issue,
+// add it as an update. Same verdict AI as the overnight scan (finder plus a
+// stricter second opinion), because a wrong "it's fixed" is the costly mistake.
+// This path NEVER sets a status itself - a "fixed" verdict lands as an update
+// for a human to verify, exactly like the scan.
+function fetchStudentUpdate_(data) {
+  var id = data.issue_id;
+  if (!id) return { ok: false, error: 'fetchStudentUpdate needs an issue_id' };
+  var found = findRow_(id);
+  if (!found) return { ok: false, error: 'No issue found with id ' + id };
+  var rec = found.record;
+
+  var email = String(rec.student_contact || '').trim().toLowerCase();
+  if (email.indexOf('@') < 0) {
+    // Fall back to any report on the issue that carried an email.
+    try {
+      (JSON.parse(rec.reports_json || '[]') || []).forEach(function (rp) {
+        var c = String(rp.student_contact || '').trim().toLowerCase();
+        if (email.indexOf('@') < 0 && c.indexOf('@') > 0) email = c;
+      });
+    } catch (e) {}
+  }
+  if (email.indexOf('@') < 0) {
+    return { ok: true, found: false, message: 'No student email on this issue, so there is nothing to look up in Chatwoot.' };
+  }
+
+  // Contact, then their conversations.
+  var hit;
+  try {
+    var out = chatwootCall_('/contacts/search?q=' + encodeURIComponent(email));
+    var list = (out && out.payload) || [];
+    hit = list.filter(function (c) { return String(c.email || '').toLowerCase() === email; })[0] || list[0];
+  } catch (e) { return { ok: false, error: 'Chatwoot contact search failed: ' + String(e.message || e) }; }
+  if (!hit || !hit.id) return { ok: true, found: false, message: 'No Chatwoot contact matches ' + email + '.' };
+
+  var convs;
+  try {
+    var cv = chatwootCall_('/contacts/' + hit.id + '/conversations');
+    convs = (cv && cv.payload) || [];
+  } catch (e) { return { ok: false, error: 'Could not list the conversations: ' + String(e.message || e) }; }
+
+  // Newer than the issue's last activity, and not one we've already recorded
+  // (both the scan and this path stamp the conversation number into the issue
+  // text, so a re-press can't import the same chat twice).
+  var since = new Date(rec.updated_at || rec.submitted_at || 0).getTime();
+  var already = String(rec.raw_text || '');
+  var fresh = convs.filter(function (c) {
+    var t = Number(c.last_activity_at || c.timestamp || 0) * 1000;
+    if (!(t > since)) return false;
+    return already.indexOf('Chatwoot conversation ' + c.id) < 0;
+  });
+  if (!fresh.length) {
+    return { ok: true, found: false, message: 'No new conversations with this student since the last update.' };
+  }
+  fresh.sort(function (a, b) { return Number(b.last_activity_at || 0) - Number(a.last_activity_at || 0); });
+  var conv = fresh[0];
+
+  var imp = chatwootImport_({ conversation: String(conv.id) });
+  if (!imp || !imp.ok) return { ok: false, error: 'Could not import conversation ' + conv.id + ': ' + ((imp && imp.error) || 'unknown') };
+  if (!imp.message_count) {
+    return { ok: true, found: false, message: 'The newer conversation (' + conv.id + ') has no readable messages.', conversation: imp.link };
+  }
+
+  // Verdict pass, same shape as the overnight scan's update path.
+  var p = 'A student with an OPEN issue on our sailing course platform has been in touch again. ' +
+    'Decide what this conversation says about THAT issue, and nothing else.\n\n' +
+    'THE OPEN ISSUE:\n' + JSON.stringify({ summary: rec.summary, status: rec.status, lesson_code: rec.lesson_code, logged: rec.submitted_at }) + '\n\n' +
+    'THE NEW CONVERSATION:\n' + String(imp.transcript || '').slice(0, 12000) + '\n\n' +
+    'Choose one verdict:\n' +
+    '- "fixed": the student says it now works, or confirms the fix or workaround did the job.\n' +
+    '- "still_broken": the student says it is still happening, happening again, or worse.\n' +
+    '- "new_detail": genuinely new information about the same problem (another device, steps to reproduce, when it started, more students affected).\n' +
+    '- "nothing_new": the conversation is about something else entirely, or adds nothing. This is the common answer - use it freely.\n\n' +
+    'Return ONLY JSON: {"verdict":"fixed|still_broken|new_detail|nothing_new","note":"<one sentence of what the student actually said>"}. No prose, no fences.';
+  var first = anthropicJson_(FINDER_MODEL, p, 400);
+  if (first === null) return { ok: false, error: 'The AI read of the conversation failed. Try again in a minute.' };
+  if (!first.verdict || first.verdict === 'nothing_new') {
+    return { ok: true, found: false, message: 'Found a newer conversation, but it has nothing new on this issue.', conversation: imp.link };
+  }
+
+  // Second opinion - strict, exactly as the scan runs it.
+  var vp = 'A first-pass AI read a support conversation and concluded it is an update on a known open issue. Disagree if it is wrong.\n\n' +
+    'OPEN ISSUE: ' + JSON.stringify({ summary: rec.summary, status: rec.status }) + '\n' +
+    'CLAIMED VERDICT: ' + first.verdict + ' - ' + (first.note || '') + '\n\n' +
+    'CONVERSATION:\n' + String(imp.transcript || '').slice(0, 12000) + '\n\n' +
+    'Be strict. "fixed" requires the student actually confirming it works now, not an instructor hoping so. ' +
+    'If the conversation is really about a different problem, disagree.\n' +
+    'Return ONLY JSON: {"agree":true or false,"verdict":"fixed|still_broken|new_detail","note":"<corrected one sentence>"}. No prose, no fences.';
+  var second = anthropicJson_(VERIFIER_MODEL, vp, 400);
+  if (second === null) return { ok: false, error: 'The AI second opinion failed. Try again in a minute.' };
+  if (second.agree !== true) {
+    return { ok: true, found: false, message: 'A newer conversation exists, but the second-opinion check was not convinced it relates to this issue. Worth a human read.', conversation: imp.link };
+  }
+
+  var verdict = second.verdict || first.verdict;
+  var note = second.note || first.note || '';
+  var VLABEL = { fixed: 'Student says it now works', still_broken: 'Student says it is still happening', new_detail: 'New detail from the student' };
+  var vLabel = VLABEL[verdict] || 'Update from the student';
+
+  var r = addUpdate_({
+    issue_id: id,
+    instructor_name: 'Fetch update',
+    summary: vLabel + ': ' + note,
+    raw_text: '[Fetch update, Chatwoot conversation ' + conv.id + ']\n' + vLabel + '.\n' + note +
+      '\n\nTranscript:\n' + String(imp.transcript || '').slice(0, 5000),
+    student_name: imp.student_name || '',
+    student_contact: imp.student_contact || '',
+    // Since r43.4 the import copies screenshots to Drive; carry them onto the
+    // issue so a fetched update keeps its pictures.
+    image_urls: (imp.images && imp.images.length) ? imp.images.join(',') : '',
+    app_url: data.app_url || getAppUrl_()
+  });
+  if (!r || !r.ok) return { ok: false, error: 'Read the conversation fine, but adding the update failed: ' + ((r && r.error) || 'unknown') };
+
+  return {
+    ok: true, found: true, verdict: verdict,
+    message: vLabel + ': ' + note,
+    conversation: imp.link,
+    images: (imp.images || []).length
+  };
 }
 
 function backendInfo_() {
