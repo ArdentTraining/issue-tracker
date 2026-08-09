@@ -1284,7 +1284,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r43.2 · 2026-08-09";  // bump this with each round, it lands on every feedback report
+var BUILD = "r43.4 · 2026-08-09";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2721,8 +2721,21 @@ function chatwootImport(value) {
     // only the transcript, where the email almost never appears, so without
     // this it would blank both fields again a moment later (Edd, 1 Aug).
     state.chatwootContact = { name: res.student_name || "", contact: res.student_contact || "" };
+    // Screenshots shared in the chat arrive already saved to Drive (Edd,
+    // 9 Aug) - they join the attach list like hand-picked ones and ride the
+    // normal submit.
+    var imgs = res.images || [];
+    state.attachedImages = state.attachedImages || [];
+    imgs.forEach(function (u) {
+      if (!state.attachedImages.some(function (im) { return im.url === u; })) {
+        state.attachedImages.push({ url: u, uploaded: true, name: "from the chat" });
+      }
+    });
+    if (imgs.length) renderThumbs();
+    var imgNote = imgs.length ? ' Brought ' + imgs.length + ' screenshot' + (imgs.length === 1 ? '' : 's') + ' along too.'
+      : (res.images_seen ? ' (' + res.images_seen + ' screenshot' + (res.images_seen === 1 ? '' : 's') + ' in the chat could not be copied.)' : '');
     $("cwStatus").innerHTML = 'Imported ' + res.message_count + ' message' + (res.message_count === 1 ? '' : 's') +
-      (res.student_name ? ' from ' + esc(res.student_name) : '') + '. Press Extract when you\'re ready.' +
+      (res.student_name ? ' from ' + esc(res.student_name) : '') + '.' + imgNote + ' Press Extract when you\'re ready.' +
       (res.link ? ' <a href="' + esc(res.link) + '" target="_blank" style="color:var(--accent);">Open in Chatwoot</a>' : '');
     closeChatwootPicker();
   }).catch(function (e) { $("cwStatus").textContent = "Import error. See console."; console.error(e); });

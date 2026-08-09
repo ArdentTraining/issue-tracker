@@ -2025,6 +2025,7 @@ function chatwootImport_(data) {
     } catch (e) {}   // a contact we can't read is no reason to lose the transcript
   }
   var lines = [];
+  var attImages = [];
   list.forEach(function (m) {
     // 0 incoming (student), 1 outgoing (agent). Skip activity lines and
     // internal notes - they're noise in a transcript the AI has to read.
@@ -2032,12 +2033,38 @@ function chatwootImport_(data) {
     if (t !== 0 && t !== 1) return;
     if (m.private) return;
     var body = cleanChatwootBody_(m.content);
-    if (!body) return;
+    // Image attachments used to vanish entirely: a message that was only a
+    // screenshot had no text, so it never even reached the transcript and
+    // nobody downstream knew an image existed (Edd, 9 Aug).
+    var pics = (m.attachments || []).filter(function (a) { return String(a.file_type) === 'image' && a.data_url; });
+    if (!body && !pics.length) return;
     var who = t === 0
       ? (sender.name || 'Student')
       : ((m.sender && (m.sender.name || m.sender.available_name)) || 'Ardent');
     var when = m.created_at ? new Date(Number(m.created_at) * 1000).toISOString().slice(0, 16).replace('T', ' ') : '';
-    lines.push(who + (when ? ' (' + when + ')' : '') + ': ' + body);
+    var note = pics.length ? '[shared ' + pics.length + ' screenshot' + (pics.length > 1 ? 's' : '') + ']' : '';
+    lines.push(who + (when ? ' (' + when + ')' : '') + ': ' + (body || note) + (body && note ? '\n' + note : ''));
+    pics.forEach(function (a) { attImages.push(a.data_url); });
+  });
+
+  // Copy the screenshots into the same Drive folder the form uploads use -
+  // the issue then owns a stable link, not a Chatwoot URL that can expire.
+  // Capped at 5 (matching the form) and a sane size; a failed copy never
+  // costs the transcript.
+  var savedImages = [];
+  var cwTok = chatwootCfg_().token;
+  attImages.slice(0, 5).forEach(function (u, n) {
+    try {
+      var res = UrlFetchApp.fetch(u, { muteHttpExceptions: true, followRedirects: true, headers: { api_access_token: cwTok } });
+      if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return;
+      var blob = res.getBlob();
+      var ct = String(blob.getContentType() || '');
+      if (ct.indexOf('image/') !== 0) return;
+      if (blob.getBytes().length > 6 * 1024 * 1024) return;
+      var up = uploadImage_({ base64: Utilities.base64Encode(blob.getBytes()), mimeType: ct,
+        filename: 'chatwoot-' + id + '-' + (n + 1) });
+      if (up && up.ok && up.url) savedImages.push(up.url);
+    } catch (e) {}
   });
 
   return {
@@ -2047,6 +2074,8 @@ function chatwootImport_(data) {
     student_contact: sender.email || sender.phone_number || '',
     transcript: lines.join('\n\n'),
     message_count: lines.length,
+    images: savedImages,
+    images_seen: attImages.length,
     link: CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/conversations/' + id
   };
 }
@@ -2393,6 +2422,7 @@ function scanChatwoot() {
               one.student_contact = one.student_contact || c.contact;
               one.summary = one.summary || c.summary;
               one.raw_text = transcript;
+              if (imp.images && imp.images.length) one.image_urls = imp.images.join(',');
               one.instructor_name = 'Overnight scan';
               var add = addIssue_(one);
               var newId = add && add.ok ? ((add.issue && add.issue.issue_id) || add.issue_id || '') : '';
@@ -3835,7 +3865,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r43.3 · 2026-08-09';
+var CODE_STAMP = 'r43.4 · 2026-08-09';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
