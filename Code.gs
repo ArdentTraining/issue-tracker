@@ -1431,7 +1431,10 @@ function courseReview_(data) {
       'THE QUEUE:\n' + JSON.stringify(batch) + '\n\n' +
       'Return ONLY JSON, no prose, no fences: {"suggestions":[{"issue_id":"...","suggest_priority":"high|medium|low","why":"one plain sentence"}]}. ' +
       'Include ONLY issues whose current priority looks wrong. An empty list is a perfectly good answer - most priorities are usually fine.';
-    var got = anthropicRaw_(EXTRACTION_MODEL, prompt, 4000);
+    // 16k, not a snug fit: sonnet-5 thinks before it answers on a prompt this
+    // size, and the thinking spends from the same max_tokens budget - at 4000
+    // it burned the lot thinking and returned no JSON at all (live, 9 Aug).
+    var got = anthropicRaw_(EXTRACTION_MODEL, prompt, 16000);
     var res = got.json;
     if (res === null) {
       // Announce the failure rather than quietly returning a thin result
