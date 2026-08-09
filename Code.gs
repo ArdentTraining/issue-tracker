@@ -1406,7 +1406,7 @@ function courseReview_(data) {
   pool.forEach(function (i) { byId[i.issue_id] = i; });
 
   var suggestions = [];
-  var BATCH = 30;
+  var BATCH = 15; // small batches: a truncated reply loses one batch, not the run
   for (var b = 0; b < pool.length; b += BATCH) {
     var batch = pool.slice(b, b + BATCH).map(function (i) {
       return {
@@ -1431,11 +1431,13 @@ function courseReview_(data) {
       'THE QUEUE:\n' + JSON.stringify(batch) + '\n\n' +
       'Return ONLY JSON, no prose, no fences: {"suggestions":[{"issue_id":"...","suggest_priority":"high|medium|low","why":"one plain sentence"}]}. ' +
       'Include ONLY issues whose current priority looks wrong. An empty list is a perfectly good answer - most priorities are usually fine.';
-    var res = anthropicJson_(EXTRACTION_MODEL, prompt, 2500);
+    var got = anthropicRaw_(EXTRACTION_MODEL, prompt, 4000);
+    var res = got.json;
     if (res === null) {
       // Announce the failure rather than quietly returning a thin result
-      // (the silent-fallback lesson from the troubleshoot helper).
-      return { ok: false, error: 'The AI review call failed part-way (batch starting at ' + (b + 1) + ' of ' + pool.length + '). Try again in a minute.' };
+      // (the silent-fallback lesson from the troubleshoot helper), and say
+      // what actually came back so the fault is debuggable from the toast.
+      return { ok: false, error: 'The AI review call failed part-way (batch starting at ' + (b + 1) + ' of ' + pool.length + '): ' + got.why + '. Try again in a minute.' };
     }
     (res.suggestions || []).forEach(function (s) {
       var i = byId[s.issue_id];
@@ -2265,6 +2267,42 @@ function scanRows_() {
     var o = {}; head.forEach(function (h, i) { o[h] = r[i]; }); return o;
   });
 }
+// Like anthropicJson_ but says WHY it failed instead of a bare null, and
+// forgives the two classic JSON sins - a chatty preamble before the object,
+// and a truncated tail - by pulling out the outermost {...} it can find.
+// Written for the course review (Round 44), where the plain helper's silent
+// null made a real fault look like "try again in a minute" forever.
+function anthropicRaw_(model, prompt, maxTokens) {
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) return { json: null, why: 'no API key configured' };
+  var res;
+  try {
+    res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({ model: model, max_tokens: maxTokens || 1500, messages: [{ role: 'user', content: prompt }] })
+    });
+  } catch (e) { return { json: null, why: 'request failed (' + String(e).slice(0, 120) + ')' }; }
+  var code = res.getResponseCode();
+  if (code < 200 || code >= 300) {
+    return { json: null, why: 'HTTP ' + code + ' from the API (' + String(res.getContentText() || '').slice(0, 160) + ')' };
+  }
+  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { json: null, why: 'unreadable API envelope' }; }
+  var text = '';
+  if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
+    if (parsed.content[i].type === 'text') text += parsed.content[i].text;
+  }
+  text = text.replace(/^```json?\s*|\s*```$/g, '').trim();
+  try { return { json: JSON.parse(text), why: '' }; } catch (e) {}
+  // Preamble or trailing prose: take the outermost braces.
+  var a = text.indexOf('{'), z = text.lastIndexOf('}');
+  if (a > -1 && z > a) {
+    try { return { json: JSON.parse(text.slice(a, z + 1)), why: '' }; } catch (e) {}
+  }
+  var cut = parsed.stop_reason === 'max_tokens';
+  return { json: null, why: (cut ? 'the reply hit the token cap mid-JSON' : 'the reply was not valid JSON') + ' ("' + text.slice(0, 120) + '…")' };
+}
+
 function anthropicJson_(model, prompt, maxTokens) {
   var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) return null;
