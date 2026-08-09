@@ -1400,7 +1400,7 @@ function courseReview_(data) {
   pool.sort(function (a, b) {
     return (rank[String(a.priority || 'low').toLowerCase()] || 2) - (rank[String(b.priority || 'low').toLowerCase()] || 2);
   });
-  pool = pool.slice(0, 90);
+  pool = pool.slice(0, Math.min(Number(data && data.limit) || 90, 90));
 
   var byId = {};
   pool.forEach(function (i) { byId[i.issue_id] = i; });
@@ -2300,7 +2300,9 @@ function anthropicRaw_(model, prompt, maxTokens) {
     try { return { json: JSON.parse(text.slice(a, z + 1)), why: '' }; } catch (e) {}
   }
   var cut = parsed.stop_reason === 'max_tokens';
-  return { json: null, why: (cut ? 'the reply hit the token cap mid-JSON' : 'the reply was not valid JSON') + ' ("' + text.slice(0, 120) + '…")' };
+  var blocks = (parsed.content || []).map(function (c) { return c.type + ':' + String(c.text || c.thinking || '').length; }).join(',');
+  return { json: null, why: (cut ? 'the reply hit the token cap mid-JSON' : 'the reply was not valid JSON') +
+    ' (blocks ' + (blocks || 'none') + '; out ' + ((parsed.usage && parsed.usage.output_tokens) || '?') + ' tokens; "' + text.slice(0, 120) + '…")' };
 }
 
 function anthropicJson_(model, prompt, maxTokens) {
