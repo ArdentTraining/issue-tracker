@@ -534,10 +534,14 @@
       <button id="tabUsers" onclick="setView('users')">Admin</button>
     </div>
     <button class="ghost small themebtn" id="themeBtn" onclick="cycleTheme()" title="Switch theme">Theme</button>
-    <div class="small muted" id="userbox" style="display:none;white-space:nowrap;">
-      <span id="whoami"></span>
-      <button class="ghost small" style="padding:4px 10px;margin-left:6px;" onclick="openChangePassword()">Change password</button>
-      <button class="ghost small" style="padding:4px 10px;margin-left:6px;" onclick="doLogout()">Log out</button>
+    <!-- The username is the menu now (Edd, FB-0174): press it for change
+         password and log out, rather than two buttons crowding the header. -->
+    <div class="small muted" id="userbox" style="display:none;white-space:nowrap;position:relative;">
+      <button class="ghost small" style="padding:4px 10px;" onclick="toggleUserMenu(event)"><span id="whoami"></span> &#9662;</button>
+      <div id="userMenu" class="hidden" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,0.35);min-width:170px;text-align:left;">
+        <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();openChangePassword()">Change password</button>
+        <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();doLogout()">Log out</button>
+      </div>
     </div>
   </div>
 </header>
@@ -6029,6 +6033,18 @@ function doAcceptInvite() {
     onAuthed(res.user);
   }).catch(function (e) { $("inviteMsg").textContent = "Setup error. See console."; console.error(e); });
 }
+// The little menu under the username (Edd, FB-0174). Click the name to open,
+// click anywhere else to close.
+function toggleUserMenu(e) {
+  if (e) e.stopPropagation();
+  $("userMenu").classList.toggle("hidden");
+}
+function closeUserMenu() { $("userMenu").classList.add("hidden"); }
+document.addEventListener("click", function () {
+  var m = $("userMenu");
+  if (m && !m.classList.contains("hidden")) m.classList.add("hidden");
+});
+
 function doLogout() {
   apiPost({ action: "logout" }).catch(function () {});
   clearToken();
