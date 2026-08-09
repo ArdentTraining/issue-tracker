@@ -1281,7 +1281,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r43 · 2026-08-08";  // bump this with each round, it lands on every feedback report
+var BUILD = "r43.1 · 2026-08-09";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2594,7 +2594,9 @@ function runExtract() {
   var btn = $("extractBtn");
   btn.disabled = true;
   $("extractStatus").innerHTML = '<span class="spinner"></span> reading…';
+  busyShow("Reading the report…");  // can't-miss overlay while the slow call runs (Edd, FB-0169)
   apiPost({ action: "extract", raw_text: raw }).then(function (res) {
+    busyHide();
     btn.disabled = false;
     // Reveal the fields now the extract has run (even on failure, so the
     // instructor can still fill them in by hand).
@@ -2689,6 +2691,7 @@ function runExtract() {
       postExtractSlideCheck();
     }
   }).catch(function (e) {
+    busyHide();
     btn.disabled = false;
     $("extractStatus").textContent = "Extraction error. See console.";
     console.error(e);
@@ -5006,7 +5009,7 @@ function doLink(sourceId) {
 function postUpdateFromDetail(id) {
   var raw = $("d_update_text") ? $("d_update_text").value.trim() : "";
   if (!raw) { toast("Paste the new conversation first."); return; }
-  toast("Reading…");
+  busyShow("Reading and adding the update…");  // overlay, not just a toast (Edd, FB-0169)
   apiPost({ action: "extract", raw_text: raw }).then(function (res) {
     var f = (res && res.ok && res.fields) ? res.fields : {};
     return apiPost({
@@ -5015,10 +5018,11 @@ function postUpdateFromDetail(id) {
       priority_reason: f.priority_reason || "", app_url: APP_URL
     });
   }).then(function (res) {
+    busyHide();
     if (!res || !res.ok) { toast("Update failed: " + ((res && res.error) || "unknown")); return; }
     toast("Update added.");
     closeDetail(); loadIssues();
-  }).catch(function (e) { toast("Update error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toast("Update error. See console."); console.error(e); });
 }
 
 function splitIssueAction(id) {
