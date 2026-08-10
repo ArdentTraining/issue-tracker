@@ -5886,7 +5886,14 @@ function btBackfill_(body) {
       // The "reached history's edge" check has to watch the field the listing
       // is actually ordered by, or it fires on the wrong clock.
       var orderStamp = orderByCreated ? createdAt : lastAt;
-      if (orderStamp && orderStamp < BACKFILL_OLDEST) { stats.hit_oldest = true; break; }
+      if (orderStamp && orderStamp < BACKFILL_OLDEST) {
+        // Chatwoot's sort_on_created_at lists OLDEST FIRST, so an out-of-window
+        // row at the start means "not there yet", not "past the edge" - skip it
+        // and keep walking. Only the default (newest-first) ordering can read
+        // an old row as the end of history.
+        if (orderByCreated) { stats.too_old_skipped = (stats.too_old_skipped || 0) + 1; continue; }
+        stats.hit_oldest = true; break;
+      }
       if (seenCount + stats.processed >= cap) { stats.hit_cap = true; break; }
       if (seen[id]) { stats.skipped_seen++; continue; }
       stats.processed++;
