@@ -4069,7 +4069,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r49 · 2026-08-10';
+var CODE_STAMP = 'r50 · 2026-08-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4475,20 +4475,32 @@ var FIX_STOPWORDS = { 'the': 1, 'and': 1, 'that': 1, 'this': 1, 'with': 1, 'have
 // KnownFixes rows by resolved_date. Live use passes nothing and sees it all.
 // kfOnly skips the Issues sweep - for callers that already have their own
 // issue candidates and only want the KnownFixes corpus folded in.
+// r50: relevance-ranked shortlist. The old rank was a flat count of query
+// words appearing anywhere in the candidate; at 301 corpus rows the sharp
+// answer was getting crowded out by plausible neighbours (the three 10 Aug
+// backtest regressions). Three changes, same contract, cutoff semantics
+// untouched:
+//  1. rare words count for more (IDF computed from the candidate pool itself,
+//     so rarity is measured against what the corpus holds today), and a hit in
+//     the problem text counts double a hit in the fix text - matching what
+//     went wrong beats matching what was done about it;
+//  2. near-duplicate candidates collapse to one, so a popular fix cannot fill
+//     half the slots by itself;
+//  3. when more than 8 survive, one small sonnet call re-ranks the top 20 down
+//     to the best 6 before they reach suggestFix_ - beyond a handful, word
+//     stats cannot tell the sharp answer from a plausible neighbour.
 function fixCandidatesFor_(text, cutoffIso, kfOnly) {
-  var words = {};
+  var qwords = {};
   String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
-    if (w.length > 3 && !FIX_STOPWORDS[w]) words[w] = true;
+    if (w.length > 3 && !FIX_STOPWORDS[w]) qwords[w] = true;
   });
-  var keys = Object.keys(words);
-  if (!keys.length) return [];
+  var qkeys = Object.keys(qwords);
+  if (!qkeys.length) return [];
   var cutoff = cutoffIso ? new Date(cutoffIso).getTime() : 0;
-  function scoreHay(hay) {
-    var score = 0;
-    for (var k = 0; k < keys.length; k++) if (hay.indexOf(keys[k]) > -1) score++;
-    return score;
-  }
-  var scored = [];
+
+  // Gather the pool first - same sources, same filters, and the same cutoff
+  // rule as before (the backtest's no-time-travel guarantee lives here).
+  var pool = [];
   (kfOnly ? [] : (getIssues_().issues || [])).forEach(function (i) {
     if (String(i.status || '').toLowerCase() !== 'resolved') return;
     if (!i.resolution_note) return;
@@ -4496,26 +4508,100 @@ function fixCandidatesFor_(text, cutoffIso, kfOnly) {
       var when = i.resolved_at ? new Date(i.resolved_at).getTime() : 0;
       if (!when || when >= cutoff) return;
     }
-    var hay = ((i.summary || '') + ' ' + (i.resolution_note || '') + ' ' + (i.lesson_code || '')).toLowerCase();
-    var score = scoreHay(hay);
-    if (score >= 3) scored.push({ score: score, c: { summary: i.summary || '', resolution_note: i.resolution_note || '',
-      lesson_code: i.lesson_code || '', section: i.section || '', issue_type: i.issue_type || '' } });
+    pool.push({ p: ((i.summary || '') + ' ' + (i.lesson_code || '')).toLowerCase(),
+      f: String(i.resolution_note || '').toLowerCase(),
+      c: { summary: i.summary || '', resolution_note: i.resolution_note || '',
+        lesson_code: i.lesson_code || '', section: i.section || '', issue_type: i.issue_type || '' } });
   });
-  // The KnownFixes corpus (backfilled from Chatwoot history, r46) plays by the
-  // same scoring rules - it is the memory that predates the tracker.
   knownFixRows_().forEach(function (kf) {
     if (kf.dup_of) return;
     if (cutoff) {
       var kd = kf.resolved_date ? new Date(kf.resolved_date).getTime() : 0;
       if (!kd || kd >= cutoff) return;
     }
-    var hay = ((kf.problem || '') + ' ' + (kf.fix || '') + ' ' + (kf.lesson_code || '')).toLowerCase();
-    var score = scoreHay(hay);
-    if (score >= 3) scored.push({ score: score, c: { summary: kf.problem || '', resolution_note: kf.fix || '',
-      lesson_code: kf.lesson_code || '', section: '', issue_type: kf.category || '' } });
+    pool.push({ p: ((kf.problem || '') + ' ' + (kf.lesson_code || '')).toLowerCase(),
+      f: String(kf.fix || '').toLowerCase(),
+      c: { summary: kf.problem || '', resolution_note: kf.fix || '',
+        lesson_code: kf.lesson_code || '', section: '', issue_type: kf.category || '' } });
+  });
+  if (!pool.length) return [];
+
+  function toks(s) {
+    var m = {};
+    s.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
+      if (w.length > 3 && !FIX_STOPWORDS[w]) m[w] = true;
+    });
+    return m;
+  }
+  var df = {};
+  var poolToks = pool.map(function (d) {
+    var t = toks(d.p + ' ' + d.f);
+    for (var w in t) df[w] = (df[w] || 0) + 1;
+    return t;
+  });
+  var N = pool.length;
+  function idf(w) { return Math.log((N + 1) / ((df[w] || 0) + 1)) + 1; }
+
+  var scored = [];
+  pool.forEach(function (d, di) {
+    var score = 0, hits = 0;
+    for (var k = 0; k < qkeys.length; k++) {
+      var w = qkeys[k];
+      var inP = d.p.indexOf(w) > -1, inF = d.f.indexOf(w) > -1;
+      if (inP || inF) hits++;
+      if (inP) score += 2 * idf(w);
+      if (inF) score += idf(w);
+    }
+    // The floor keeps its old meaning: at least 3 distinct query words present.
+    if (hits >= 3) scored.push({ score: score, t: poolToks[di], c: d.c });
   });
   scored.sort(function (a, b) { return b.score - a.score; });
-  return scored.slice(0, 12).map(function (x) { return x.c; });
+
+  // Collapse near-duplicates: walk the ranking, drop anything that is mostly
+  // the same words (Jaccard >= 0.7) as a candidate already kept.
+  var kept = [];
+  for (var s = 0; s < scored.length && kept.length < 20; s++) {
+    var ct = scored[s].t, dup = false;
+    for (var k2 = 0; k2 < kept.length; k2++) {
+      var kt = kept[k2].t, inter = 0, uni = 0, w2;
+      for (w2 in ct) { uni++; if (kt[w2]) inter++; }
+      for (w2 in kt) { if (!ct[w2]) uni++; }
+      if (uni && inter / uni >= 0.7) { dup = true; break; }
+    }
+    if (!dup) kept.push(scored[s]);
+  }
+  var out = kept.map(function (x) { return x.c; });
+  if (out.length > 8) out = rerankCandidates_(String(text || '').slice(0, 1500), out);
+  return out.slice(0, 12);
+}
+
+// One small, cheap call: sonnet sees the new problem and a numbered list of
+// candidates, keeps the best 6. Only runs when the stats left more than 8 on
+// the table; any failure falls back to the stats order, never an empty list.
+function rerankCandidates_(query, cands) {
+  try {
+    var lines = cands.map(function (c, i) {
+      return (i + 1) + '. problem: ' + String(c.summary || '').slice(0, 200) +
+        ' | fix: ' + String(c.resolution_note || '').slice(0, 200) +
+        (c.lesson_code ? ' | lesson: ' + c.lesson_code : '');
+    });
+    var got = anthropicRaw_(ANTHROPIC_MODEL,
+      'A support system needs the past fixes most likely to resolve a NEW problem. ' +
+      'Rank by whether the SAME thing failed in the same part of the platform - ' +
+      'not merely the same topic, the same lesson, or the same device.\n\n' +
+      'NEW problem:\n"""\n' + query + '\n"""\n\n' +
+      'PAST fixes:\n' + lines.join('\n') + '\n\n' +
+      'Return ONLY JSON, no prose, no fences: {"keep": [<up to 6 entry numbers, most relevant first>]}', 300);
+    if (got.json && got.json.keep && got.json.keep.length) {
+      var picked = [], seen = {};
+      got.json.keep.forEach(function (n) {
+        var ix = Number(n) - 1;
+        if (ix >= 0 && ix < cands.length && !seen[ix]) { seen[ix] = true; picked.push(cands[ix]); }
+      });
+      if (picked.length) return picked;
+    }
+  } catch (e) {}
+  return cands;
 }
 
 // The shared "read it all back" core: brief + known-fix lookup off one import.
@@ -5659,11 +5745,13 @@ var KNOWNFIX_HEADERS = ['conversation_id', 'resolved_date', 'problem', 'fix', 'c
 var BACKTESTLOG_SHEET = 'BacktestLog';
 var BACKTESTLOG_HEADERS = ['type', 'conversation_id', 'data_json', 'created_at'];
 var BACKFILL_OLDEST = '2026-02-10T00:00:00Z';  // ~6 months back, per the cap
-// r47: raised from 500 on Edd's instruction - the first sweep only reached ~4
-// days of history by Chatwoot's last-activity ordering, so the corpus had no
-// real depth behind it. 2000 covers the original 500 plus the next ~1500, and
-// the 6-month BACKFILL_OLDEST boundary still stops it either way.
-var BACKFILL_MAX_ROWS = 2000;                  // conversations processed, per the cap
+// r47: raised from 500 on Edd's instruction; r50: raised again to 6000. The
+// 2000 cap only reached 27 Jul - Chatwoot's default last-activity ordering
+// puts a bulk auto-resolve sweep in front of the real history. r50 also lets
+// the driver pass sort_by (created-at ordering reaches genuine history
+// directly) and max_rows; the 6-month BACKFILL_OLDEST boundary is the real
+// stop either way.
+var BACKFILL_MAX_ROWS = 6000;                  // conversations processed, per the cap
 
 function knownFixesSheet_(create) {
   var sh = sheetByName_(KNOWNFIXES_SHEET);
@@ -5771,6 +5859,11 @@ function btBackfill_(body) {
   var page = Math.max(1, Number(body.page) || 1);
   var maxPages = Math.max(1, Number(body.max_pages) || 3);
   var endPage = page + maxPages - 1;
+  // r50: the driver may steer the listing order (e.g. created_at_desc, probed
+  // against the live API first) and lift the row cap for a deep sweep.
+  var sortBy = /^[a-z_]+$/.test(String(body.sort_by || '')) ? String(body.sort_by) : '';
+  var cap = Math.min(Number(body.max_rows) || BACKFILL_MAX_ROWS, 8000);
+  var orderByCreated = sortBy.indexOf('created') > -1;
   var seen = {};
   btLogRows_('seen').forEach(function (r) { seen[r.conversation_id] = true; });
   knownFixRows_().forEach(function (r) { seen[r.conversation_id] = true; });
@@ -5780,7 +5873,7 @@ function btBackfill_(body) {
 
   while (page <= endPage && Date.now() - started < budget) {
     var out;
-    try { out = chatwootCall_('/conversations?status=resolved&page=' + page); }
+    try { out = chatwootCall_('/conversations?status=resolved&page=' + page + (sortBy ? '&sort_by=' + sortBy : '')); }
     catch (e) { stats.errors++; break; }
     var payload = (out && out.data && out.data.payload) || (out && out.payload) || [];
     if (!payload.length) { page = 0; break; }   // ran out of history
@@ -5789,8 +5882,12 @@ function btBackfill_(body) {
       var c = payload[i];
       var id = String(c.id);
       var lastAt = c.last_activity_at ? new Date(Number(c.last_activity_at) * 1000).toISOString() : '';
-      if (lastAt && lastAt < BACKFILL_OLDEST) { stats.hit_oldest = true; break; }
-      if (seenCount + stats.processed >= BACKFILL_MAX_ROWS) { stats.hit_cap = true; break; }
+      var createdAt = c.created_at ? new Date(Number(c.created_at) * 1000).toISOString() : '';
+      // The "reached history's edge" check has to watch the field the listing
+      // is actually ordered by, or it fires on the wrong clock.
+      var orderStamp = orderByCreated ? createdAt : lastAt;
+      if (orderStamp && orderStamp < BACKFILL_OLDEST) { stats.hit_oldest = true; break; }
+      if (seenCount + stats.processed >= cap) { stats.hit_cap = true; break; }
       if (seen[id]) { stats.skipped_seen++; continue; }
       stats.processed++;
       var t;
@@ -6138,6 +6235,22 @@ function backtest_(body) {
       queued++;
     }
     return { ok: true, queued: queued };
+  }
+  if (op === 'probe') {
+    // Read-only look at a conversations listing - lets the driver check which
+    // ordering / filter params this Chatwoot build honours before committing
+    // a long sweep to them. GETs only, metadata only.
+    var pq = String(body.query || 'status=resolved&page=1');
+    if (!/^[a-zA-Z0-9_=&.\-:%\[\]]+$/.test(pq)) return { ok: false, error: 'bad query' };
+    try {
+      var pr = chatwootCall_('/conversations?' + pq);
+      var pl = (pr && pr.data && pr.data.payload) || (pr && pr.payload) || [];
+      return { ok: true, count: pl.length, rows: pl.map(function (c) {
+        return { id: c.id, status: c.status,
+          created_at: c.created_at ? new Date(Number(c.created_at) * 1000).toISOString() : '',
+          last_activity_at: c.last_activity_at ? new Date(Number(c.last_activity_at) * 1000).toISOString() : '' };
+      }) };
+    } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
   }
   if (op === 'state') {
     var kf = knownFixRows_();
