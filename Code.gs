@@ -4069,7 +4069,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r47 · 2026-08-10';
+var CODE_STAMP = 'r48 · 2026-08-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4449,12 +4449,15 @@ function briefAi_(transcript) {
     'When one of those would resolve it, the next step IS that action, phrased as a thing the instructor does ' +
     '("Reset the password for them in the students tab of the instructor portal"), not another question or step routed through the student. ' +
     'Keep everything in plain English an untechnical instructor can act on.\n\n' +
+    'One more thing (Edd, FB-0179): screenshots a student shares are often their own COURSEWORK - chartwork photos, ' +
+    'exam answers, assessment pages sent for marking - not pictures of a fault. Read the conversation for which it is.\n\n' +
     'Return ONLY JSON, no prose, no fences:\n' +
     '{"summary": "<one or two plain sentences: who the student is, what is going wrong, and on what device or platform if known>",\n' +
     ' "device": "<their device / OS / browser or app if mentioned, else empty string>",\n' +
     ' "tried": ["<each thing already tried, one short plain-English entry each - empty list if nothing yet>"],\n' +
     ' "next": "<the single recommended next step, short and practical, addressed to the instructor>",\n' +
-    ' "instructor_action": true or false (true when the next step is an action the INSTRUCTOR performs - a password reset, a course assignment, manual marking, posting in the chat, an invoice - rather than something the student is asked to try)}';
+    ' "instructor_action": true or false (true when the next step is an action the INSTRUCTOR performs - a password reset, a course assignment, manual marking, posting in the chat, an invoice - rather than something the student is asked to try),\n' +
+    ' "images_note": "<empty string normally; when screenshots in the chat are likely the student\'s coursework or chartwork for marking rather than fault evidence, one short line saying so>"}';
   return anthropicRaw_(ANTHROPIC_MODEL, prompt, 16000);
 }
 
@@ -4535,6 +4538,7 @@ function caseBriefCore_(imp, cutoffIso) {
     tried: (brief.tried || []).map(function (t) { return String(t); }).slice(0, 12),
     next: String(brief.next || ''),
     instructor_action: !!brief.instructor_action,
+    images_note: String(brief.images_note || ''),
     fix: fix && fix.found ? String(fix.fix) : '',
     fix_based_on: fix && fix.found ? String(fix.based_on || '') : '',
     message_count: imp.message_count,
@@ -4745,7 +4749,7 @@ function caseCheckpoint_(data) {
       raw_text: '[Live case checkpoint, Chatwoot conversation ' + id + ']\n' + (bj.summary || '') +
         '\n\nLatest transcript:\n' + String(imp.transcript || '').slice(0, 5000),
       student_name: imp.student_name || '', student_contact: imp.student_contact || '',
-      image_urls: (imp.images && imp.images.length) ? imp.images.join(',') : '',
+      image_urls: (bj.images_note ? '' : ((imp.images && imp.images.length) ? imp.images.join(',') : '')),  // coursework screenshots stay off the report (Edd, FB-0179)
       app_url: data.app_url || getAppUrl_(), _user: data._user });
     if (!r0 || !r0.ok) return { ok: false, error: 'Could not add the update: ' + ((r0 && r0.error) || 'unknown') };
     bj.message_count = imp.message_count;
@@ -4774,7 +4778,7 @@ function caseCheckpoint_(data) {
     summary: f.summary || bj.summary || '',
     priority: f.priority || 'medium',
     priority_reason: f.priority_reason || '',
-    image_urls: (imp.images || []).join(','),
+    image_urls: (bj.images_note ? '' : (imp.images || []).join(',')),  // coursework screenshots stay off the report (Edd, FB-0179)
     section: f.section || '',
     platform: f.platform || '',
     media_kind: f.media_kind || '',

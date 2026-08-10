@@ -305,7 +305,9 @@
     /* On a phone the account row (name, theme, log out) sits above the tab
        strip, so the tabs stay next to the content they switch. */
     .topbar > div:last-child { flex-direction: column-reverse; align-items: stretch !important; gap: 8px !important; }
-    .topbar #userbox { display: flex !important; justify-content: flex-end; align-items: center; gap: 6px; flex-wrap: wrap; }
+    /* The name sits on the SAME row as the Bugs title when the header wraps
+       (Edd, FB-0178): pinned top-right, switcher below. */
+    .topbar #userbox { display: flex !important; justify-content: flex-end; align-items: center; gap: 6px; flex-wrap: wrap; position: absolute; top: 12px; right: 12px; }
     .switcher button { padding: 7px 10px; font-size: 13px; white-space: nowrap; }
     .wrap { padding: 12px; }
     .row { flex-direction: column; gap: 0; }
@@ -543,12 +545,13 @@
       <button id="tabCourse" onclick="setView('course')">Course fixes</button>
       <button id="tabUsers" onclick="setView('users')">Admin</button>
     </div>
-    <button class="ghost small themebtn" id="themeBtn" onclick="cycleTheme()" title="Switch theme">Theme</button>
-    <!-- The username is the menu now (Edd, FB-0174): press it for change
-         password and log out, rather than two buttons crowding the header. -->
+    <!-- The username is the menu now (Edd, FB-0174): press it for theme,
+         change password and log out. Theme moved in here from the header
+         (Edd, FB-0177) - clicking it cycles without closing the menu. -->
     <div class="small muted" id="userbox" style="display:none;white-space:nowrap;position:relative;">
       <button class="ghost small" style="padding:4px 10px;" onclick="toggleUserMenu(event)"><span id="whoami"></span> &#9662;</button>
       <div id="userMenu" class="hidden" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,0.35);min-width:170px;text-align:left;">
+        <button class="ghost small" id="themeBtn" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="event.stopPropagation();cycleTheme()">Theme</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();openChangePassword()">Change password</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();doLogout()">Log out</button>
       </div>
@@ -580,7 +583,7 @@
       <div class="field" id="field_chatwoot">
         <label>Pull it from a live chat</label>
         <div class="row" style="gap:8px;">
-          <input id="cwInput" placeholder="Chatwoot link or number" autocomplete="off" style="flex:1;min-width:0;" onkeydown="if(event.key==='Enter'){event.preventDefault();chatwootImport();}" />
+          <input id="cwInput" placeholder="Chatwoot link or number" autocomplete="one-time-code" style="flex:1;min-width:0;" onkeydown="if(event.key==='Enter'){event.preventDefault();chatwootImport();}" />
           <button type="button" class="ghost" style="white-space:nowrap;" onclick="chatwootImport()">Import</button>
           <button type="button" class="ghost" style="white-space:nowrap;" onclick="openChatwootPicker()">Browse recent</button>
         </div>
@@ -674,10 +677,10 @@
       <details class="fgroup" id="grp_student">
         <summary>The student <span class="gsum" id="gsum_student"></span></summary>
         <div class="row" id="field_student_row">
-          <div class="field"><label>Student name</label><input id="f_student_name" autocomplete="off" /></div>
-          <div class="field"><label>Student contact</label><input id="f_student_contact" autocomplete="off" /></div>
+          <div class="field"><label>Student name</label><input id="f_student_name" autocomplete="one-time-code" /></div>
+          <div class="field"><label>Student contact</label><input id="f_student_contact" autocomplete="one-time-code" /></div>
         </div>
-        <div class="field" id="field_device"><label>Device / OS / browser (student's setup)</label><input id="f_device_info" placeholder="e.g. iPad, iOS 17, Safari" autocomplete="off" /></div>
+        <div class="field" id="field_device"><label>Device / OS / browser (student's setup)</label><input id="f_device_info" placeholder="e.g. iPad, iOS 17, Safari" autocomplete="one-time-code" /></div>
         <div class="field" id="field_double_checked">
           <label style="display:inline;color:var(--text);"><input type="checkbox" id="f_double_checked" style="width:auto;margin-right:6px;vertical-align:-1px;" />I've double-checked this myself, not just taken the student's word for it</label>
         </div>
@@ -819,7 +822,7 @@
   <h2 style="margin-top:0;">Open conversations</h2>
   <p class="small muted" style="margin-top:-6px;">A student's in touch - what do we say? Pull the chat in, see where it stands, and the bug report falls out of the conversation. Cases are shared: anyone can pick one up and carry on.</p>
   <div class="row" style="margin-bottom:14px;gap:8px;">
-    <input id="liveCwInput" placeholder="Chatwoot link or number" autocomplete="off" style="flex:1;min-width:0;max-width:340px;" onkeydown="if(event.key==='Enter'){event.preventDefault();openLiveCase();}" />
+    <input id="liveCwInput" placeholder="Chatwoot link or number" autocomplete="one-time-code" style="flex:1;min-width:0;max-width:340px;" onkeydown="if(event.key==='Enter'){event.preventDefault();openLiveCase();}" />
     <button type="button" class="primary" style="white-space:nowrap;" onclick="openLiveCase()">Open a case</button>
     <button type="button" class="ghost" style="white-space:nowrap;" onclick="openChatwootPicker(openLiveCaseFromPicker)">Browse recent</button>
   </div>
@@ -1332,7 +1335,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r47 · 2026-08-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r48 · 2026-08-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2459,7 +2462,11 @@ function renderLiveDetail() {
   '</div>';
 
   if (b.images && b.images.length) {
-    html += '<details class="acc" style="margin-top:14px;"><summary>Screenshots (' + b.images.length + ')</summary><div class="thumbs">' +
+    // When the AI reads these as coursework for marking rather than fault
+    // evidence (Edd, FB-0179), say so - and checkpoints leave them off the
+    // report automatically.
+    if (b.images_note) html += '<div class="small muted" style="margin-top:12px;">' + esc(b.images_note) + ' They won\'t be attached to the report.</div>';
+    html += '<details class="acc" style="margin-top:' + (b.images_note ? '4' : '14') + 'px;"><summary>Screenshots (' + b.images.length + ')</summary><div class="thumbs">' +
       b.images.map(function (u) {
         return '<a class="thumb" href="' + esc(driveOpen(u)) + '" target="_blank"><img src="' + esc(driveImg(u, 600)) + '" /></a>';
       }).join("") + '</div></details>';
