@@ -5863,7 +5863,7 @@ function btReplay_(body) {
     '{"clear_fix": true or false (was a specific fix or answer visibly confirmed or clearly given?),\n' +
     ' "fix": "<one or two sentences: the specific thing that actually resolved it>",\n' +
     ' "resolved_by": "<first name of the team member who gave the fix, or empty>",\n' +
-    ' "category": "<one of: tech_issue, course_error, shipping, admin, other>"}', 800);
+    ' "category": "<one of: tech_issue, course_error, shipping, admin, other>"}', 8000);
   if (!truthGot.json) return { ok: false, error: 'truth read failed: ' + truthGot.why };
   var truth = truthGot.json;
 
@@ -5897,7 +5897,7 @@ function btReplay_(body) {
     'actual fix genuinely was that step. Judge the known_fix and the next step together - either can carry the match.\n\n' +
     'Return ONLY JSON, no prose, no fences:\n' +
     '{"first_match_student_turn": <number or null>,\n' +
-    ' "why": "<one plain line: why it matched where it did, or why it never matched>"}', 600);
+    ' "why": "<one plain line: why it matched where it did, or why it never matched>"}', 8000);
   var acc = accGot.json || { first_match_student_turn: null, why: 'judge failed: ' + accGot.why };
 
   // Draft comparison: at the first substantive agent reply, write ours from
@@ -5928,7 +5928,7 @@ function btReplay_(body) {
         '- helpfulness: clear, one actionable step not a wall of them, the right length for support\n' +
         '- voice: which reads more like a warm, plain-English human instructor\n\n' +
         'Return ONLY JSON, no prose, no fences:\n' +
-        '{"correctness": "A|B|tie", "helpfulness": "A|B|tie", "voice": "A|B|tie", "note": "<one line>"}', 500);
+        '{"correctness": "A|B|tie", "helpfulness": "A|B|tie", "voice": "A|B|tie", "note": "<one line>"}', 8000);
       var v = judgeGot.json;
       if (v) {
         function unblind(x) { return x === 'tie' ? 'tie' : ((x === 'A') === oursFirst ? 'ours' : 'theirs'); }
