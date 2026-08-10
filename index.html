@@ -1332,7 +1332,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r46 · 2026-08-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r47 · 2026-08-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2196,6 +2196,7 @@ function openDraftModal(id, text, voiced) {
   var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
   $("draftText").value = text || "";
   $("draftVoiced").textContent = voiced ? "· in your voice" : "";
+  setDraftActionNote("");
   var b = $("draftChatwootBtn"), c = String(i.student_contact || "");
   if (c.indexOf("@") > 0) { b.style.display = ""; b.onclick = function () { openInChatwoot(c); }; }
   else b.style.display = "none";
@@ -2438,6 +2439,7 @@ function renderLiveDetail() {
       : '<div class="small muted">Nothing tried yet, as far as the conversation shows.</div>');
 
   html += '<h3>Recommended next step</h3>' +
+    (b.instructor_action ? '<div class="small" style="color:var(--accent);margin-bottom:2px;">One for us to do, not the student:</div>' : '') +
     '<div style="font-size:13.5px;">' + (b.next ? esc(b.next) : '<span class="muted">Nothing to suggest right now - refresh the brief if the conversation has moved on.</span>') + '</div>';
 
   if (b.fix) {
@@ -2520,17 +2522,27 @@ function liveDraftReply() {
   apiPost({ action: "caseDraftReply", conversation_id: c.conversation_id }).then(function (res) {
     busyHide();
     if (!res || !res.ok || !res.text) { toast("Draft failed: " + ((res && res.error) || "unknown")); return; }
-    openLiveDraftModal(res.text, !!res.voiced, c.student_contact);
+    openLiveDraftModal(res.text, !!res.voiced, c.student_contact, res.action_note || "");
   }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
 }
 // The same editable popup the issue drafts use, fed by a case instead.
-function openLiveDraftModal(text, voiced, contact) {
+function openLiveDraftModal(text, voiced, contact, actionNote) {
   $("draftText").value = text || "";
   $("draftVoiced").textContent = voiced ? "· in your voice" : "";
+  setDraftActionNote(actionNote);
   var btn = $("draftChatwootBtn");
   if (contact && String(contact).indexOf("@") > 0) { btn.style.display = ""; btn.onclick = function () { openInChatwoot(contact); }; }
   else btn.style.display = "none";
   $("draftOverlay").style.display = "flex";
+}
+// The draft reads as if the action has been done, so the note is not optional
+// dressing: skipping it means telling the student a password was reset when
+// nobody reset it.
+function setDraftActionNote(note) {
+  var box = $("draftActionNote");
+  if (!box) return;
+  if (note) { $("draftActionText").textContent = note; box.style.display = ""; }
+  else box.style.display = "none";
 }
 function liveCheckpoint(decision) {
   var c = liveCaseById(state.liveSelected);
@@ -7297,6 +7309,12 @@ init();
 <div id="draftOverlay" style="display:none;position:fixed;inset:0;background:rgba(2,10,20,0.65);z-index:300;align-items:center;justify-content:center;">
   <div class="modal" style="width:660px;max-width:94vw;">
     <h3 style="margin-top:0;">Draft message to student <span id="draftVoiced" class="small muted"></span></h3>
+    <!-- r47: when the draft is written as if an instructor-side action is being
+         done (a password reset, a course assignment, manual marking), this
+         tells the instructor to actually do it before the message goes. -->
+    <div id="draftActionNote" style="display:none;border:1px solid var(--medium);background:rgba(254,193,149,0.12);border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:13px;">
+      <strong>Before you send, do this:</strong> <span id="draftActionText"></span>
+    </div>
     <textarea id="draftText" rows="12" style="width:100%;font-size:13.5px;"></textarea>
     <div class="row" style="margin-top:10px;">
       <button class="primary" onclick="copyText($('draftText').value)">Copy</button>

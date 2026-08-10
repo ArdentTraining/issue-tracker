@@ -3423,6 +3423,7 @@ function troubleshoot_(data) {
     'Keep the list short, distinct and non-overlapping: aim for 2 to 4 genuinely different next steps and never repeat the same step in different words. Treat mobile data, a phone hotspot and a different wifi as ONE step (trying a different network); if any different network has already been tried, do NOT suggest another network step. ' +
     'Do NOT tell them to escalate to Edd, Charlie, Stu or anyone, or to message Slack; that happens automatically when an issue is high priority. Once the relevant steps have genuinely all been tried, just say to submit it so it reaches the team. ' +
     'Point out any step that seems to have been missed or done out of order. If it matches one of the known account issues, name it and give that specific fix first. ' +
+    'Remember the instructor can DO things, not only relay steps: reset the student\'s password from the students tab of the instructor portal, assign a course to their account, mark an exam manually from photos of their answers, post an answer in the course live chat, re-send an ebook, or raise an invoice. When one of those resolves it faster than another student-side step, make THAT the step, phrased as an action the instructor takes ("reset the password for them"), not a request routed through the student. ' +
     'Decide from the conversation whether it is a browser/web issue or a mobile app issue and use the matching list. ' +
     'Focus every step on the thing that is actually FAILING. If another route already works for them (for example the website works, or it works on another device), that is only a temporary workaround, so do NOT suggest troubleshooting the part that already works. A "different network" step means getting them to try the FAILING thing (e.g. the app) on a different network (mobile data, a phone hotspot, or another wifi, which are all one and the same step), never trying the website on a different network. ' +
     'Only suggest checking free storage when the problem is about downloading or saving content, not for a login or "check network connection" problem. ' +
@@ -4068,7 +4069,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r46 · 2026-08-10';
+var CODE_STAMP = 'r47 · 2026-08-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4152,7 +4153,8 @@ function draftStudentMessage_(data) {
     }) + '\n' +
     (last && (last.summary || last.raw_text) ? 'LATEST UPDATE ON THE ISSUE: ' + String(last.summary || last.raw_text).slice(0, 400) + '\n' : '') +
     (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n' : '') +
-    '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name. ' +
+    '\nRules: plain text only, no subject line, 50-110 words, greet the student by first name. ' +
+    'Say the thing in the first sentence rather than warming up to it, skip reassurance the student did not ask for, and never state a fact that is not in the issue or the fix notes. ' +
     (guide
       ? 'Sign off exactly the way this instructor signs off in the style guide (their name: "' + (who || 'The Ardent team') + '"). '
       : 'Sign off as "' + (who || 'The Ardent team') + '". ') +
@@ -4441,12 +4443,18 @@ function briefAi_(transcript) {
     'The next step is ONE step, the most useful one, chosen from the playbook order and skipping anything already done; ' +
     'if it matches a known account issue in the playbook, that specific fix IS the next step. ' +
     'If the conversation is not a tech problem (a content question, an admin query, a shipping problem), the next step is whatever genuinely helps the student, playbook or not. ' +
+    'IMPORTANT (r47): the fastest resolution is often something WE do, not something we ask the student to do. ' +
+    'The instructor can reset a student\'s password from the instructor portal, assign a course to their account, ' +
+    'mark an exam manually from photos of their answers, post an answer in the course live chat, re-send an ebook, or raise an invoice. ' +
+    'When one of those would resolve it, the next step IS that action, phrased as a thing the instructor does ' +
+    '("Reset the password for them in the students tab of the instructor portal"), not another question or step routed through the student. ' +
     'Keep everything in plain English an untechnical instructor can act on.\n\n' +
     'Return ONLY JSON, no prose, no fences:\n' +
     '{"summary": "<one or two plain sentences: who the student is, what is going wrong, and on what device or platform if known>",\n' +
     ' "device": "<their device / OS / browser or app if mentioned, else empty string>",\n' +
     ' "tried": ["<each thing already tried, one short plain-English entry each - empty list if nothing yet>"],\n' +
-    ' "next": "<the single recommended next step, short and practical, addressed to the instructor>"}';
+    ' "next": "<the single recommended next step, short and practical, addressed to the instructor>",\n' +
+    ' "instructor_action": true or false (true when the next step is an action the INSTRUCTOR performs - a password reset, a course assignment, manual marking, posting in the chat, an invoice - rather than something the student is asked to try)}';
   return anthropicRaw_(ANTHROPIC_MODEL, prompt, 16000);
 }
 
@@ -4526,6 +4534,7 @@ function caseBriefCore_(imp, cutoffIso) {
     device: String(brief.device || ''),
     tried: (brief.tried || []).map(function (t) { return String(t); }).slice(0, 12),
     next: String(brief.next || ''),
+    instructor_action: !!brief.instructor_action,
     fix: fix && fix.found ? String(fix.fix) : '',
     fix_based_on: fix && fix.found ? String(fix.based_on || '') : '',
     message_count: imp.message_count,
@@ -4651,51 +4660,65 @@ function caseCheckReply_(data) {
 // Draft the next reply in the conversation, in the logged-in instructor's own
 // voice where a guide is on file. Copy-paste out (Edd's call): the tracker
 // never posts drafts into the Chatwoot thread.
+// The ONE reply-draft prompt (r47), shared by the live case draft and the
+// backtest's replay draft so the benchmark always measures the prompt we
+// actually ship. Reworked on the blind judge's repeated verdicts from the
+// 10 Aug backtest: the team's real replies are shorter, commit to the answer,
+// and skip the padding - and when the resolution is an action only WE can
+// take, the real reply performs it ("I've reset your password"). The draft
+// can't press the button, but it CAN be written as if the button is being
+// pressed, with the instructor told exactly what to do before sending.
+function draftReplyPrompt_(ctx, tail, guide, signName) {
+  return 'Draft the next reply in a live support conversation, from an instructor at Ardent Training (an online RYA sailing school) to a student.\n\n' +
+    'WHERE THE CONVERSATION STANDS:\n' + JSON.stringify(ctx) + '\n\n' +
+    'THE MOST RECENT MESSAGES:\n"""\n' + tail + '\n"""\n\n' +
+    (guide ? 'Write it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n\n' : '') +
+    'HOW TO WRITE IT:\n' +
+    '- 50 to 110 words, and closer to 50 when the answer is simple. Our team\'s real replies are short; padding is what makes a draft read like a machine.\n' +
+    '- If the known fix or the recommended next step answers the student\'s question, COMMIT to the answer in the first sentence. No hedging around a fact we hold, no "it may be worth checking whether", no restating their problem back at them first.\n' +
+    '- One step at most, and no second speculative suggestion "in case". If the fix is known, do not pad it with extra troubleshooting.\n' +
+    '- No reassurance the student did not ask for, and no apologising for things that have not gone wrong.\n' +
+    '- NEVER state a physical-world or account fact you have not been given: what is in their pack, what their error said, where their parcel is, what their account holds. If the right reply depends on a fact you do not hold, ask the ONE checking question that gets it ("have you checked the other side of the sheet?") rather than confidently arranging a fix - a wrong replacement or a wrong promise costs far more than a short question.\n' +
+    '- If the recommended next step is an action WE take rather than the student (resetting their password, assigning a course to their account, marking their exam from photos, posting an answer in the course chat, re-sending an ebook, raising an invoice), write the reply as if that action is being done ("I\'ve reset your password - ...") and put the action itself in instructor_action as one short imperative line. The instructor will do it before sending. If no such action is needed, instructor_action is an empty string.\n' +
+    '- Never promise dates, never invent progress.\n' +
+    '- If this reads as the first reply in a while, greet the student by first name; otherwise carry the conversation on naturally. Plain text only, no subject line.\n' +
+    (guide
+      ? '- Sign off the way this instructor signs off in the style guide (their name: "' + (signName || 'The Ardent team') + '").\n'
+      : '- Sign off as "' + (signName || 'The Ardent team') + '".\n') +
+    '\nReturn ONLY JSON, no prose, no fences:\n' +
+    '{"message": "<the reply text>",\n' +
+    ' "instructor_action": "<what the instructor must DO before sending, one short imperative line, or empty string>"}';
+}
+
 function caseDraftReply_(data) {
   var id = chatwootConvId_(data.conversation_id || data.conversation);
   var rec = liveCaseFind_(id);
   if (!rec) return { ok: false, error: 'No live case for that conversation.' };
   var who = (data._user && data._user.name) || '';
-  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
-  if (!apiKey) return { ok: false, error: 'no api key' };
   var b = caseBriefJson_(rec);
   var guide = voiceGuideFor_(who);
   var tail = String(b.transcript || '').slice(-2500);
 
-  var prompt = 'Draft the next reply in a live support conversation, from an instructor at Ardent Training (an online RYA sailing school) to a student.\n\n' +
-    'WHERE THE CONVERSATION STANDS:\n' + JSON.stringify({
-      summary: b.summary || rec.summary || '', device: b.device || '',
-      already_tried: b.tried || [], recommended_next_step: b.next || '',
-      known_fix_from_a_past_issue: b.fix || '',
-      student_first_name: String(rec.student_name || '').split(' ')[0]
-    }) + '\n\n' +
-    'THE MOST RECENT MESSAGES:\n"""\n' + tail + '\n"""\n\n' +
-    (guide ? 'Write it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n\n' : '') +
-    'Rules: plain text only, no subject line, 50-140 words. If this reads as the first reply in a while, greet the student by first name; otherwise carry the conversation on naturally. ' +
-    'If there is a known fix from a past issue, lead with that. Otherwise walk them through the recommended next step - one step only, in plain English, and never a wall of steps. ' +
-    'Never promise dates, never invent progress. ' +
-    (guide
-      ? 'Sign off the way this instructor signs off in the style guide (their name: "' + (who || 'The Ardent team') + '"). '
-      : 'Sign off as "' + (who || 'The Ardent team') + '". ') +
-    'Return ONLY the message text, nothing else.';
+  var prompt = draftReplyPrompt_({
+    summary: b.summary || rec.summary || '', device: b.device || '',
+    already_tried: b.tried || [], recommended_next_step: b.next || '',
+    next_step_is_an_instructor_action: !!b.instructor_action,
+    known_fix_from_a_past_issue: b.fix || '',
+    student_first_name: String(rec.student_name || '').split(' ')[0]
+  }, tail, guide, who);
 
-  try {
-    var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      payload: JSON.stringify({ model: DRAFT_MODEL, max_tokens: 1500, messages: [{ role: 'user', content: prompt }] })
-    });
-    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return { ok: false, error: 'API error ' + res.getResponseCode() };
-    var parsed = JSON.parse(res.getContentText() || '{}');
-    var text = '';
-    (parsed.content || []).forEach(function (c) { if (c.type === 'text') text += c.text; });
-    text = text.trim();
-    if (!text) return { ok: false, error: 'empty draft' };
-    rec.draft_count = (Number(rec.draft_count) || 0) + 1;
-    rec.last_touched_by = who;
-    liveCaseSave_(rec);
-    return { ok: true, text: text, voiced: !!guide };
-  } catch (e) { return { ok: false, error: String(e) }; }
+  // anthropicRaw_ rather than a bare fetch: the draft is JSON now (message +
+  // instructor_action), and the 8k budget keeps the thinking-eats-max_tokens
+  // trap away from a model that reasons before it writes.
+  var got = anthropicRaw_(DRAFT_MODEL, prompt, 8000);
+  if (!got.json || !String(got.json.message || '').trim()) {
+    return { ok: false, error: 'The draft call failed: ' + (got.why || 'empty draft') };
+  }
+  rec.draft_count = (Number(rec.draft_count) || 0) + 1;
+  rec.last_touched_by = who;
+  liveCaseSave_(rec);
+  return { ok: true, text: String(got.json.message).trim(),
+    action_note: String(got.json.instructor_action || '').trim(), voiced: !!guide };
 }
 
 // The checkpoint files the issue WITHOUT closing the case - identical
@@ -5632,7 +5655,11 @@ var KNOWNFIX_HEADERS = ['conversation_id', 'resolved_date', 'problem', 'fix', 'c
 var BACKTESTLOG_SHEET = 'BacktestLog';
 var BACKTESTLOG_HEADERS = ['type', 'conversation_id', 'data_json', 'created_at'];
 var BACKFILL_OLDEST = '2026-02-10T00:00:00Z';  // ~6 months back, per the cap
-var BACKFILL_MAX_ROWS = 500;                   // conversations processed, per the cap
+// r47: raised from 500 on Edd's instruction - the first sweep only reached ~4
+// days of history by Chatwoot's last-activity ordering, so the corpus had no
+// real depth behind it. 2000 covers the original 500 plus the next ~1500, and
+// the 6-month BACKFILL_OLDEST boundary still stops it either way.
+var BACKFILL_MAX_ROWS = 2000;                  // conversations processed, per the cap
 
 function knownFixesSheet_(create) {
   var sh = sheetByName_(KNOWNFIXES_SHEET);
@@ -5881,6 +5908,7 @@ function btReplay_(body) {
       student_turn: studentTurns,
       at_turn_index: i + 1,
       next: core.bj.next || '',
+      instructor_action: !!core.bj.instructor_action,
       known_fix: core.bj.fix || '',
       fix_based_on: core.bj.fix_based_on || ''
     });
@@ -5970,42 +5998,24 @@ function btReplay_(body) {
 // caseDraftReply_ uses, voiced with the real agent's guide where one exists,
 // but standing on the replay's own brief - no live case row is touched.
 function btDraftAt_(prefix, suggestions, replyIdx, agentName, studentName) {
-  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
-  if (!apiKey) return null;
   var brief = null;
   for (var i = suggestions.length - 1; i >= 0; i--) {
     if (!suggestions[i].error && suggestions[i].at_turn_index <= replyIdx) { brief = suggestions[i]; break; }
   }
   if (!brief && suggestions.length && !suggestions[0].error) brief = suggestions[0];
   var guide = agentName ? voiceGuideFor_(agentName) : '';
-  var prompt = 'Draft the next reply in a live support conversation, from an instructor at Ardent Training (an online RYA sailing school) to a student.\n\n' +
-    'WHERE THE CONVERSATION STANDS:\n' + JSON.stringify({
-      recommended_next_step: (brief && brief.next) || '',
-      known_fix_from_a_past_issue: (brief && brief.known_fix) || '',
-      student_first_name: String(studentName || '').split(' ')[0]
-    }) + '\n\n' +
-    'THE MOST RECENT MESSAGES:\n"""\n' + prefix.slice(-2500) + '\n"""\n\n' +
-    (guide ? 'Write it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n\n' : '') +
-    'Rules: plain text only, no subject line, 50-140 words. If this reads as the first reply in a while, greet the student by first name; otherwise carry the conversation on naturally. ' +
-    'If there is a known fix from a past issue, lead with that. Otherwise walk them through the recommended next step - one step only, in plain English, and never a wall of steps. ' +
-    'Never promise dates, never invent progress. ' +
-    (guide
-      ? 'Sign off the way this instructor signs off in the style guide (their name: "' + (agentName || 'The Ardent team') + '"). '
-      : 'Sign off as "' + (agentName || 'The Ardent team') + '". ') +
-    'Return ONLY the message text, nothing else.';
-  try {
-    var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      payload: JSON.stringify({ model: DRAFT_MODEL, max_tokens: 1500, messages: [{ role: 'user', content: prompt }] })
-    });
-    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return null;
-    var parsed = JSON.parse(res.getContentText() || '{}');
-    tallyAi_(parsed);
-    var text = '';
-    (parsed.content || []).forEach(function (c) { if (c.type === 'text') text += c.text; });
-    return text.trim() || null;
-  } catch (e) { return null; }
+  // r47: the SAME prompt the live caseDraftReply_ uses (draftReplyPrompt_), so
+  // the benchmark measures what ships. The judged text is the message alone -
+  // the real reply was also just the sent message, so that is the fair pair.
+  var prompt = draftReplyPrompt_({
+    recommended_next_step: (brief && brief.next) || '',
+    next_step_is_an_instructor_action: !!(brief && brief.instructor_action),
+    known_fix_from_a_past_issue: (brief && brief.known_fix) || '',
+    student_first_name: String(studentName || '').split(' ')[0]
+  }, prefix.slice(-2500), guide, agentName);
+  var got = anthropicRaw_(DRAFT_MODEL, prompt, 8000);
+  if (!got.json || !String(got.json.message || '').trim()) return null;
+  return String(got.json.message).trim();
 }
 
 // The dispatcher: one key-gated action, several ops. 'sample' hands back the
@@ -6025,8 +6035,70 @@ function backtest_(body) {
     }) };
   }
   if (op === 'results') {
+    // _logged_at lets the caller split runs apart: the r46 rows and any r47
+    // re-run of the same conversations live in the same log.
     var replays = btLogRows_('replay');
-    return { ok: true, count: replays.length, replays: replays.map(function (r) { return r.data; }) };
+    return { ok: true, count: replays.length, replays: replays.map(function (r) {
+      var d = r.data || {}; d._logged_at = r.created_at; return d;
+    }) };
+  }
+  if (op === 'peek') {
+    // Read-only look at one conversation's turns, for verifying the wording of
+    // a seed against what was actually said - never seed a guess.
+    var pid = chatwootConvId_(body.conversation_id || '');
+    if (!pid) return { ok: false, error: 'conversation_id required' };
+    try {
+      var pt = chatwootTurns_(pid);
+      return { ok: true, conversation_id: pid, student_name: pt.student_name,
+        started_at: pt.started_at, ended_at: pt.ended_at, turns: pt.turns };
+    } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
+  }
+  if (op === 'seed') {
+    // r47: hand-curated KnownFixes entries from the backtest's miss catalogue.
+    // Each entry names its source conversation; the resolved_date is read from
+    // the REAL conversation (its last message) so the time-travel rule stays
+    // honest - a seed can never fire on the conversation it was learned from.
+    var entries = body.entries || [];
+    var sh47 = knownFixesSheet_(true);
+    var have = {};
+    knownFixRows_().forEach(function (r) { have[r.conversation_id] = true; });
+    var seeded = [], skipped = [], failed = [];
+    for (var si = 0; si < entries.length; si++) {
+      var en = entries[si] || {};
+      var sid = String(en.conversation_id || '');
+      if (!sid || !en.problem || !en.fix) { failed.push({ id: sid, why: 'missing fields' }); continue; }
+      if (have[sid]) { skipped.push(sid); continue; }
+      var when = String(en.resolved_date || '');
+      if (!when) {
+        try { when = chatwootTurns_(sid).ended_at || ''; }
+        catch (e) { failed.push({ id: sid, why: 'date read failed: ' + String(e).slice(0, 80) }); continue; }
+      }
+      if (!when) { failed.push({ id: sid, why: 'no resolved date' }); continue; }
+      sh47.appendRow([sid, when, String(en.problem).slice(0, 800), String(en.fix).slice(0, 800),
+        String(en.category || 'other'), String(en.lesson_code || ''), Number(en.message_count) || 0,
+        'seeded_r47', new Date().toISOString(), '']);
+      have[sid] = true;
+      seeded.push(sid);
+    }
+    return { ok: true, seeded: seeded, skipped_existing: skipped, failed: failed };
+  }
+  if (op === 'suggest') {
+    // Process patterns from the miss catalogue go through the SAME
+    // suggest-and-approve queue as every other playbook idea - the playbook
+    // itself never changes without Edd pressing approve.
+    var sug = body.suggestions || [];
+    var queued = 0;
+    for (var qi = 0; qi < sug.length; qi++) {
+      var s = sug[qi] || {};
+      if (!s.suggestion) continue;
+      addSuggestion_({
+        id: Utilities.getUuid(), issue_id: '', summary: String(s.summary || 'From the 10 Aug backtest miss catalogue'),
+        suggestion: String(s.suggestion), section: String(s.section || 'known issues'),
+        created_at: new Date().toISOString()
+      });
+      queued++;
+    }
+    return { ok: true, queued: queued };
   }
   if (op === 'state') {
     var kf = knownFixRows_();
