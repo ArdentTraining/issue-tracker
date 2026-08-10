@@ -263,6 +263,10 @@ function doPost(e) {
       if (!mk || String(body.key || '') !== mk) return jsonOut({ ok: false, error: 'bad deploy key' });
       return jsonOut({ ok: true, result: migrateAudience() });
     }
+    // The backtest harness (r46): key-gated maintenance machinery, not a user
+    // feature. Read-only against Chatwoot; writes only to its own sheets
+    // (KnownFixes, BacktestLog), never to Issues.
+    if (action === 'backtest') return jsonOut(backtest_(body));
 
     if (action === 'login') return jsonOut(login_(body));
     if (action === 'acceptInvite') return jsonOut(acceptInvite_(body));
@@ -2182,10 +2186,11 @@ function chatwootImport_(data) {
   // Copy the screenshots into the same Drive folder the form uploads use -
   // the issue then owns a stable link, not a Chatwoot URL that can expire.
   // Capped at 5 (matching the form) and a sane size; a failed copy never
-  // costs the transcript.
+  // costs the transcript. The backtest passes skip_images so a 500-conversation
+  // sweep doesn't fill Drive with copies nobody asked for (r46).
   var savedImages = [];
   var cwTok = chatwootCfg_().token;
-  attImages.slice(0, 5).forEach(function (u, n) {
+  (data.skip_images ? [] : attImages.slice(0, 5)).forEach(function (u, n) {
     try {
       var res = UrlFetchApp.fetch(u, { muteHttpExceptions: true, followRedirects: true, headers: { api_access_token: cwTok } });
       if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return;
@@ -2260,6 +2265,17 @@ var SCAN_HEADERS = ['conversation_id', 'scanned_at', 'confidence', 'summary', 'c
                     'kind', 'verdict'];
 var FINDER_MODEL = 'claude-sonnet-5';
 var VERIFIER_MODEL = 'claude-opus-5';
+
+// Running tally of AI usage inside one execution, so batch jobs (the backtest,
+// mainly) can report what they actually spent rather than guessing (r46).
+var AI_TALLY = { calls: 0, in_tokens: 0, out_tokens: 0 };
+function tallyAi_(parsed) {
+  AI_TALLY.calls++;
+  if (parsed && parsed.usage) {
+    AI_TALLY.in_tokens += Number(parsed.usage.input_tokens) || 0;
+    AI_TALLY.out_tokens += Number(parsed.usage.output_tokens) || 0;
+  }
+}
 var SCAN_MAX_CONVERSATIONS = 60;   // per run, keeps us inside the 6-minute trigger limit
 var SCAN_BATCH = 8;                // conversations per finder call
 var SCAN_MAX_SUGGESTIONS = 10;     // a bigger night than this means the prompt is wrong
@@ -2308,6 +2324,7 @@ function anthropicRaw_(model, prompt, maxTokens) {
     return { json: null, why: 'HTTP ' + code + ' from the API (' + String(res.getContentText() || '').slice(0, 160) + ')' };
   }
   var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { json: null, why: 'unreadable API envelope' }; }
+  tallyAi_(parsed);
   var text = '';
   if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
     if (parsed.content[i].type === 'text') text += parsed.content[i].text;
@@ -2338,6 +2355,7 @@ function anthropicJson_(model, prompt, maxTokens) {
   } catch (e) { return null; }
   if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return null;
   var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return null; }
+  tallyAi_(parsed);
   var text = '';
   if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
     if (parsed.content[i].type === 'text') text += parsed.content[i].text;
@@ -3249,6 +3267,16 @@ function suggestFix_(data) {
 
   var newIssue = data.new_issue || {};
   var candidates = data.candidates || [];
+  // Fold in the KnownFixes corpus (r46): the caller's candidates come from
+  // resolved issues, but the corpus remembers fixes that predate the tracker.
+  // Callers that came through fixCandidatesFor_ already have them (skip flag).
+  if (!data._kf_included) {
+    try {
+      candidates = candidates.concat(
+        fixCandidatesFor_((newIssue.summary || '') + ' ' + String(newIssue.raw_text || '').slice(0, 3000), null, true)
+      ).slice(0, 16);
+    } catch (e) {}
+  }
   if (!candidates.length) return { ok: true, found: false };
 
   var prompt = 'An instructor has just logged an issue with an online sailing course platform (Ardent Training). ' +
@@ -3281,6 +3309,7 @@ function suggestFix_(data) {
   if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return { ok: true, found: false };
 
   var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { ok: true, found: false }; }
+  tallyAi_(parsed);
   var text = '';
   if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
     if (parsed.content[i].type === 'text') text += parsed.content[i].text;
@@ -4039,7 +4068,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r45 · 2026-08-09';
+var CODE_STAMP = 'r46 · 2026-08-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4430,40 +4459,66 @@ var FIX_STOPWORDS = { 'the': 1, 'and': 1, 'that': 1, 'this': 1, 'with': 1, 'have
   'what': 1, 'when': 1, 'where': 1, 'which': 1, 'again': 1, 'then': 1, 'them': 1, 'some': 1, 'also': 1,
   'because': 1, 'about': 1, 'into': 1, 'over': 1, 'after': 1, 'before': 1, 'really': 1, 'still': 1,
   'issue': 1, 'problem': 1, 'working': 1, 'works': 1, 'tried': 1, 'trying': 1, 'resolved': 1, 'sorted': 1 };
-function fixCandidatesFor_(text) {
+// cutoffIso (optional) keeps the backtest honest: pass a date and the lookup
+// only sees fixes that existed BEFORE it - resolved issues by resolved_at,
+// KnownFixes rows by resolved_date. Live use passes nothing and sees it all.
+// kfOnly skips the Issues sweep - for callers that already have their own
+// issue candidates and only want the KnownFixes corpus folded in.
+function fixCandidatesFor_(text, cutoffIso, kfOnly) {
   var words = {};
   String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
     if (w.length > 3 && !FIX_STOPWORDS[w]) words[w] = true;
   });
   var keys = Object.keys(words);
   if (!keys.length) return [];
-  var scored = [];
-  (getIssues_().issues || []).forEach(function (i) {
-    if (String(i.status || '').toLowerCase() !== 'resolved') return;
-    if (!i.resolution_note) return;
-    var hay = ((i.summary || '') + ' ' + (i.resolution_note || '') + ' ' + (i.lesson_code || '')).toLowerCase();
+  var cutoff = cutoffIso ? new Date(cutoffIso).getTime() : 0;
+  function scoreHay(hay) {
     var score = 0;
     for (var k = 0; k < keys.length; k++) if (hay.indexOf(keys[k]) > -1) score++;
-    if (score >= 3) scored.push({ score: score, i: i });
+    return score;
+  }
+  var scored = [];
+  (kfOnly ? [] : (getIssues_().issues || [])).forEach(function (i) {
+    if (String(i.status || '').toLowerCase() !== 'resolved') return;
+    if (!i.resolution_note) return;
+    if (cutoff) {
+      var when = i.resolved_at ? new Date(i.resolved_at).getTime() : 0;
+      if (!when || when >= cutoff) return;
+    }
+    var hay = ((i.summary || '') + ' ' + (i.resolution_note || '') + ' ' + (i.lesson_code || '')).toLowerCase();
+    var score = scoreHay(hay);
+    if (score >= 3) scored.push({ score: score, c: { summary: i.summary || '', resolution_note: i.resolution_note || '',
+      lesson_code: i.lesson_code || '', section: i.section || '', issue_type: i.issue_type || '' } });
+  });
+  // The KnownFixes corpus (backfilled from Chatwoot history, r46) plays by the
+  // same scoring rules - it is the memory that predates the tracker.
+  knownFixRows_().forEach(function (kf) {
+    if (kf.dup_of) return;
+    if (cutoff) {
+      var kd = kf.resolved_date ? new Date(kf.resolved_date).getTime() : 0;
+      if (!kd || kd >= cutoff) return;
+    }
+    var hay = ((kf.problem || '') + ' ' + (kf.fix || '') + ' ' + (kf.lesson_code || '')).toLowerCase();
+    var score = scoreHay(hay);
+    if (score >= 3) scored.push({ score: score, c: { summary: kf.problem || '', resolution_note: kf.fix || '',
+      lesson_code: kf.lesson_code || '', section: '', issue_type: kf.category || '' } });
   });
   scored.sort(function (a, b) { return b.score - a.score; });
-  return scored.slice(0, 12).map(function (x) {
-    return { summary: x.i.summary || '', resolution_note: x.i.resolution_note || '',
-      lesson_code: x.i.lesson_code || '', section: x.i.section || '', issue_type: x.i.issue_type || '' };
-  });
+  return scored.slice(0, 12).map(function (x) { return x.c; });
 }
 
 // The shared "read it all back" core: brief + known-fix lookup off one import.
-function caseBriefCore_(imp) {
+// cutoffIso comes only from the backtest replay - live callers leave it out.
+function caseBriefCore_(imp, cutoffIso) {
   var got = briefAi_(imp.transcript);
   if (!got.json) return { error: 'The AI read of the conversation failed: ' + got.why + '. Try again in a minute.' };
   var brief = got.json;
   var fix = { found: false };
   try {
-    var cands = fixCandidatesFor_((brief.summary || '') + ' ' + String(imp.transcript || '').slice(0, 3000));
+    var cands = fixCandidatesFor_((brief.summary || '') + ' ' + String(imp.transcript || '').slice(0, 3000), cutoffIso);
     if (cands.length) {
       fix = suggestFix_({ new_issue: { summary: brief.summary || '', raw_text: String(imp.transcript || '').slice(0, 4000) },
-        candidates: cands }) || { found: false };
+        candidates: cands, _kf_included: true }) || { found: false };
     }
   } catch (e) { fix = { found: false }; }
   return { bj: {
@@ -5558,4 +5613,425 @@ function markNewFeedbackNeedsTesting() {
   }
   Logger.log('markNewFeedbackNeedsTesting: moved ' + flipped + ' feedback item(s) to needs_testing.');
   return flipped;
+}
+
+// ---- The backtest harness (r46) -------------------------------------------
+//
+// Two jobs, both scoped in "Scoping - Backtest harness - 9 August 2026":
+// Job 1 backfills a KnownFixes corpus from historical resolved Chatwoot
+// conversations; Job 2 replays past conversations against the live-case
+// machinery and scores it. Everything here is key-gated (DEPLOY_KEY), reads
+// Chatwoot but never writes to it, and writes only to its own two sheets.
+// The two honesty rules live here: replays pass a cutoff so the lookup never
+// sees a fix from the future, and draft judging is blind pairwise with the
+// order randomised.
+
+var KNOWNFIXES_SHEET = 'KnownFixes';
+var KNOWNFIX_HEADERS = ['conversation_id', 'resolved_date', 'problem', 'fix', 'category', 'lesson_code',
+  'message_count', 'source', 'extracted_at', 'dup_of'];
+var BACKTESTLOG_SHEET = 'BacktestLog';
+var BACKTESTLOG_HEADERS = ['type', 'conversation_id', 'data_json', 'created_at'];
+var BACKFILL_OLDEST = '2026-02-10T00:00:00Z';  // ~6 months back, per the cap
+var BACKFILL_MAX_ROWS = 500;                   // conversations processed, per the cap
+
+function knownFixesSheet_(create) {
+  var sh = sheetByName_(KNOWNFIXES_SHEET);
+  if (!sh && create) {
+    sh = ss_().insertSheet(KNOWNFIXES_SHEET);
+    sh.getRange(1, 1, 1, KNOWNFIX_HEADERS.length).setValues([KNOWNFIX_HEADERS]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+function knownFixRows_() {
+  var sh = knownFixesSheet_(false);
+  if (!sh) return [];
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var head = values[0];
+  var out = [];
+  for (var r = 1; r < values.length; r++) {
+    if (!values[r][0]) continue;
+    var rec = {};
+    for (var c = 0; c < head.length; c++) rec[head[c]] = values[r][c];
+    rec.conversation_id = String(rec.conversation_id);
+    // Sheets coerces ISO strings to Dates on the way in; hand back ISO strings
+    // so date maths and comparisons stay predictable (the 30 Jul coercion trap).
+    if (rec.resolved_date instanceof Date) rec.resolved_date = rec.resolved_date.toISOString();
+    rec._rowNum = r + 1;
+    out.push(rec);
+  }
+  return out;
+}
+function backtestLogSheet_() {
+  var sh = sheetByName_(BACKTESTLOG_SHEET);
+  if (!sh) {
+    sh = ss_().insertSheet(BACKTESTLOG_SHEET);
+    sh.getRange(1, 1, 1, BACKTESTLOG_HEADERS.length).setValues([BACKTESTLOG_HEADERS]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+function btLog_(type, convId, obj) {
+  backtestLogSheet_().appendRow([type, String(convId || ''), JSON.stringify(obj || {}), new Date().toISOString()]);
+}
+function btLogRows_(type) {
+  var sh = sheetByName_(BACKTESTLOG_SHEET);
+  if (!sh) return [];
+  var values = sh.getDataRange().getValues();
+  var out = [];
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][0]) !== type) continue;
+    var o = { conversation_id: String(values[r][1]), created_at: values[r][3] };
+    try { o.data = JSON.parse(values[r][2]); } catch (e) { o.data = {}; }
+    out.push(o);
+  }
+  return out;
+}
+
+// One conversation as structured turns, read-only, no Drive copies. The same
+// filtering rules as chatwootImport_ (skip activity lines and private notes)
+// so the replay sees exactly what the live brief would see.
+function chatwootTurns_(convId) {
+  var conv = chatwootCall_('/conversations/' + convId);
+  var msgs = chatwootCall_('/conversations/' + convId + '/messages');
+  var list = (msgs && (msgs.payload || (msgs.data && msgs.data.payload))) || [];
+  var sender = (conv && conv.meta && conv.meta.sender) || {};
+  var turns = [];
+  list.forEach(function (m) {
+    var t = Number(m.message_type);
+    if (t !== 0 && t !== 1) return;
+    if (m.private) return;
+    var body = cleanChatwootBody_(m.content);
+    var pics = (m.attachments || []).filter(function (a) { return String(a.file_type) === 'image'; }).length;
+    if (!body && !pics) return;
+    turns.push({
+      who: t === 0 ? 'student' : 'agent',
+      name: t === 0 ? (sender.name || 'Student') : ((m.sender && (m.sender.name || m.sender.available_name)) || 'Ardent'),
+      at: m.created_at ? new Date(Number(m.created_at) * 1000).toISOString() : '',
+      body: body || ('[shared ' + pics + ' screenshot' + (pics > 1 ? 's' : '') + ']')
+    });
+  });
+  return {
+    conversation_id: String(convId),
+    student_name: sender.name || '',
+    turns: turns,
+    started_at: turns.length ? turns[0].at : '',
+    ended_at: turns.length ? turns[turns.length - 1].at : '',
+    status: String((conv && conv.status) || (conv && conv.payload && conv.payload.status) || '')
+  };
+}
+function btTranscript_(turns, upTo) {
+  var lines = [];
+  for (var i = 0; i < turns.length && i < upTo; i++) {
+    var t = turns[i];
+    lines.push(t.name + (t.at ? ' (' + t.at.slice(0, 16).replace('T', ' ') + ')' : '') + ': ' + t.body);
+  }
+  return lines.join('\n\n');
+}
+
+// Job 1: sweep resolved Chatwoot history into KnownFixes. Resumable: every
+// conversation looked at gets a 'seen' row in BacktestLog, so a re-run skips
+// straight past it, and the caller steers with page/max_pages. Stops itself at
+// the ~6-month / 500-conversation cap from the scoping doc.
+function btBackfill_(body) {
+  var budget = Math.min(Number(body.budget_ms) || 270000, 300000);
+  var started = Date.now();
+  var page = Math.max(1, Number(body.page) || 1);
+  var maxPages = Math.max(1, Number(body.max_pages) || 3);
+  var endPage = page + maxPages - 1;
+  var seen = {};
+  btLogRows_('seen').forEach(function (r) { seen[r.conversation_id] = true; });
+  knownFixRows_().forEach(function (r) { seen[r.conversation_id] = true; });
+  var seenCount = Object.keys(seen).length;
+  var stats = { processed: 0, added: 0, skipped_seen: 0, nofix: 0, thin: 0, errors: 0, hit_oldest: false, hit_cap: false, pages_done: [] };
+  var kfSheet = knownFixesSheet_(true);
+
+  while (page <= endPage && Date.now() - started < budget) {
+    var out;
+    try { out = chatwootCall_('/conversations?status=resolved&page=' + page); }
+    catch (e) { stats.errors++; break; }
+    var payload = (out && out.data && out.data.payload) || (out && out.payload) || [];
+    if (!payload.length) { page = 0; break; }   // ran out of history
+    for (var i = 0; i < payload.length; i++) {
+      if (Date.now() - started >= budget) break;
+      var c = payload[i];
+      var id = String(c.id);
+      var lastAt = c.last_activity_at ? new Date(Number(c.last_activity_at) * 1000).toISOString() : '';
+      if (lastAt && lastAt < BACKFILL_OLDEST) { stats.hit_oldest = true; break; }
+      if (seenCount + stats.processed >= BACKFILL_MAX_ROWS) { stats.hit_cap = true; break; }
+      if (seen[id]) { stats.skipped_seen++; continue; }
+      stats.processed++;
+      var t;
+      try { t = chatwootTurns_(id); }
+      catch (e2) { stats.errors++; btLog_('seen', id, { verdict: 'error', why: String(e2).slice(0, 120) }); continue; }
+      var hasStudent = t.turns.some(function (x) { return x.who === 'student'; });
+      var hasAgent = t.turns.some(function (x) { return x.who === 'agent'; });
+      if (t.turns.length < 2 || !hasStudent || !hasAgent) {
+        stats.thin++; btLog_('seen', id, { verdict: 'thin' }); continue;
+      }
+      var transcript = btTranscript_(t.turns, t.turns.length).slice(0, 12000);
+      var got = anthropicRaw_(ANTHROPIC_MODEL, btExtractPrompt_(transcript), 1000);
+      if (!got.json) { stats.errors++; btLog_('seen', id, { verdict: 'ai_failed', why: got.why }); continue; }
+      var f = got.json;
+      if (!f.found || !String(f.fix || '').trim() || !String(f.problem || '').trim()) {
+        stats.nofix++; btLog_('seen', id, { verdict: 'nofix' }); continue;
+      }
+      kfSheet.appendRow([id, lastAt || t.ended_at, String(f.problem).slice(0, 800), String(f.fix).slice(0, 800),
+        String(f.category || 'other'), String(f.lesson_code || ''), t.turns.length, 'chatwoot_backfill',
+        new Date().toISOString(), '']);
+      stats.added++;
+    }
+    if (stats.hit_oldest || stats.hit_cap) break;
+    stats.pages_done.push(page);
+    page++;
+  }
+  var finished = stats.hit_oldest || stats.hit_cap || page === 0;
+  return { ok: true, next_page: finished ? 0 : page, finished: finished, stats: stats, tally: AI_TALLY };
+}
+function btExtractPrompt_(transcript) {
+  return 'You are building a "known fixes" memory for Ardent Training, an online RYA sailing school. ' +
+    'Below is one RESOLVED support conversation from its history.\n\n' +
+    'Decide whether this thread shows BOTH: (a) a specific problem the student described, AND (b) a fix that was ' +
+    'confirmed to work or clearly given as the answer. A password reset that worked, a refund processed, a missing ' +
+    'ebook re-sent, a clear how-to question answered - all count, as long as the resolution is visible in the thread. ' +
+    'Chit-chat, unanswered threads, threads that fizzle out, and resolutions that happened somewhere else ("I\'ll call you") ' +
+    'do NOT count. When in doubt, found is false.\n\n' +
+    'THE CONVERSATION:\n"""\n' + transcript + '\n"""\n\n' +
+    'Return ONLY JSON, no prose, no fences:\n' +
+    '{"found": true or false,\n' +
+    ' "problem": "<one or two plain sentences: what was going wrong, with the device or platform if relevant>",\n' +
+    ' "fix": "<one or two plain sentences: the specific thing that fixed it or the answer given>",\n' +
+    ' "category": "<one of: tech_issue, course_error, shipping, admin, other>",\n' +
+    ' "lesson_code": "<e.g. DS.09.04 if one specific lesson is identifiable, else empty string>"}';
+}
+
+// Near-identical pairs get marked, not deleted: dup_of points at the row that
+// stays live, and the lookup skips marked rows. The repeats are still real
+// history (how often a fix recurs is a signal), so nothing is thrown away.
+function btDedupe_() {
+  var rows = knownFixRows_();
+  var marked = 0;
+  function tokens(r) {
+    var m = {};
+    ((r.problem || '') + ' ' + (r.fix || '')).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+      .forEach(function (w) { if (w.length > 3 && !FIX_STOPWORDS[w]) m[w] = true; });
+    return m;
+  }
+  var toks = rows.map(tokens);
+  var sh = knownFixesSheet_(false);
+  var dupCol = KNOWNFIX_HEADERS.indexOf('dup_of') + 1;
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].dup_of) continue;
+    for (var j = i + 1; j < rows.length; j++) {
+      if (rows[j].dup_of) continue;
+      var a = toks[i], b = toks[j], inter = 0, uni = 0, k;
+      for (k in a) { uni++; if (b[k]) inter++; }
+      for (k in b) { if (!a[k]) uni++; }
+      if (uni && inter / uni >= 0.75) {
+        sh.getRange(rows[j]._rowNum, dupCol).setValue(rows[i].conversation_id);
+        rows[j].dup_of = rows[i].conversation_id;
+        marked++;
+      }
+    }
+  }
+  return { ok: true, rows: rows.length, marked_duplicates: marked };
+}
+
+// Job 2: replay one conversation turn by turn. After each student message the
+// live-case brief runs on the transcript-so-far, with the known-fix lookup
+// cut off at the conversation's own start date - the no-time-travel rule.
+// Ground truth, the accuracy verdict, and the blind draft comparison all use
+// VERIFIER_MODEL so the judge is not the model that wrote the briefs.
+function btReplay_(body) {
+  var id = chatwootConvId_(body.conversation_id || '');
+  if (!id) return { ok: false, error: 'conversation_id required' };
+  var maxTurns = Math.max(1, Math.min(Number(body.max_turns) || 6, 10));
+  AI_TALLY = { calls: 0, in_tokens: 0, out_tokens: 0 };
+
+  var t;
+  try { t = chatwootTurns_(id); }
+  catch (e) { return { ok: false, error: 'Chatwoot read failed: ' + String(e).slice(0, 160) }; }
+  if (t.turns.length < 2) return { ok: false, error: 'too thin to replay' };
+  var cutoff = t.started_at;
+  var fullTranscript = btTranscript_(t.turns, t.turns.length).slice(0, 14000);
+
+  // Ground truth: what actually fixed it, and who gave the fix.
+  var truthGot = anthropicRaw_(VERIFIER_MODEL,
+    'Read this RESOLVED support conversation from Ardent Training (online RYA sailing school).\n\n"""\n' + fullTranscript + '\n"""\n\n' +
+    'Return ONLY JSON, no prose, no fences:\n' +
+    '{"clear_fix": true or false (was a specific fix or answer visibly confirmed or clearly given?),\n' +
+    ' "fix": "<one or two sentences: the specific thing that actually resolved it>",\n' +
+    ' "resolved_by": "<first name of the team member who gave the fix, or empty>",\n' +
+    ' "category": "<one of: tech_issue, course_error, shipping, admin, other>"}', 800);
+  if (!truthGot.json) return { ok: false, error: 'truth read failed: ' + truthGot.why };
+  var truth = truthGot.json;
+
+  // The replay: after each student message, what would the brief have said?
+  var suggestions = [];
+  var studentTurns = 0;
+  for (var i = 0; i < t.turns.length; i++) {
+    if (t.turns[i].who !== 'student') continue;
+    studentTurns++;
+    if (studentTurns > maxTurns) continue;   // keep counting M, stop briefing
+    var imp = { transcript: btTranscript_(t.turns, i + 1), message_count: i + 1, images: [], link: '' };
+    var core = caseBriefCore_(imp, cutoff);
+    if (core.error) { suggestions.push({ student_turn: studentTurns, error: core.error }); continue; }
+    suggestions.push({
+      student_turn: studentTurns,
+      at_turn_index: i + 1,
+      next: core.bj.next || '',
+      known_fix: core.bj.fix || '',
+      fix_based_on: core.bj.fix_based_on || ''
+    });
+  }
+
+  // Accuracy: did any suggestion match the real fix, and how early?
+  var accGot = anthropicRaw_(VERIFIER_MODEL,
+    'A support system replayed a historical conversation. After each student message it suggested a next step, and ' +
+    'sometimes a known fix from past cases. Judge it against what actually resolved the conversation.\n\n' +
+    'THE FIX THAT ACTUALLY RESOLVED IT:\n' + JSON.stringify(truth.fix) + '\n\n' +
+    'THE SYSTEM\'S SUGGESTIONS, in order:\n' + JSON.stringify(suggestions) + '\n\n' +
+    'A suggestion MATCHES when acting on it would have produced the actual fix - the same specific action or answer. ' +
+    'The same topic is not a match. A generic step (restart, clear cache, try another browser) only matches if the ' +
+    'actual fix genuinely was that step. Judge the known_fix and the next step together - either can carry the match.\n\n' +
+    'Return ONLY JSON, no prose, no fences:\n' +
+    '{"first_match_student_turn": <number or null>,\n' +
+    ' "why": "<one plain line: why it matched where it did, or why it never matched>"}', 600);
+  var acc = accGot.json || { first_match_student_turn: null, why: 'judge failed: ' + accGot.why };
+
+  // Draft comparison: at the first substantive agent reply, write ours from
+  // the same position and judge the pair blind, order randomised.
+  var draft = null;
+  var replyIdx = -1;
+  for (var j = 0; j < t.turns.length; j++) {
+    if (t.turns[j].who === 'agent' && t.turns[j].body.length > 60 && j > 0) { replyIdx = j; break; }
+  }
+  if (replyIdx > 0) {
+    var realReply = t.turns[replyIdx].body;
+    var agentName = t.turns[replyIdx].name || truth.resolved_by || '';
+    var prefix = btTranscript_(t.turns, replyIdx);
+    var ourDraft = btDraftAt_(prefix, suggestions, replyIdx, agentName, t.student_name);
+    if (ourDraft) {
+      var oursFirst = Math.random() < 0.5;
+      var A = oursFirst ? ourDraft : realReply;
+      var B = oursFirst ? realReply : ourDraft;
+      var judgeGot = anthropicRaw_(VERIFIER_MODEL,
+        'At the same point in a real support conversation (Ardent Training, online RYA sailing school), two different ' +
+        'replies to the student were written. You do not know who wrote which. Judge the pair.\n\n' +
+        'THE CONVERSATION SO FAR:\n"""\n' + prefix.slice(0, 8000) + '\n"""\n\n' +
+        'WHAT EVENTUALLY RESOLVED THE CONVERSATION (context for judging correctness only):\n' + JSON.stringify(truth.fix) + '\n\n' +
+        'REPLY A:\n"""\n' + A + '\n"""\n\n' +
+        'REPLY B:\n"""\n' + B + '\n"""\n\n' +
+        'Three verdicts, each "A", "B", or "tie":\n' +
+        '- correctness: which points the student closer to what actually solved it (an invented or wrong step loses)\n' +
+        '- helpfulness: clear, one actionable step not a wall of them, the right length for support\n' +
+        '- voice: which reads more like a warm, plain-English human instructor\n\n' +
+        'Return ONLY JSON, no prose, no fences:\n' +
+        '{"correctness": "A|B|tie", "helpfulness": "A|B|tie", "voice": "A|B|tie", "note": "<one line>"}', 500);
+      var v = judgeGot.json;
+      if (v) {
+        function unblind(x) { return x === 'tie' ? 'tie' : ((x === 'A') === oursFirst ? 'ours' : 'theirs'); }
+        draft = {
+          agent: agentName, at_turn_index: replyIdx + 1,
+          ours: ourDraft, theirs: realReply,
+          correctness: unblind(v.correctness), helpfulness: unblind(v.helpfulness), voice: unblind(v.voice),
+          note: v.note || ''
+        };
+      } else {
+        draft = { agent: agentName, error: 'judge failed: ' + judgeGot.why };
+      }
+    }
+  }
+
+  var elapsedH = (t.started_at && t.ended_at) ?
+    Math.round((new Date(t.ended_at) - new Date(t.started_at)) / 36000) / 100 : null;
+  var result = {
+    conversation_id: id,
+    category: truth.category || '',
+    clear_fix: !!truth.clear_fix,
+    real_fix: truth.fix || '',
+    turns_total: t.turns.length,
+    student_turns_total: studentTurns,
+    student_turns_briefed: Math.min(studentTurns, maxTurns),
+    elapsed_hours: elapsedH,
+    first_match_student_turn: acc.first_match_student_turn,
+    match_why: acc.why || '',
+    suggestions: suggestions,
+    draft: draft,
+    cutoff: cutoff,
+    tally: AI_TALLY
+  };
+  btLog_('replay', id, result);
+  return { ok: true, result: result };
+}
+
+// Our reply from the replay position: the same prompt shape the live
+// caseDraftReply_ uses, voiced with the real agent's guide where one exists,
+// but standing on the replay's own brief - no live case row is touched.
+function btDraftAt_(prefix, suggestions, replyIdx, agentName, studentName) {
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) return null;
+  var brief = null;
+  for (var i = suggestions.length - 1; i >= 0; i--) {
+    if (!suggestions[i].error && suggestions[i].at_turn_index <= replyIdx) { brief = suggestions[i]; break; }
+  }
+  if (!brief && suggestions.length && !suggestions[0].error) brief = suggestions[0];
+  var guide = agentName ? voiceGuideFor_(agentName) : '';
+  var prompt = 'Draft the next reply in a live support conversation, from an instructor at Ardent Training (an online RYA sailing school) to a student.\n\n' +
+    'WHERE THE CONVERSATION STANDS:\n' + JSON.stringify({
+      recommended_next_step: (brief && brief.next) || '',
+      known_fix_from_a_past_issue: (brief && brief.known_fix) || '',
+      student_first_name: String(studentName || '').split(' ')[0]
+    }) + '\n\n' +
+    'THE MOST RECENT MESSAGES:\n"""\n' + prefix.slice(-2500) + '\n"""\n\n' +
+    (guide ? 'Write it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n\n' : '') +
+    'Rules: plain text only, no subject line, 50-140 words. If this reads as the first reply in a while, greet the student by first name; otherwise carry the conversation on naturally. ' +
+    'If there is a known fix from a past issue, lead with that. Otherwise walk them through the recommended next step - one step only, in plain English, and never a wall of steps. ' +
+    'Never promise dates, never invent progress. ' +
+    (guide
+      ? 'Sign off the way this instructor signs off in the style guide (their name: "' + (agentName || 'The Ardent team') + '"). '
+      : 'Sign off as "' + (agentName || 'The Ardent team') + '". ') +
+    'Return ONLY the message text, nothing else.';
+  try {
+    var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({ model: DRAFT_MODEL, max_tokens: 1500, messages: [{ role: 'user', content: prompt }] })
+    });
+    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return null;
+    var parsed = JSON.parse(res.getContentText() || '{}');
+    tallyAi_(parsed);
+    var text = '';
+    (parsed.content || []).forEach(function (c) { if (c.type === 'text') text += c.text; });
+    return text.trim() || null;
+  } catch (e) { return null; }
+}
+
+// The dispatcher: one key-gated action, several ops. 'sample' hands back the
+// KnownFixes pool so the caller can stratify; 'results' hands back every
+// replay row so the write-up happens outside the 6-minute window.
+function backtest_(body) {
+  var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!key || String(body.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  var op = String(body.op || '');
+  if (op === 'backfill') return btBackfill_(body);
+  if (op === 'dedupe') return btDedupe_();
+  if (op === 'replay') return btReplay_(body);
+  if (op === 'sample') {
+    return { ok: true, pool: knownFixRows_().map(function (r) {
+      return { conversation_id: r.conversation_id, resolved_date: r.resolved_date, category: r.category,
+        message_count: Number(r.message_count) || 0, lesson_code: r.lesson_code || '', dup_of: r.dup_of || '' };
+    }) };
+  }
+  if (op === 'results') {
+    var replays = btLogRows_('replay');
+    return { ok: true, count: replays.length, replays: replays.map(function (r) { return r.data; }) };
+  }
+  if (op === 'state') {
+    var kf = knownFixRows_();
+    return { ok: true, known_fixes: kf.length, dups: kf.filter(function (r) { return r.dup_of; }).length,
+      seen: btLogRows_('seen').length, replays: btLogRows_('replay').length };
+  }
+  return { ok: false, error: 'unknown backtest op: ' + op };
 }
