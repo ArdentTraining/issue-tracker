@@ -6082,6 +6082,41 @@ function backtest_(body) {
     }
     return { ok: true, seeded: seeded, skipped_existing: skipped, failed: failed };
   }
+  if (op === 'kf') {
+    // Read back full KnownFixes rows for given conversation ids (or all when
+    // none given) - lets a curation pass check what the extractor actually
+    // wrote before deciding whether a hand-verified version should replace it.
+    var want = {};
+    (body.conversation_ids || []).forEach(function (x) { want[String(x)] = true; });
+    var all = knownFixRows_();
+    var hits = all.filter(function (r) { return !Object.keys(want).length || want[r.conversation_id]; });
+    return { ok: true, rows: hits.map(function (r) {
+      return { conversation_id: r.conversation_id, resolved_date: r.resolved_date, problem: r.problem,
+        fix: r.fix, category: r.category, lesson_code: r.lesson_code, source: r.source, dup_of: r.dup_of || '', row: r._rowNum };
+    }) };
+  }
+  if (op === 'kffix') {
+    // Replace the problem/fix wording on an existing KnownFixes row (matched
+    // by conversation_id) with a hand-verified version. Curation, not deletion:
+    // the row keeps its id, date and place; source records the override.
+    var fixes = body.entries || [];
+    var sh2 = knownFixesSheet_(false);
+    if (!sh2) return { ok: false, error: 'no KnownFixes sheet' };
+    var byId = {};
+    knownFixRows_().forEach(function (r) { byId[r.conversation_id] = r; });
+    var done = [], missing = [];
+    for (var fi = 0; fi < fixes.length; fi++) {
+      var fe = fixes[fi] || {};
+      var frow = byId[String(fe.conversation_id || '')];
+      if (!frow) { missing.push(String(fe.conversation_id || '')); continue; }
+      if (fe.problem) sh2.getRange(frow._rowNum, KNOWNFIX_HEADERS.indexOf('problem') + 1).setValue(String(fe.problem).slice(0, 800));
+      if (fe.fix) sh2.getRange(frow._rowNum, KNOWNFIX_HEADERS.indexOf('fix') + 1).setValue(String(fe.fix).slice(0, 800));
+      if (fe.category) sh2.getRange(frow._rowNum, KNOWNFIX_HEADERS.indexOf('category') + 1).setValue(String(fe.category));
+      sh2.getRange(frow._rowNum, KNOWNFIX_HEADERS.indexOf('source') + 1).setValue('curated_r47');
+      done.push(frow.conversation_id);
+    }
+    return { ok: true, updated: done, missing: missing };
+  }
   if (op === 'suggest') {
     // Process patterns from the miss catalogue go through the SAME
     // suggest-and-approve queue as every other playbook idea - the playbook
