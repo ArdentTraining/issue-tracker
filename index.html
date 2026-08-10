@@ -308,6 +308,9 @@
     /* The name sits on the SAME row as the Bugs title when the header wraps
        (Edd, FB-0178): pinned top-right, switcher below. */
     .topbar #userbox { display: flex !important; justify-content: flex-end; align-items: center; gap: 6px; flex-wrap: wrap; position: absolute; top: 12px; right: 12px; }
+    /* Room at the bottom so no button hides under the view-as bar or the
+       feedback pill on a phone (Edd, FB-0180). */
+    .wrap { padding-bottom: 96px; }
     .switcher button { padding: 7px 10px; font-size: 13px; white-space: nowrap; }
     .wrap { padding: 12px; }
     .row { flex-direction: column; gap: 0; }
@@ -1020,7 +1023,6 @@
     <div class="seg" id="usersSeg" style="flex-wrap:wrap;">
       <button type="button" id="us_people" onclick="setUsersSection('people')">People</button>
       <button type="button" id="us_feedback" onclick="setUsersSection('feedback')">Feedback</button>
-      <button type="button" id="us_chatscan" onclick="setUsersSection('chatscan')">Spotted in chat</button>
       <button type="button" id="us_playbook" onclick="setUsersSection('playbook')">Playbook</button>
     </div>
   </div>
@@ -1066,18 +1068,9 @@
   <div id="feedbackList"></div>
   </div>
 
-  <div id="usec_chatscan" class="hidden">
-    <div class="card">
-      <h2>Spotted in chat</h2>
-      <p class="small muted" style="margin-top:-6px;">Problems students mentioned in live chat. Anything the overnight scan and its second-AI check both agreed on is now logged automatically (as "Overnight scan") and sits in Actions and Track like any other issue. What appears here is only what needs a human eye: the ones the scan couldn't log cleanly, or wasn't sure about. Logging one pulls the conversation into the normal form.</p>
-      <div class="row" style="margin-bottom:10px;">
-        <button class="ghost small" id="scanNowBtn" style="padding:5px 12px;" onclick="runChatScanNow()">Scan now</button>
-        <button class="ghost small" style="padding:5px 12px;" onclick="renderChatScan()">Refresh</button>
-        <span class="small muted" style="align-self:center;">Instructors see this list in their Actions tab too.</span>
-      </div>
-      <div id="chatScanList"></div>
-    </div>
-  </div>
+  <!-- The "Spotted in chat" section is gone from Admin (Edd, FB-0182/0183):
+       the same list lives in Actions, so this was a duplicate. The admin-only
+       Scan now control moved into the Actions scan block. -->
 
   <div id="usec_playbook" class="hidden">
   <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">Suggested playbook updates</h3>
@@ -1335,7 +1328,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r48 · 2026-08-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r49 · 2026-08-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6588,8 +6581,9 @@ function renderUsers() {
 // nobody has to scroll through the whole user list to reach the feedback. The
 // last-used section is remembered.
 function setUsersSection(s) {
-  var sections = ["people", "feedback", "chatscan", "playbook"];
+  var sections = ["people", "feedback", "playbook"];
   if (s === "invite") s = "people"; // invite now lives at the top of People
+  if (s === "chatscan") s = "feedback"; // section removed (FB-0182), old saved prefs land here
   if (sections.indexOf(s) < 0) s = "feedback";
   state.usersSection = s;
   localSet("ait_users_section", s);
@@ -6597,15 +6591,12 @@ function setUsersSection(s) {
     var body = $("usec_" + k); if (body) body.classList.toggle("hidden", k !== s);
     var btn = $("us_" + k); if (btn) btn.className = k === s ? "active" : "";
   });
-  if (s === "chatscan") renderChatScan();
 }
 
 // ---- "Spotted in chat": the nightly scan's suggestions, awaiting a verdict --
-// The queue appears in two places now (Admin sub-tab and Actions), so redraw
-// whichever is on screen.
+// Lives in Actions only since FB-0182 (the Admin copy was a duplicate).
 function refreshScanViews() {
   if (state.view === "actions") renderChatScan("actionsScan");
-  else if (state.view === "users" && state.usersSection === "chatscan") renderChatScan();
 }
 function renderChatScan(targetId) {
   var box = $(targetId || "chatScanList");
@@ -6628,7 +6619,11 @@ function renderChatScan(targetId) {
     var chatLink = function (id) { return "https://app.chatwoot.com/app/accounts/100142/conversations/" + esc(String(id)); };
 
     // No umbrella heading (Edd, FB-0172) - the two sub-headings say it all.
+    // Scan now moved here from the removed Admin section (FB-0182), admins only.
     var html = "";
+    if (inActions && state.perms && state.perms.users) {
+      html += '<div class="row" style="margin-bottom:6px;"><button class="ghost small" id="scanNowBtn" style="padding:5px 12px;" onclick="runChatScanNow()">Scan now</button></div>';
+    }
     html += '<h3>Updates on open issues</h3>';
     html += ups.length ? ups.map(function (r) {
       var v = VERDICT[String(r.verdict || "")] || { label: String(r.verdict || "update"), colour: "var(--muted)" };
@@ -6771,17 +6766,26 @@ function loadSuggestions() {
   }).catch(function (e) { console.error(e); });
 }
 function suggestionRowHtml(s) {
+  // Respond (Edd, FB-0181): approve with caveats - edit the wording before it
+  // goes into the playbook, rather than a bare accept-or-reject.
   return '<div class="card" style="margin-bottom:8px;border-color:var(--accent);">' +
     '<div class="small muted" style="margin-bottom:4px;">From a resolved issue: ' + esc(summaryText(s, false)) + (s.section ? ' · ' + esc(s.section) : '') + '</div>' +
     '<div style="margin-bottom:8px;"><strong>Suggested addition:</strong> ' + esc(s.suggestion || "") + '</div>' +
     '<div class="row">' +
       '<button class="primary small" onclick="resolveSuggestion(\'' + esc(s.id) + '\', true)">Approve and add</button>' +
+      '<button class="ghost small" onclick="var w=$(\'sugEdit_' + esc(s.id) + '\');w.classList.toggle(\'hidden\');if(!w.classList.contains(\'hidden\'))w.querySelector(\'textarea\').focus()">Respond</button>' +
       '<button class="ghost small" onclick="resolveSuggestion(\'' + esc(s.id) + '\', false)">Reject</button>' +
+    '</div>' +
+    '<div id="sugEdit_' + esc(s.id) + '" class="hidden" style="margin-top:8px;">' +
+      '<textarea rows="3" style="width:100%;font-size:13px;">' + esc(s.suggestion || "") + '</textarea>' +
+      '<button class="primary small" style="margin-top:6px;" onclick="resolveSuggestion(\'' + esc(s.id) + '\', true, this.previousElementSibling.value)">Add your version to the playbook</button>' +
     '</div>' +
   '</div>';
 }
-function resolveSuggestion(id, approve) {
-  apiPost({ action: "resolvePlaybookSuggestion", id: id, approve: approve }).then(function (res) {
+function resolveSuggestion(id, approve, editedText) {
+  var payload = { action: "resolvePlaybookSuggestion", id: id, approve: approve };
+  if (approve && editedText && editedText.trim()) payload.suggestion = editedText.trim();
+  apiPost(payload).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast(approve ? "Added to the playbook." : "Suggestion dismissed.");
     loadSuggestions();
