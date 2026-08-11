@@ -2223,6 +2223,10 @@ function showUpdating(on) {
 }
 
 function applyBootstrap(res) {
+  // How long until there was something real on the screen, and how long until
+  // it was the live copy. Both land in a feedback report, so "it feels slow"
+  // can be answered with a number next time.
+  if (!state._firstRenderMs) state._firstRenderMs = Math.round(performance.now());
   state.issues = res.issues || [];
   state._issuesLoaded = true;
   if (res.assignees) state.assignees = res.assignees;
@@ -2273,6 +2277,7 @@ function loadIssues(isRetry) {
     }
     showUpdating(false);
     hideBoot();
+    state._freshMs = Math.round(performance.now());
     if (res.backend) diag.backend = res.backend;   // which build feedback came from
     if (res.user) {
       // First time through this sets the tabs and lands on a sensible view.
