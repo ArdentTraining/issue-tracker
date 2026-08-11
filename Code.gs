@@ -4100,7 +4100,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r51.1 · 2026-08-11';
+var CODE_STAMP = 'r51.2 · 2026-08-11';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4204,6 +4204,9 @@ function draftStudentMessage_(data) {
     (parsed.content || []).forEach(function (c) { if (c.type === 'text') text += c.text; });
     text = text.trim();
     if (!text) return { ok: false, error: 'empty draft' };
+    // Belt and braces on the one unambiguous tell: even if the model slips an
+    // em dash past the prompt, it never reaches a student (Edd, 11 Aug).
+    text = text.replace(/\s*—\s*/g, ', ').replace(/,\s*,/g, ',');
     return { ok: true, text: text, voiced: !!guide };
   } catch (e) { return { ok: false, error: String(e) }; }
 }
@@ -4929,7 +4932,16 @@ function batchStudentDrafts_(data) {
       'THE ISSUE:\n' + JSON.stringify({ summary: i.summary, lesson: i.lesson || i.lesson_code || '', fix_notes: fixNotes,
         student_first_name: String(st.name).split(' ')[0] }) + '\n' +
       (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n' : '') +
-      '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name. ' +
+      '\nSTYLE - strip the AI tells, every draft, whoever the instructor (Edd, 11 Aug):\n' +
+    '- NO em dashes, ever. Commas, full stops, or brackets instead.\n' +
+    '- No "isn\'t just X" / "more than just" setup-then-negate constructions. Direct, affirmative statements.\n' +
+    '- No throat-clearing openers, no "delve", no "whether you\'re a beginner or an expert" hedges.\n' +
+    '- No relentless rule-of-three rhythm (X, Y, and Z in every sentence).\n' +
+    '- Never announce that something "matters" - real importance shows in the writing.\n' +
+    '- No forward pointers or snappy aphoristic closers that add no information. If the point is made, stop.\n' +
+    '- No hollow superlatives (seamless, robust, game-changing, unlock, elevate and their kin).\n' +
+    '- No over-tidy symmetrical paragraphs that feel machine-balanced.\n' +
+    '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name. ' +
       (guide
         ? 'Sign off exactly the way this instructor signs off in the style guide (their name: "' + (who || 'The Ardent team') + '"). '
         : 'Sign off as "' + (who || 'The Ardent team') + '". ') +
