@@ -898,7 +898,10 @@ function getIssues_() {
 var LIST_RAW_CAP = 300;              // characters of raw text kept in the list
 var REPORTS_PASSTHROUGH = 1200;      // reports_json this small is not worth reworking
 var ISSUE_CACHE_KEY = 'ait_issues_list_v1';
-var ISSUE_CACHE_SECONDS = 60;
+// Ten minutes. Any write drops the cache on its way out (maybeInvalidate_),
+// so the only thing this window can hold back is a change typed straight into
+// the spreadsheet by hand - and ten minutes is a fair wait for that.
+var ISSUE_CACHE_SECONDS = 600;
 var CACHE_CHUNK = 80 * 1024;         // CacheService caps a value at 100 KB
 var CACHE_MAX_CHUNKS = 60;
 
