@@ -1328,7 +1328,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r50 · 2026-08-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r51 · 2026-08-11";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2120,11 +2120,19 @@ function myActionItems() {
   // Everyone with the tab sees every action (Edd, 21 Jul): the team is small
   // and any instructor can pass a fix on. Cards carry who logged each one.
   var now = Date.now(), day = 24 * 60 * 60 * 1000;
-  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [] };
+  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [], scanned: [] };
   var canVerify = !!(state.perms && (state.perms.manage || state.perms.users));
   (state.issues || []).forEach(function (i) {
     var st = String(i.status || "open").toLowerCase();
     if (i.dev_query_at && i.dev_query_target === "instructor") out.questions.push(i);
+    // Auto-logged by the overnight scan and no human has touched it yet: the
+    // Slack ping said it exists but Actions never showed it (Edd, 11 Aug).
+    // Someone should look in on the student, whatever queue the fix sits in.
+    if (String(i.instructor_name || "") === "Overnight scan" && !isTrue(i.student_sorted) &&
+        st !== "resolved" && st !== "past" && st !== "parked" &&
+        !parseReports(i).some(function (rp) {
+          return rp.instructor_name && ["Overnight scan", "Queue sweep", "Fetch update", "Claude"].indexOf(rp.instructor_name) < 0;
+        })) out.scanned.push(i);
     // The dev/course team marked it fixed and it's sitting waiting for someone
     // to check and close it. It was only visible in the queues before, which
     // is why "awaiting admin" had nowhere to be found (Edd, 26 Jul).
@@ -2209,6 +2217,15 @@ function openInChatwoot(email) {
 }
 // Every draft button now goes through the popup flow above.
 function draftEmailFor(id, kind) { draftStudentMessage(id, kind); }
+// Clear a scan-logged issue from the Actions lane: the student's been looked
+// in on (or was already sorted in the chat), the fix stays in its queue.
+function scannedSorted(id) {
+  apiPost({ action: "updateIssue", issue_id: id, student_sorted: "true" }).then(function (res) {
+    if (!res || !res.ok) { toast("Could not update: " + ((res && res.error) || "unknown")); return; }
+    toast("Marked sorted - the fix stays in its queue.");
+    loadIssues();
+  }).catch(function () { toast("Update failed."); });
+}
 // The house templates, kept as the offline fallback.
 function draftTemplateFor(id, kind) {
   var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
@@ -2239,6 +2256,7 @@ function renderActions() {
   // right-hand pane, same as Track (Edd, 26 Jul - my first pass hid the
   // action text on mobile and buried the detail in an accordion).
   var rows = []
+    .concat((a.scanned || []).map(function (i) { return { i: i, kind: "scanned", word: "Scanned", colour: "var(--accent)", act: "Look in on the student" }; }))
     .concat((a.chase || []).map(function (i) { return { i: i, kind: "chase", word: "Chase", colour: "var(--coral)", act: "Poke the courier" }; }))
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
@@ -2258,7 +2276,9 @@ function renderActions() {
     // The one button that matches the action phrase. Everything else is in
     // the issue itself, one click away.
     var btn = "";
-    if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 days</button>' +
+    if (r.kind === "scanned") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft message to student</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'scannedSorted(\'' + id + '\')">Student\'s sorted</button>';
+    else if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 days</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Sorted</button>';
     else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
     else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
