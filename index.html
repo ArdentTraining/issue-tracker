@@ -2299,6 +2299,13 @@ function loadIssues(isRetry) {
 // Anything that needs the whole thing - a detail pane, the edit form - calls
 // hydrateIssue first. The fetched text is merged into the row we already
 // hold, so every later read sees it and we only ever fetch once.
+// A clipped preview must never pass itself off as the whole report - the
+// same rule as the troubleshooting fallback (a degraded answer says so).
+function clipNote(issue) {
+  return (issue && issue.clipped)
+    ? '<div class="small muted" style="margin-top:8px;"><span class="spinner"></span> fetching the rest of this report&hellip;</div>'
+    : "";
+}
 function hydrateIssue(id, onDone) {
   var iss = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
   if (!iss || !iss.clipped) { if (onDone) onDone(iss || null); return; }
@@ -5736,12 +5743,12 @@ function openDetail(issue) {
       var head = esc(rp.summary || rp.student_name || ("Entry " + (i + 1)));
       html += '<details' + (i === reps.length - 1 ? " open" : "") + ' style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-bottom:6px;background:var(--bg);">' +
         '<summary style="cursor:pointer;">' + head + ' <span class="small muted">(' + meta + ')</span></summary>' +
-        '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px;">' + esc(rp.raw_text || rp.summary || "") + '</div>' +
+        '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px;">' + esc(rp.raw_text || rp.summary || "") + clipNote(issue) + '</div>' +
       '</details>';
     });
     html += '</details>';
   } else if (issue.raw_text) {
-    html += '<details class="acc"><summary>Report</summary><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' + esc(issue.raw_text) + '</div></details>';
+    html += '<details class="acc"><summary>Report</summary><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' + esc(issue.raw_text) + clipNote(issue) + '</div></details>';
   }
   html += '<div class="row" style="margin:4px 0 10px;">' +
     (reportCount(issue) > 1 ? '<button class="ghost small" onclick="splitIssueAction(\'' + esc(issue.issue_id) + '\')">Split apart</button>' : '') +
@@ -6772,7 +6779,7 @@ function openDevDetail(id) {
 
   if (issue.raw_text) {
     html += '<h3>Report</h3><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' +
-      esc(issue.raw_text) + '</div>';
+      esc(issue.raw_text) + clipNote(issue) + '</div>';
   }
   if (images.length) {
     html += '<h3>Screenshots</h3><div class="thumbs">' + images.map(function (u) {

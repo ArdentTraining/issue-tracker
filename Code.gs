@@ -1072,23 +1072,33 @@ function getIssuesList_() {
 function getIssueFull_(data) {
   var id = String((data && (data.issue_id || data.id)) || '');
   if (!id) return { ok: false, error: 'need an issue_id' };
+  // Every call to the Sheets service costs, and this runs the moment a pane
+  // opens, so it is kept to two: find the row, read the row. The column names
+  // come from HEADERS rather than a third read of row 1 - the sheet order IS
+  // HEADERS, which is the rule the whole file already relies on.
   for (var s = 0; s < ISSUE_SHEETS.length; s++) {
     var sheet = sheetByName_(ISSUE_SHEETS[s]);
     if (!sheet) continue;
-    var last = sheet.getLastRow();
-    if (last < 2) continue;
-    var ids = sheet.getRange(2, 1, last - 1, 1).getValues();
-    for (var r = 0; r < ids.length; r++) {
-      if (String(ids[r][0]) !== id) continue;
-      var width = sheet.getLastColumn();
-      var head = sheet.getRange(1, 1, 1, width).getValues()[0];
-      var row = sheet.getRange(r + 2, 1, 1, width).getValues()[0];
-      var obj = {};
-      for (var c = 0; c < head.length; c++) obj[head[c]] = row[c] === '' ? null : row[c];
-      if (obj.chase_at) obj.chase_at = dayStr_(obj.chase_at);
-      if (obj.tracking_number) obj.tracking_number = normaliseTracking_(obj.tracking_number);
-      return { ok: true, issue: obj };
+    var rowNum = 0;
+    try {
+      var hit = sheet.createTextFinder(id).matchEntireCell(true).findNext();
+      if (hit && hit.getColumn() === 1) rowNum = hit.getRow();
+    } catch (e) { rowNum = 0; }
+    if (!rowNum) {
+      var last = sheet.getLastRow();
+      if (last < 2) continue;
+      var ids = sheet.getRange(2, 1, last - 1, 1).getValues();
+      for (var r = 0; r < ids.length; r++) {
+        if (String(ids[r][0]) === id) { rowNum = r + 2; break; }
+      }
     }
+    if (!rowNum) continue;
+    var row = sheet.getRange(rowNum, 1, 1, HEADERS.length).getValues()[0];
+    var obj = {};
+    for (var c = 0; c < HEADERS.length; c++) obj[HEADERS[c]] = row[c] === '' ? null : row[c];
+    if (obj.chase_at) obj.chase_at = dayStr_(obj.chase_at);
+    if (obj.tracking_number) obj.tracking_number = normaliseTracking_(obj.tracking_number);
+    return { ok: true, issue: obj };
   }
   return { ok: false, error: 'not found' };
 }
