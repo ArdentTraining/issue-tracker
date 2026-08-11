@@ -526,6 +526,15 @@
   .permrow input { width: auto; margin-right: 5px; vertical-align: -1px; }
   .hidden { display: none !important; }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: -2px; }
+  /* Round 54. Edd: "never know if a click we made actually registered". Every
+     press now shows in the same frame it happens, before anything is asked of
+     the server: the button dips, and if the press started a call it keeps a
+     spinner and stops taking a second press until the call comes back. */
+  .is-pressed { transform: scale(0.97); filter: brightness(0.88); transition: none; }
+  .is-busy { position: relative; opacity: 0.72; cursor: progress; }
+  .is-busy::after { content: ""; position: absolute; right: 6px; top: 50%; width: 11px; height: 11px; margin-top: -6px;
+    border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; opacity: 0.85; animation: spin 0.7s linear infinite; }
+  .is-busy { padding-right: 24px !important; }
   @keyframes spin { to { transform: rotate(360deg); } }
   /* Live cases (Round 45): the unread dot and the who's-holding-it chip. */
   .live-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 1px; flex-shrink: 0; }
@@ -560,6 +569,9 @@
     <!-- The username is the menu now (Edd, FB-0174): press it for theme,
          change password and log out. Theme moved in here from the header
          (Edd, FB-0177) - clicking it cycles without closing the menu. -->
+    <!-- Round 54: the page draws from the last copy it saw and refreshes
+         behind that, so this says quietly when a refresh is in the air. -->
+    <span class="small muted" id="updatingChip" style="display:none;margin-right:10px;"><span class="spinner"></span> updating&hellip;</span>
     <div class="small muted" id="userbox" style="display:none;">
       <button class="ghost small" style="padding:4px 10px;" onclick="toggleUserMenu(event)"><span id="whoami"></span> &#9662;</button>
       <div id="userMenu" class="hidden" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,0.35);min-width:170px;text-align:left;">
@@ -1343,7 +1355,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r53 · 2026-08-11";  // bump this with each round, it lands on every feedback report
+var BUILD = "r54 · 2026-08-11";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1614,6 +1626,53 @@ function setFormChecklist(_arg, itemId, val) {
   renderFormChecklist();
 }
 
+// ============================ PRESS FEEDBACK (Round 54) ============================
+// The complaint underneath all the others: "it always feels like we are
+// waiting and never know if a click we made actually registered". Two parts,
+// both here so nothing has to be wired button by button.
+//
+// 1. Every press dips the control immediately, on pointerdown, in the same
+//    frame. No round trip, no handler, no chance of missing it.
+// 2. If that press goes on to start a backend call within a moment, the same
+//    control keeps a spinner and stops accepting presses until the call
+//    settles. apiPost does the tying-up, so any button that talks to the
+//    backend gets this whether or not anyone remembered to ask for it.
+var PRESS_TO_CALL_MS = 500;   // how long a press stays "the one that did this"
+function initPressFeedback() {
+  document.addEventListener("pointerdown", function (e) {
+    var el = e.target && e.target.closest ? e.target.closest("button, .seg button, [onclick]") : null;
+    if (!el || el.disabled) return;
+    el.classList.add("is-pressed");
+    state._pressEl = el;
+    state._pressAt = Date.now();
+  }, true);
+  // Let go, and the dip goes with it - the spinner (if a call started) stays.
+  ["pointerup", "pointercancel", "blur"].forEach(function (ev) {
+    document.addEventListener(ev, function () {
+      var el = state._pressEl;
+      if (el) el.classList.remove("is-pressed");
+    }, true);
+  });
+}
+// Mark the control that started this call as busy, and give it back after.
+function markCallBusy() {
+  var el = state._pressEl;
+  if (!el) return null;
+  if (Date.now() - (state._pressAt || 0) > PRESS_TO_CALL_MS) return null;
+  if (el.tagName !== "BUTTON") return null;
+  if (!el.isConnected || el.dataset.aitBusy) return null;
+  el.dataset.aitBusy = "1";
+  el.classList.add("is-busy");
+  if (el.tagName === "BUTTON") el.disabled = true;
+  return el;
+}
+function releaseCallBusy(el) {
+  if (!el) return;
+  delete el.dataset.aitBusy;
+  el.classList.remove("is-busy", "is-pressed");
+  if (el.tagName === "BUTTON") el.disabled = false;
+}
+
 // ============================ BACKEND ============================
 function getToken() { return state.token || (localGet("ait_token") || ""); }
 function setToken(t) { state.token = t; localSet("ait_token", t); }
@@ -1632,14 +1691,17 @@ function apiPost(payload) {
   // the session token all travel in there).
   var startedAt = Date.now();
   var action = payload.action || "?";
+  var busyEl = markCallBusy();   // the button that started this, if a press did
   return fetch(APPS_SCRIPT_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload)
   }).then(function (r) { return r.json(); }).then(function (res) {
+    releaseCallBusy(busyEl);
     diagApi(action, startedAt, (res && res.ok === false) ? ("error: " + (res.error || "unknown")) : "ok");
     return gateCheck(res);
   }).catch(function (e) {
+    releaseCallBusy(busyEl);
     diagApi(action, startedAt, "failed: " + e);
     throw e;
   });
@@ -1922,6 +1984,7 @@ function shortId(i) {
 
 // ============================ INIT ============================
 function init() {
+  initPressFeedback();
   var cs = $("f_courier");
   if (cs) cs.innerHTML = COURIERS.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("");
   updateThemeBtn();
@@ -1936,13 +1999,7 @@ function init() {
   var invite = params.get("invite");
   if (invite) { startInvite(invite); return; }
   if (getToken()) {
-    apiGet("me").then(function (res) {
-      // The backend tells us which version of itself is live, so feedback can
-      // say which build it came from without anyone checking the deploy notes.
-      if (res && res.backend) diag.backend = res.backend;
-      if (res && res.ok && res.user) onAuthed(res.user);
-      else showLogin();
-    }).catch(function () { showLogin(); });
+    startSession();
   } else {
     showLogin();
   }
@@ -1956,12 +2013,30 @@ function hideDetails() { var d = $("detailsSection"); if (d) d.classList.add("hi
 function onAuthed(user) {
   hideBoot();
   $("authScreen").classList.remove("show");
-  // Signing in fresh skips the "me" call that normally carries this, so ask
-  // once here instead. Feedback is a lot less useful without a build stamp.
-  if (!diag.backend) apiGet("ping").then(function (res) { if (res && res.backend) diag.backend = res.backend; }).catch(function () {});
   applyPerms(user);
+  state._permsApplied = true;
+  loadIssues();   // bootstrap: issues, instructors, assignees, live cases, scan queue
+}
+
+// Round 54. Opening the app with a session used to be a 2-4 second "me" call
+// before anything could be drawn, and only then did the issue list start
+// loading. Now the last board we saw goes up straight away and the one
+// bootstrap call - which carries the user as well - refreshes it behind. If
+// the session has expired the call comes back unauthorized, apiPost's gate
+// drops us to the login screen, and the cached board goes with it.
+function startSession() {
+  var cached = readBootCache();
+  if (cached && cached.user && cached.issues && cached.issues.length) {
+    hideBoot();
+    $("authScreen").classList.remove("show");
+    applyPerms(cached.user);
+    state._permsApplied = true;
+    applyBootstrap(cached);
+    state._issuesLoaded = true;
+    state._fromCache = true;
+    openDeepLinkedIssue();
+  }
   loadIssues();
-  loadAssignees();
 }
 
 // People an issue can be assigned to (those who can work a fix queue). Loaded
@@ -1993,15 +2068,10 @@ function assignFromDetail(id) {
   var sel = $("assignSelect");
   if (!sel) return;
   var who = sel.value;
-  apiPost({ action: "assignIssue", issue_id: id, assignee: who }).then(function (res) {
-    if (!res || !res.ok) { toast("Assign failed: " + ((res && res.error) || "unknown")); return; }
-    var iss = state.issues.filter(function (i) { return i.issue_id === id; })[0];
-    if (iss) iss.assignee = who;
-    toast(who ? ("Assigned to " + who + ".") : "Unassigned.");
-    if (state.view === "course") renderCourse();
-    else if (state.view === "dev") renderDev();
-    else if (state.view === "admin") renderAdmin();
-  }).catch(function (e) { toast("Assign error."); console.error(e); });
+  toast(who ? ("Assigned to " + who + ".") : "Unassigned.");
+  optimistic(id, { assignee: who },
+    { action: "assignIssue", issue_id: id, assignee: who },
+    { failMsg: "That assignment didn't save", noRefresh: true });
 }
 function mediaLabel(m) {
   return m === "video" ? "Video / animation" : m === "text" ? "Text / diagram / quiz" : m === "other" ? "Other" : "";
@@ -2100,27 +2170,195 @@ function applyPerms(user) {
   updateViewAsBar();
 }
 
+// ============================ LOADING (Round 54) ============================
+// It always felt like waiting (Edd). Opening the app used to be five or six
+// separate calls, each paying Apps Script's ~1.8 second round trip before it
+// did any work, and the first of them shipped 2.6 MB the list views never
+// read. Now it is ONE call, `bootstrap`, and the page draws from the last
+// one we saw while the fresh one is still in the air.
+var BOOT_CACHE_PREFIX = "ait_boot_v1:";
+var BOOT_CACHE_MAX = 4000000;   // localStorage gives us about 5 MB in total
+
+function bootCacheKey() {
+  var u = state.realUser || state.user || null;
+  var who = u ? (u.email || u.name) : localGet("ait_boot_who");
+  return BOOT_CACHE_PREFIX + String(who || "?");
+}
+function saveBootCache(res) {
+  try {
+    if (state.viewAs) return;   // never cache a simulated board as the real one
+    var who = (res.user && (res.user.email || res.user.name)) || "";
+    if (who) localSet("ait_boot_who", who);
+    var str = JSON.stringify({
+      user: res.user, generated_at: res.generated_at, issues: res.issues, assignees: res.assignees,
+      instructors: res.instructors, live_cases: res.live_cases, scans: res.scans,
+      playbook_suggestions: res.playbook_suggestions
+    });
+    if (str.length > BOOT_CACHE_MAX) return;
+    localSet(bootCacheKey(), str);
+  } catch (e) {}
+}
+// Keyed by who is signed in, and dropped on sign-out, so a shared machine
+// never shows one person's board to the next (and a fresh login never reads
+// a cache built under different permissions).
+function clearBootCache() {
+  try {
+    Object.keys(localStorage).forEach(function (k) {
+      if (k.indexOf(BOOT_CACHE_PREFIX) === 0) localStorage.removeItem(k);
+    });
+    localStorage.removeItem("ait_boot_who");
+  } catch (e) {}
+}
+function readBootCache() {
+  try {
+    var raw = localGet(bootCacheKey());
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+// A quiet marker rather than a spinner over everything: what is on screen is
+// real, it is just a few seconds old.
+function showUpdating(on) {
+  var el = $("updatingChip");
+  if (el) el.style.display = on ? "" : "none";
+}
+
+function applyBootstrap(res) {
+  state.issues = res.issues || [];
+  state._issuesLoaded = true;
+  if (res.assignees) state.assignees = res.assignees;
+  if (res.instructors) state.instructors = res.instructors;
+  if (res.live_cases) { state.liveCases = res.live_cases; state.liveLoaded = true; }
+  if (res.scans) { state._scans = res.scans; updateScanCount(); }
+  if (res.playbook_suggestions) state._playbookSuggestions = res.playbook_suggestions;
+  updateActionsTabCount();
+  renderCurrentView();
+}
+// One place that knows how to redraw whatever the person is looking at.
+function renderCurrentView() {
+  if (state.view === "actions") renderActions();
+  else if (state.view === "admin") renderAdmin();
+  else if (state.view === "analytics") renderAnalytics();
+  else if (state.view === "dev") renderDev();
+  else if (state.view === "course") renderCourse();
+  else if (state.view === "live") renderLive();
+}
+
+// Draw from the cache immediately, then swap in the fresh copy. Keeps the
+// name loadIssues so the thirty-odd "reload after a write" callers, and the
+// promise they chain onto, carry on working unchanged.
 function loadIssues(isRetry) {
-  return apiGet("getIssues").then(function (res) {
+  if (!state._issuesLoaded) {
+    var cached = readBootCache();
+    if (cached && cached.issues && cached.issues.length) {
+      applyBootstrap(cached);
+      state._fromCache = true;
+      openDeepLinkedIssue();
+    }
+  }
+  showUpdating(true);
+  return apiPost({ action: "bootstrap" }).then(function (res) {
+    if (res && res.ok === false && res.error === "unauthorized") {
+      clearBootCache();   // apiPost's gate has already shown the login screen
+      showUpdating(false);
+      return;
+    }
     if (!res || !res.ok) {
-      console.warn("getIssues failed", res);
+      console.warn("bootstrap failed", res);
       // A silent failure used to leave stale content sitting on the page.
       // Retry once, then say so.
       if (!isRetry) { setTimeout(function () { loadIssues(true); }, 2000); return; }
+      showUpdating(false);
       toast("Could not load the issue list. Reload the page to try again.");
       return;
     }
-    state.issues = res.issues || [];
-    state._issuesLoaded = true;
-    updateActionsTabCount();
-    loadLiveCases();  // the "chat open" badges and the case list ride along
-    if (state.view === "actions") renderActions();
-    if (state.view === "admin") renderAdmin();
-    else if (state.view === "analytics") renderAnalytics();
-    else if (state.view === "dev") renderDev();
-    else if (state.view === "course") renderCourse();
+    showUpdating(false);
+    hideBoot();
+    if (res.backend) diag.backend = res.backend;   // which build feedback came from
+    if (res.user) {
+      // First time through this sets the tabs and lands on a sensible view.
+      // On every later refresh it must NOT, or a background reload would
+      // throw the person back to their default tab mid-job.
+      if (!state._permsApplied) { applyPerms(res.user); state._permsApplied = true; }
+      else if (!state.viewAs) { state.user = res.user; state.perms = res.user.perms || {}; }
+    }
+    state._fromCache = false;
+    applyBootstrap(res);
+    saveBootCache(res);
     openDeepLinkedIssue();
-  }).catch(function (e) { console.error(e); });
+  }).catch(function (e) { showUpdating(false); console.error(e); });
+}
+
+// ---- full text on demand --------------------------------------------------
+// The list payload carries a 300-character preview of the two long fields
+// (see issueListRow_ in Code.gs); a row that was cut is marked `clipped`.
+// Anything that needs the whole thing - a detail pane, the edit form - calls
+// hydrateIssue first. The fetched text is merged into the row we already
+// hold, so every later read sees it and we only ever fetch once.
+function hydrateIssue(id, onDone) {
+  var iss = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (!iss || !iss.clipped) { if (onDone) onDone(iss || null); return; }
+  if (!state._hydrating) state._hydrating = {};
+  if (state._hydrating[id]) { if (onDone) state._hydrating[id].push(onDone); return; }
+  state._hydrating[id] = onDone ? [onDone] : [];
+  apiPost({ action: "getIssue", issue_id: id }).then(function (res) {
+    var waiting = state._hydrating[id] || [];
+    delete state._hydrating[id];
+    if (res && res.ok && res.issue) {
+      // Merge the two text fields only. Replacing the whole row would undo
+      // any optimistic change made while this was in the air.
+      iss.raw_text = res.issue.raw_text;
+      iss.reports_json = res.issue.reports_json;
+      delete iss.clipped;
+    }
+    waiting.forEach(function (f) { f(iss); });
+  }).catch(function (e) {
+    var waiting = state._hydrating[id] || [];
+    delete state._hydrating[id];
+    console.error(e);
+    waiting.forEach(function (f) { f(iss); });
+  });
+}
+
+// ---- optimistic writes ----------------------------------------------------
+// A click has to look like it landed straight away, so we change the row on
+// screen first and let the write catch up. If the write fails we put the row
+// back exactly as it was and say so plainly - never a silent no-op.
+function patchIssue(id, fields) {
+  var iss = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (!iss) return null;
+  var before = {};
+  Object.keys(fields).forEach(function (k) { before[k] = iss[k]; iss[k] = fields[k]; });
+  return before;
+}
+function revertIssue(id, before) {
+  if (!before) return;
+  var iss = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (!iss) return;
+  Object.keys(before).forEach(function (k) { iss[k] = before[k]; });
+}
+// Change it on screen now, write in the background, put it back if it fails.
+function optimistic(id, fields, payload, opts) {
+  opts = opts || {};
+  var before = patchIssue(id, fields);
+  updateActionsTabCount();
+  renderCurrentView();
+  return apiPost(payload).then(function (res) {
+    if (!res || !res.ok) {
+      revertIssue(id, before);
+      renderCurrentView();
+      toast((opts.failMsg || "That didn't save") + " (" + ((res && res.error) || "unknown") + ") - put back as it was.");
+      return res;
+    }
+    if (opts.done) opts.done(res);
+    // Quietly bring the row back in line with the server, without the wait.
+    if (!opts.noRefresh) loadIssues();
+    return res;
+  }).catch(function (e) {
+    revertIssue(id, before);
+    renderCurrentView();
+    toast((opts.failMsg || "That didn't save") + " - put back as it was.");
+    console.error(e);
+  });
 }
 
 // ============================ ACTIONS (instructor to-dos) ============================
@@ -2461,6 +2699,16 @@ function loadLiveCases() {
     else if (state.view === "admin") renderAdmin();
     else if (state.view === "actions") renderActions();
   }).catch(function () { state._liveLoading = false; });
+}
+function refreshScans() {
+  return apiGet("chatScanList").then(function (res) {
+    if (res && res.ok) { state._scans = res.scans || []; updateScanCount(); }
+    return res;
+  }).catch(function () {});
+}
+function updateScanCount() {
+  var rows = state._scans || [];
+  if ($("us_chatscan")) $("us_chatscan").textContent = rows.length ? "Spotted in chat (" + rows.length + ")" : "Spotted in chat";
 }
 function loadLiveCasesThenRender() {
   apiPost({ action: "listLiveCases" }).then(function (res) {
@@ -2857,12 +3105,11 @@ function detailSetStatus(id, status) {
       return;
     }
   }
-  apiPost({ action: "updateIssue", issue_id: id, status: status }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast(status === "parked" ? "Parked - it'll wake up if anyone reports it again."
-      : status === "open" ? "Sent back as still open." : "Resolved.");
-    closeDetail(); loadIssues();
-  }).catch(function () { toast("Error."); });
+  closeDetail();
+  toast(status === "parked" ? "Parked - it'll wake up if anyone reports it again."
+    : status === "open" ? "Sent back as still open." : "Resolved.");
+  optimistic(id, { status: status }, { action: "updateIssue", issue_id: id, status: status },
+    { failMsg: "That status change didn't save" });
 }
 
 // Chased the courier: log that it happened and re-arm the reminder, so a
@@ -2883,11 +3130,9 @@ function chaseAgain(id, days) {
 // Park an issue from Actions: known about, deliberately left, and it wakes up
 // if anyone reports it again (Edd, 26 Jul).
 function actionsPark(id) {
-  apiPost({ action: "updateIssue", issue_id: id, status: "parked" }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Parked - it'll come back if anyone else reports it.");
-    loadIssues();
-  }).catch(function () { toast("Error."); });
+  toast("Parked - it'll come back if anyone else reports it.");
+  optimistic(id, { status: "parked" }, { action: "updateIssue", issue_id: id, status: "parked" },
+    { failMsg: "That park didn't save" });
 }
 
 function actionsAnswer(id) {
@@ -2901,11 +3146,10 @@ function actionsAnswer(id) {
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 function actionsMarkNotified(id) {
-  apiPost({ action: "updateIssue", issue_id: id, notified_students: true }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Marked as told.");
-    loadIssues();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  toast("Marked as told.");
+  optimistic(id, { notified_students: "true" },
+    { action: "updateIssue", issue_id: id, notified_students: true },
+    { failMsg: "That tick didn't save" });
 }
 // "I've told the student we're still on it" - logs the reassurance as an
 // update, which bumps updated_at and drops the card off the long-open list.
@@ -2918,11 +3162,10 @@ function actionsSentUpdate(id) {
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 function actionsResolveTbc(id, good) {
-  apiPost({ action: "updateIssue", issue_id: id, status: good ? "resolved" : "open" }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast(good ? "Resolved for good." : "Reopened for a proper fix.");
-    loadIssues();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  toast(good ? "Resolved for good." : "Reopened for a proper fix.");
+  optimistic(id, { status: good ? "resolved" : "open" },
+    { action: "updateIssue", issue_id: id, status: good ? "resolved" : "open" },
+    { failMsg: "That didn't save" });
 }
 function copyText(t) {
   navigator.clipboard.writeText(t).then(function () { toast("Copied."); }, function () { toast("Couldn't copy."); });
@@ -4783,6 +5026,10 @@ function loadIntoForm(issue) {
   if (audienceOf(issue) !== "internal") setCategory(catOf(issue));
   state.requestKind = kindOf(issue);
   renderRequestKind();
+  // The form edits the real text, so it must have all of it (Round 54).
+  if (issue.clipped) hydrateIssue(issue.issue_id, function (full) {
+    if (full && state.editingId === full.issue_id) setField("rawText", full.raw_text);
+  });
   setField("rawText", issue.raw_text);
   setField("f_student_name", issue.student_name);
   setField("f_student_contact", issue.student_contact);
@@ -5223,6 +5470,14 @@ function drawerFoldRestore(saved) {
 }
 
 function openDetail(issue) {
+  // Round 54: the list only carries a preview of the long texts. Draw the
+  // pane now from what we have (instant), and redraw it once the full report
+  // and its update history land - a fraction of a second later.
+  if (issue.clipped) {
+    hydrateIssue(issue.issue_id, function (full) {
+      if (full && state.detailId === full.issue_id && state.detailKind === "admin") openDetail(full);
+    });
+  }
   var refold = (state.detailId === issue.issue_id && state.detailKind === "admin") ? drawerFoldState() : null;
   state.detailId = issue.issue_id;
   state.detailKind = "admin";
@@ -5618,21 +5873,28 @@ function saveDetail() {
     student_sorted: $("d_sorted") ? $("d_sorted").checked : false
   };
   if ($("d_priority")) payload.priority = $("d_priority").value;
-  apiPost(payload).then(function (res) {
-    if (!res || !res.ok) { toast("Update failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Issue updated.");
-    closeDetail();
-    loadIssues();
-  }).catch(function (e) { toast("Update error. See console."); console.error(e); });
+  // The board changes the moment the button goes down, and the write catches
+  // up behind it. Nine times out of ten this used to be a five second wait
+  // on a blank pane (Round 54).
+  var fields = {
+    status: status, resolution_note: note,
+    notified_students: $("d_notified").checked ? "true" : "",
+    student_sorted: ($("d_sorted") && $("d_sorted").checked) ? "true" : ""
+  };
+  if (payload.priority) fields.priority = payload.priority;
+  if (status === "resolved" || status === "resolved_tbc") fields.resolved_at = new Date().toISOString();
+  var savingId = payload.issue_id;
+  closeDetail();
+  toast("Issue updated.");
+  optimistic(savingId, fields, payload, { failMsg: "That update didn't save" });
 }
 
 function reopenIssue(id) {
-  apiPost({ action: "updateIssue", issue_id: id, status: "open" }).then(function (res) {
-    if (!res || !res.ok) { toast("Reopen failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Reopened.");
-    closeDetail();
-    loadIssues();
-  }).catch(function (e) { toast("Reopen error. See console."); console.error(e); });
+  closeDetail();
+  toast("Reopened.");
+  optimistic(id, { status: "open", resolved_at: "" },
+    { action: "updateIssue", issue_id: id, status: "open" },
+    { failMsg: "That reopen didn't save" });
 }
 
 function copyContacts() {
@@ -6404,6 +6666,12 @@ function sendDevQuery(id) {
 }
 
 function openDevDetail(id) {
+  (function () {
+    var pre = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
+    if (pre && pre.clipped) hydrateIssue(id, function (full) {
+      if (full && state.detailId === id) openDevDetail(id);
+    });
+  })();
   var issue = state.issues.filter(function (i) { return i.issue_id === id; })[0];
   if (!issue) return;
   var refold = (state.detailId === id && state.detailKind === "dev") ? drawerFoldState() : null;
@@ -6753,6 +7021,9 @@ document.addEventListener("click", function () {
 function doLogout() {
   apiPost({ action: "logout" }).catch(function () {});
   clearToken();
+  clearBootCache();   // never show one person's board to the next on a shared machine
+  state.issues = []; state._issuesLoaded = false; state._scans = null; state.liveCases = [];
+  state._permsApplied = false;
   state.user = null; state.perms = {};
   state.viewAs = null; state.realUser = null;
   var vb = $("viewAsBar"); if (vb) vb.classList.remove("show", "simulating");
@@ -6828,17 +7099,26 @@ function setUsersSection(s) {
 // ---- "Spotted in chat": the nightly scan's suggestions, awaiting a verdict --
 // Lives in Actions only since FB-0182 (the Admin copy was a duplicate).
 function refreshScanViews() {
-  if (state.view === "actions") renderChatScan("actionsScan");
+  // We have just changed a row, so the copy that came in with the bootstrap
+  // is out of date - go and get it again rather than redrawing the old one.
+  refreshScans().then(function () {
+    if (state.view === "actions") renderChatScan("actionsScan");
+  });
 }
 function renderChatScan(targetId) {
   var box = $(targetId || "chatScanList");
   if (!box) return;
-  var inActions = targetId === "actionsScan";
+  // Round 54: the scan queue rides in with the bootstrap, so it draws with
+  // everything else instead of starting its own 3-4 second call each time the
+  // tab opens. refreshScans() is for after we act on a row.
+  if (state._scans) { drawChatScan(box, targetId, state._scans); return; }
   box.innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
-  apiGet("chatScanList").then(function (res) {
-    if (!res || !res.ok) { box.innerHTML = '<p class="muted small">Could not load: ' + esc((res && res.error) || "unknown") + '</p>'; return; }
-    var rows = res.scans || [];
-    if ($("us_chatscan")) $("us_chatscan").textContent = rows.length ? "Spotted in chat (" + rows.length + ")" : "Spotted in chat";
+  refreshScans().then(function () { drawChatScan(box, targetId, state._scans || []); });
+}
+function drawChatScan(box, targetId, rows) {
+  var inActions = targetId === "actionsScan";
+  (function () {
+    updateScanCount();
     // In Actions it's a secondary block, so stay quiet when there's nothing.
     if (inActions && !rows.length) { box.innerHTML = ""; return; }
     var news = rows.filter(function (r) { return String(r.kind || "new") !== "update"; });
@@ -6901,7 +7181,7 @@ function renderChatScan(targetId) {
       '</div>';
     }).join("") : '<p class="muted small">Nothing new spotted. The scan only queues what two different models both call a real problem.</p>';
     box.innerHTML = html;
-  }).catch(function (e) { box.innerHTML = '<p class="muted small">Load error.</p>'; console.error(e); });
+  })();
 }
 // Send it to the log form, pre-filled from the conversation, and mark the
 // suggestion as acted on. The normal extraction and duplicate checks then run.

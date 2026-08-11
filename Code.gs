@@ -221,6 +221,7 @@ function doGet(e) {
   try {
     var p = (e && e.parameter) || {};
     var action = p.action || '';
+    CURRENT_ACTION_ = action;
     if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
     if (action === 'getInvite') return jsonOut(getInvite_(p.token));   // public: validate an invite link
     if (action === 'mirror') return jsonOut(mirror_(p));               // read-only, key-gated mirror for the local Cowork sync
@@ -230,6 +231,9 @@ function doGet(e) {
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
 
+    if (action === 'bootstrap') return jsonOut(bootstrap_(user));
+    if (action === 'getIssuesList') return jsonOut(getIssuesList_());
+    if (action === 'getIssue') return jsonOut(getIssueFull_(p));
     if (action === 'getIssues') return jsonOut(getIssues_());
     if (action === 'getInstructors') return jsonOut(getInstructors_());
     if (action === 'listUsers') return jsonOut(listUsers_());
@@ -248,6 +252,7 @@ function doPost(e) {
     var body = {};
     if (e && e.postData && e.postData.contents) body = JSON.parse(e.postData.contents);
     var action = body.action || '';
+    CURRENT_ACTION_ = action;
 
     // Public auth actions (no session yet).
     // Self-deploy: gated by its own DEPLOY_KEY (script property), not a user
@@ -282,6 +287,9 @@ function doPost(e) {
     // token in the request body rather than the URL (URLs leak into browser
     // history and logs; bodies don't). The GET versions below still work.
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
+    if (action === 'bootstrap') return jsonOut(bootstrap_(user));
+    if (action === 'getIssuesList') return jsonOut(getIssuesList_());
+    if (action === 'getIssue') return jsonOut(getIssueFull_(body));
     if (action === 'getIssues') return jsonOut(getIssues_());
     if (action === 'getInstructors') return jsonOut(getInstructors_());
     if (action === 'listUsers') return jsonOut(listUsers_());
@@ -454,7 +462,8 @@ function reqPerm_(action) {
     case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
     // uploadImage and addFeedback are available to any logged-in user (feedback
     // screenshots, etc.), handled by the default below.
-    case 'getIssues': case 'getInstructors': case 'me': return 'any';
+    case 'getIssues': case 'getIssuesList': case 'getIssue': case 'bootstrap':
+    case 'getInstructors': case 'me': return 'any';
     default: return 'any';
   }
 }
@@ -731,6 +740,11 @@ function adminInviteLink(email) {
 // The front-end sends POSTs with Content-Type text/plain so the browser
 // treats them as "simple" requests and skips the CORS preflight.
 function jsonOut(obj) {
+  // Round 54: the single exit point for every response, so it is the one
+  // reliable place to drop the cached issue list after a write. Doing it here
+  // rather than inside each write function means a new action can never
+  // forget - see READ_ONLY_ACTIONS.
+  maybeInvalidate_();
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
@@ -860,6 +874,209 @@ function getIssues_() {
     }
   });
   return { ok: true, issues: all };
+}
+
+// ---- Round 54: list projection, one-shot bootstrap, and the caches --------
+// Everything on the site felt slow (Edd, the oldest complaint in the project).
+// Three causes, all addressed here:
+//   1. getIssues shipped the whole sheet - raw_text and every report's full
+//      transcript - about 2.6 MB, when the list views only ever draw badges,
+//      summaries and dates from it. issueListRow_ builds a LIST projection:
+//      empty cells are left out entirely (900 rows x 46 mostly-blank columns
+//      was itself a third of the payload), and the long texts are clipped to
+//      a preview so search still works. `clipped:1` marks a row whose full
+//      text lives on the server; getIssue fetches it when a pane opens.
+//   2. Opening the app made five or six separate 2-4 second round trips. On
+//      Apps Script the round trip itself is ~1.8s before any work happens, so
+//      the fix is to make one. bootstrap_ returns the lot.
+//   3. Repeated reads re-read the whole spreadsheet. The projection is cached
+//      in CacheService for a minute, chunked because a cache value caps at
+//      100 KB. maybeInvalidate_ (called on the way out of jsonOut) drops it
+//      after ANY write action, so nobody ever sees a stale board after their
+//      own click. Reads are listed explicitly - an action we forget about
+//      invalidates, which costs a re-read and never shows stale data.
+var LIST_RAW_CAP = 300;              // characters of raw text kept in the list
+var ISSUE_CACHE_KEY = 'ait_issues_list_v1';
+var ISSUE_CACHE_SECONDS = 60;
+var CACHE_CHUNK = 80 * 1024;         // CacheService caps a value at 100 KB
+var CACHE_MAX_CHUNKS = 60;
+
+function clip_(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) : s; }
+
+// One issue, slimmed for a list view. Keeps every structured field the
+// front end filters, sorts, badges or searches on; clips the two big texts.
+function issueListRow_(i) {
+  var o = {}, clipped = false, k, v;
+  for (k in i) {
+    if (!Object.prototype.hasOwnProperty.call(i, k)) continue;
+    if (k === 'raw_text' || k === 'reports_json') continue;
+    v = i[k];
+    if (v === null || v === '' || v === undefined) continue;   // blanks cost bytes and say nothing
+    o[k] = v;
+  }
+  if (i.raw_text != null && i.raw_text !== '') {
+    var s = String(i.raw_text);
+    o.raw_text = clip_(s, LIST_RAW_CAP);
+    if (s.length > LIST_RAW_CAP) clipped = true;
+  }
+  if (i.reports_json) {
+    var arr = null;
+    try { arr = JSON.parse(i.reports_json); } catch (e) { arr = null; }
+    if (arr && arr.length !== undefined && arr.map) {
+      o.reports_json = JSON.stringify(arr.map(function (rp) {
+        var q = {}, rk, rv;
+        for (rk in rp) {
+          if (!Object.prototype.hasOwnProperty.call(rp, rk)) continue;
+          if (rk === 'raw_text') continue;
+          rv = rp[rk];
+          if (rv === null || rv === '' || rv === undefined) continue;
+          q[rk] = rv;
+        }
+        if (rp.raw_text != null && rp.raw_text !== '') {
+          var t = String(rp.raw_text);
+          q.raw_text = clip_(t, LIST_RAW_CAP);
+          if (t.length > LIST_RAW_CAP) clipped = true;
+        }
+        return q;
+      }));
+    } else {
+      o.reports_json = i.reports_json;
+    }
+  }
+  if (clipped) o.clipped = 1;
+  return o;
+}
+
+function cachePutChunked_(key, str, secs) {
+  try {
+    var c = CacheService.getScriptCache();
+    var n = Math.ceil(str.length / CACHE_CHUNK);
+    if (n > CACHE_MAX_CHUNKS) { c.remove(key + '_n'); return false; }
+    var map = {};
+    for (var i = 0; i < n; i++) map[key + '_' + i] = str.substring(i * CACHE_CHUNK, (i + 1) * CACHE_CHUNK);
+    c.putAll(map, secs);
+    c.put(key + '_n', String(n), secs);   // written last, so a half-written set never reads as complete
+    return true;
+  } catch (e) { return false; }
+}
+
+function cacheGetChunked_(key) {
+  try {
+    var c = CacheService.getScriptCache();
+    var n = Number(c.get(key + '_n') || 0);
+    if (!n) return null;
+    var keys = [];
+    for (var i = 0; i < n; i++) keys.push(key + '_' + i);
+    var got = c.getAll(keys) || {};
+    var out = '';
+    for (var j = 0; j < n; j++) {
+      var part = got[key + '_' + j];
+      if (part == null) return null;   // a chunk expired: treat the whole thing as a miss
+      out += part;
+    }
+    return out;
+  } catch (e) { return null; }
+}
+
+function invalidateIssueCache_() {
+  try {
+    var c = CacheService.getScriptCache();
+    var keys = [ISSUE_CACHE_KEY + '_n'];
+    for (var i = 0; i < CACHE_MAX_CHUNKS; i++) keys.push(ISSUE_CACHE_KEY + '_' + i);
+    c.removeAll(keys);
+  } catch (e) {}
+}
+
+// Actions that only read. Everything else drops the issue cache on its way
+// out. Being on this list is the ONLY way to keep the cache through a call,
+// so a new write action is safe by default.
+var READ_ONLY_ACTIONS = {
+  ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
+  listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, getFeedback: 1, getAssignees: 1,
+  getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1,
+  listVoiceGuides: 1, listContentSuggestions: 1, getManifest: 1, extract: 1, askIssues: 1,
+  suggestFix: 1, troubleshoot: 1, matchUpdate: 1, draftStudentMessage: 1, listLiveCases: 1,
+  caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1
+};
+var CURRENT_ACTION_ = '';
+function maybeInvalidate_() {
+  if (!CURRENT_ACTION_) return;
+  if (READ_ONLY_ACTIONS[CURRENT_ACTION_]) return;
+  invalidateIssueCache_();
+}
+
+// The list payload: cached projection, or built and cached.
+function getIssuesList_() {
+  var cached = cacheGetChunked_(ISSUE_CACHE_KEY);
+  if (cached) {
+    try {
+      var p = JSON.parse(cached);
+      p.from_cache = true;
+      return p;
+    } catch (e) {}
+  }
+  var all = getIssues_().issues || [];
+  var payload = { ok: true, generated_at: new Date().toISOString(), issues: all.map(issueListRow_) };
+  cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(payload), ISSUE_CACHE_SECONDS);
+  return payload;
+}
+
+// One issue, full fat. Reads the id column first and then just the one row,
+// so opening a detail pane never costs a whole-spreadsheet read.
+function getIssueFull_(data) {
+  var id = String((data && (data.issue_id || data.id)) || '');
+  if (!id) return { ok: false, error: 'need an issue_id' };
+  for (var s = 0; s < ISSUE_SHEETS.length; s++) {
+    var sheet = sheetByName_(ISSUE_SHEETS[s]);
+    if (!sheet) continue;
+    var last = sheet.getLastRow();
+    if (last < 2) continue;
+    var ids = sheet.getRange(2, 1, last - 1, 1).getValues();
+    for (var r = 0; r < ids.length; r++) {
+      if (String(ids[r][0]) !== id) continue;
+      var width = sheet.getLastColumn();
+      var head = sheet.getRange(1, 1, 1, width).getValues()[0];
+      var row = sheet.getRange(r + 2, 1, 1, width).getValues()[0];
+      var obj = {};
+      for (var c = 0; c < head.length; c++) obj[head[c]] = row[c] === '' ? null : row[c];
+      if (obj.chase_at) obj.chase_at = dayStr_(obj.chase_at);
+      if (obj.tracking_number) obj.tracking_number = normaliseTracking_(obj.tracking_number);
+      return { ok: true, issue: obj };
+    }
+  }
+  return { ok: false, error: 'not found' };
+}
+
+// Everything the app needs to draw itself, in one round trip. Each piece is
+// permission-gated the same way its own action is, and each is wrapped so one
+// slow or broken corner (Chatwoot, say) cannot take the whole load down with
+// it - the app still opens, just without that panel.
+function bootstrap_(user) {
+  var out = {
+    ok: true,
+    generated_at: new Date().toISOString(),
+    user: publicUser_(user),
+    backend: backendInfo_()
+  };
+  var list = getIssuesList_();
+  out.issues = list.issues || [];
+  out.issues_from_cache = !!list.from_cache;
+  if (hasPerm_(user, reqPerm_('getInstructors'))) {
+    try { out.instructors = getInstructors_().instructors || []; } catch (e) { out.instructors_error = String(e); }
+  }
+  if (hasPerm_(user, reqPerm_('getAssignees'))) {
+    try { out.assignees = listAssignees_().assignees || []; } catch (e) { out.assignees_error = String(e); }
+  }
+  if (hasPerm_(user, reqPerm_('listLiveCases'))) {
+    try { out.live_cases = listLiveCases_({ _issues: out.issues }).cases || []; } catch (e) { out.live_cases_error = String(e); }
+  }
+  if (hasPerm_(user, reqPerm_('chatScanList'))) {
+    try { out.scans = chatScanList_().scans || []; } catch (e) { out.scans_error = String(e); }
+  }
+  if (hasPerm_(user, reqPerm_('listPlaybookSuggestions'))) {
+    try { out.playbook_suggestions = getSuggestions_() || []; } catch (e) {}
+  }
+  return out;
 }
 
 function getInstructors_() {
@@ -4135,7 +4352,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r53 · 2026-08-11';
+var CODE_STAMP = 'r54 · 2026-08-11';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4554,7 +4771,11 @@ function listLiveCases_(data) {
   // One read of the issue sheets, not one per case.
   var issueById = {};
   if (rows.some(function (r) { return r.issue_id; })) {
-    (getIssues_().issues || []).forEach(function (i) { issueById[i.issue_id] = i; });
+    // Round 54: bootstrap has already read the issues, so it hands them over
+    // rather than paying for a second whole-spreadsheet read. Only status and
+    // student_sorted are used below, and the list projection carries both.
+    var pre = data && data._issues;
+    (pre || getIssues_().issues || []).forEach(function (i) { issueById[i.issue_id] = i; });
   }
   var peeks = 0;
   rows.forEach(function (r) {
