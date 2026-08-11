@@ -147,6 +147,9 @@
   .switcher button { background: transparent; padding: 7px 14px; color: var(--muted); }
   .switcher button.active { background: var(--surface-2); color: var(--text); }
   .themebtn { white-space: nowrap; padding: 7px 12px; }
+  /* The dropdown menu inside needs a positioned parent; it used to be an
+     inline style on the element, which silently beat the mobile pin (FB-0178). */
+  #userbox { position: relative; white-space: nowrap; }
 
   /* Full-width app (Edd, 21 Jul): no artificial cap, just breathing room. */
   .wrap { max-width: none; margin: 0 auto; padding: 20px 28px; }
@@ -306,8 +309,14 @@
        strip, so the tabs stay next to the content they switch. */
     .topbar > div:last-child { flex-direction: column-reverse; align-items: stretch !important; gap: 8px !important; }
     /* The name sits on the SAME row as the Bugs title when the header wraps
-       (Edd, FB-0178): pinned top-right, switcher below. */
-    .topbar #userbox { display: flex !important; justify-content: flex-end; align-items: center; gap: 6px; flex-wrap: wrap; position: absolute; top: 12px; right: 12px; }
+       (Edd, FB-0178, refiled): pinned top-right, switcher below. The r48 pass
+       wrote "position: absolute" here and called it fixed, but the element
+       carries position:relative INLINE (for its dropdown menu), and inline
+       always beats a stylesheet rule - so the pin never applied and the name
+       stayed on its own row. The inline style is gone from the markup now
+       (the base #userbox rule holds the relative), and this pin is real.
+       header.topbar is sticky, i.e. positioned, so the pin anchors to it. */
+    .topbar #userbox { display: flex; justify-content: flex-end; align-items: center; gap: 6px; flex-wrap: wrap; position: absolute; top: 9px; right: 12px; }
     /* Room at the bottom so no button hides under the view-as bar or the
        feedback pill on a phone (Edd, FB-0180). */
     .wrap { padding-bottom: 96px; }
@@ -551,7 +560,7 @@
     <!-- The username is the menu now (Edd, FB-0174): press it for theme,
          change password and log out. Theme moved in here from the header
          (Edd, FB-0177) - clicking it cycles without closing the menu. -->
-    <div class="small muted" id="userbox" style="display:none;white-space:nowrap;position:relative;">
+    <div class="small muted" id="userbox" style="display:none;">
       <button class="ghost small" style="padding:4px 10px;" onclick="toggleUserMenu(event)"><span id="whoami"></span> &#9662;</button>
       <div id="userMenu" class="hidden" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,0.35);min-width:170px;text-align:left;">
         <button class="ghost small" id="themeBtn" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="event.stopPropagation();cycleTheme()">Theme</button>
@@ -708,7 +717,11 @@
         </div>
         <div class="row" id="field_module_row">
           <div class="field"><label>Module</label><input id="f_module" autocomplete="off" /></div>
-          <div class="field"><label>Lesson / slide / question</label><input id="f_lesson" autocomplete="off" /></div>
+          <!-- "Slide / question" plain (Edd, FB-0194, refiled): the lesson
+               itself already lives in the Lesson code box next door - this box
+               holds the deeper reference (a slide range like DS.07.06.11-16,
+               or a question), so calling it a lesson too was the confusion. -->
+          <div class="field"><label>Slide / question</label><input id="f_lesson" autocomplete="off" placeholder="e.g. DS.07.06.11-16, or the question" /></div>
         </div>
         <div class="field" id="field_media">
           <label>Which part of the lesson? (auto-detected, change if wrong)</label>
@@ -991,7 +1004,9 @@
       <button type="button" id="dev_all" onclick="setDevFilter('all')">All</button>
     </div>
   </div>
-  <div class="area-toggle" id="devFilters" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
+  <!-- One row (Edd, FB-0202): without display:flex here the global
+       "select { width:100% }" rule stacked the five dropdowns full-width. -->
+  <div class="area-toggle" id="devFilters" style="display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
   <div class="split-host" id="devSplitHost">
     <div class="list-col" id="devList"></div>
     <div class="col-drag" title="Drag to resize the list"></div>
@@ -1328,7 +1343,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r52.2 · 2026-08-11";  // bump this with each round, it lands on every feedback report
+var BUILD = "r53 · 2026-08-11";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2115,16 +2130,31 @@ function loadIssues(isRetry) {
 // students deserve a "still on it" note. Everything else stays in Track.
 var ACTIONS_LONG_OPEN_DAYS = 14;
 var ACTIONS_TBC_FOLLOWUP_DAYS = 3;
+// Once we've replied to a scan-logged student, the row leaves Actions for this
+// long (Edd, FB-0196): the ball is with the student and there is nothing to
+// do. It comes back if they go quiet past the grace, and sooner if they reply.
+var SCAN_WAITING_GRACE_DAYS = 3;
 
-// Has anyone actually replied to this student? A human-authored update
-// counts, and so does any entry carrying waiting:true (a correction note can
-// record a reply the tracker never saw). Machine entries do not.
-function scanReplied(i) {
-  return parseReports(i).some(function (rp) {
-    if (rp.waiting) return true;
-    return rp.instructor_name && ["Overnight scan", "Queue sweep", "Fetch update", "Claude"].indexOf(rp.instructor_name) < 0;
+// Where does the conversation stand on a scan-logged issue? Reads the report
+// timeline: a human-authored entry (or one carrying waiting:true) is our
+// reply; a machine entry (the scan, Fetch update) only lands when the student
+// said something that matters, so one AFTER our reply means the student has
+// come back. Claude's administrative notes count as neither.
+function scanWaitingInfo(i) {
+  var lastReply = 0, lastStudent = 0;
+  parseReports(i).forEach(function (rp) {
+    var t = new Date(rp.date || 0).getTime() || 0;
+    var name = rp.instructor_name || "";
+    if (rp.waiting || (name && ["Overnight scan", "Queue sweep", "Fetch update", "Claude"].indexOf(name) < 0)) {
+      if (t > lastReply) lastReply = t;
+    } else if (name === "Overnight scan" || name === "Fetch update") {
+      if (t > lastStudent) lastStudent = t;
+    }
   });
+  return { replied: lastReply > 0, lastReply: lastReply, studentBack: lastStudent > lastReply };
 }
+// Kept for anything else that only needs the yes/no.
+function scanReplied(i) { return scanWaitingInfo(i).replied; }
 function myActionItems() {
   // Everyone with the tab sees every action (Edd, 21 Jul): the team is small
   // and any instructor can pass a fix on. Cards carry who logged each one.
@@ -2139,19 +2169,31 @@ function myActionItems() {
     // Someone should look in on the student, whatever queue the fix sits in.
     if (String(i.instructor_name || "") === "Overnight scan" && !isTrue(i.student_sorted) &&
         st !== "resolved" && st !== "past" && st !== "parked" && st !== "resolved_tbc") {
-      // A human update now flips the row to "Waiting" rather than clearing it
-      // (Edd, FB-0188): we have replied and it is the student's turn, so the
-      // row should say so. It leaves the lane when the student is marked
-      // sorted or the issue closes. Machine entries (the scan itself, Fetch
-      // update, Claude's notes) are not a reply, but any entry can carry
-      // waiting:true to record that a reply genuinely went out.
-      i._waiting = scanReplied(i);
+      // We replied, the ball is with the student (FB-0188) - and for a few
+      // days that means there is nothing to DO, so the row leaves Actions
+      // entirely (Edd, FB-0196). It comes back as "Waiting" once the quiet
+      // has run past the grace (worth a nudge), and straight away if the
+      // student replies (a scan or Fetch update entry lands after our reply).
+      var w = scanWaitingInfo(i);
+      if (w.replied && !w.studentBack) {
+        var quiet = now - w.lastReply;
+        if (quiet < SCAN_WAITING_GRACE_DAYS * day) return;  // grace: hidden
+        i._waiting = true;
+        i._waitDays = Math.floor(quiet / day);
+      } else {
+        i._waiting = false;
+        i._studentBack = w.studentBack && w.replied;
+      }
       out.scanned.push(i);
     }
     // The dev/course team marked it fixed and it's sitting waiting for someone
     // to check and close it. It was only visible in the queues before, which
     // is why "awaiting admin" had nowhere to be found (Edd, 26 Jul).
-    if (canVerify && st === "dev_fixed") out.verify.push(i);
+    // Course errors skip the check: when the course team says a wrong diagram
+    // is fixed, it is fixed (Edd, FB-0195) - they resolve on "Mark fixed" now,
+    // and any already sitting at dev_fixed drop out of the verify lane too
+    // (they still reach the "tell the student" lane below).
+    if (canVerify && st === "dev_fixed" && catOf(i) !== "course_error") out.verify.push(i);
     // "Tell the student": only fixes that happened AFTER logging. An issue that
     // arrived already resolved was sorted in the chat with the student present,
     // so there's nobody to notify (resolved_at at/before logging = chat-resolved).
@@ -2249,12 +2291,47 @@ function draftMarkSent(id) {
 }
 // Jump from a contact to their Chatwoot record (Edd, FB-0162). The lookup is
 // server-side because the contact id isn't stored here.
+// The window has to open IN the click (Edd, FB-0197): the lookup takes 4-7
+// seconds, and a window.open that fires after an await is popup-blocked
+// without a word - the call returned ok and nothing visibly happened. So a
+// placeholder window opens synchronously and gets pointed at the contact when
+// the URL arrives; if even the placeholder is blocked, a clickable link
+// appears instead of silence.
 function openInChatwoot(email) {
+  var win = null;
+  try { win = window.open("", "_blank"); } catch (e) {}
+  if (win) {
+    try { win.document.write('<body style="background:#0F1B2D;color:#E8EDF2;font-family:sans-serif;padding:40px;">Looking up the Chatwoot contact for ' +
+      String(email).replace(/[<>&]/g, "") + '…</body>'); } catch (e) {}
+  }
   toast("Looking up the contact…");
   apiPost({ action: "chatwootContactUrl", email: email }).then(function (res) {
-    if (res && res.ok && res.url) window.open(res.url, "_blank");
-    else toast((res && res.error) || "No Chatwoot contact found.");
-  }).catch(function () { toast("Chatwoot lookup failed."); });
+    if (res && res.ok && res.url) {
+      if (win && !win.closed) win.location = res.url;
+      else showOpenLink(res.url, "The popup was blocked - open the Chatwoot contact here:");
+    } else {
+      if (win && !win.closed) win.close();
+      toast((res && res.error) || "No Chatwoot contact found.");
+    }
+  }).catch(function (e) {
+    if (win && !win.closed) win.close();
+    toast("Chatwoot lookup failed: " + (e && e.message || "network error"));
+  });
+}
+// Visible fallback when a popup can't be opened for us: a link the person
+// clicks themselves (a user-initiated click is never popup-blocked).
+function showOpenLink(url, label) {
+  var el = $("openLinkNote");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "openLinkNote";
+    el.style.cssText = "position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:12px 18px;z-index:400;box-shadow:0 8px 24px rgba(0,0,0,0.35);";
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<span class="small">' + esc(label || "Open:") + '</span> ' +
+    '<a href="' + esc(url) + '" target="_blank" rel="noopener" onclick="this.parentNode.style.display=\'none\'">Open in Chatwoot</a> ' +
+    '<button class="ghost small" style="margin-left:10px;padding:2px 8px;" onclick="this.parentNode.style.display=\'none\'">Dismiss</button>';
+  el.style.display = "block";
 }
 // Every draft button now goes through the popup flow above.
 function draftEmailFor(id, kind) { draftStudentMessage(id, kind); }
@@ -2298,10 +2375,13 @@ function renderActions() {
   // action text on mobile and buried the detail in an accordion).
   var rows = []
     .concat((a.scanned || []).map(function (i) {
-      // Replied already? The word changes to Waiting (Edd, FB-0188).
-      return i._waiting
-        ? { i: i, kind: "scanned", word: "Waiting", colour: "var(--medium)", act: "Replied - waiting on the student" }
-        : { i: i, kind: "scanned", word: "Scanned", colour: "var(--accent)", act: "Look in on the student" };
+      // Replied already? The row hides for the grace days (FB-0196), then
+      // comes back as Waiting; a student reply brings it back sooner.
+      if (i._waiting) return { i: i, kind: "scanned", word: "Waiting", colour: "var(--medium)",
+        act: "No reply in " + i._waitDays + " day" + (i._waitDays === 1 ? "" : "s") + " - worth a nudge?" };
+      if (i._studentBack) return { i: i, kind: "scanned", word: "Replied", colour: "var(--accent)",
+        act: "The student came back - look in" };
+      return { i: i, kind: "scanned", word: "Scanned", colour: "var(--accent)", act: "Look in on the student" };
     }))
     .concat((a.chase || []).map(function (i) { return { i: i, kind: "chase", word: "Chase", colour: "var(--coral)", act: "Poke the courier" }; }))
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
@@ -5097,7 +5177,9 @@ function nextActionFor(i) {
   var s = String(i.status || "open").toLowerCase();
   if (i.dev_query_at) return "Answer the question below - it is holding up the fix.";
   if (catOf(i) === "shipping" && (s === "open" || s === "in_progress")) return "Chase the courier, then set the next reminder.";
-  if (s === "dev_fixed") return "Check the fix actually works, then resolve it and tell the students.";
+  if (s === "dev_fixed") return catOf(i) === "course_error"
+    ? "The course team fixed it - no re-check needed (FB-0195), just tell the students and resolve."
+    : "Check the fix actually works, then resolve it and tell the students.";
   if (s === "resolved_tbc") return isTrue(i.student_sorted)
     ? "Waiting to see if it recurs. Nothing needed unless it comes back."
     : "Check the workaround stuck with the student, then resolve.";
@@ -5991,7 +6073,7 @@ function renderDevFilters(statusPool) {
     var opts = options.map(function (o) {
       return '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>';
     }).join("");
-    return '<select onchange="setDevSel(\'' + key + '\', this.value)" style="min-width:120px;padding:7px 8px;">' + opts + '</select>';
+    return '<select onchange="setDevSel(\'' + key + '\', this.value)" style="width:auto;min-width:120px;padding:7px 8px;">' + opts + '</select>';
   };
 
   $("devFilters").innerHTML =
@@ -6190,13 +6272,26 @@ function courseReviewRun() {
   busyShow("Reading the open queue… this can take a minute.");
   apiPost({ action: "courseReview" }).then(function (res) {
     busyHide();
-    if (!res || !res.ok) { toast("Review failed: " + ((res && res.error) || "unknown")); return; }
+    if (!res || !res.ok) {
+      // The failure stays on screen in the panel (Edd, FB-0201): a toast
+      // vanishes mid-read and "the button doesn't work" is what's left.
+      courseReviewFail((res && res.error) || "unknown");
+      return;
+    }
     state.courseReview = res;
     renderCourseReview();
     toast(res.suggestions.length
       ? "Looked at " + res.reviewed + " - " + res.suggestions.length + " suggestion" + (res.suggestions.length === 1 ? "" : "s") + "."
       : "Looked at " + res.reviewed + " open fixes - the priorities all look right.");
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); courseReviewFail(String(e && e.message || e || "network error")); console.error(e); });
+}
+function courseReviewFail(msg) {
+  var el = $("courseReviewPanel");
+  if (!el) { toast("Review failed: " + msg); return; }
+  el.innerHTML = '<div class="card" style="margin-bottom:14px;border-color:var(--high);">' +
+    '<div style="color:var(--high);font-weight:600;margin-bottom:4px;">The AI review did not run</div>' +
+    '<div class="small" style="white-space:pre-wrap;">' + esc(msg) + '</div>' +
+    '<div class="small muted" style="margin-top:6px;">Nothing was changed. Fix the cause above and press the button again.</div></div>';
 }
 
 function renderCourseReview() {
@@ -7428,17 +7523,48 @@ function feedbackDiagHtml(id, ctx) {
 
 function deleteFeedback(id) {
   if (!confirm("Delete this feedback for good? There's no undo.")) return;
+  // Same optimistic treatment as markFeedback (FB-0200): the card goes now,
+  // and comes back with an apology if the delete didn't stick.
+  var kept = state._fbAll || [];
+  var removed = kept.filter(function (f) { return f.id === id; });
+  state._fbAll = kept.filter(function (f) { return f.id !== id; });
+  renderFeedbackRows();
   apiPost({ action: "deleteFeedback", id: id }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Feedback deleted.");
-    renderFeedback();
-  }).catch(function (e) { toast("Error."); console.error(e); });
+    if (!res || !res.ok) {
+      state._fbAll = state._fbAll.concat(removed);
+      renderFeedbackRows();
+      toast("The delete didn't save (" + ((res && res.error) || "unknown") + ") - the card is back.");
+    }
+  }).catch(function (e) {
+    state._fbAll = state._fbAll.concat(removed);
+    renderFeedbackRows();
+    toast("The delete didn't save - the card is back.");
+    console.error(e);
+  });
 }
+// Optimistic (Edd, FB-0200): the old shape was write (2-3s) then a full
+// re-fetch (3-4s) before the card so much as flickered - ten seconds of
+// nothing after pressing Confirm fixed. Now the card updates the moment the
+// button is pressed, the write happens in the background, and a failed write
+// puts the card back the way it was and says so.
 function markFeedback(id, status) {
+  var prev = null;
+  (state._fbAll || []).forEach(function (f) { if (f.id === id) { prev = f.status; f.status = status; } });
+  renderFeedbackRows();
+  var openN = (state._fbAll || []).filter(function (f) { return String(f.status || "new").toLowerCase() !== "done"; }).length;
+  if ($("us_feedback")) $("us_feedback").textContent = openN ? "Feedback (" + openN + ")" : "Feedback";
   apiPost({ action: "updateFeedback", id: id, status: status }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    renderFeedback();
-  }).catch(function (e) { toast("Error."); console.error(e); });
+    if (!res || !res.ok) {
+      (state._fbAll || []).forEach(function (f) { if (f.id === id) f.status = prev; });
+      renderFeedbackRows();
+      toast("That didn't save (" + ((res && res.error) || "unknown") + ") - the card is back as it was.");
+    }
+  }).catch(function (e) {
+    (state._fbAll || []).forEach(function (f) { if (f.id === id) f.status = prev; });
+    renderFeedbackRows();
+    toast("That didn't save - the card is back as it was.");
+    console.error(e);
+  });
 }
 
 // ============================ GO ============================

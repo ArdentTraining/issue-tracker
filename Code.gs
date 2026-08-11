@@ -1468,6 +1468,12 @@ function courseReview_(data) {
       // Announce the failure rather than quietly returning a thin result
       // (the silent-fallback lesson from the troubleshoot helper), and say
       // what actually came back so the fault is debuggable from the toast.
+      // The billing case gets said in plain words (Edd, FB-0201: the raw
+      // HTTP 400 read as "the button doesn't work" when the account was
+      // simply out of API credit - and every AI feature was down with it).
+      if (/credit balance is too low/i.test(String(got.why || ''))) {
+        return { ok: false, error: 'The Anthropic API account is out of credit, so the review (and every other AI feature - extraction, drafts, the scan) cannot run. Top up at console.anthropic.com > Plans & Billing, then press the button again. The button itself is fine.' };
+      }
       return { ok: false, error: 'The AI review call failed part-way (batch starting at ' + (b + 1) + ' of ' + pool.length + '): ' + got.why + '. Try again in a minute.' };
     }
     (res.suggestions || []).forEach(function (s) {
@@ -1677,7 +1683,19 @@ function markDevFixed_(data) {
   var rec = found.record;
   rec.dev_fixed_at = new Date().toISOString();
   if (!rec.dev_passed_at) rec.dev_passed_at = rec.dev_fixed_at;
-  rec.status = 'dev_fixed';
+  // A course error marked fixed IS fixed (Edd, FB-0195): the course team just
+  // changed the slide themselves, so asking an instructor to go and check it
+  // again is make-work. Straight to resolved; notified_students stays as it
+  // was, so the "tell the student" lane still fires where students are
+  // affected. Tech issues keep the dev_fixed stop - a code fix genuinely
+  // needs someone to see it work before the student's told.
+  if (String(rec.category || '').toLowerCase() === 'course_error') {
+    rec.status = 'resolved';
+    rec.resolved_at = rec.dev_fixed_at;
+    if (!rec.resolution_note) rec.resolution_note = 'Fixed by the course team' + (data.dev_notes ? ': ' + data.dev_notes : '.');
+  } else {
+    rec.status = 'dev_fixed';
+  }
   if (data.dev_notes != null) rec.dev_notes = data.dev_notes;
   rec.updated_at = new Date().toISOString();
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
@@ -2635,7 +2653,16 @@ function scanChatwoot() {
               if (String(one.category || c.category || '').toLowerCase() === 'tech_issue') {
                 try {
                   var ts = troubleshoot_({ raw_text: transcript });
-                  if (ts && ts.ok && ts.found && !ts.degraded && ts.steps && ts.steps.length) one.recommended_steps = ts.steps;
+                  if (ts && ts.ok && ts.found && !ts.degraded) {
+                    if (ts.steps && ts.steps.length) one.recommended_steps = ts.steps;
+                    // The helper also reads what the transcript says was
+                    // ALREADY tried - save it, or the checklist arrives blank
+                    // and the next-action asks the student for things they
+                    // have already sent (Edd, FB-0198: Sergei had supplied
+                    // videos, device models and a whole tried-list, and the
+                    // issue still said nothing had been tried).
+                    if (ts.checklist) one.checklist_json = JSON.stringify(ts.checklist);
+                  }
                 } catch (e) {}
               }
               var add = addIssue_(one);
@@ -4108,7 +4135,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r52 · 2026-08-11';
+var CODE_STAMP = 'r53 · 2026-08-11';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4305,9 +4332,10 @@ function fetchStudentUpdate_(data) {
     convs = (cv && cv.payload) || [];
   } catch (e) { return { ok: false, error: 'Could not list the conversations: ' + String(e.message || e) }; }
 
-  // Newer than the issue's last activity, and not one we've already recorded
-  // (both the scan and this path stamp the conversation number into the issue
-  // text, so a re-press can't import the same chat twice).
+  // First choice: a conversation we have never read (newer than the issue's
+  // last activity and not stamped into the issue text - both the scan and
+  // this path stamp the conversation number, so a re-press can't import the
+  // same chat twice as "new").
   var since = new Date(rec.updated_at || rec.submitted_at || 0).getTime();
   var already = String(rec.raw_text || '');
   var fresh = convs.filter(function (c) {
@@ -4315,42 +4343,78 @@ function fetchStudentUpdate_(data) {
     if (!(t > since)) return false;
     return already.indexOf('Chatwoot conversation ' + c.id) < 0;
   });
-  if (!fresh.length) {
-    return { ok: true, found: false, message: 'No new conversations with this student since the last update.' };
-  }
   fresh.sort(function (a, b) { return Number(b.last_activity_at || 0) - Number(a.last_activity_at || 0); });
-  var conv = fresh[0];
+  var conv = fresh[0] || null;
+  var grown = false, prevCount = 0;
+
+  // Second choice (Edd, FB-0199): the conversation we already know about may
+  // have GROWN - same thread, more messages. The old code skipped any stamped
+  // conversation outright, so a thread that gained a page of detail read as
+  // "no new conversations". Time comparisons can't be trusted here (any edit
+  // to the issue moves updated_at), so the check is message COUNT against the
+  // count recorded when the thread was last read; old stamps without a count
+  // fall through to the AI diff below.
+  if (!conv) {
+    var known = convs.filter(function (c) { return already.indexOf('Chatwoot conversation ' + c.id) > -1; });
+    known.sort(function (a, b) { return Number(b.last_activity_at || 0) - Number(a.last_activity_at || 0); });
+    if (known.length) {
+      conv = known[0];
+      grown = true;
+      var cm = already.match(new RegExp('Chatwoot conversation ' + conv.id + ' \\((\\d+) messages\\)'));
+      prevCount = cm ? Number(cm[1]) : 0;
+    }
+  }
+  if (!conv) {
+    return { ok: true, found: false, message: 'No conversations with this student to check - nothing new, and nothing linked.' };
+  }
 
   var imp = chatwootImport_({ conversation: String(conv.id) });
   if (!imp || !imp.ok) return { ok: false, error: 'Could not import conversation ' + conv.id + ': ' + ((imp && imp.error) || 'unknown') };
   if (!imp.message_count) {
-    return { ok: true, found: false, message: 'The newer conversation (' + conv.id + ') has no readable messages.', conversation: imp.link };
+    return { ok: true, found: false, message: 'The ' + (grown ? 'linked' : 'newer') + ' conversation (' + conv.id + ') has no readable messages.', conversation: imp.link };
+  }
+  if (grown && prevCount && Number(imp.message_count) <= prevCount) {
+    return { ok: true, found: false, message: 'The linked conversation (' + conv.id + ') has no new messages since it was last read (' + imp.message_count + ' messages).', conversation: imp.link };
   }
 
-  // Verdict pass, same shape as the overnight scan's update path.
+  // Verdict pass, same shape as the overnight scan's update path. When the
+  // thread is one we've read before (grown), the question changes: is there
+  // anything here BEYOND what the issue already holds? (Edd, FB-0199)
+  var alreadyTail = grown ? String(rec.raw_text || '').slice(-3000) : '';
   var p = 'A student with an OPEN issue on our sailing course platform has been in touch again. ' +
     'Decide what this conversation says about THAT issue, and nothing else.\n\n' +
     'THE OPEN ISSUE:\n' + JSON.stringify({ summary: rec.summary, status: rec.status, lesson_code: rec.lesson_code, logged: rec.submitted_at }) + '\n\n' +
-    'THE NEW CONVERSATION:\n' + String(imp.transcript || '').slice(0, 12000) + '\n\n' +
+    (grown
+      ? 'ALREADY RECORDED ON THE ISSUE (the end of its running notes - anything in here is NOT new):\n"""\n' + alreadyTail + '\n"""\n\n' +
+        'THE FULL CONVERSATION AS IT STANDS NOW (this thread has been read before and has since grown - judge only what is NEW against the notes above):\n'
+      : 'THE NEW CONVERSATION:\n') +
+    String(imp.transcript || '').slice(0, 12000) + '\n\n' +
     'Choose one verdict:\n' +
     '- "fixed": the student says it now works, or confirms the fix or workaround did the job.\n' +
     '- "still_broken": the student says it is still happening, happening again, or worse.\n' +
-    '- "new_detail": genuinely new information about the same problem (another device, steps to reproduce, when it started, more students affected).\n' +
-    '- "nothing_new": the conversation is about something else entirely, or adds nothing. This is the common answer - use it freely.\n\n' +
-    'Return ONLY JSON: {"verdict":"fixed|still_broken|new_detail|nothing_new","note":"<one sentence of what the student actually said>"}. No prose, no fences.';
+    '- "new_detail": genuinely new information about the same problem (another device, steps to reproduce, when it started, more students affected' +
+    (grown ? ', or troubleshooting done since the notes above were written' : '') + ').\n' +
+    '- "nothing_new": the conversation ' + (grown ? 'adds nothing beyond what the notes above already record' : 'is about something else entirely, or adds nothing') + '. This is the common answer - use it freely.\n\n' +
+    'Return ONLY JSON: {"verdict":"fixed|still_broken|new_detail|nothing_new","note":"<one sentence of what the student actually said' + (grown ? ' that is new' : '') + '>"}. No prose, no fences.';
   var first = anthropicJson_(FINDER_MODEL, p, 400);
   if (first === null) return { ok: false, error: 'The AI read of the conversation failed. Try again in a minute.' };
   if (!first.verdict || first.verdict === 'nothing_new') {
-    return { ok: true, found: false, message: 'Found a newer conversation, but it has nothing new on this issue.', conversation: imp.link };
+    return { ok: true, found: false,
+      message: grown
+        ? 'Re-read the linked conversation (' + conv.id + ', now ' + imp.message_count + ' messages) - nothing new on this issue beyond what is already recorded.'
+        : 'Found a newer conversation, but it has nothing new on this issue.',
+      conversation: imp.link };
   }
 
   // Second opinion - strict, exactly as the scan runs it.
   var vp = 'A first-pass AI read a support conversation and concluded it is an update on a known open issue. Disagree if it is wrong.\n\n' +
     'OPEN ISSUE: ' + JSON.stringify({ summary: rec.summary, status: rec.status }) + '\n' +
     'CLAIMED VERDICT: ' + first.verdict + ' - ' + (first.note || '') + '\n\n' +
+    (grown ? 'ALREADY RECORDED ON THE ISSUE (not new):\n"""\n' + alreadyTail + '\n"""\n\n' : '') +
     'CONVERSATION:\n' + String(imp.transcript || '').slice(0, 12000) + '\n\n' +
     'Be strict. "fixed" requires the student actually confirming it works now, not an instructor hoping so. ' +
-    'If the conversation is really about a different problem, disagree.\n' +
+    'If the conversation is really about a different problem, disagree.' +
+    (grown ? ' This thread was read before: disagree if the claimed news is already in the recorded notes.' : '') + '\n' +
     'Return ONLY JSON: {"agree":true or false,"verdict":"fixed|still_broken|new_detail","note":"<corrected one sentence>"}. No prose, no fences.';
   var second = anthropicJson_(VERIFIER_MODEL, vp, 400);
   if (second === null) return { ok: false, error: 'The AI second opinion failed. Try again in a minute.' };
@@ -4367,7 +4431,9 @@ function fetchStudentUpdate_(data) {
     issue_id: id,
     instructor_name: 'Fetch update',
     summary: vLabel + ': ' + note,
-    raw_text: '[Fetch update, Chatwoot conversation ' + conv.id + ']\n' + vLabel + '.\n' + note +
+    // The message count rides in the stamp so a later press can tell "this
+    // thread has grown" from "this thread is as we left it" (FB-0199).
+    raw_text: '[Fetch update, Chatwoot conversation ' + conv.id + ' (' + imp.message_count + ' messages)]\n' + vLabel + '.\n' + note +
       '\n\nTranscript:\n' + String(imp.transcript || '').slice(0, 5000),
     student_name: imp.student_name || '',
     student_contact: imp.student_contact || '',
@@ -4378,9 +4444,33 @@ function fetchStudentUpdate_(data) {
   });
   if (!r || !r.ok) return { ok: false, error: 'Read the conversation fine, but adding the update failed: ' + ((r && r.error) || 'unknown') };
 
+  // The transcript usually says what's been TRIED too, so bring the
+  // troubleshooting checklist up to date with it (Edd, FB-0198). Merge only
+  // upwards: a human's done/na ticks are never downgraded by the AI read.
+  var checklistNote = '';
+  if (String(rec.category || '').toLowerCase() === 'tech_issue') {
+    try {
+      var ts2 = troubleshoot_({ raw_text: String(imp.transcript || '').slice(0, 12000), existing_history: String(rec.raw_text || '').slice(-4000) });
+      if (ts2 && ts2.ok && ts2.found && !ts2.degraded && ts2.checklist) {
+        var cur = {}; try { cur = rec.checklist_json ? JSON.parse(rec.checklist_json) : {}; } catch (e) { cur = {}; }
+        var merged = {}, changed = false;
+        Object.keys(ts2.checklist).forEach(function (k) {
+          var was = cur[k], now = ts2.checklist[k];
+          merged[k] = (was === 'done' || was === 'na') ? was : now;
+          if (merged[k] !== was) changed = true;
+        });
+        Object.keys(cur).forEach(function (k) { if (!(k in merged)) merged[k] = cur[k]; });
+        if (changed) {
+          var f2 = findRow_(id);  // re-find: addUpdate_ just rewrote the row
+          if (f2) { setCellOnIssue_(f2, 'checklist_json', JSON.stringify(merged)); checklistNote = ' The troubleshooting checklist was updated from the transcript.'; }
+        }
+      }
+    } catch (e) {}
+  }
+
   return {
     ok: true, found: true, verdict: verdict,
-    message: vLabel + ': ' + note,
+    message: vLabel + ': ' + note + checklistNote,
     conversation: imp.link,
     images: (imp.images || []).length
   };
