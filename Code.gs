@@ -895,7 +895,12 @@ function getIssues_() {
 //      after ANY write action, so nobody ever sees a stale board after their
 //      own click. Reads are listed explicitly - an action we forget about
 //      invalidates, which costs a re-read and never shows stale data.
-var LIST_RAW_CAP = 300;              // characters of raw text kept in the list
+// How much of a report the list carries. Measured on the live corpus: at 300
+// characters two rows in three needed a follow-up fetch to be read, and that
+// fetch is about five seconds. At 900 it is closer to one in five, and the
+// long email threads that remain are the ones nobody expects to arrive
+// instantly anyway. The extra weight is paid once, into a cache.
+var LIST_RAW_CAP = 900;
 var REPORTS_PASSTHROUGH = 1200;      // reports_json this small is not worth reworking
 var ISSUE_CACHE_KEY = 'ait_issues_list_v1';
 // Ten minutes. Any write drops the cache on its way out (maybeInvalidate_),
