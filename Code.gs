@@ -4332,11 +4332,15 @@ function fetchStudentUpdate_(data) {
     convs = (cv && cv.payload) || [];
   } catch (e) { return { ok: false, error: 'Could not list the conversations: ' + String(e.message || e) }; }
 
-  // First choice: a conversation we have never read (newer than the issue's
-  // last activity and not stamped into the issue text - both the scan and
-  // this path stamp the conversation number, so a re-press can't import the
-  // same chat twice as "new").
-  var since = new Date(rec.updated_at || rec.submitted_at || 0).getTime();
+  // First choice: a conversation we have never read (active since the issue
+  // was LOGGED and not stamped into the issue text - both the scan and this
+  // path stamp the conversation number, so a re-press can't import the same
+  // chat twice as "new"). The gate used to be updated_at, which hid genuinely
+  // unread threads the moment anyone touched the issue: Edd ticked Sergei's
+  // checklist at 14:59 and the support note from earlier that day instantly
+  // read as "old" (FB-0199, live re-test). Dedupe is the stamp's job, not the
+  // clock's.
+  var since = new Date(rec.submitted_at || rec.updated_at || 0).getTime();
   var already = String(rec.raw_text || '');
   var fresh = convs.filter(function (c) {
     var t = Number(c.last_activity_at || c.timestamp || 0) * 1000;
