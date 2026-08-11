@@ -1014,6 +1014,13 @@ function addIssue_(data) {
   // NOT auto-route to a fix team, they just sit open for the team to review.
   // Shipping never routes to a fix team: nobody here fixes a parcel, we chase
   // the courier. It stays open with a chase date instead.
+  // Scan-logged TECH issues don't auto-route (Edd, FB-0184/0185): nobody has
+  // tried anything with the student yet, so "high" is not enough to skip the
+  // troubleshooting stage - they stay open in the Actions Scanned lane until
+  // a human has looked in. A known-account quirk (the partner portal URL, say)
+  // would otherwise land on a developer who can't fix a login habit. Course
+  // errors still route: there is no student troubleshooting for a wrong diagram.
+  var scanLogged = String(data.instructor_name || '') === 'Overnight scan';
   if (!data.tbc && !data.resolved && !data.parked && issue.request_kind !== 'improvement' && category !== 'shipping') {
     if (category === 'course_error') {
       issue.dev_passed_at = new Date().toISOString();
@@ -1026,7 +1033,7 @@ function addIssue_(data) {
         issue.dev_passed_at = new Date().toISOString();
         issue.status = 'with_dev';
       }
-    } else if (category === 'tech_issue' && String(issue.priority).toLowerCase() === 'high') {
+    } else if (category === 'tech_issue' && !scanLogged && String(issue.priority).toLowerCase() === 'high') {
       // Edd's rule (21 Jul): tech issues reach the developers automatically
       // only when HIGH priority, or when a repeat report makes it 3+ reports
       // (see addReportToIssue_). The old AI "needs a developer" judgement was
@@ -2614,6 +2621,15 @@ function scanChatwoot() {
               one.raw_text = transcript;
               if (imp.images && imp.images.length) one.image_urls = imp.images.join(',');
               one.instructor_name = 'Overnight scan';
+              // Attach the things-to-try up front (Edd, FB-0185), so whoever
+              // picks it out of the Scanned lane starts with steps, not a
+              // blank page. Best effort - a failed call never blocks the log.
+              if (String(one.category || c.category || '').toLowerCase() === 'tech_issue') {
+                try {
+                  var ts = troubleshoot_({ raw_text: transcript });
+                  if (ts && ts.ok && ts.found && !ts.degraded && ts.steps && ts.steps.length) one.recommended_steps = ts.steps;
+                } catch (e) {}
+              }
               var add = addIssue_(one);
               var newId = add && add.ok ? ((add.issue && add.issue.issue_id) || add.issue_id || '') : '';
               if (newId) { newLogged++; newLoggedList.push({ id: newId, summary: one.summary || c.summary }); row[8] = 'logged'; row[9] = newId; row[10] = 'Overnight scan'; row[11] = now; }
@@ -4084,7 +4100,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r51 · 2026-08-11';
+var CODE_STAMP = 'r51.1 · 2026-08-11';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
