@@ -708,7 +708,7 @@
         </div>
         <div class="row" id="field_module_row">
           <div class="field"><label>Module</label><input id="f_module" autocomplete="off" /></div>
-          <div class="field"><label>Lesson</label><input id="f_lesson" autocomplete="off" /></div>
+          <div class="field"><label>Lesson / slide / question</label><input id="f_lesson" autocomplete="off" /></div>
         </div>
         <div class="field" id="field_media">
           <label>Which part of the lesson? (auto-detected, change if wrong)</label>
@@ -1328,7 +1328,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r52.1 · 2026-08-11";  // bump this with each round, it lands on every feedback report
+var BUILD = "r52.2 · 2026-08-11";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
