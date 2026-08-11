@@ -4400,8 +4400,14 @@ function fetchStudentUpdate_(data) {
     (grown ? ', or troubleshooting done since the notes above were written' : '') + ').\n' +
     '- "nothing_new": the conversation ' + (grown ? 'adds nothing beyond what the notes above already record' : 'is about something else entirely, or adds nothing') + '. This is the common answer - use it freely.\n\n' +
     'Return ONLY JSON: {"verdict":"fixed|still_broken|new_detail|nothing_new","note":"<one sentence of what the student actually said' + (grown ? ' that is new' : '') + '>"}. No prose, no fences.';
-  var first = anthropicJson_(FINDER_MODEL, p, 400);
-  if (first === null) return { ok: false, error: 'The AI read of the conversation failed. Try again in a minute.' };
+  // 16k, not 400: the grown-thread prompt carries the issue notes AND the
+  // full transcript, and a big prompt makes the model think before answering
+  // - thinking spends from max_tokens, and at 400 the whole budget burned
+  // with no JSON left (the r44 trap, re-hit live on Sergei's thread).
+  // anthropicRaw_ also says WHY when it fails instead of a bare null.
+  var got1 = anthropicRaw_(FINDER_MODEL, p, 16000);
+  var first = got1.json;
+  if (first === null) return { ok: false, error: 'The AI read of the conversation failed (' + (got1.why || 'no answer') + '). Try again in a minute.' };
   if (!first.verdict || first.verdict === 'nothing_new') {
     return { ok: true, found: false,
       message: grown
@@ -4420,8 +4426,9 @@ function fetchStudentUpdate_(data) {
     'If the conversation is really about a different problem, disagree.' +
     (grown ? ' This thread was read before: disagree if the claimed news is already in the recorded notes.' : '') + '\n' +
     'Return ONLY JSON: {"agree":true or false,"verdict":"fixed|still_broken|new_detail","note":"<corrected one sentence>"}. No prose, no fences.';
-  var second = anthropicJson_(VERIFIER_MODEL, vp, 400);
-  if (second === null) return { ok: false, error: 'The AI second opinion failed. Try again in a minute.' };
+  var got2 = anthropicRaw_(VERIFIER_MODEL, vp, 16000);
+  var second = got2.json;
+  if (second === null) return { ok: false, error: 'The AI second opinion failed (' + (got2.why || 'no answer') + '). Try again in a minute.' };
   if (second.agree !== true) {
     return { ok: true, found: false, message: 'A newer conversation exists, but the second-opinion check was not convinced it relates to this issue. Worth a human read.', conversation: imp.link };
   }
