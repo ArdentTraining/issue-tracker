@@ -1533,7 +1533,11 @@ function addUpdate_(data) {
     student_name: data.student_name || '', student_contact: data.student_contact || '',
     device_info: data.device_info || '', instructor_name: who,
     summary: data.summary || '', priority: String(data.priority || '').toLowerCase(),
-    raw_text: note, recommended_steps: data.recommended_steps || null, date: new Date().toISOString()
+    raw_text: note, recommended_steps: data.recommended_steps || null,
+    // waiting: the instructor has replied and the ball is with the student -
+    // the Actions lane reads this to show "Waiting" (Edd, FB-0188).
+    waiting: data.waiting ? true : undefined,
+    date: new Date().toISOString()
   });
   rec.reports_json = JSON.stringify(reps);
 
@@ -1548,13 +1552,17 @@ function addUpdate_(data) {
   }
 
   // If the issue is currently parked as Resolved - TBC and a fresh update comes
-  // in, reopen it (the suggested fix evidently did not stick).
-  if (String(rec.status).toLowerCase() === 'resolved_tbc') rec.status = 'open';
-  // Same reasoning for a parked one. It was parked because the student went
-  // quiet, and a follow-up means they haven't, so there is something to go on
-  // again. The park branch below can set it straight back if the update is
-  // itself an "Update and park".
-  if (String(rec.status).toLowerCase() === 'parked') rec.status = 'open';
+  // in, reopen it (the suggested fix evidently did not stick). keep_status
+  // opts out: an administrative note (a correction, an "I've replied" marker)
+  // is not fresh news from the student and must not reopen anything (r52).
+  if (!data.keep_status) {
+    if (String(rec.status).toLowerCase() === 'resolved_tbc') rec.status = 'open';
+    // Same reasoning for a parked one. It was parked because the student went
+    // quiet, and a follow-up means they haven't, so there is something to go on
+    // again. The park branch below can set it straight back if the update is
+    // itself an "Update and park".
+    if (String(rec.status).toLowerCase() === 'parked') rec.status = 'open';
+  }
 
   // If the pasted follow-up shows the problem was sorted out in the chat, close
   // the issue and save the answer, rather than only gluing more text on.
@@ -4100,7 +4108,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r51.2 · 2026-08-11';
+var CODE_STAMP = 'r52 · 2026-08-11';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4153,6 +4161,20 @@ function listVoiceGuides_() {
   }).filter(function (g) { return g.name; }) };
 }
 
+// Edd's universal strip-list (11 Aug): no AI tells in anything a student
+// reads, whoever the instructor. One constant so every draft prompt carries
+// the same rules - r51.2 put them on the batch drafts only; r52 shares them
+// with the single-draft and live-case prompts too.
+var AI_TELLS_RULES_ = '\nSTYLE - strip the AI tells, every draft, whoever the instructor (Edd, 11 Aug):\n' +
+  '- NO em dashes, ever. Commas, full stops, or brackets instead.\n' +
+  '- No "isn\'t just X" / "more than just" setup-then-negate constructions. Direct, affirmative statements.\n' +
+  '- No throat-clearing openers, no "delve", no "whether you\'re a beginner or an expert" hedges.\n' +
+  '- No relentless rule-of-three rhythm (X, Y, and Z in every sentence).\n' +
+  '- Never announce that something "matters" - real importance shows in the writing.\n' +
+  '- No forward pointers or snappy aphoristic closers that add no information. If the point is made, stop.\n' +
+  '- No hollow superlatives (seamless, robust, game-changing, unlock, elevate and their kin).\n' +
+  '- No over-tidy symmetrical paragraphs that feel machine-balanced.\n';
+
 function draftStudentMessage_(data) {
   var found = findRow_(data.issue_id);
   if (!found) return { ok: false, error: 'No issue found with that id.' };
@@ -4168,11 +4190,25 @@ function draftStudentMessage_(data) {
   // the whole guide goes in, and the draft uses the strongest model we have.
   var last = reps.length ? reps[reps.length - 1] : null;
   var guide = voiceGuideFor_(who);
+  // FB-0186: a "still on it" draft should carry the SPECIFIC next thing to
+  // try off the pre-dev checklist, not vague reassurance, so the message
+  // itself moves the troubleshooting along. First item not yet done or n/a,
+  // in checklist order - the same one the detail pane's next action names.
+  var nextStep = '';
+  if (kind === 'longopen' && String(i.category || '').toLowerCase() === 'tech_issue') {
+    var ckMap = {}; try { ckMap = i.checklist_json ? JSON.parse(i.checklist_json) : {}; } catch (e) { ckMap = {}; }
+    for (var ci = 0; ci < CHECKLIST_ITEMS.length; ci++) {
+      var stC = ckMap[CHECKLIST_ITEMS[ci].id];
+      if (stC !== 'done' && stC !== 'na') { nextStep = CHECKLIST_ITEMS[ci].label; break; }
+    }
+  }
   var goal = kind === 'fixed'
     ? 'Tell the student the problem they reported has been fixed, and invite them to try again and shout if anything still looks off.'
     : kind === 'followup'
       ? 'Check in on whether the workaround they were given is still doing the job, without pestering.'
-      : 'Reassure the student their report is not forgotten and is still being worked on. Do not invent progress that is not in the notes.';
+      : nextStep
+        ? 'Ask the student to try the one specific troubleshooting step given below, phrased in plain language a non-technical sailor can follow, and make clear their report is still being worked on. Do not invent progress that is not in the notes.'
+        : 'Reassure the student their report is not forgotten and is still being worked on. Do not invent progress that is not in the notes.';
 
   var prompt = 'Draft a short, warm email from an instructor at Ardent Training (an online RYA sailing school) to a student.\n\n' +
     'GOAL: ' + goal + '\n\n' +
@@ -4183,7 +4219,9 @@ function draftStudentMessage_(data) {
       student_first_name: String(i.student_name || '').split(' ')[0]
     }) + '\n' +
     (last && (last.summary || last.raw_text) ? 'LATEST UPDATE ON THE ISSUE: ' + String(last.summary || last.raw_text).slice(0, 400) + '\n' : '') +
+    (nextStep ? 'THE NEXT TROUBLESHOOTING STEP TO ASK OF THE STUDENT (from our checklist, written for staff - rephrase it as a plain ask):\n"' + nextStep + '"\n' : '') +
     (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n' : '') +
+    AI_TELLS_RULES_ +
     '\nRules: plain text only, no subject line, 50-110 words, greet the student by first name. ' +
     'Say the thing in the first sentence rather than warming up to it, skip reassurance the student did not ask for, and never state a fact that is not in the issue or the fix notes. ' +
     (guide
@@ -4207,7 +4245,7 @@ function draftStudentMessage_(data) {
     // Belt and braces on the one unambiguous tell: even if the model slips an
     // em dash past the prompt, it never reaches a student (Edd, 11 Aug).
     text = text.replace(/\s*—\s*/g, ', ').replace(/,\s*,/g, ',');
-    return { ok: true, text: text, voiced: !!guide };
+    return { ok: true, text: text, voiced: !!guide, next_step: nextStep || '' };
   } catch (e) { return { ok: false, error: String(e) }; }
 }
 
@@ -4723,6 +4761,7 @@ function draftReplyPrompt_(ctx, tail, guide, signName) {
     (guide
       ? '- Sign off the way this instructor signs off in the style guide (their name: "' + (signName || 'The Ardent team') + '").\n'
       : '- Sign off as "' + (signName || 'The Ardent team') + '".\n') +
+    AI_TELLS_RULES_ +
     '\nReturn ONLY JSON, no prose, no fences:\n' +
     '{"message": "<the reply text>",\n' +
     ' "instructor_action": "<what the instructor must DO before sending, one short imperative line, or empty string>"}';
@@ -4932,15 +4971,7 @@ function batchStudentDrafts_(data) {
       'THE ISSUE:\n' + JSON.stringify({ summary: i.summary, lesson: i.lesson || i.lesson_code || '', fix_notes: fixNotes,
         student_first_name: String(st.name).split(' ')[0] }) + '\n' +
       (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n' : '') +
-      '\nSTYLE - strip the AI tells, every draft, whoever the instructor (Edd, 11 Aug):\n' +
-    '- NO em dashes, ever. Commas, full stops, or brackets instead.\n' +
-    '- No "isn\'t just X" / "more than just" setup-then-negate constructions. Direct, affirmative statements.\n' +
-    '- No throat-clearing openers, no "delve", no "whether you\'re a beginner or an expert" hedges.\n' +
-    '- No relentless rule-of-three rhythm (X, Y, and Z in every sentence).\n' +
-    '- Never announce that something "matters" - real importance shows in the writing.\n' +
-    '- No forward pointers or snappy aphoristic closers that add no information. If the point is made, stop.\n' +
-    '- No hollow superlatives (seamless, robust, game-changing, unlock, elevate and their kin).\n' +
-    '- No over-tidy symmetrical paragraphs that feel machine-balanced.\n' +
+      AI_TELLS_RULES_ +
     '\nRules: plain text only, no subject line, 60-140 words, greet the student by first name. ' +
       (guide
         ? 'Sign off exactly the way this instructor signs off in the style guide (their name: "' + (who || 'The Ardent team') + '"). '
