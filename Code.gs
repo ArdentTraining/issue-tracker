@@ -896,6 +896,7 @@ function getIssues_() {
 //      own click. Reads are listed explicitly - an action we forget about
 //      invalidates, which costs a re-read and never shows stale data.
 var LIST_RAW_CAP = 300;              // characters of raw text kept in the list
+var REPORTS_PASSTHROUGH = 1200;      // reports_json this small is not worth reworking
 var ISSUE_CACHE_KEY = 'ait_issues_list_v1';
 var ISSUE_CACHE_SECONDS = 60;
 var CACHE_CHUNK = 80 * 1024;         // CacheService caps a value at 100 KB
@@ -920,8 +921,13 @@ function issueListRow_(i) {
     if (s.length > LIST_RAW_CAP) clipped = true;
   }
   if (i.reports_json) {
+    var rjs = String(i.reports_json);
+    // Most reports are short. Parsing and re-serialising 900 of them costs
+    // more time on Apps Script than the bytes it saves, so anything already
+    // small goes straight through untouched.
+    if (rjs.length <= REPORTS_PASSTHROUGH) { o.reports_json = rjs; if (clipped) o.clipped = 1; return o; }
     var arr = null;
-    try { arr = JSON.parse(i.reports_json); } catch (e) { arr = null; }
+    try { arr = JSON.parse(rjs); } catch (e) { arr = null; }
     if (arr && arr.length !== undefined && arr.map) {
       o.reports_json = JSON.stringify(arr.map(function (rp) {
         var q = {}, rk, rv;
@@ -947,15 +953,31 @@ function issueListRow_(i) {
   return o;
 }
 
-function cachePutChunked_(key, str, secs) {
+// The payload is well over a megabyte and a cache value caps at 100 KB, so
+// it is gzipped first (JSON of this shape squashes to about a seventh) and
+// then chunked. Writing twenty 80 KB chunks took NINETEEN SECONDS and then
+// read back as a miss - measured, r54, before this. Gzipped it is three or
+// four chunks and the write is free.
+function packForCache_(str) {
+  return Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(str, 'application/json')).getBytes());
+}
+function unpackFromCache_(b64) {
+  return Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(b64), 'application/x-gzip')).getDataAsString();
+}
+function cachePutChunked_(key, raw, secs) {
   try {
+    var str = packForCache_(raw);
     var c = CacheService.getScriptCache();
     var n = Math.ceil(str.length / CACHE_CHUNK);
     if (n > CACHE_MAX_CHUNKS) { c.remove(key + '_n'); return false; }
     var map = {};
     for (var i = 0; i < n; i++) map[key + '_' + i] = str.substring(i * CACHE_CHUNK, (i + 1) * CACHE_CHUNK);
     c.putAll(map, secs);
-    c.put(key + '_n', String(n), secs);   // written last, so a half-written set never reads as complete
+    // Written last, so a half-written set never reads as complete. Reading
+    // one chunk straight back proves the write actually took: silently
+    // dropped values are exactly how the first attempt at this failed.
+    if (c.get(key + '_0') == null) return false;
+    c.put(key + '_n', String(n), secs);
     return true;
   } catch (e) { return false; }
 }
@@ -974,7 +996,7 @@ function cacheGetChunked_(key) {
       if (part == null) return null;   // a chunk expired: treat the whole thing as a miss
       out += part;
     }
-    return out;
+    return unpackFromCache_(out);
   } catch (e) { return null; }
 }
 
@@ -1015,8 +1037,29 @@ function getIssuesList_() {
       return p;
     } catch (e) {}
   }
-  var all = getIssues_().issues || [];
-  var payload = { ok: true, generated_at: new Date().toISOString(), issues: all.map(issueListRow_) };
+  // Straight off the sheet into the projection: building 900 full objects
+  // and then 900 slim ones was double the work for no reason.
+  var out = [];
+  ISSUE_SHEETS.forEach(function (name) {
+    var sheet = sheetByName_(name);
+    if (!sheet) return;
+    var values = sheet.getDataRange().getValues();
+    if (values.length < 2) return;
+    var head = values[0];
+    for (var r = 1; r < values.length; r++) {
+      var row = values[r];
+      if (!row[0]) continue;
+      var obj = {};
+      for (var c = 0; c < head.length; c++) {
+        if (row[c] === '' || row[c] === null) continue;
+        obj[head[c]] = row[c];
+      }
+      if (obj.chase_at) obj.chase_at = dayStr_(obj.chase_at);
+      if (obj.tracking_number) obj.tracking_number = normaliseTracking_(obj.tracking_number);
+      out.push(issueListRow_(obj));
+    }
+  });
+  var payload = { ok: true, generated_at: new Date().toISOString(), issues: out };
   cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(payload), ISSUE_CACHE_SECONDS);
   return payload;
 }
@@ -1058,24 +1101,34 @@ function bootstrap_(user) {
     user: publicUser_(user),
     backend: backendInfo_()
   };
+  // Rough server-side timings, so a slow open can be diagnosed from the
+  // response instead of guessing which piece of it was the hold-up.
+  var t0 = Date.now(), ms = {};
   var list = getIssuesList_();
   out.issues = list.issues || [];
   out.issues_from_cache = !!list.from_cache;
+  ms.issues = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('getInstructors'))) {
     try { out.instructors = getInstructors_().instructors || []; } catch (e) { out.instructors_error = String(e); }
   }
+  ms.instructors = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('getAssignees'))) {
     try { out.assignees = listAssignees_().assignees || []; } catch (e) { out.assignees_error = String(e); }
   }
+  ms.assignees = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('listLiveCases'))) {
     try { out.live_cases = listLiveCases_({ _issues: out.issues }).cases || []; } catch (e) { out.live_cases_error = String(e); }
   }
+  ms.live_cases = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('chatScanList'))) {
     try { out.scans = chatScanList_().scans || []; } catch (e) { out.scans_error = String(e); }
   }
+  ms.scans = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('listPlaybookSuggestions'))) {
     try { out.playbook_suggestions = getSuggestions_() || []; } catch (e) {}
   }
+  ms.total = Date.now() - t0;
+  out.ms = ms;   // cumulative milliseconds at each step
   return out;
 }
 
