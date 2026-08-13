@@ -177,7 +177,16 @@ var HEADERS = [
   // read from. Deliberately LEFT OUT of the list projection (issueListRow_) so
   // the board stays as fast as Round 54 made it.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'next_action_json'   // AU {action, why, instructor_side, student_ask, sig, at}
+  'next_action_json',  // AU {action, why, instructor_side, student_ask, sig, at}
+  // Is there a student on the other end of this report at all? (Edd, FB-0207:
+  // "I specifically didn't attach this report to a student and yet you gave
+  // things for the student to try.") Set from what the form held when it was
+  // logged, not re-guessed later, so the checklist, the things-to-try and the
+  // next-action reasoner all read the same answer. Blank on every row logged
+  // before this column existed, which reads as "work it out from the name and
+  // contact" rather than as a no.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'student_involved'   // AV yes | no | '' (unknown, older rows)
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -348,6 +357,7 @@ function doPost(e) {
     if (action === 'askIssues') return jsonOut(askIssues_(body));
     if (action === 'suggestFix') return jsonOut(suggestFix_(body));
     if (action === 'troubleshoot') return jsonOut(troubleshoot_(body));
+    if (action === 'sameIssue') return jsonOut(sameIssue_(body));
     if (action === 'draftStudentMessage') return jsonOut(draftStudentMessage_(body));
     if (action === 'nextAction') return jsonOut(nextAction_(body));
     if (action === 'chatwootContactUrl') return jsonOut(chatwootContactUrl_(body));
@@ -434,7 +444,7 @@ function hasPerm_(user, req) {
 }
 function reqPerm_(action) {
   switch (action) {
-    case 'addIssue': case 'addUpdate': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'nextAction': case 'chatwootContactUrl': return 'log';
+    case 'addIssue': case 'addUpdate': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'nextAction': case 'sameIssue': case 'chatwootContactUrl': return 'log';
     // updateIssue is 'work' so the dev/course team can retune priority from
     // their drawer; anything beyond priority still needs manage (checked
     // inside updateIssue_ itself).
@@ -1040,6 +1050,9 @@ var READ_ONLY_ACTIONS = {
   getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1,
   listVoiceGuides: 1, listContentSuggestions: 1, getManifest: 1, extract: 1, askIssues: 1,
   suggestFix: 1, troubleshoot: 1, matchUpdate: 1, draftStudentMessage: 1, listLiveCases: 1,
+  // Reads open issues and answers a question; writes nothing, so the cached
+  // list projection survives it (the Round 54 invalidation rule).
+  sameIssue: 1,
   caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
   // nextAction DOES write one cell (its own cached answer), and it still
   // belongs here. The list projection leaves next_action_json out entirely, so
@@ -1306,6 +1319,12 @@ function addIssue_(data) {
     courier: category === 'shipping' ? (data.courier || '') : '',
     tracking_number: category === 'shipping' ? normaliseTracking_(data.tracking_number) : '',
     student_sorted: (data.student_sorted === true || data.student_sorted === 'true') ? true : '',
+    // Whether anyone is on the other end. The form answers this; we only fall
+    // back to reading it off the report when an older caller says nothing.
+    student_involved: data.student_involved === 'no' || data.student_involved === false ? 'no'
+      : data.student_involved === 'yes' || data.student_involved === true ? 'yes'
+      : (audience === 'internal' ? 'no'
+        : (String(data.student_name || '').trim() || String(data.student_contact || '').trim()) ? 'yes' : 'no'),
     // Default to chasing in three working-ish days if nobody said otherwise:
     // an unchased parcel problem is the one that goes quiet for a fortnight.
     chase_at: category === 'shipping'
@@ -1483,6 +1502,27 @@ function bumpPriority_(current, incoming) {
 // Course errors are first narrowed to the SAME slide (lesson code), then the AI
 // must confirm it is the same actual error, because one slide can carry two
 // completely different errors that must stay separate.
+// The same matcher the submit already runs, asked BEFORE the submit so the
+// instructor sees the merge coming and gets the choice (Edd, FB-0204: he
+// logged the same city drop-down fault twice, five minutes apart, and was
+// never offered it). Deliberately the same function rather than a second
+// opinion, so what the popup offers is exactly what would otherwise have
+// happened quietly at submit. The front end only asks when its own word
+// scoring already puts a candidate close, so this is one small call on the
+// reports where it might matter, not on every extraction.
+function sameIssue_(data) {
+  var category = String(data.category || 'tech_issue').toLowerCase();
+  if (category === 'internal') category = 'tech_issue';
+  if (!String(data.summary || '').trim() && !String(data.raw_text || '').trim()) {
+    return { ok: true, match_id: null, why: 'nothing to match on yet' };
+  }
+  var id = null;
+  try { id = aiMatchIssue_(data, category); } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+  return { ok: true, match_id: id || null };
+}
+
 function aiMatchIssue_(data, category) {
   var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) return null;
@@ -3781,13 +3821,14 @@ function troubleshoot_(data) {
   if (!apiKey) return fallbackSteps_(data && (data.staff === true || data.staff === 'true'));
   var raw = data.raw_text || '';
   if (!raw) return { ok: true, found: false };
-  // Our own systems (an internal task, or anything on the instructor portal)
-  // have no student on the other end, so the steps are addressed to whoever is
-  // sitting there and the student-account ones drop out.
+  // No student on the other end, so the steps are addressed to whoever is
+  // sitting there and the student-account ones drop out. That is our own
+  // systems (an internal task, the instructor portal) and, since FB-0207, any
+  // report an instructor logged without attaching a student to it.
   var staff = (data.staff === true || data.staff === 'true');
 
   var prompt = (staff
-    ? 'You are helping an Ardent Training staff member troubleshoot a fault they have hit on one of OUR OWN systems (the instructor portal, or an internal task). There is NO student involved: the person reporting it is the person sitting in front of it. Address every step to them directly ("try a hard refresh", "ask someone else on the team to load it"), never "get the student to". Skip anything about a student\'s account, their email address, their password, or a partner portal login, because none of it applies. Everything else still counts: staff hit stale caches, bad extensions and flaky networks like anyone else, and knowing whether a hard refresh or another browser clears it tells the developers whether it is everyone or one session. '
+    ? 'You are helping an Ardent Training staff member troubleshoot a fault THEY have hit and reported themselves. There is NO student on the other end of this report: nobody has been in touch about it, and there is nobody to relay steps to. It is either one of our own systems (the instructor portal, an internal task) or a bug an instructor spotted while using the platform. Address every step to them directly ("try a hard refresh", "ask someone else on the team to load it"), and NEVER phrase anything as "get the student to", "ask the student", or "send the student" - there is no student to ask, and doing it anyway is the single thing we have been told off for. Skip anything about a student\'s account, their email address, their password, or a partner portal login, because none of it applies. Everything else still counts: staff hit stale caches, bad extensions and flaky networks like anyone else, and knowing whether a hard refresh or another browser clears it tells the developers whether it is everyone or one session. '
     : 'You are helping an Ardent Training instructor troubleshoot a student tech issue. ') +
     'Below is the troubleshooting playbook, then the conversation or notes the instructor pasted. ' +
     'Work out what has ALREADY been tried in the conversation, then list the NEXT things the instructor should get the student to try, in the playbook order, skipping anything already done. ' +
@@ -4443,7 +4484,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r55 · 2026-08-13';
+var CODE_STAMP = 'r56 · 2026-08-13';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4682,7 +4723,8 @@ function nextActionSignature_(rec) {
     'q' + String(rec.dev_query_at || ''),
     'a' + String(rec.assignee || ''),
     'z' + (String(rec.student_sorted) === 'true' ? 1 : 0),
-    'n' + (String(rec.notified_students) === 'true' ? 1 : 0)
+    'n' + (String(rec.notified_students) === 'true' ? 1 : 0),
+    'i' + (issueHasStudent_(rec) ? 1 : 0)
   ].join('|');
 }
 
@@ -4701,8 +4743,22 @@ function checklistEvidence_(rec, staff) {
   }).join('\n');
 }
 
+// Is there a student on the other end of this issue? The flag the form saved
+// wins; rows logged before that column existed get read the old way (Edd,
+// FB-0207). Kept next to nextActionAi_ because the reasoner is the loudest
+// place a wrong answer shows up.
+function issueHasStudent_(rec) {
+  var flag = String(rec.student_involved || '').toLowerCase();
+  if (flag === 'no') return false;
+  if (flag === 'yes') return true;
+  if (String(rec.audience || '') === 'internal') return false;
+  return !!(String(rec.student_name || '').trim() || String(rec.student_contact || '').trim());
+}
+
 function nextActionAi_(rec) {
-  var staff = String(rec.audience || '') === 'internal' ||
+  var hasStudent = issueHasStudent_(rec);
+  var staff = !hasStudent ||
+    String(rec.audience || '') === 'internal' ||
     ['instructor_portal', 'partner_portal'].indexOf(String(rec.section || '')) > -1;
   var tr = issueTranscript_(rec);
   var cat = String(rec.category || 'tech_issue');
@@ -4729,6 +4785,7 @@ function nextActionAi_(rec) {
     lesson: rec.lesson || rec.lesson_code || '',
     student_name: rec.student_name || '',
     student_has_contact: !!rec.student_contact,
+    a_student_is_involved: hasStudent,
     student_sorted: String(rec.student_sorted) === 'true',
     students_notified: String(rec.notified_students) === 'true',
     device_info: rec.device_info || '',
@@ -4749,6 +4806,8 @@ function nextActionAi_(rec) {
   var prompt = 'You are the most experienced person on the support desk at Ardent Training, an online RYA sailing school. ' +
     'An instructor has this issue open in front of them and wants ONE genuinely useful next action.\n\n' +
     'THE HARD RULES, in order of importance:\n' +
+    (hasStudent ? '' :
+      '0. THERE IS NO STUDENT ON THIS ONE. It was logged by one of the team about something they hit themselves, and a_student_is_involved is false. So there is nobody to ask, nobody to relay a step to, and nobody waiting on an update. Do NOT return an action that asks the student anything, tells us to contact or update a student, or waits on a student reply, and do NOT ask for information only a student could give. student_ask must be an empty string and instructor_side must be true. The useful action here is one WE take: reproduce it ourselves and pin down exactly when it happens, check whether anyone else on the team sees it, or hand it to the developers with what we already know.\n') +
     '1. NEVER ask the student for something the thread already gives you. If they have told us the device, the iOS version, the browser, or sent a screenshot or video, that question is answered.\n' +
     '2. NEVER suggest anything the thread shows has already been tried, and never suggest a variation of it in different words.\n' +
     '3. A troubleshooting step that could not possibly explain THIS fault is not a next action, however untried it is. A layout that breaks only in portrait, or a video that stops at the same second every time, is not going to be fixed by a different network, a hard refresh or a VPN being turned off. Ignore untried steps that do not fit the symptom, and say so in the why line if that is the interesting part.\n' +

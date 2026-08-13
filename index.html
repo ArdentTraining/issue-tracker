@@ -423,7 +423,8 @@
   .clRow.done .clLabel { color: var(--muted); text-decoration: line-through; }
   .clRow.na .clLabel { color: var(--muted); }
   .clBtns { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-  .clBtn { background: var(--bg); color: var(--muted); border: none; border-left: 1px solid var(--line); padding: 4px 9px; font-size: 12px; cursor: pointer; width: auto; }
+  .clBtn { background: var(--bg); color: var(--muted); border: none; border-left: 1px solid var(--line); padding: 4px 9px; font-size: 12px; cursor: pointer; width: auto; white-space: nowrap; }
+  .clBtn--done { min-width: 76px; text-align: center; }
   .clBtn:first-child { border-left: none; }
   .clBtn.on.clBtn--done { background: var(--low); color: #fff; }
   .clBtn.on.clBtn--na { background: var(--surface-2); color: var(--text); }
@@ -595,11 +596,11 @@
         <div id="instructorName" style="padding:9px 0;">—</div>
       </div>
 
-      <div class="field hidden" id="field_mode">
+      <div class="field" id="field_mode">
         <label>What is this report?</label>
         <div class="seg" id="modeSeg">
-          <button type="button" id="mode_student" class="active" onclick="setFormMode('student')">Student support</button>
-          <button type="button" id="mode_internal" onclick="setFormMode('internal')">Internal task / bug</button>
+          <button type="button" id="mode_student" class="active" onclick="setFormMode('student', true)">Reported by a student</button>
+          <button type="button" id="mode_internal" onclick="setFormMode('internal', true)">General bug / suggestion</button>
         </div>
         <div class="small muted" id="modeHint" style="margin-top:4px;"></div>
       </div>
@@ -1355,7 +1356,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r55 · 2026-08-13";  // bump this with each round, it lands on every feedback report
+var BUILD = "r56 · 2026-08-13";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1478,6 +1479,7 @@ var state = {
   devKind: "all",             // all | fix | improvement
   devType: "all",             // all | <issue_type values present in the queue>
   devSize: "all",             // all | small | medium | large | unsized
+  devSearch: "",              // developers view: free-text search, same fields as Track (Edd, FB-0205)
   courseFilter: "todo",       // course fixes view: todo / fixed / all
   courseBulkKind: "kc",       // bulk assign: which kind of fix ("assign all X...")
   courseBulkWho: "",          // bulk assign: ...to whom
@@ -1495,6 +1497,7 @@ var state = {
   assignees: [],              // people an issue can be assigned to (name/email + course/dev flags)
   formMode: "student",        // "student" (support report) or "internal" (admin-only internal task/bug)
   noStudent: false,           // instructor confirmed there is no student for this issue, so no email is chased
+  modeChosen: false,          // the instructor answered "what is this report?" themselves, so extraction must not overrule it
   subIssues: null,            // the "split" subset actually being logged as their own issues
   subIssuesAll: null,         // every separate problem the AI found in one report
   subDisp: null,              // per-problem disposition, same order as subIssuesAll: split | fold | drop
@@ -1515,6 +1518,8 @@ var state = {
   courseType: "all",          // all | lesson | kc | ma (from the code suffix .K / .M)
   coursePart: "all",          // all | text | video | other (which part of the lesson)
   courseAssignee: "all",      // all | unassigned | <person's name>
+  courseKind: "all",          // all | fix | improvement (Edd, FB-0206: suggested improvements should be visible as such here too)
+  courseSearch: "",           // free-text search, same fields as Track
   // Live cases (Round 45): the shared Open-conversations workspace.
   liveCases: [],              // open cases from the LiveCases sheet, newest activity first
   liveSelected: null,         // conversation_id of the case on screen
@@ -1540,29 +1545,35 @@ var COURIERS = ["DHL", "Royal Mail", "Parcelforce", "UPS", "FedEx", "DPD", "Evri
 // ones that survive but are phrased at a student (Edd, 4 Aug: "staff also need
 // reminding of simple fixes sometimes").
 var CHECKLIST = [
-  { id: "confirm_error",          group: "Identify and record", label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)", staff: true, staffLabel: "Confirmed exactly what's failing and what you're seeing (screenshot if useful)" },
-  { id: "noted_device",           group: "Identify and record", label: "Noted device make, model, OS version, and browser or app", staff: true, staffLabel: "Noted which browser, device and OS version you were on" },
-  { id: "replicated",             group: "Identify and record", label: "Tried the same course, lesson and portal yourself, on your own account and device", staff: true, staffLabel: "Asked someone else on the team to try the same thing, to see if it's just you" },
-  { id: "right_place",            group: "Account and login",   label: "Logging in via the right place (correct partner portal vs ardent-training.com)" },
-  { id: "email_correct",          group: "Account and login",   label: "Email spelled correctly, and it's the one they registered with" },
-  { id: "password_reset",         group: "Account and login",   label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' },
-  { id: "social_signin_password", group: "Account and login",   label: 'Social sign-in: created a password via "organisation → forgot password"' },
-  { id: "refreshed",              group: "Standard fixes",      label: "Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)", staff: true },
-  { id: "logout_login",           group: "Standard fixes",      label: "Logged out and back in", staff: true },
-  { id: "restart_device",         group: "Standard fixes",      label: "Restarted the device (or closed and reopened the app/browser)", staff: true },
-  { id: "clear_cache",            group: "Standard fixes",      label: "Cleared cache / tried an incognito or private window", staff: true },
-  { id: "app_updated",            group: "Standard fixes",      label: "Checked the app is up to date" },
-  { id: "different_browser",      group: "Standard fixes",      label: "Tried a different browser", staff: true },
-  { id: "different_device",       group: "Standard fixes",      label: "Tried a different device", staff: true },
-  { id: "different_network",      group: "Standard fixes",      label: "Tried a different network (mobile data, hotspot, or another wifi)", staff: true },
-  { id: "vpn_adblock",            group: "Standard fixes",      label: "Turned off any VPN, ad blocker, or content/parental filter", staff: true },
-  { id: "storage_space",          group: "Standard fixes",      label: "Checked there's free storage on the device (download/save problems)" }
+  { id: "confirm_error",          group: "Identify and record", label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)", staff: true, staffLabel: "Confirmed exactly what's failing and what you're seeing (screenshot if useful)", verb: "Confirmed" },
+  { id: "noted_device",           group: "Identify and record", label: "Noted device make, model, OS version, and browser or app", staff: true, staffLabel: "Noted which browser, device and OS version you were on", verb: "Noted" },
+  { id: "replicated",             group: "Identify and record", label: "Tried the same course, lesson and portal yourself, on your own account and device", staff: true, staffLabel: "Asked someone else on the team to try the same thing, to see if it's just you", verb: "Tried", staffVerb: "Asked" },
+  { id: "right_place",            group: "Account and login",   label: "Logging in via the right place (correct partner portal vs ardent-training.com)", verb: "Checked" },
+  { id: "email_correct",          group: "Account and login",   label: "Email spelled correctly, and it's the one they registered with", verb: "Checked" },
+  { id: "password_reset",         group: "Account and login",   label: 'Tried "forgot password", then typed email and password manually (no copy-paste)', verb: "Tried" },
+  { id: "social_signin_password", group: "Account and login",   label: 'Social sign-in: created a password via "organisation → forgot password"', verb: "Tried" },
+  { id: "refreshed",              group: "Standard fixes",      label: "Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)", staff: true, verb: "Tried" },
+  { id: "logout_login",           group: "Standard fixes",      label: "Logged out and back in", staff: true, verb: "Tried" },
+  { id: "restart_device",         group: "Standard fixes",      label: "Restarted the device (or closed and reopened the app/browser)", staff: true, verb: "Tried" },
+  { id: "clear_cache",            group: "Standard fixes",      label: "Cleared cache / tried an incognito or private window", staff: true, verb: "Tried" },
+  { id: "app_updated",            group: "Standard fixes",      label: "Checked the app is up to date", verb: "Checked" },
+  { id: "different_browser",      group: "Standard fixes",      label: "Tried a different browser", staff: true, verb: "Tried" },
+  { id: "different_device",       group: "Standard fixes",      label: "Tried a different device", staff: true, verb: "Tried" },
+  { id: "different_network",      group: "Standard fixes",      label: "Tried a different network (mobile data, hotspot, or another wifi)", staff: true, verb: "Tried" },
+  { id: "vpn_adblock",            group: "Standard fixes",      label: "Turned off any VPN, ad blocker, or content/parental filter", staff: true, verb: "Tried" },
+  { id: "storage_space",          group: "Standard fixes",      label: "Checked there's free storage on the device (download/save problems)", verb: "Checked" }
 ];
 // The list that applies to this report, and the wording that suits it.
 function checklistFor(staff) {
   return staff ? CHECKLIST.filter(function (it) { return it.staff; }) : CHECKLIST;
 }
 function checklistLabel(it, staff) { return (staff && it.staffLabel) ? it.staffLabel : it.label; }
+// The word on the "done" button. Half of these are not things anybody tries:
+// writing down a device model, or confirming which portal an account sits on,
+// is noted or checked, and labelling that "Tried" made the button read as a
+// lie (Edd, FB-0208). The stored value stays "done" whichever verb shows, so
+// nothing downstream has to know about this.
+function checklistVerb(it, staff) { return (staff && it.staffVerb) ? it.staffVerb : (it.verb || "Tried"); }
 
 // Parse the saved checklist map off an issue row.
 function checklistMapOf(issue) {
@@ -1590,7 +1601,7 @@ function checklistBody(map, handler, arg, staff) {
     html += '<div class="clRow ' + cur + '">' +
       '<div class="clLabel">' + esc(checklistLabel(it, staff)) + "</div>" +
       '<div class="clBtns">' +
-        clBtn("done", "Tried", cur, handler, arg, it.id) +
+        clBtn("done", checklistVerb(it, staff), cur, handler, arg, it.id) +
         clBtn("na", "N/A", cur, handler, arg, it.id) +
         clBtn("todo", "Not yet", cur, handler, arg, it.id) +
       "</div></div>";
@@ -1607,7 +1618,7 @@ function renderFormChecklist() {
   if (state.category !== "tech_issue" || state.requestKind === "improvement" || loggingAsResolved()) {
     panel.classList.add("hidden"); panel.innerHTML = ""; return;
   }
-  var staff = formIsOurOwnSystem();
+  var staff = formIsStaffTroubleshooting();
   var map = state.checklist || {};
   var items = checklistFor(staff);
   var cleared = checklistCleared(map, staff);
@@ -2152,9 +2163,11 @@ function applyPerms(user) {
   $("tabCourse").style.display = p.course ? "" : "none";
   $("tabUsers").style.display = p.users ? "" : "none";
 
-  // The Internal task toggle is only for full admins; everyone else just sees
-  // the normal student-support form with no toggle at all.
-  if ($("field_mode")) $("field_mode").classList.toggle("hidden", !p.users);
+  // Everybody gets to say whether a student is behind this report (Edd,
+  // FB-0206). It used to be an admins-only "internal task" switch, which left
+  // every instructor logging their own spotted bugs down the student-support
+  // path and being handed things to try with a student who does not exist.
+  if ($("field_mode")) $("field_mode").classList.toggle("hidden", !p.log);
 
   var name = (user && (user.name || user.email)) || "";
   state.selectedInstructor = name;
@@ -3242,13 +3255,20 @@ function setCategory(cat) {
   updateAdaptiveFields();
 }
 
-// Student support vs Internal task. Internal is only offered to admins (the
-// "users" permission, i.e. Edd/Charly/Charlie) and is for our own systems:
-// portals, website, infrastructure. No student fields, no email chasing, no
-// troubleshooting checklist.
-function canLogInternal() { return !!(state.perms && state.perms.users); }
-function setFormMode(mode) {
+// "Reported by a student" vs "General bug / suggestion". The second one is
+// anything we spotted ourselves: a portal or website bug, an internal job, or
+// an idea. No student fields, no email chasing, and no student-facing
+// troubleshooting. Open to anyone who can log (Edd, FB-0206) - it used to be
+// admins only, which is exactly how an instructor's own bug report ended up
+// being answered with steps for a student (FB-0207).
+function canLogInternal() { return !!(state.perms && state.perms.log); }
+function setFormMode(mode, byUser) {
   mode = mode === "internal" && canLogInternal() ? "internal" : "student";
+  // Once the instructor has answered "what is this report?" themselves, the
+  // extraction does not get to answer it again. Edd picking "General bug"
+  // and the AI quietly flipping it back to student support is the same fault
+  // as FB-0207 wearing a different hat.
+  if (byUser) state.modeChosen = true;
   state.formMode = mode;
   var isInternal = mode === "internal";
   // Nothing shows below the Extract button until an extraction has run (or an
@@ -3258,14 +3278,18 @@ function setFormMode(mode) {
   $("mode_internal").className = isInternal ? "active" : "";
   var hint = $("modeHint");
   if (hint) hint.textContent = isInternal
-    ? "An internal job for the team: portals, website, infrastructure, or admin. Not tied to a student."
+    ? "Something we spotted ourselves, or an idea: portals, website, infrastructure, admin, or an improvement. No student attached, so no steps to work through with one."
     : "";
   if (isInternal) {
-    // Internal work is technical by definition (our portals, site, infra).
-    state.category = "tech_issue";
-    // Internal work isn't something to troubleshoot with a student.
+    // Nobody to troubleshoot with, so the student-facing helpers go.
     hideTroubleshoot();
     hideSuggestion();
+    // A general bug is usually a tech one, but an instructor spotting a wrong
+    // diagram themselves is a course error and must not be forced into the
+    // tech queue, so the category picker is left alone here (Round 56). It was
+    // pinned to tech_issue while this switch was admins-only and only ever
+    // meant "internal job".
+    state.category = $("f_category") ? $("f_category").value : "tech_issue";
   } else {
     state.category = $("f_category") ? $("f_category").value : "course_error";
   }
@@ -3277,7 +3301,7 @@ function renderIssueTypeOptions() {
   var sel = $("f_issue_type");
   if (!sel) return;
   var current = sel.value;
-  var opts = state.formMode === "internal" ? ISSUE_TYPES_INTERNAL
+  var opts = (state.formMode === "internal" && state.category !== "course_error") ? ISSUE_TYPES_INTERNAL
     : state.category === "shipping" ? ISSUE_TYPES_SHIPPING
     : ISSUE_TYPES_STUDENT;
   sel.innerHTML = opts.map(function (t) { return '<option value="' + t + '">' + t + '</option>'; }).join("");
@@ -3329,25 +3353,28 @@ function showField(id, show) {
 function updateAdaptiveFields() {
   updateSortedRow();
   var isInternal = state.formMode === "internal";
-  var isCourse = !isInternal && state.category === "course_error";
-  var isShipping = !isInternal && state.category === "shipping";
+  var isCourse = state.category === "course_error";
+  var isShipping = state.category === "shipping";
   var isImprovement = state.requestKind === "improvement";
   // A parcel has no lesson, no device and no part-of-platform: it has a
   // courier, a tracking number and a date to chase.
   showField("field_shipping", isShipping);
   showField("field_chase", isShipping);
-  // Internal tasks are about our systems, not a student's problem, so all the
-  // student-facing fields go away and the section picker does the locating.
-  showField("field_category", !isInternal);
-  showField("field_reqkind", !isInternal);
+  // A general bug has no student behind it, so the student row goes. Everything
+  // else stays: an instructor spotting a wrong diagram themselves is still a
+  // course error on a lesson, and still might be an improvement rather than a
+  // fault, so the category and fix/improvement pickers now survive the switch
+  // (Round 56; they were hidden while this was an admins-only internal switch).
+  showField("field_category", true);
+  showField("field_reqkind", true);
   showField("field_student_row", !isInternal);
-  showField("field_course_row", !isInternal && !isShipping);
-  showField("field_module_row", !isInternal && !isShipping);
-  showField("field_device", !isInternal && !isCourse && !isShipping);  // tech only
-  showField("field_platform", !isCourse && !isShipping);              // tech + internal bugs
+  showField("field_course_row", !isShipping);
+  showField("field_module_row", !isShipping);
+  showField("field_device", !isCourse && !isShipping);  // tech only
+  showField("field_platform", !isCourse && !isShipping);
   showField("field_media", isCourse);                   // course only
   showField("field_double_checked", isCourse);          // course only
-  showField("field_impact", !isInternal && isImprovement); // improvements (either category)
+  showField("field_impact", isImprovement);             // improvements (either category)
   // Section is most useful for tech and internal problems; course errors are
   // located by their lesson code instead.
   showField("field_section", !isCourse);
@@ -3505,9 +3532,11 @@ function runExtract() {
     // If this reads as an internal problem (portal, admin tools) and this user
     // is allowed to log internal tasks, flip the form over automatically. They
     // can flip it back if the AI has misread it.
-    if (f.likely_internal === true && canLogInternal() && !state.editingId) {
+    if (state.modeChosen) {
+      // Their call, not ours.
+    } else if (f.likely_internal === true && canLogInternal() && !state.editingId) {
       setFormMode("internal");
-      $("extractStatus").textContent = "This looks like an internal issue, so I've set the form to Internal. Flip it back if that's wrong.";
+      $("extractStatus").textContent = "Nothing here points at a student, so I've set this to a general bug. Flip it back if there is one.";
     } else if (state.formMode === "internal" && f.likely_internal === false) {
       setFormMode("student");
     }
@@ -3771,13 +3800,14 @@ function requestTroubleshoot(checklistOnly) {
   if (state.category !== "tech_issue") return;
   var raw = getField("rawText");
   if (!raw) return;
-  // On our own systems the steps are for whoever is sitting there, which is
-  // one of us, so the backend words them in the second person and skips the
-  // student-account ones.
-  var payload = { action: "troubleshoot", raw_text: raw, staff: formIsOurOwnSystem() };
+  // With no student on the other end the steps are for whoever is sitting
+  // there, which is one of us, so the backend words them in the second person
+  // and skips the student-account ones. That covers our own systems and, since
+  // FB-0207, any report logged without a student attached.
+  var payload = { action: "troubleshoot", raw_text: raw, staff: formIsStaffTroubleshooting() };
   var target = (state.existingMatches || []).filter(function (m) { return m.issue_id === state.updateTargetId; })[0];
   if (target && target.raw_text) payload.existing_history = target.raw_text;
-  showLoading("Checking what to try with the student…");
+  showLoading(payload.staff ? "Checking what to try…" : "Checking what to try with the student…");
   apiPost(payload).then(function (res) {
     hideLoading();
     if (res && res.ok) {
@@ -3796,6 +3826,21 @@ function requestTroubleshoot(checklistOnly) {
 // instructor should SEE it coming and get the choice. Repeat reports are how
 // faults get prioritised (each one bumps the count and nudges priority up),
 // so the default is to add to the existing trail.
+// Everything worth searching an issue by, in one string. Track has read this
+// since the beginning; the Developers page now reads the same one so a search
+// there behaves exactly the way it does on the board (Edd, FB-0205).
+// Note the Round 54 limit: raw_text in the list projection is the first 900
+// characters of a report, so a phrase buried deep in a long thread will not be
+// found here. The fix, if it ever bites, is a server-side search.
+function searchHay(i) {
+  return ((i.lesson_code || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
+          " " + (i.lesson || "") + " " + (i.module || "") + " " + (i.device_info || "") +
+          " " + (i.resolution_note || "") + " " + (i.student_contact || "") +
+          " " + (i.instructor_name || "") + " " + (i.assignee || "") +
+          " " + (i.section || "") + " " + (i.dev_notes || "") +
+          " " + shortId(i) + " " + (i.issue_id || "") +
+          " " + (i.raw_text || "")).toLowerCase();
+}
 function tokensOf(s) {
   var stop = { this: 1, that: 1, with: 1, from: 1, when: 1, then: 1, does: 1, not: 1, the: 1, and: 1, for: 1, are: 1, was: 1, has: 1, have: 1, been: 1, student: 1, issue: 1, page: 1 };
   return String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length > 3 && !stop[w]; });
@@ -3807,15 +3852,32 @@ function tokensOf(s) {
 function isSplitting() {
   return !!(state.splitMode && state.subIssues && state.subIssues.length >= 1);
 }
-function detectDuplicateFault() {
-  if (state.editingId || state.updateTargetId) return null;
-  if (isSplitting()) return null;
+// Scoring the candidates. The old version leaned almost entirely on a lesson
+// code: matching one was worth 2 of the 3 points needed, so a report that had
+// one only needed a quarter of its words to overlap, while a report WITHOUT
+// one needed three quarters - and two AI-written summaries of the same fault
+// rarely share three quarters of their words. Website, portal and purchase
+// bugs have no lesson code at all, which is why Edd logged the same city
+// drop-down fault twice five minutes apart and was never offered the merge
+// (FB-0204). So there are now two more ways to earn the missing points, and
+// both are things a lesson code was only ever standing in for: the same part
+// of the platform, and the same person logging again within the hour.
+var DUP_SURE  = 3;     // show the merge offer outright
+var DUP_MAYBE = 1.5;   // close enough to be worth asking the AI matcher about
+function dupCandidates() {
+  var out = { best: null, score: 0 };
+  if (state.editingId || state.updateTargetId) return out;
+  if (isSplitting()) return out;
   var myRef = String(getField("f_lesson_code") || "").trim().toUpperCase();
-  var mySum = tokensOf(getField("f_summary"));
-  if (!mySum.length) return null;
+  // Compare on the summary AND the top of what was actually pasted, so a
+  // report submitted before the summary settles still has words to match on.
+  var mine = tokensOf(getField("f_summary") + " " + String(getField("rawText") || "").slice(0, 600));
+  if (!mine.length) return out;
   var myEmail = String(getField("f_student_contact") || "").trim().toLowerCase();
+  var mySection = String(getField("f_section") || "").trim().toLowerCase();
+  var me = String(state.selectedInstructor || "").trim().toLowerCase();
   var myCat = state.category;
-  var best = null, bestScore = 0;
+  var now = Date.now();
   (state.issues || []).forEach(function (i) {
     if (!isOpen(i)) return;
     if (catOf(i) !== myCat) return;
@@ -3823,14 +3885,26 @@ function detectDuplicateFault() {
     var score = 0;
     var iRef = String(i.lesson_code || "").trim().toUpperCase();
     if (myRef && iRef && myRef === iRef) score += 2;
-    var theirs = tokensOf(i.summary);
+    var theirs = tokensOf(faultWords(i).text);
     if (theirs.length) {
-      var shared = mySum.filter(function (w) { return theirs.indexOf(w) > -1; }).length;
-      score += 4 * (shared / Math.min(mySum.length, theirs.length));
+      var shared = mine.filter(function (w) { return theirs.indexOf(w) > -1; }).length;
+      score += 4 * (shared / Math.min(mine.length, theirs.length));
     }
-    if (score > bestScore) { bestScore = score; best = i; }
+    // Logging a run of bugs in one sitting is exactly when the same one gets
+    // written up twice, so a recent one of our own counts for something.
+    var age = now - new Date(i.submitted_at || 0).getTime();
+    if (me && age >= 0 && age < 60 * 60 * 1000 &&
+        String(i.instructor_name || "").trim().toLowerCase() === me) score += 1.2;
+    // Same part of the platform, which is what a lesson code does for a course
+    // error and what nothing did for a website bug.
+    if (mySection && String(i.section || "").toLowerCase() === mySection) score += 0.8;
+    if (score > out.score) { out.score = score; out.best = i; }
   });
-  return bestScore >= 3 ? best : null;
+  return out;
+}
+function detectDuplicateFault() {
+  var c = dupCandidates();
+  return c.score >= DUP_SURE ? c.best : null;
 }
 // The words that actually tell us what a logged fault is. The summary first,
 // but a report submitted without Extract has no summary at all, so fall back to
@@ -3848,8 +3922,32 @@ function faultWords(issue) {
   }
   return { text: raw, fromRaw: true };
 }
-function showDupSuggestion() {
-  var match = detectDuplicateFault();
+// Word overlap said "maybe". Ask the same matcher the submit would have used,
+// so what the instructor is offered is what would actually have happened,
+// rather than a second opinion that can disagree with it. One small call, and
+// only when a candidate is already close (see DUP_MAYBE).
+function askDupMatcher() {
+  var c = dupCandidates();
+  if (c.score >= DUP_SURE || c.score < DUP_MAYBE) return;
+  var raw = String(getField("rawText") || "");
+  if (!raw) return;
+  apiPost({
+    action: "sameIssue",
+    category: state.category,
+    summary: getField("f_summary"),
+    raw_text: raw.slice(0, 6000),
+    lesson_code: getField("f_lesson_code"),
+    device_info: getField("f_device_info")
+  }).then(function (res) {
+    if (!res || !res.ok || !res.match_id) return;
+    // They may have moved on since we asked.
+    if (state.editingId || state.updateTargetId || state.dupTargetId || state.dupDismissed) return;
+    var hit = (state.issues || []).filter(function (i) { return i.issue_id === res.match_id; })[0];
+    if (hit) showDupSuggestion(hit);
+  }).catch(function (e) { console.error(e); });
+}
+function showDupSuggestion(forced) {
+  var match = forced || detectDuplicateFault();
   if (!match) return;
   state.dupTargetId = match.issue_id;
   state.dupDismissed = false;
@@ -3921,6 +4019,7 @@ function hideDupSuggestion() {
 function afterExtractReady() {
   detectExistingIssue();
   showDupSuggestion();
+  if (!state.dupTargetId) askDupMatcher();
   // The known-fix suggestion and the troubleshooting steps are bug-only. An
   // improvement is a feature request, so there's nothing to fix or try. And if
   // the conversation was already sorted out in the chat, there's nothing left to
@@ -4467,16 +4566,33 @@ function hideTroubleshoot() {
   state.troubleshootAck = false;
 }
 
+// Who a report HITS, which is a different question from who noticed it (see
+// the Round 23 split of category from audience). A general bug we spotted
+// ourselves on the website still hits students, so the audience comes from the
+// part of the platform, the same derivation migrateAudience() used on the 156
+// rows it moved. Only a student-support report is student by definition.
+var INTERNAL_SECTIONS = ["instructor_portal", "partner_portal", "other"];
+function deriveAudience(mode, section) {
+  if (mode !== "internal") return "student";
+  var sec = String(section || "").toLowerCase();
+  if (!sec) return "internal";
+  return INTERNAL_SECTIONS.indexOf(sec) > -1 ? "internal" : "student";
+}
+
 function collectForm() {
   var isInternal = state.formMode === "internal";
   return {
     instructor_name: state.selectedInstructor,
-    // Internal is an audience now, not a category: internal work is technical.
-    category: isInternal ? "tech_issue" : state.category,
-    audience: isInternal ? "internal" : "student",
-    // Internal feature requests are backlog items, same as improvements.
-    request_kind: isInternal
-      ? (getField("f_issue_type") === "feature_request" ? "improvement" : "fix")
+    category: state.category,
+    audience: deriveAudience(state.formMode, getField("f_section")),
+    // Is there a student on the other end? Saved rather than re-guessed, so
+    // the detail pane, the checklist and the next-action reasoner all read the
+    // same answer the instructor gave at the time (Edd, FB-0207).
+    student_involved: formHasStudent() ? "yes" : "no",
+    // A feature request logged as a general bug is a backlog item, same as an
+    // improvement.
+    request_kind: isInternal && getField("f_issue_type") === "feature_request"
+      ? "improvement"
       : state.requestKind,
     // Anything typed in the outcome box travels with the original text, so the
     // "where we got to" part of a live issue is never lost.
@@ -4486,10 +4602,13 @@ function collectForm() {
     student_name: isInternal ? "" : getField("f_student_name"),
     student_contact: isInternal ? "" : getField("f_student_contact"),
     device_info: isInternal ? "" : getField("f_device_info"),
-    course: isInternal ? "" : getField("f_course"),
-    module: isInternal ? "" : getField("f_module"),
-    lesson: isInternal ? "" : getField("f_lesson"),
-    lesson_code: isInternal ? "" : getField("f_lesson_code"),
+    // Where in the course it sits is about the content, not about the student,
+    // so a general bug keeps it. An instructor spotting a wrong diagram on
+    // DS.09.04 themselves needs that code to reach the course team.
+    course: getField("f_course"),
+    module: getField("f_module"),
+    lesson: getField("f_lesson"),
+    lesson_code: getField("f_lesson_code"),
     issue_type: getField("f_issue_type"),
     summary: getField("f_summary"),
     priority: getField("f_priority"),
@@ -4497,7 +4616,7 @@ function collectForm() {
     section: getField("f_section"),
     media_kind: state.category === "course_error" ? getField("f_media_kind") : "",
     double_checked: state.category === "course_error" && $("f_double_checked") ? $("f_double_checked").checked : false,
-    impact: state.requestKind === "improvement" && !isInternal ? getField("f_impact") : "",
+    impact: state.requestKind === "improvement" ? getField("f_impact") : "",
     platform: collectPlatform(),
     courier: state.category === "shipping" ? getField("f_courier") : "",
     tracking_number: state.category === "shipping" ? getField("f_tracking_number") : "",
@@ -4974,8 +5093,9 @@ function submitIssue() {
     if (!state.editingId && outcomeText && improveRx.test(outcomeText)) {
       state._pendingImprovement = {
         instructor_name: state.selectedInstructor,
-        category: state.formMode === "internal" ? "tech_issue" : state.category,
-        audience: state.formMode === "internal" ? "internal" : "student",
+        category: state.category,
+        audience: deriveAudience(state.formMode, data.section || ""),
+        student_involved: "no",
         course: data.course || "", module: data.module || "", lesson: data.lesson || "",
         lesson_code: data.lesson_code || "", section: data.section || "",
         raw_text: "Improvement idea spotted in an issue outcome:\n\n" + outcomeText,
@@ -5000,6 +5120,7 @@ function resetForm() {
   state.resolution = null;   // so the submit row comes back to full strength
   state.requestKind = "fix";
   state.noStudent = false;
+  state.modeChosen = false;
   setFormMode("student");
   renderRequestKind();
   renderFormChecklist();
@@ -5229,17 +5350,9 @@ function renderAdmin() {
     if (fp && (i.priority || "").toLowerCase() !== fp) return false;
     if (ft && i.issue_type !== ft) return false;
     if (fc && i.course !== fc) return false;
-    if (fq) {
-      // raw_text included so an issue can be found by anything anyone said in
-      // the pasted conversation or its updates, not just the extracted fields.
-      var hay = ((i.lesson_code || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
-                 " " + (i.lesson || "") + " " + (i.module || "") + " " + (i.device_info || "") +
-                 " " + (i.resolution_note || "") + " " + (i.student_contact || "") +
-                 " " + (i.instructor_name || "") + " " + (i.assignee || "") +
-                 " " + shortId(i) + " " + (i.issue_id || "") +
-                 " " + (i.raw_text || "")).toLowerCase();
-      if (hay.indexOf(fq) === -1) return false;
-    }
+    // raw_text is in there, so an issue can be found by anything anyone said in
+    // the pasted conversation or its updates, not just the extracted fields.
+    if (fq && searchHay(i).indexOf(fq) === -1) return false;
     return true;
   });
 
@@ -5408,10 +5521,46 @@ function issueIsOurOwnSystem(issue) {
   return isOurOwnSystem(audienceOf(issue) === "internal" ? "internal" : "student", issue && issue.section);
 }
 
+// Is there actually a student on the other end of this report? (Edd, FB-0207:
+// "I specifically didn't attach this report to a student and yet you gave
+// things for the student to try. This was just an instructor reporting a
+// bug.") The answer comes from what the form itself holds, never from a guess
+// about the wording: a general bug, or an explicit "no student involved", or
+// simply nobody named and no contact and no chat pulled in, all mean there is
+// nobody to work the steps through with. When there is no student, everything
+// student-facing drops out and we fall back on the staff wording that has been
+// there since Round 37 rather than inventing a second path.
+function formHasStudent() {
+  if (state.formMode === "internal") return false;
+  if (state.noStudent) return false;
+  if (state.chatwootConvId) return true;                     // pulled from a live chat, so there is one
+  if (String(getField("f_student_name") || "").trim()) return true;
+  if (String(getField("f_student_contact") || "").trim()) return true;
+  return false;
+}
+function issueHasStudent(issue) {
+  if (!issue) return false;
+  var flag = String(issue.student_involved || "").toLowerCase();
+  if (flag === "no") return false;
+  if (flag === "yes") return true;
+  // The 900-odd rows logged before this column existed carry no flag, so read
+  // it off the report the way we always could.
+  if (audienceOf(issue) === "internal") return false;
+  return !!(String(issue.student_name || "").trim() || String(issue.student_contact || "").trim());
+}
+// Who the troubleshooting is addressed to. Our own systems have never had a
+// student; now neither does a report that never had one attached.
+function formIsStaffTroubleshooting() {
+  return formIsOurOwnSystem() || !formHasStudent();
+}
+function issueIsStaffTroubleshooting(issue) {
+  return issueIsOurOwnSystem(issue) || !issueHasStudent(issue);
+}
+
 // ---- pre-dev checklist inside a detail drawer (Track + Developers) ----
 function detailChecklistHtml(issue) {
   if (catOf(issue) !== "tech_issue") return "";
-  var staff = issueIsOurOwnSystem(issue);
+  var staff = issueIsStaffTroubleshooting(issue);
   var map = checklistMapOf(issue);
   var items = checklistFor(staff);
   var cleared = checklistCleared(map, staff);
@@ -5468,7 +5617,7 @@ function nextActionFor(i) {
   if (catOf(i) === "course_error") return "Confirm the error, then pass it to the course team.";
   // Name the actual next step off the checklist (Edd, FB-0186), rather than
   // pointing vaguely at the fold below.
-  var staffI = issueIsOurOwnSystem(i), mapI = checklistMapOf(i), itemsI = checklistFor(staffI), nextI = null;
+  var staffI = issueIsStaffTroubleshooting(i), mapI = checklistMapOf(i), itemsI = checklistFor(staffI), nextI = null;
   for (var ni = 0; ni < itemsI.length; ni++) {
     var stI = mapI[itemsI[ni].id];
     if (stI !== "done" && stI !== "na") { nextI = itemsI[ni]; break; }
@@ -5528,7 +5677,7 @@ function paintNextAction(id) {
 }
 function draftKindFor(issue) {
   var s0 = String(issue.status || "open").toLowerCase();
-  if (!(issue.student_contact || issue.student_name) || audienceOf(issue) === "internal") return null;
+  if (!issueHasStudent(issue)) return null;
   if (s0 === "dev_fixed" || s0 === "resolved") return "fixed";
   if (s0 === "resolved_tbc") return "followup";
   if (s0 === "open" || s0 === "in_progress" || s0 === "with_dev") return "longopen";
@@ -6365,7 +6514,9 @@ function renderDev() {
 
   // Dropdown filters (Edd, FB-0164): where it shows, fix vs improvement, the
   // issue type, and how big the fix is estimated to be.
+  var devQ = String(state.devSearch || "").trim().toLowerCase();
   var list = statusPool.filter(function (i) {
+    if (devQ && searchHay(i).indexOf(devQ) === -1) return false;
     if (state.devSection !== "all" && String(i.section || "other").toLowerCase() !== state.devSection) return false;
     if (state.devKind !== "all" && kindOf(i) !== state.devKind) return false;
     if (state.devType !== "all" && String(i.issue_type || "other").toLowerCase() !== state.devType) return false;
@@ -6455,6 +6606,9 @@ function renderDevFilters(statusPool) {
   };
 
   $("devFilters").innerHTML =
+    '<input id="devSearch" type="search" placeholder="Search summary, ref, student, lesson code…" ' +
+      'value="' + esc(state.devSearch || "") + '" oninput="setDevSearch(this.value)" ' +
+      'style="flex:1 1 220px;min-width:180px;padding:7px 9px;" />' +
     drop("devSort", [["priority", "Sort: priority"], ["longest", "Sort: longest open"], ["newest", "Sort: newest"]]) +
     drop("devSection", [["all", "Where: all"]].concat(sections.map(function (s) { return [s, SECTION_LABEL[s] || s]; }))) +
     drop("devKind", [["all", "Kind: all"], ["fix", "Fixes"], ["improvement", "Improvements"]]) +
@@ -6465,6 +6619,16 @@ function renderDevFilters(statusPool) {
 function setDevSel(key, value) {
   state[key] = value;
   renderDev();
+}
+// Typing redraws the whole filter bar, which would steal the caret, so put it
+// back where it was.
+function setDevSearch(v) {
+  state.devSearch = v;
+  var pos = null, el = $("devSearch");
+  if (el) pos = el.selectionStart;
+  renderDev();
+  var again = $("devSearch");
+  if (again) { again.focus(); if (pos != null) { try { again.setSelectionRange(pos, pos); } catch (e) {} } }
 }
 // Every course fix that still needs doing or is awaiting verification. Unlike
 // the Developers queue this is NOT gated on dev_passed_at, so imported "open"
@@ -6520,6 +6684,11 @@ function courseCardHtml(i) {
       priBadge(i.priority) +
       (reps > 1 ? '<span class="badge type-badge">×' + reps + ' reports</span>' : '') +
       (done ? statusBadge(i.status) : "") +
+      // A suggested improvement is not a fault, and reading a queue where the
+      // two sit unlabelled next to each other is how a wishlist item gets
+      // treated as a bug (Edd, FB-0206). The Developers queue has said this in
+      // its sub-line since FB-0164; the course queue now says it too.
+      (kindOf(i) === "improvement" ? reqBadge("improvement") : "") +
       refBadge(i) + queryBadge(i) +
       (ref ? '<span class="code">' + esc(ref) + '</span>' : '') +
       partBadge +
@@ -6562,7 +6731,10 @@ function renderCourse() {
 
   renderCourseFilters(statusPool);
 
+  var courseQ = String(state.courseSearch || "").trim().toLowerCase();
   var list = statusPool.filter(function (i) {
+    if (courseQ && searchHay(i).indexOf(courseQ) === -1) return false;
+    if (state.courseKind !== "all" && kindOf(i) !== state.courseKind) return false;
     if (state.courseCourse !== "all" && (courseOf(i)) !== state.courseCourse) return false;
     if (state.courseModule !== "all" && (dispModule(i) || "") !== state.courseModule) return false;
     if (state.courseLesson !== "all" && String(i.lesson_code || "") !== state.courseLesson) return false;
@@ -6739,7 +6911,11 @@ function renderCourseFilters(statusPool) {
   };
 
   $("courseFilters").innerHTML =
+    '<input id="courseSearch" type="search" placeholder="Search summary, ref, student, lesson code…" ' +
+      'value="' + esc(state.courseSearch || "") + '" oninput="setCourseSearch(this.value)" ' +
+      'style="min-width:0;padding:7px 9px;" />' +
     drop("status", "setCourseFilter(this.value)", [["todo", "To do"], ["fixed", "Fixed / done"], ["all", "All"]]) +
+    drop("courseKind", "setCourseSel('courseKind', this.value)", [["all", "Kind: all"], ["fix", "Fixes"], ["improvement", "Improvements"]]) +
     drop("courseCourse", "setCourseSel('courseCourse', this.value)", listOpts("Course", courses)) +
     drop("courseModule", "setCourseSel('courseModule', this.value)", listOpts("Module", modules)) +
     drop("courseLesson", "setCourseSel('courseLesson', this.value)", listOpts("Lesson", lessons)) +
@@ -6754,6 +6930,14 @@ function setDevFilter(f) {
   $("dev_fixed").classList.toggle("active", f === "fixed");
   $("dev_all").classList.toggle("active", f === "all");
   renderDev();
+}
+function setCourseSearch(v) {
+  state.courseSearch = v;
+  var pos = null, el = $("courseSearch");
+  if (el) pos = el.selectionStart;
+  renderCourse();
+  var again = $("courseSearch");
+  if (again) { again.focus(); if (pos != null) { try { again.setSelectionRange(pos, pos); } catch (e) {} } }
 }
 function setCourseFilter(f) {
   state.courseFilter = f;
@@ -7562,6 +7746,7 @@ function captureFeedbackContext() {
     ctx.dev_filter = state.devFilter;
     ctx.dev_sort = state.devSort;
     ctx.dev_drops = [state.devSection, state.devKind, state.devType, state.devSize].join("/");
+    ctx.dev_search = state.devSearch || "";
   }
   if (state.view === "course") ctx.course_filter = state.courseFilter;
   if (state.view === "analytics") { ctx.area = state.anaArea; ctx.metric = state.statMetric; }
