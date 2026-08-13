@@ -1167,7 +1167,7 @@
     <p class="small muted" id="emailModalLead">We couldn't find the student's email in the message. Add it so we can log and contact them, for example to tell them when it's fixed.</p>
     <div class="field"><input id="emailModalInput" type="email" placeholder="student@example.com" onkeydown="if(event.key==='Enter')saveStudentEmail()"></div>
     <div class="btns"><button class="primary" onclick="saveStudentEmail()">Save</button><button class="ghost" id="emailSkipBtn" onclick="skipEmail()">Skip for now</button></div>
-    <div style="margin-top:8px;"><button class="ghost small" style="padding:4px 10px;" onclick="noStudentInvolved()">No student involved - this is a portal / internal problem</button></div>
+    <div style="margin-top:8px;"><button class="ghost small" style="padding:4px 10px;" onclick="noStudentInvolved()">No student involved - I spotted this myself</button></div>
     <div id="emailModalMsg" class="small muted" style="margin-top:6px;"></div>
   </div>
 </div>
@@ -1267,8 +1267,8 @@
 <!-- THINGS-TO-TRY POPUP -->
 <div class="modal-bg" id="tshootModal">
   <div class="modal" style="max-width:540px;">
-    <h3>Things to try with the student</h3>
-    <p class="small muted">Work through these with the student. Please still submit this so we keep a record, it will update the existing issue if there is one.</p>
+    <h3 id="tshootModalTitle">Things to try with the student</h3>
+    <p class="small muted" id="tshootModalLead">Work through these with the student. Please still submit this so we keep a record, it will update the existing issue if there is one.</p>
     <div id="tshootModalBody"></div>
     <div class="btns" style="margin-top:12px;"><button class="primary" onclick="ackTroubleshoot()">Got it, I'll try these and submit</button></div>
   </div>
@@ -4056,6 +4056,9 @@ function skipEmail() {
 // chasing an email for it: remember that for this form and carry on.
 function noStudentInvolved() {
   state.noStudent = true;
+  // Say so on the form too, so the answer is visible rather than remembered
+  // in a variable, and so everything keyed off the report type agrees with it.
+  setFormMode("internal", true);
   $("emailModal").classList.remove("show");
   postExtractSlideCheck();
 }
@@ -4548,6 +4551,15 @@ function showTroubleshoot(steps, escalate, note, staff, degraded, reason) {
     '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="openTroubleshootModal()">Show again</button>';
   $("troubleshootPanel").classList.remove("hidden");
   // And the popup, which must be dismissed before the issue can be submitted.
+  // The modal's own heading and lead line are markup, so they have to be told
+  // as well: the steps switching to staff wording while the title still said
+  // "with the student" is the same complaint half-answered (Edd, FB-0207).
+  var title = $("tshootModalTitle"), lead = $("tshootModalLead");
+  if (title) title.textContent = degraded ? "Standard first steps (not tailored)"
+    : staff ? "Things to try" : "Things to try with the student";
+  if (lead) lead.textContent = staff
+    ? "Have a go at these yourself. Please still submit this so we keep a record, it will update the existing issue if there is one."
+    : "Work through these with the student. Please still submit this so we keep a record, it will update the existing issue if there is one.";
   $("tshootModalBody").innerHTML = '<div class="tshoot" style="border:none;background:transparent;padding:0;margin:0;">' + inner + '</div>';
   $("tshootModal").classList.add("show");
 }
@@ -4632,7 +4644,7 @@ function collectForm() {
 function updateSortedRow() {
   var row = $("sortedRow");
   if (!row) return;
-  var show = state.formMode !== "internal" && state.requestKind !== "improvement";
+  var show = formHasStudent() && state.requestKind !== "improvement";
   row.classList.toggle("hidden", !show);
   if (!show && $("f_student_sorted")) $("f_student_sorted").checked = false;
 }
