@@ -167,7 +167,17 @@ var HEADERS = [
   // edited by the developers from their detail pane, so the queue can be sorted
   // and filtered by effort as well as priority. Blank = not sized yet.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'fix_size'           // AT small | medium | large | ''
+  'fix_size',          // AT small | medium | large | ''
+  // The reasoned next action, cached (Edd, FB-0203). Picking the next unticked
+  // checklist box is not thinking: a student who has sent videos, tried three
+  // browsers and updated iOS must not be told to try a different network just
+  // because that line is untried. nextActionAi_ reads the whole thread instead.
+  // Cached here because the tracker bills real API credits, so an unchanged
+  // issue must cost nothing to open; the stored signature says what it was
+  // read from. Deliberately LEFT OUT of the list projection (issueListRow_) so
+  // the board stays as fast as Round 54 made it.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'next_action_json'   // AU {action, why, instructor_side, student_ask, sig, at}
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -339,6 +349,7 @@ function doPost(e) {
     if (action === 'suggestFix') return jsonOut(suggestFix_(body));
     if (action === 'troubleshoot') return jsonOut(troubleshoot_(body));
     if (action === 'draftStudentMessage') return jsonOut(draftStudentMessage_(body));
+    if (action === 'nextAction') return jsonOut(nextAction_(body));
     if (action === 'chatwootContactUrl') return jsonOut(chatwootContactUrl_(body));
     if (action === 'setVoiceGuide') return jsonOut(setVoiceGuide_(body));
     if (action === 'listVoiceGuides') return jsonOut(listVoiceGuides_());
@@ -423,7 +434,7 @@ function hasPerm_(user, req) {
 }
 function reqPerm_(action) {
   switch (action) {
-    case 'addIssue': case 'addUpdate': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'chatwootContactUrl': return 'log';
+    case 'addIssue': case 'addUpdate': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'nextAction': case 'chatwootContactUrl': return 'log';
     // updateIssue is 'work' so the dev/course team can retune priority from
     // their drawer; anything beyond priority still needs manage (checked
     // inside updateIssue_ itself).
@@ -918,7 +929,10 @@ function issueListRow_(i) {
   var o = {}, clipped = false, k, v;
   for (k in i) {
     if (!Object.prototype.hasOwnProperty.call(i, k)) continue;
-    if (k === 'raw_text' || k === 'reports_json') continue;
+    // next_action_json is a per-issue cache that only a detail pane ever asks
+    // for. On 900 rows it would put the payload straight back where Round 54
+    // found it, so it stays off the list and rides in on the nextAction call.
+    if (k === 'raw_text' || k === 'reports_json' || k === 'next_action_json') continue;
     v = i[k];
     if (v === null || v === '' || v === undefined) continue;   // blanks cost bytes and say nothing
     o[k] = v;
@@ -1026,7 +1040,13 @@ var READ_ONLY_ACTIONS = {
   getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1,
   listVoiceGuides: 1, listContentSuggestions: 1, getManifest: 1, extract: 1, askIssues: 1,
   suggestFix: 1, troubleshoot: 1, matchUpdate: 1, draftStudentMessage: 1, listLiveCases: 1,
-  caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1
+  caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
+  // nextAction DOES write one cell (its own cached answer), and it still
+  // belongs here. The list projection leaves next_action_json out entirely, so
+  // there is no way for a held cache to show a stale next action - and dropping
+  // the whole board cache every time somebody opened an issue would undo most
+  // of Round 54. If next_action_json ever reaches the list, take this back out.
+  nextAction: 1
 };
 var CURRENT_ACTION_ = '';
 function maybeInvalidate_() {
@@ -4423,7 +4443,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r54 · 2026-08-11';
+var CODE_STAMP = 'r55 · 2026-08-13';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4509,12 +4529,24 @@ function draftStudentMessage_(data) {
   // try off the pre-dev checklist, not vague reassurance, so the message
   // itself moves the troubleshooting along. First item not yet done or n/a,
   // in checklist order - the same one the detail pane's next action names.
-  var nextStep = '';
+  var nextStep = '', stepSource = '';
   if (kind === 'longopen' && String(i.category || '').toLowerCase() === 'tech_issue') {
-    var ckMap = {}; try { ckMap = i.checklist_json ? JSON.parse(i.checklist_json) : {}; } catch (e) { ckMap = {}; }
-    for (var ci = 0; ci < CHECKLIST_ITEMS.length; ci++) {
-      var stC = ckMap[CHECKLIST_ITEMS[ci].id];
-      if (stC !== 'done' && stC !== 'na') { nextStep = CHECKLIST_ITEMS[ci].label; break; }
+    // Round 55 (Edd, FB-0203): ask for the thing the reasoner worked out from
+    // the whole thread, not the next unticked box. If it decided the next move
+    // is ours to make, there is nothing to ask the student for at all, and the
+    // draft goes back to a plain "still on it" rather than inventing a chore.
+    var reasoned = null;
+    try { reasoned = nextActionCached_(found, {}); } catch (e) { reasoned = null; }
+    if (reasoned && reasoned.ok) {
+      stepSource = 'reasoned';
+      nextStep = reasoned.instructor_side ? '' : String(reasoned.student_ask || reasoned.action || '');
+    }
+    if (!stepSource) {
+      var ckMap = {}; try { ckMap = i.checklist_json ? JSON.parse(i.checklist_json) : {}; } catch (e) { ckMap = {}; }
+      for (var ci = 0; ci < CHECKLIST_ITEMS.length; ci++) {
+        var stC = ckMap[CHECKLIST_ITEMS[ci].id];
+        if (stC !== 'done' && stC !== 'na') { nextStep = CHECKLIST_ITEMS[ci].label; stepSource = 'checklist'; break; }
+      }
     }
   }
   var goal = kind === 'fixed'
@@ -4534,7 +4566,11 @@ function draftStudentMessage_(data) {
       student_first_name: String(i.student_name || '').split(' ')[0]
     }) + '\n' +
     (last && (last.summary || last.raw_text) ? 'LATEST UPDATE ON THE ISSUE: ' + String(last.summary || last.raw_text).slice(0, 400) + '\n' : '') +
-    (nextStep ? 'THE NEXT TROUBLESHOOTING STEP TO ASK OF THE STUDENT (from our checklist, written for staff - rephrase it as a plain ask):\n"' + nextStep + '"\n' : '') +
+    (nextStep
+      ? (stepSource === 'reasoned'
+          ? 'THE ONE THING TO ASK THE STUDENT (worked out from the whole thread - ask for exactly this and nothing else, and do not ask for anything they have already given us):\n"' + nextStep + '"\n'
+          : 'THE NEXT TROUBLESHOOTING STEP TO ASK OF THE STUDENT (from our checklist, written for staff - rephrase it as a plain ask):\n"' + nextStep + '"\n')
+      : '') +
     (guide ? '\nWrite it in this instructor\'s own voice. Their style guide:\n"""\n' + guide.slice(0, 30000) + '\n"""\n' : '') +
     AI_TELLS_RULES_ +
     '\nRules: plain text only, no subject line, 50-110 words, greet the student by first name. ' +
@@ -4560,8 +4596,247 @@ function draftStudentMessage_(data) {
     // Belt and braces on the one unambiguous tell: even if the model slips an
     // em dash past the prompt, it never reaches a student (Edd, 11 Aug).
     text = text.replace(/\s*—\s*/g, ', ').replace(/,\s*,/g, ',');
-    return { ok: true, text: text, voiced: !!guide, next_step: nextStep || '' };
+    return { ok: true, text: text, voiced: !!guide, next_step: nextStep || '', step_source: stepSource };
   } catch (e) { return { ok: false, error: String(e) }; }
+}
+
+// ============================ THE NEXT ACTION ================================
+// Edd, FB-0203: "The next action section should be more intelligent. Look at
+// the full transcript, troubleshooting list, etc and make a genuinely useful
+// suggested next action."
+//
+// What was wrong. Two thin sources fed that line. nextActionFor() in the front
+// end reads the status and then names the first unticked checklist box, and
+// briefAi_ returns a single `next` off the conversation alone. Naming the next
+// unticked box is not thinking. Sergei Fedorov had sent videos, updated iOS,
+// tried other devices and had the developers already looking at an iPhone
+// portrait layout bug, and the pane told us to get him to try a different
+// network, purely because that line happened to be untried. A network has
+// nothing to do with a layout that only breaks in portrait.
+//
+// What this does instead. One call, everything on the table: the whole thread
+// (every report and update, not a 3,000-character slice), the checklist with
+// its labels and real states, where the issue stands with the developers or
+// the course team, any open question, past fixes that share words with it, and
+// who the student is. Out comes one action, one line of why, and a flag for
+// whether it is ours to do or theirs to try.
+//
+// Why it is cached. The tracker bills Edd's Anthropic credits, so opening an
+// unchanged issue must cost nothing. nextActionSignature_ fingerprints the
+// things that could change the answer; a matching fingerprint returns the
+// stored answer with no API call at all.
+var NEXT_ACTION_CAP = 24000;   // characters of thread the reasoner reads
+var NEXT_ACTION_MODEL = ANTHROPIC_MODEL;   // sonnet: this runs often, and it is plenty for the job
+
+// The whole conversation, oldest first, attributed and dated, because who said
+// a thing and when is half of what makes an action sensible. reports_json holds
+// every report AND every update (addUpdate_ writes an entry too), and raw_text
+// is those same texts concatenated, so the entries are the fuller record and
+// raw_text is only the fallback for an issue that predates them.
+function issueTranscript_(rec) {
+  var reps = [];
+  try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
+  var parts = [];
+  if (reps && reps.length) {
+    for (var r = 0; r < reps.length; r++) {
+      var rp = reps[r] || {};
+      var head = '--- ' + (rp.instructor_name || 'unknown') + ', ' +
+        String(rp.submitted_at || rp.at || '').slice(0, 16).replace('T', ' ') + ' ---';
+      var body = String(rp.raw_text || '').trim();
+      if (!body && rp.summary) body = String(rp.summary);
+      if (body) parts.push(head + '\n' + body);
+    }
+  }
+  if (!parts.length && rec.raw_text) parts.push(String(rec.raw_text));
+  var all = parts.join('\n\n');
+  var truncated = false;
+  if (all.length > NEXT_ACTION_CAP) {
+    // Keep the END. The oldest part of a long email chain is the part everyone
+    // has already acted on; what is unresolved is at the bottom.
+    all = '[the earliest part of this thread is not shown]\n\n' + all.slice(all.length - NEXT_ACTION_CAP);
+    truncated = true;
+  }
+  return { text: all, truncated: truncated, messages: (reps && reps.length) || (rec.raw_text ? 1 : 0) };
+}
+
+// A fingerprint of everything that could sensibly change the answer. Note what
+// is NOT in it: updated_at. Any edit at all moves updated_at, and re-reading a
+// thread because somebody retitled a lesson is money for nothing.
+function nextActionSignature_(rec) {
+  var reps = [];
+  try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
+  var ck = {};
+  try { ck = rec.checklist_json ? JSON.parse(rec.checklist_json) : {}; } catch (e) { ck = {}; }
+  var ckSig = CHECKLIST_ITEMS.map(function (it) {
+    var s = String(ck[it.id] || '');
+    return s === 'done' ? 'd' : s === 'na' ? 'n' : 't';
+  }).join('');
+  return [
+    'r' + ((reps && reps.length) || 0),
+    'x' + String(rec.raw_text || '').length,
+    's' + String(rec.status || ''),
+    'p' + String(rec.priority || ''),
+    'c' + String(rec.category || ''),
+    'k' + ckSig,
+    'v' + (rec.dev_passed_at ? 1 : 0) + (rec.dev_fixed_at ? 1 : 0) + String(rec.dev_notes || '').length,
+    'q' + String(rec.dev_query_at || ''),
+    'a' + String(rec.assignee || ''),
+    'z' + (String(rec.student_sorted) === 'true' ? 1 : 0),
+    'n' + (String(rec.notified_students) === 'true' ? 1 : 0)
+  ].join('|');
+}
+
+// The checklist as evidence rather than as a to-do list. The model gets every
+// item with its state, and is told plainly that an untried step is only worth
+// suggesting if it could actually explain THIS fault.
+function checklistEvidence_(rec, staff) {
+  var ck = {};
+  try { ck = rec.checklist_json ? JSON.parse(rec.checklist_json) : {}; } catch (e) { ck = {}; }
+  var items = checklistItemsFor_(staff);
+  if (!items.length) return '(no checklist on this issue)';
+  return items.map(function (it) {
+    var s = String(ck[it.id] || 'todo');
+    var word = s === 'done' ? 'ALREADY DONE' : s === 'na' ? 'not relevant' : 'not yet tried';
+    return '- [' + word + '] ' + checklistLabel_(it, staff);
+  }).join('\n');
+}
+
+function nextActionAi_(rec) {
+  var staff = String(rec.audience || '') === 'internal' ||
+    ['instructor_portal', 'partner_portal'].indexOf(String(rec.section || '')) > -1;
+  var tr = issueTranscript_(rec);
+  var cat = String(rec.category || 'tech_issue');
+  var status = String(rec.status || 'open').toLowerCase();
+
+  // Past fixes that share words with this one. Word overlap only, no second AI
+  // call: the reasoner is better placed to judge whether a match is real than
+  // a shortlist ranker is, and one call is the whole point.
+  var pastFixes = [];
+  try {
+    pastFixes = fixCandidatesFor_(String(rec.summary || '') + ' ' + tr.text.slice(0, 3000)).slice(0, 6);
+  } catch (e) { pastFixes = []; }
+
+  var state = {
+    summary: rec.summary || '',
+    status: status,
+    priority: rec.priority || '',
+    category: cat,
+    request_kind: rec.request_kind || 'fix',
+    audience: rec.audience || 'student',
+    section: rec.section || '',
+    platform: rec.platform || '',
+    course: rec.course || '',
+    lesson: rec.lesson || rec.lesson_code || '',
+    student_name: rec.student_name || '',
+    student_has_contact: !!rec.student_contact,
+    student_sorted: String(rec.student_sorted) === 'true',
+    students_notified: String(rec.notified_students) === 'true',
+    device_info: rec.device_info || '',
+    assignee: rec.assignee || '',
+    logged: String(rec.submitted_at || '').slice(0, 10),
+    handed_to_developers_on: rec.dev_passed_at ? String(rec.dev_passed_at).slice(0, 10) : '',
+    marked_fixed_on: rec.dev_fixed_at ? String(rec.dev_fixed_at).slice(0, 10) : '',
+    developer_notes: String(rec.dev_notes || '').slice(0, 2000),
+    open_question_from_the_team: rec.dev_query_at ? String(rec.dev_query || '') : '',
+    open_question_is_for: rec.dev_query_at ? String(rec.dev_query_target || 'admins') : '',
+    resolution_note: String(rec.resolution_note || '').slice(0, 1000),
+    images_attached: String(rec.image_urls || '') ? String(rec.image_urls).split(',').length : 0,
+    courier: rec.courier || '',
+    tracking_number: rec.tracking_number || '',
+    chase_on: rec.chase_at ? String(rec.chase_at).slice(0, 10) : ''
+  };
+
+  var prompt = 'You are the most experienced person on the support desk at Ardent Training, an online RYA sailing school. ' +
+    'An instructor has this issue open in front of them and wants ONE genuinely useful next action.\n\n' +
+    'THE HARD RULES, in order of importance:\n' +
+    '1. NEVER ask the student for something the thread already gives you. If they have told us the device, the iOS version, the browser, or sent a screenshot or video, that question is answered.\n' +
+    '2. NEVER suggest anything the thread shows has already been tried, and never suggest a variation of it in different words.\n' +
+    '3. A troubleshooting step that could not possibly explain THIS fault is not a next action, however untried it is. A layout that breaks only in portrait, or a video that stops at the same second every time, is not going to be fixed by a different network, a hard refresh or a VPN being turned off. Ignore untried steps that do not fit the symptom, and say so in the why line if that is the interesting part.\n' +
+    '4. The fastest resolution is often something WE do. The instructor can reset a password from the students tab of the instructor portal, assign a course to an account, extend an account by hand, mark an exam manually from photos, post an answer in the course live chat, re-send an ebook, or raise an invoice. When one of those settles it, THAT is the action, phrased as a thing we do.\n' +
+    '5. When the troubleshooting has genuinely gone as far as it can and the fault is real, the action is to move it on, not to keep poking the student: hand it to the developers (or the course team for a content error) with the specific evidence that will let them reproduce it, chase whoever already has it if it has sat too long, or answer the question they have asked us.\n' +
+    '6. If the thread shows the developers or the course team are already on it and there is nothing new to give them, say plainly that the useful next action is to leave the student alone and chase internally, and name what we would chase for.\n' +
+    '7. Notice what the ISSUE RECORD says versus what the thread says. If the conversation says the developers are working on it but the record was never handed to them, saying so IS the useful action, because nothing in our system is tracking it.\n' +
+    '8. Read the student. Somebody who has diagnosed the fault themselves and offered to help does not need to be walked through the basics.\n' +
+    '9. One action. Concrete, plain English, addressed to the instructor, no jargon, no lists, no hedging between two options.\n\n' +
+    'THE ISSUE RECORD (our system\'s own view):\n' + JSON.stringify(state, null, 1) + '\n\n' +
+    'THE PRE-DEVELOPER CHECKLIST (what the team has ticked off, as evidence - NOT a list to read the next line from):\n' +
+    checklistEvidence_(rec, staff) + '\n\n' +
+    (pastFixes.length
+      ? 'PAST ISSUES WE FIXED THAT SHARE WORDS WITH THIS ONE (only use one if it genuinely matches; word overlap is not a match):\n' +
+        JSON.stringify(pastFixes.map(function (c) {
+          return { problem: String(c.summary || '').slice(0, 300), fix: String(c.resolution_note || '').slice(0, 300), lesson: c.lesson_code || '' };
+        })) + '\n\n'
+      : '') +
+    'OUR TROUBLESHOOTING PLAYBOOK (for the account faults that have a known specific fix):\n' + getPlaybook_() + '\n\n' +
+    'THE WHOLE THREAD, oldest first (every report and update logged on this issue):\n"""\n' + tr.text + '\n"""\n\n' +
+    (tr.truncated ? 'NOTE: this thread was long enough that the earliest part is not shown. Do not treat the start as missing information.\n\n' : '') +
+    'Return ONLY JSON, no prose, no fences:\n' +
+    '{"action": "<the single next action, one or two sentences, addressed to the instructor as something to do>",\n' +
+    ' "why": "<one short line saying why this and not the obvious alternative - name the thing in the thread that decided it>",\n' +
+    ' "instructor_side": true or false (true when this is something WE do; false when it is something the student is asked to do or tell us),\n' +
+    ' "student_ask": "<empty string when instructor_side is true; otherwise the one thing to ask the student, in plain words a non-technical sailor can act on>"}';
+
+  var got = anthropicRaw_(NEXT_ACTION_MODEL, prompt, 16000);
+  if (!got.json || !got.json.action) {
+    return { ok: false, why: got.why || 'the reply had no action in it' };
+  }
+  return {
+    ok: true,
+    action: String(got.json.action || '').slice(0, 600),
+    why: String(got.json.why || '').slice(0, 400),
+    instructor_side: !!got.json.instructor_side,
+    student_ask: String(got.json.student_ask || '').slice(0, 400),
+    messages: tr.messages
+  };
+}
+
+// Read the cached answer, or work one out and cache it. force:true is the
+// Rethink button. compute:false means "give me the cached one if it is still
+// good, otherwise nothing" - for callers that must not spend money.
+function nextActionCached_(found, opts) {
+  opts = opts || {};
+  var rec = found.record;
+  var sig = nextActionSignature_(rec);
+  var stored = null;
+  try { stored = rec.next_action_json ? JSON.parse(rec.next_action_json) : null; } catch (e) { stored = null; }
+  if (stored && stored.sig === sig && !opts.force) {
+    stored.cached = true;
+    stored.ok = true;
+    return stored;
+  }
+  if (opts.compute === false) return { ok: false, stale: !!stored, why: 'not computed yet' };
+
+  var out = nextActionAi_(rec);
+  if (!out.ok) {
+    // A failure must never quietly pose as an answer (the FB-0150 lesson), so
+    // nothing is cached and the caller is told exactly what went wrong.
+    return { ok: false, why: out.why, had_stale: !!stored };
+  }
+  var store = {
+    action: out.action, why: out.why, instructor_side: out.instructor_side,
+    student_ask: out.student_ask, messages: out.messages,
+    sig: sig, at: new Date().toISOString(), model: NEXT_ACTION_MODEL
+  };
+  try {
+    setCellOnIssue_(found, 'next_action_json', JSON.stringify(store));
+  } catch (e) {}   // a cache that will not write is a slow feature, not a broken one
+  store.ok = true;
+  store.cached = false;
+  return store;
+}
+
+function nextAction_(data) {
+  var id = data && data.issue_id;
+  if (!id) return { ok: false, error: 'nextAction needs an issue_id' };
+  var found = findRow_(id);
+  if (!found) return { ok: false, error: 'No issue found with id ' + id };
+  var out = nextActionCached_(found, { force: !!data.force });
+  if (!out.ok) return { ok: false, issue_id: id, error: out.why || 'could not work out a next action' };
+  return {
+    ok: true, issue_id: id, action: out.action, why: out.why,
+    instructor_side: !!out.instructor_side, student_ask: out.student_ask || '',
+    messages: out.messages || 0, at: out.at, cached: !!out.cached
+  };
 }
 
 // ---- jump to a contact in Chatwoot (Edd, FB-0162) --------------------------
@@ -4898,12 +5173,45 @@ function listLiveCases_(data) {
 // confirm it's the right chat), what's been tried in plain English, and the
 // single next step out of the playbook. Same strictness rules as the
 // troubleshoot helper: only count a step as tried if the conversation says so.
-function briefAi_(transcript) {
+// issueId (optional): once a case has an issue filed against it, the issue
+// knows things the chat does not - what the team has ticked off, whether the
+// developers have it, what they said back. Round 55 folds that in so the case
+// brief's next step is reasoned off the same evidence as the detail pane's,
+// rather than off the conversation alone. Still ONE call: the brief has to
+// read the transcript anyway, and a second call would double the wait on a
+// press that is already slow.
+function briefAi_(transcript, issueId) {
+  var extra = '';
+  if (issueId) {
+    var f = null; try { f = findRow_(issueId); } catch (e) { f = null; }
+    if (f) {
+      var ir = f.record;
+      var staffB = String(ir.audience || '') === 'internal';
+      extra = '\nTHE ISSUE ALREADY FILED FOR THIS STUDENT (our system\'s own view - the chat does not know any of this):\n' +
+        JSON.stringify({
+          summary: ir.summary || '', status: ir.status || '', priority: ir.priority || '',
+          category: ir.category || '', lesson: ir.lesson || ir.lesson_code || '',
+          handed_to_developers_on: ir.dev_passed_at ? String(ir.dev_passed_at).slice(0, 10) : '',
+          marked_fixed_on: ir.dev_fixed_at ? String(ir.dev_fixed_at).slice(0, 10) : '',
+          developer_notes: String(ir.dev_notes || '').slice(0, 1200),
+          open_question_from_the_team: ir.dev_query_at ? String(ir.dev_query || '') : '',
+          assignee: ir.assignee || ''
+        }) + '\n\nWHAT THE TEAM HAS ALREADY TICKED OFF ON IT (evidence, NOT a list to read the next line from):\n' +
+        checklistEvidence_(ir, staffB) + '\n';
+    }
+  }
   var prompt = 'You are helping an Ardent Training instructor (online RYA sailing school) pick up a live student support conversation mid-flow. ' +
     'Read the conversation and play it back, so whoever opens it next knows exactly where things stand without reading the whole thread.\n\n' +
     'OUR TROUBLESHOOTING PLAYBOOK (for choosing the next step):\n' + getPlaybook_() + '\n\n' +
-    'THE CONVERSATION:\n"""\n' + String(transcript || '').slice(0, 14000) + '\n"""\n\n' +
+    extra +
+    '\nTHE CONVERSATION:\n"""\n' + String(transcript || '').slice(0, 14000) + '\n"""\n\n' +
     'Rules: only count a step as already tried if it is EXPLICITLY described in the conversation - never assume. ' +
+    // Round 55 (Edd, FB-0203): the same hard rules the detail pane's reasoner
+    // works to, so the two never disagree about what to do next.
+    'NEVER ask the student for something the conversation already gives you - if they have told us the device, the OS version or the browser, or sent a screenshot or video, that question is answered. ' +
+    'A step that could not possibly explain THIS fault is not a next step however untried it is: a layout that only breaks in portrait, or a video that stops at the same second every time, will not be fixed by a different network or a hard refresh. ' +
+    'When the troubleshooting has genuinely gone as far as it can and the fault is real, the next step is to move it on rather than keep poking the student - hand it to the developers or the course team with the evidence that lets them reproduce it, chase whoever already has it, or answer the question they have asked us. ' +
+    'If the issue record above shows the developers already have it and there is nothing new to give them, say plainly that the next step is to leave the student in peace and chase internally, and name what for. ' +
     'The app working on another device does NOT mean a different network was tried. ' +
     'The next step is ONE step, the most useful one, chosen from the playbook order and skipping anything already done; ' +
     'if it matches a known account issue in the playbook, that specific fix IS the next step. ' +
@@ -4921,6 +5229,7 @@ function briefAi_(transcript) {
     ' "device": "<their device / OS / browser or app if mentioned, else empty string>",\n' +
     ' "tried": ["<each thing already tried, one short plain-English entry each - empty list if nothing yet>"],\n' +
     ' "next": "<the single recommended next step, short and practical, addressed to the instructor>",\n' +
+    ' "next_why": "<one short line saying why this one and not the obvious alternative - name the thing in the conversation or the issue record that decided it>",\n' +
     ' "instructor_action": true or false (true when the next step is an action the INSTRUCTOR performs - a password reset, a course assignment, manual marking, posting in the chat, an invoice - rather than something the student is asked to try),\n' +
     ' "images_note": "<empty string normally; when screenshots in the chat are likely the student\'s coursework or chartwork for marking rather than fault evidence, one short line saying so>"}';
   return anthropicRaw_(ANTHROPIC_MODEL, prompt, 16000);
@@ -4985,8 +5294,8 @@ function fixCandidatesFor_(text, cutoffIso, kfOnly) {
 
 // The shared "read it all back" core: brief + known-fix lookup off one import.
 // cutoffIso comes only from the backtest replay - live callers leave it out.
-function caseBriefCore_(imp, cutoffIso) {
-  var got = briefAi_(imp.transcript);
+function caseBriefCore_(imp, cutoffIso, issueId) {
+  var got = briefAi_(imp.transcript, issueId);
   if (!got.json) return { error: 'The AI read of the conversation failed: ' + got.why + '. Try again in a minute.' };
   var brief = got.json;
   var fix = { found: false };
@@ -5002,6 +5311,7 @@ function caseBriefCore_(imp, cutoffIso) {
     device: String(brief.device || ''),
     tried: (brief.tried || []).map(function (t) { return String(t); }).slice(0, 12),
     next: String(brief.next || ''),
+    next_why: String(brief.next_why || ''),
     instructor_action: !!brief.instructor_action,
     images_note: String(brief.images_note || ''),
     fix: fix && fix.found ? String(fix.fix) : '',
@@ -5030,7 +5340,7 @@ function caseBrief_(data) {
   if (!rec) rec = { conversation_id: id, opened_by: who, opened_at: now, status: 'open', issue_id: '', draft_count: 0 };
   rec.status = 'open';
 
-  var core = caseBriefCore_(imp);
+  var core = caseBriefCore_(imp, null, rec.issue_id || '');
   if (core.error) return { ok: false, error: core.error };
   var prev = caseBriefJson_(rec);
   core.bj.note_posted = !!prev.note_posted;
@@ -5066,7 +5376,7 @@ function caseCheckReply_(data) {
   }
 
   var who = (data._user && data._user.name) || '';
-  var core = caseBriefCore_(imp);
+  var core = caseBriefCore_(imp, null, rec.issue_id || '');
   if (core.error) return { ok: false, error: 'New messages arrived, but the re-read failed: ' + core.error };
   core.bj.note_posted = !!prev.note_posted;
 
@@ -5558,6 +5868,12 @@ function setup() {
   ISSUE_SHEETS.forEach(function (name) {
     var sheet = ss.getSheetByName(name);
     if (!sheet) sheet = ss.insertSheet(name);
+    // A sheet only has the columns it was given. Appending a header past the
+    // last one throws rather than growing the sheet, and every row write goes
+    // out HEADERS.length wide, so make the room first (Round 55).
+    if (sheet.getMaxColumns() < HEADERS.length) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), HEADERS.length - sheet.getMaxColumns());
+    }
     sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight('bold');

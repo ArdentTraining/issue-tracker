@@ -1355,7 +1355,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r54 · 2026-08-11";  // bump this with each round, it lands on every feedback report
+var BUILD = "r55 · 2026-08-13";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2277,6 +2277,12 @@ function loadIssues(isRetry) {
     }
     showUpdating(false);
     hideBoot();
+    // Every write goes through here on its way back, and a write can change
+    // what the next action ought to be. Drop what we are holding rather than
+    // guess which writes matter; the server still answers from its own cache
+    // unless something material actually moved, so this costs a round trip,
+    // not an AI call (Round 55).
+    state.naCache = {}; state._naTried = {};
     state._freshMs = Math.round(performance.now());
     if (res.backend) diag.backend = res.backend;   // which build feedback came from
     if (res.user) {
@@ -2845,7 +2851,10 @@ function renderLiveDetail() {
 
   html += '<h3>Recommended next step</h3>' +
     (b.instructor_action ? '<div class="small" style="color:var(--accent);margin-bottom:2px;">One for us to do, not the student:</div>' : '') +
-    '<div style="font-size:13.5px;">' + (b.next ? esc(b.next) : '<span class="muted">Nothing to suggest right now - refresh the brief if the conversation has moved on.</span>') + '</div>';
+    '<div style="font-size:13.5px;">' + (b.next ? esc(b.next) : '<span class="muted">Nothing to suggest right now - refresh the brief if the conversation has moved on.</span>') + '</div>' +
+    // Why this one and not the obvious alternative (Edd, FB-0203). A step you
+    // can see the reasoning behind is one you can disagree with.
+    (b.next_why ? '<div class="small muted" style="margin-top:3px;">' + esc(b.next_why) + '</div>' : '');
 
   if (b.fix) {
     html += '<div class="batch" style="margin-top:12px;background:rgba(70,192,138,0.10);border-color:var(--low);">' +
@@ -5421,6 +5430,9 @@ function setDetailChecklist(issueId, itemId, val) {
   var map = checklistMapOf(issue);
   map[itemId] = val;
   issue.checklist_json = JSON.stringify(map);
+  // What the team has ruled in or out changes the answer, so the reasoned next
+  // action is now out of date. Re-read it once the ticking stops (Round 55).
+  naScheduleRefresh(issueId);
   if (state.detailKind === "dev") openDevDetail(issueId);
   else openDetail(issue);
   apiPost({ action: "saveChecklist", issue_id: issueId, checklist_json: issue.checklist_json })
@@ -5432,6 +5444,13 @@ function setDetailChecklist(issueId, itemId, val) {
 // One plain sentence on what this issue is waiting for (Edd, FB-0156): the
 // same judgement the Actions tab makes, written out for the detail pane so
 // nobody has to reconstruct it from the status badge and the history.
+//
+// Round 55 (Edd, FB-0203): this is now the FALLBACK, not the answer. It reads
+// the status and the checklist and nothing else, which is how an issue with
+// videos attached, three devices tried and the developers already looking at
+// it got told to try a different network. The real answer comes from the
+// server's reasoner, which reads the whole thread; this is what we show while
+// that lands, or if it fails - and when we show it, we say so.
 function nextActionFor(i) {
   var s = String(i.status || "open").toLowerCase();
   if (i.dev_query_at) return "Answer the question below - it is holding up the fix.";
@@ -5457,6 +5476,91 @@ function nextActionFor(i) {
   return nextI
     ? "Next from the checklist: " + checklistLabel(nextI, staffI) + "."
     : "Checklist all cleared - pass it to the developers.";
+}
+
+// ---- the reasoned next action (Edd, FB-0203) -------------------------------
+// The server reads the whole thread, the checklist, what the developers have
+// said and any past fix that matches, and hands back one action plus a line of
+// why. It caches its answer against a fingerprint of the issue, so opening the
+// same unchanged issue again costs nothing: no AI call, and none of Edd's API
+// credit. We ask for it once per issue per session (state.naCache), and again
+// only when something material moves or somebody presses Rethink.
+function naCacheGet(id) { return (state.naCache || {})[id] || null; }
+function naInvalidate(id) {
+  if (state.naCache) delete state.naCache[id];
+  if (state._naTried) delete state._naTried[id];
+}
+// Ticking checklist boxes is a burst, not an event: five ticks in a row should
+// cost one re-read, not five. Wait until the ticking stops.
+function naScheduleRefresh(id) {
+  naInvalidate(id);
+  if (state._naTimer) clearTimeout(state._naTimer);
+  state._naTimer = setTimeout(function () {
+    if (state.detailId === id && state.detailKind === "admin") loadNextAction(id, false);
+  }, 4000);
+}
+function loadNextAction(id, force) {
+  if (!id) return;
+  if (!state.naCache) state.naCache = {};
+  if (!state._naTried) state._naTried = {};
+  if (!state._naFlight) state._naFlight = {};
+  if (state._naFlight[id]) return;
+  if (!force && (state.naCache[id] || state._naTried[id])) return;
+  state._naFlight[id] = true;
+  var payload = { action: "nextAction", issue_id: id };
+  if (force) payload.force = true;
+  apiPost(payload).then(function (res) {
+    delete state._naFlight[id];
+    if (res && res.ok) state.naCache[id] = res;
+    else state._naTried[id] = (res && res.error) || "the call came back empty";
+    if (state.detailId === id && state.detailKind === "admin") paintNextAction(id);
+  }).catch(function (e) {
+    delete state._naFlight[id];
+    console.error(e);
+    state._naTried[id] = "the call did not get through";
+    if (state.detailId === id && state.detailKind === "admin") paintNextAction(id);
+  });
+}
+function paintNextAction(id) {
+  var box = $("nextActionBox");
+  var iss = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (box && iss) box.innerHTML = nextActionHtml(iss);
+}
+function draftKindFor(issue) {
+  var s0 = String(issue.status || "open").toLowerCase();
+  if (!(issue.student_contact || issue.student_name) || audienceOf(issue) === "internal") return null;
+  if (s0 === "dev_fixed" || s0 === "resolved") return "fixed";
+  if (s0 === "resolved_tbc") return "followup";
+  if (s0 === "open" || s0 === "in_progress" || s0 === "with_dev") return "longopen";
+  return null;
+}
+function nextActionHtml(issue) {
+  var id = issue.issue_id;
+  var got = naCacheGet(id);
+  var failed = (state._naTried || {})[id];
+  var inFlight = (state._naFlight || {})[id];
+  var draftKind = draftKindFor(issue);
+  var buttons =
+    (draftKind ? '<button class="ghost small" style="padding:3px 10px;margin-right:6px;" onclick="draftStudentMessage(\'' + esc(id) + '\',\'' + draftKind + '\')">Draft message to student</button>' : '') +
+    '<button class="ghost small" style="padding:3px 10px;" onclick="loadNextAction(\'' + esc(id) + '\',true)">Rethink this</button>';
+
+  if (got) {
+    return (got.instructor_side ? '<div class="small" style="color:var(--accent);margin-bottom:2px;">One for us to do, not the student:</div>' : '') +
+      '<div style="font-size:13.5px;">' + esc(got.action) + '</div>' +
+      (got.why ? '<div class="small muted" style="margin-top:3px;">' + esc(got.why) + '</div>' : '') +
+      '<div class="small muted" style="margin-top:3px;">Read off the whole thread' +
+        (got.messages ? ' (' + got.messages + ' entr' + (got.messages === 1 ? 'y' : 'ies') + ')' : '') + '.</div>' +
+      '<div style="margin-top:6px;">' + buttons + '</div>';
+  }
+  // No reasoned answer on screen, so whatever we show has to own up to that.
+  // Generic advice dressed as a considered answer is the worse failure (the
+  // FB-0150 lesson), which is why the heading changes as well as the text.
+  var head = inFlight || !failed
+    ? '<div class="small muted" style="margin-bottom:2px;">Reading the whole conversation… showing the standard suggestion meanwhile:</div>'
+    : '<div class="small" style="color:var(--high);margin-bottom:2px;">Couldn\'t read the conversation (' + esc(String(failed)) + '), so this is the standard suggestion off the status and the checklist, not this thread:</div>';
+  return head +
+    '<div style="font-size:13.5px;">' + esc(nextActionFor(issue)) + '</div>' +
+    '<div style="margin-top:6px;">' + buttons + '</div>';
 }
 
 // FB-0187: ticking a checklist item re-renders the whole drawer, which used
@@ -5573,16 +5677,11 @@ function openDetail(issue) {
       : '<span class="muted">Nothing since it was logged ' + fmtDate(issue.submitted_at) + '.</span>') + '</div>';
   // When the next action is any kind of message to the student, offer the
   // draft there and then (Edd, FB-0161). Written in the instructor's own
-  // voice if a guide is on file, otherwise the house templates.
-  var draftKind = null;
-  var s0 = String(issue.status || "open").toLowerCase();
-  if ((issue.student_contact || issue.student_name) && audienceOf(issue) !== "internal") {
-    if (s0 === "dev_fixed" || s0 === "resolved") draftKind = "fixed";
-    else if (s0 === "resolved_tbc") draftKind = "followup";
-    else if (s0 === "open" || s0 === "in_progress" || s0 === "with_dev") draftKind = "longopen";
-  }
-  html += '<h3>Next action</h3><div class="small" style="margin-bottom:10px;">' + esc(nextActionFor(issue)) +
-    (draftKind ? ' <button class="ghost small" style="padding:3px 10px;margin-left:8px;" onclick="draftStudentMessage(\'' + esc(issue.issue_id) + '\',\'' + draftKind + '\')">Draft message to student</button>' : '') + '</div>';
+  // voice if a guide is on file, otherwise the house templates. Both buttons
+  // live inside the box now, because the box redraws on its own when the
+  // reasoned action lands (Round 55).
+  html += '<h3>Next action</h3><div id="nextActionBox" class="small" style="margin-bottom:10px;">' +
+    nextActionHtml(issue) + '</div>';
   html += '<!--CONTROLS-->';
 
   html += '<details class="acc"><summary>Details</summary><div class="kv">' +
@@ -5776,6 +5875,11 @@ function openDetail(issue) {
   $("drawer").innerHTML = html;
   presentDetail("admin");
   if (refold) drawerFoldRestore(refold);
+  // Once per issue per session, and it usually answers from its own cache
+  // without touching the AI. Every re-render of the same issue comes straight
+  // back out of loadNextAction (Round 55) - a per-render AI call is exactly
+  // what we are not doing.
+  loadNextAction(issue.issue_id, false);
 
   state._copyContacts = studentArr.filter(function (s) { return s.contact; })
     .map(function (s) { return s.name + ": " + s.contact; }).join("\n");
