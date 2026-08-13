@@ -3862,8 +3862,10 @@ function isSplitting() {
 // (FB-0204). So there are now two more ways to earn the missing points, and
 // both are things a lesson code was only ever standing in for: the same part
 // of the platform, and the same person logging again within the hour.
-var DUP_SURE  = 3;     // show the merge offer outright
-var DUP_MAYBE = 1.5;   // close enough to be worth asking the AI matcher about
+var DUP_SURE   = 3;     // show the merge offer outright
+var DUP_MAYBE  = 1.5;   // close enough to be worth asking the AI matcher about
+var WORD_FLOOR = 1.2;   // the words have to say something before circumstance counts
+var BONUS_CAP  = 1.5;   // and circumstance can never carry it over the line on its own
 function dupCandidates() {
   var out = { best: null, score: 0 };
   if (state.editingId || state.updateTargetId) return out;
@@ -3885,19 +3887,31 @@ function dupCandidates() {
     var score = 0;
     var iRef = String(i.lesson_code || "").trim().toUpperCase();
     if (myRef && iRef && myRef === iRef) score += 2;
+    var word = 0;
     var theirs = tokensOf(faultWords(i).text);
     if (theirs.length) {
       var shared = mine.filter(function (w) { return theirs.indexOf(w) > -1; }).length;
-      score += 4 * (shared / Math.min(mine.length, theirs.length));
+      word = 4 * (shared / Math.min(mine.length, theirs.length));
+      score += word;
     }
-    // Logging a run of bugs in one sitting is exactly when the same one gets
-    // written up twice, so a recent one of our own counts for something.
-    var age = now - new Date(i.submitted_at || 0).getTime();
-    if (me && age >= 0 && age < 60 * 60 * 1000 &&
-        String(i.instructor_name || "").trim().toLowerCase() === me) score += 1.2;
-    // Same part of the platform, which is what a lesson code does for a course
-    // error and what nothing did for a website bug.
-    if (mySection && String(i.section || "").toLowerCase() === mySection) score += 0.8;
+    // The two circumstantial points below only count once the words have said
+    // something first. Without that guard, two genuinely different course
+    // player bugs logged by the same person within the hour clear the bar on
+    // circumstance alone, which is a worse fault than the one being fixed -
+    // caught by logging two unrelated test reports and watching the merge
+    // offer come up on them.
+    if (word >= WORD_FLOOR) {
+      var bonus = 0;
+      // Writing up a run of bugs in one sitting is exactly when the same one
+      // gets logged twice, so a recent one of our own counts for something.
+      var age = now - new Date(i.submitted_at || 0).getTime();
+      if (me && age >= 0 && age < 60 * 60 * 1000 &&
+          String(i.instructor_name || "").trim().toLowerCase() === me) bonus += 1.2;
+      // Same part of the platform, which is what a lesson code does for a
+      // course error and what nothing did for a website bug.
+      if (mySection && String(i.section || "").toLowerCase() === mySection) bonus += 0.8;
+      score += Math.min(bonus, BONUS_CAP);
+    }
     if (score > out.score) { out.score = score; out.best = i; }
   });
   return out;
