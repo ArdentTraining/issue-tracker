@@ -3898,14 +3898,23 @@ var SCOPE_SHAPED_RE = new RegExp(
   'i');
 // Has anybody actually looked yet? Only an explicit statement counts, the same
 // strict rule the checklist uses. "The student tried again" is not us looking.
+// Deliberately strict, and the asymmetry is the point. Reading "settled" when
+// nobody has looked is the exact failure this whole gate exists to stop, so it
+// only counts an explicit statement that one of US loaded it. Being too strict
+// costs an instructor one sentence telling them to do something they have
+// already done; being too loose costs the advice its foundation.
+//
+// The first draft of this had a "the same thing" alternative and it swallowed
+// "I tried it again and got the same thing", which is the student trying, not
+// us looking. Nothing vague goes in here.
 var SCOPE_SETTLED_RE = new RegExp(
-  '(i|we|you)\\s+(have\\s+)?(just\\s+)?(tried|loaded|opened|checked|tested|ran|run|looked at|viewed|replicated|reproduced)[^.!?]{0,70}\\b(myself|ourselves|yourself|too|as well|also|my own|our own|the same (lesson|page|module|course|thing))' +
-  '|(works?|loads?|opens?|plays?) (fine|ok|okay|normally|perfectly) (for|on) (me|us|my|our)' +
-  '|(fails?|404s?|errors?|breaks?) (for|on) (me|us) (too|as well)' +
-  '|(i|we) (can|could)(\\s?n.?t| not)? (see|load|open|replicate|reproduce) (it|the (same|error|page|404))' +
-  '|been able to replicate|able to reproduce|replicated (it|the (issue|error|fault))' +
-  '|(everyone|all students|every student|all of them) (is|are|were|is being) (affected|hit|getting)' +
-  '|(it is|it.?s|this is) (happening to|affecting) (everyone|all|every)',
+  '\\b(i|we)\\s+(have\\s+|had\\s+|.ve\\s+|just\\s+)*(tried|loaded|opened|checked|tested|looked at|viewed|pulled up)\\s+(it|the|this|that|his|her|their)[^.!?]{0,60}\\b(myself|ourselves|my own|our own|on (my|our) (account|end|side|machine|device|laptop|computer))' +
+  '|(works?|loads?|opens?|plays?|runs?)\\s+(fine|ok|okay|normally|perfectly|)\\s*(for|on) (me|us)\\b' +
+  '|(fails?|404s?|errors?|breaks?|does ?n.?t work|does ?n.?t load|w(on|ould\\s?n).?t load)\\s+(for|on) (me|us)\\b' +
+  '|\\b(i|we)\\s+(can|could|was|were)?\\s*(n.?t|not)?\\s*(replicate|reproduce)d?\\s+(it|the|this)' +
+  '|been able to (replicate|reproduce)|able to (replicate|reproduce)|(i|we) (have |had )?replicated' +
+  '|(everyone|all students|every student|all of them|all users) (is|are|were|is being) (affected|hit|getting)' +
+  '|(it is|it.?s|this is) (happening to|affecting) (everyone|all students|every student)',
   'i');
 // The gate is open only while BOTH are true: it is the shape of fault where the
 // scope decides the advice, and nothing in front of us says anyone has looked.
@@ -4052,8 +4061,14 @@ function withScopeStepFirst_(steps, staff, team) {
     var t = String(s || '');
     if (/\b(yourself|your own account|on your end|from your side|someone else on the team|a colleague)\b/i.test(t) &&
         /\b(load|open|try|log ?in|check|see)\b/i.test(t)) return false;
-    if (/\b(flag|escalat|straight to|urgent|submit it now|log it now|raise it)\b/i.test(t) &&
-        !/\bif it\b/i.test(t)) return false;
+    // Anything that says "hand it on now" is asserting the answer to the very
+    // question step one is asking, so it goes. The live run this was measured
+    // against returned "skip the usual troubleshooting list and submit it
+    // straight away", which is the assumption Edd caught, worded so that a
+    // narrower filter let it through. A step that carries its own "if" is
+    // conditional already and is kept.
+    if (/\b(escalat|flag (it|this|as)|straight away|straight to|urgent(ly)?|submit it|log it now|raise it|skip the (usual|normal|standard))/i.test(t) &&
+        !/\bif (it|they|she|he|you)\b/i.test(t)) return false;
     return true;
   });
   return [mine, scopeBranchText_(staff, team)].concat(kept).slice(0, 5);
