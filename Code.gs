@@ -6181,7 +6181,12 @@ function setup() {
     // Sheets turns a long consignment number into scientific notation and a
     // chase date into a Date object an hour behind, so we pin both to plain
     // text before any row lands.
-    ['tracking_number', 'chase_at'].forEach(function (col) {
+    // chatwoot_contact_id joins the list in Round 61 for the same reason: it is
+    // digits, so Sheets treats it as a number, and a long enough one comes back
+    // in scientific notation with the end of it rounded off. An identifier that
+    // quietly loses its last few digits is worse than not having one. Pinned to
+    // text while the column is still empty, so nothing needs repairing later.
+    ['tracking_number', 'chase_at', 'chatwoot_contact_id'].forEach(function (col) {
       var c = HEADERS.indexOf(col);
       if (c < 0) return;
       sheet.getRange(1, c + 1, sheet.getMaxRows(), 1).setNumberFormat('@');
