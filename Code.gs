@@ -6844,18 +6844,30 @@ function askIssues_(body) {
     res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1000, messages: [{ role: 'user', content: prompt }] })
+      // 8000, not 1000. The model thinks before it answers and the thinking
+      // spends from the same budget, so a thousand tokens went entirely on
+      // thinking and the reply came back with no text block in it at all -
+      // which is why Ask has been answering "Empty AI response" (found while
+      // wiring Ask into the queues, FB-0228). Same trap as Round 44.
+      payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 8000, messages: [{ role: 'user', content: prompt }] })
     });
   } catch (e) { return { ok: false, error: 'AI request failed: ' + e }; }
   if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
     return { ok: false, error: 'AI request failed (' + res.getResponseCode() + ').' };
   }
   var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { ok: false, error: 'Bad AI response.' }; }
+  tallyAi_(parsed);
   var text = '';
   if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
     if (parsed.content[i].type === 'text') text += parsed.content[i].text;
   }
-  if (!text.trim()) return { ok: false, error: 'Empty AI response.' };
+  // A failure has to say what actually came back. "Empty AI response" sent us
+  // looking at the front end for a fault that was a token budget all along.
+  if (!text.trim()) {
+    var blocks = (parsed.content || []).map(function (c) { return c.type + ':' + String(c.text || c.thinking || '').length; }).join(',');
+    return { ok: false, error: 'The AI replied with no answer in it (stopped: ' + (parsed.stop_reason || '?') +
+      '; blocks ' + (blocks || 'none') + '; ' + ((parsed.usage && parsed.usage.output_tokens) || '?') + ' output tokens).' };
+  }
   return { ok: true, answer: text.trim() };
 }
 
