@@ -1453,7 +1453,7 @@
   <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">Suggested playbook updates</h3>
   <div id="playbookSuggestions"></div>
 
-  <div class="card" style="margin-top:18px;">
+  <div class="card" id="playbookCard" style="margin-top:18px;">
     <h2>Troubleshooting playbook</h2>
     <p class="small muted">The rulebook the AI uses to suggest steps to instructors. Edit it directly here, or approve the suggestions above to add to it.</p>
     <!-- FB-0222: the editor grows with the playbook instead of showing it
@@ -2565,7 +2565,12 @@ window.addEventListener("resize", scheduleViewAsLift);
 // appears, so there are never two save buttons on screen at once.
 var SAVE_BARS = [
   { btn: "#drawer .savebar-btn", surface: "#drawer", scroller: "#drawer", label: "Save changes", what: "this issue" },
-  { btn: "#usec_playbook .savebar-btn", surface: "#usec_playbook .card", scroller: null, label: "Save playbook", what: "the troubleshooting playbook" }
+  // #playbookCard, not "the first .card in the section". The suggestions
+  // list above the editor renders cards of its own, so as soon as anything
+  // was waiting for approval the bar measured the wrong box, found it above
+  // the top of the window, and stayed away. That is the second half of why
+  // FB-0222 was re-filed: give the surface an id and it cannot be mistaken.
+  { btn: "#playbookCard .savebar-btn", surface: "#playbookCard", scroller: null, label: "Save playbook", what: "the troubleshooting playbook" }
 ];
 var SAVE_BAR_MIN_SCROLL = 200;   // below this the pane is short enough to leave alone
 var SAVE_BAR_MIN_MOVE = 120;     // "once they reach that far down": a fresh pane opens clean
