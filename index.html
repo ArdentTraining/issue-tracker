@@ -476,6 +476,17 @@
     padding: 10px 20px; align-items: center; gap: 12px;
   }
   .savebar.on { display: flex; }
+  /* The assign-all row (Edd, FB-0223). Its own class rather than .row, because
+     .row turns into a column on a phone and a condition read down the screen
+     one control per line is not a sentence any more. Here it wraps instead,
+     and on a narrow screen the two dropdowns share the line. */
+  .bulkrow { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .bulkrow > * { flex: none; }
+  .bulkrow select { max-width: 100%; }
+  @media (max-width: 760px) {
+    .bulkrow > .grow { flex: 1 1 140px; min-width: 0; }
+    .bulkrow > .grow select { width: 100%; }
+  }
   .savebar .savebar-what { color: var(--muted); font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Clearance, never less than there was: the bar adds its own room rather
      than sitting on top of the last thing on the page (the Round 49 fix). */
@@ -7712,17 +7723,17 @@ function renderCourseTools() {
     var join = idx === 0
       ? '<span class="small muted" style="white-space:nowrap;">Assign all</span>'
       : sel('onchange="courseCondSet(' + idx + ',\'join\',this.value)"', [["and", "and is"], ["or", "or is"]], c.join);
-    return '<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:' + (idx ? "6px" : "0") + ';">' +
-      '<span style="flex:none;">' + join + '</span>' +
-      '<span style="flex:none;">' + sel('onchange="courseCondSet(' + idx + ',\'field\',this.value)"', fieldOpts, c.field) + '</span>' +
-      '<span style="flex:none;">' + sel('onchange="courseCondSet(' + idx + ',\'value\',this.value)"', courseBulkOpts(c.field, pool), c.value, "any") + '</span>' +
+    return '<div class="bulkrow" style="margin-top:' + (idx ? "6px" : "0") + ';">' +
+      '<span>' + join + '</span>' +
+      '<span class="grow">' + sel('onchange="courseCondSet(' + idx + ',\'field\',this.value)"', fieldOpts, c.field) + '</span>' +
+      '<span class="grow">' + sel('onchange="courseCondSet(' + idx + ',\'value\',this.value)"', courseBulkOpts(c.field, pool), c.value, "any") + '</span>' +
       (idx === 0
-        ? '<button class="ghost small" style="flex:none;padding:5px 12px;font-weight:700;" title="Add another condition" onclick="courseCondAdd()">+</button>'
-        : '<button class="ghost small" style="flex:none;padding:5px 12px;" title="Drop this condition" onclick="courseCondRemove(' + idx + ')">×</button>') +
+        ? '<button class="ghost small" style="padding:5px 12px;font-weight:700;" title="Add another condition" onclick="courseCondAdd()">+</button>'
+        : '<button class="ghost small" style="padding:5px 12px;" title="Drop this condition" onclick="courseCondRemove(' + idx + ')">×</button>') +
       (idx === 0
-        ? '<span class="small muted" style="flex:none;margin:0 2px;">to</span>' +
-          '<span style="flex:none;">' + sel('onchange="state.courseBulkWho=this.value;renderCourseTools()"', whos.map(function (w) { return [w, w]; }), state.courseBulkWho, "choose a person…") + '</span>' +
-          '<button class="ghost small" style="flex:none;padding:7px 14px;" onclick="courseBulkAssign()">Assign</button>'
+        ? '<span class="small muted" style="margin:0 2px;">to</span>' +
+          '<span class="grow">' + sel('onchange="state.courseBulkWho=this.value;renderCourseTools()"', whos.map(function (w) { return [w, w]; }), state.courseBulkWho, "choose a person…") + '</span>' +
+          '<button class="ghost small" style="padding:7px 14px;" onclick="courseBulkAssign()">Assign</button>'
         : "") +
     '</div>';
   };
