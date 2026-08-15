@@ -6264,7 +6264,8 @@ function openDetail(issue) {
     // - the FB-0210 rule is that guidance which stops a mistake stays visible,
     // and these two both look like they close an issue and neither does.
     '<div class="small muted" style="margin-top:3px;">"Notified" ticks off the tell-the-student job and drops this out of the Actions list. It doesn\'t resolve the fault.</div>' +
-    '<div class="small muted" style="margin-top:2px;">"No further contact" stops us chasing this one student. The fault stays open for the developers.</div>';
+    '<div class="small muted" style="margin-top:2px;">"No further contact" stops us chasing this one student. The fault stays open for ' +
+      (catOf(issue) === "course_error" ? 'the course team' : 'the developers') + '.</div>';
 
   // Full reports/updates text and screenshots, kept at the bottom for reference.
   if (reps.length) {
