@@ -4484,7 +4484,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r58 · 2026-08-15';
+var CODE_STAMP = 'r59 · 2026-08-15';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4667,6 +4667,14 @@ function draftStudentMessage_(data) {
 // things that could change the answer; a matching fingerprint returns the
 // stored answer with no API call at all.
 var NEXT_ACTION_CAP = 24000;   // characters of thread the reasoner reads
+// Bump this whenever the reasoning changes. The Round 55 cache keys on a
+// fingerprint of the ISSUE, which is right - reopening an unchanged issue must
+// cost nothing. But it means a better prompt would go unnoticed on every issue
+// already answered, and the wrong answer Edd was looking at in FB-0214 would
+// still be sitting there. The revision rides in the fingerprint, so changing it
+// retires every stored answer in one go and each issue recomputes when it is
+// next opened. Cheap because it is still one call per issue, only once.
+var NEXT_ACTION_REV = 'r59';
 var NEXT_ACTION_MODEL = ANTHROPIC_MODEL;   // sonnet: this runs often, and it is plenty for the job
 
 // The whole conversation, oldest first, attributed and dated, because who said
@@ -4681,8 +4689,26 @@ function issueTranscript_(rec) {
   if (reps && reps.length) {
     for (var r = 0; r < reps.length; r++) {
       var rp = reps[r] || {};
-      var head = '--- ' + (rp.instructor_name || 'unknown') + ', ' +
-        String(rp.submitted_at || rp.at || '').slice(0, 16).replace('T', ' ') + ' ---';
+      // Round 59. Two things used to be missing from every heading, and both
+      // are the difference between reading a conversation and guessing at one.
+      //
+      // The date. It read `rp.submitted_at || rp.at`, and an entry carries
+      // NEITHER - the field is `date`. So every line came through as
+      // "--- Edd,  ---" and the reasoner had no way to tell the first thing we
+      // said from the last, which is exactly the ordering FB-0214 turned on.
+      //
+      // The kind. A report is what came IN; an update is what WE did about it.
+      // Unlabelled they read as one flat pile, so a note saying "student has
+      // been asked to try the Sea Regs portal" carried no more weight than the
+      // student's original message, and the answer restarted the diagnosis.
+      var when = String(rp.date || rp.submitted_at || rp.at || '').slice(0, 16).replace('T', ' ');
+      var isUpdate = String(rp.kind || '') === 'update';
+      var head = '--- [' +
+        (isUpdate ? 'OUR OWN UPDATE, logged by ' : 'REPORT LOGGED BY ') +
+        (rp.instructor_name || 'unknown') +
+        (when ? ' on ' + when : ' (undated)') + ']' +
+        (r === reps.length - 1 ? '  <<< THE MOST RECENT ENTRY, this is where the story is up to' : '') +
+        ' ---';
       var body = String(rp.raw_text || '').trim();
       if (!body && rp.summary) body = String(rp.summary);
       if (body) parts.push(head + '\n' + body);
@@ -4713,6 +4739,7 @@ function nextActionSignature_(rec) {
     return s === 'done' ? 'd' : s === 'na' ? 'n' : 't';
   }).join('');
   return [
+    NEXT_ACTION_REV,
     'r' + ((reps && reps.length) || 0),
     'x' + String(rec.raw_text || '').length,
     's' + String(rec.status || ''),
@@ -4755,6 +4782,69 @@ function issueHasStudent_(rec) {
   return !!(String(rec.student_name || '').trim() || String(rec.student_contact || '').trim());
 }
 
+// Round 59, FB-0214. Everything we have already put to the student, pulled out
+// of the thread and handed over as its own block.
+//
+// The failure it exists for: Ruth could not log in, her email was not
+// recognised, and she had bought the course through Sea Regs in Plymouth - a
+// partner school, so she logs in at their portal, not ours. Edd had spotted
+// that, sent her the right link, and nudged her again. The next action came
+// back "reset her password yourself and send her the login link", which is a
+// step BACKWARDS: the password was never the fault, and the link had already
+// gone. Edd: "the next action here is completely wrong and takes us back a
+// step."
+//
+// The thread held all of that. It was just buried in the middle of a long
+// conversation with no dates and no labels, and the model weighed a playbook
+// line above a thing a human had already done. So it gets pulled to the front,
+// in order, newest last, and the rules below make it the first thing that
+// binds.
+function alreadySaidTo_(rec) {
+  var reps = [];
+  try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
+  var ours = [];
+  for (var i = 0; i < reps.length; i++) {
+    var rp = reps[i] || {};
+    if (String(rp.kind || '') !== 'update') continue;
+    var body = String(rp.raw_text || rp.summary || '').trim();
+    if (!body) continue;
+    ours.push({
+      on: String(rp.date || rp.submitted_at || '').slice(0, 10),
+      by: rp.instructor_name || 'us',
+      said: body.slice(0, 1200)
+    });
+  }
+  return ours;
+}
+
+// The one symptom that decides which fix is even plausible: the student's own
+// words for what is failing. A password reset cannot fix an account the login
+// page has never heard of, and "your username is not recognised" is the login
+// page saying exactly that. The playbook lists both the partner-portal fix and
+// the reset-their-password fix, and left to itself the reasoner picks whichever
+// reads as most decisive rather than whichever matches the error on the screen.
+function symptomNote_(rec) {
+  var hay = (String(rec.summary || '') + ' ' + String(rec.raw_text || '')).toLowerCase();
+  var hits = [];
+  if (/not recognis|not recogniz|no account|unknown (user|email)|user not found|doesn.t recognise|does not recognise/.test(hay)) {
+    hits.push('The student reports the login NOT RECOGNISING them. That is an account-or-portal fault, not a password fault: a reset cannot help an account the login page has never heard of, and a reset email will never arrive at an address that page does not hold. Do not return a password reset as the action for this symptom unless the thread has already ruled the portal out.');
+  }
+  if (/sea ?regs|searegs|dosa|partner school|bought (it )?(via|through)|via [a-z ]+ in [a-z]/.test(hay)) {
+    hits.push('This student came to us through a PARTNER SCHOOL. Partner-school students have no account at ardent-training.com at all; they log in at their school\'s own portal (searegs.ardent-training.com and the like). This exact pattern has caused a wrong answer twice before, so check the thread for whether they have been sent to the right portal yet before suggesting anything else.');
+  }
+  if (/reset (email|link)( has)? (never|not) (arriv|com)|no (password )?reset email|didn.t get (an )?email|no email came/.test(hay)) {
+    hits.push('A reset email that never arrives usually means the address is not on the account at all (wrong address, or the account lives on a partner portal), not that the mail is slow. Treat a missing reset email as evidence about the ACCOUNT.');
+  }
+  return hits;
+}
+
+// Who a fix belongs to. A course error is the course team's, every time: a
+// wrong diagram or a clumsy question is written, not coded. Everything else
+// that gets handed on goes to the developers.
+function owningTeam_(rec) {
+  return String(rec.category || '') === 'course_error' ? 'the course team' : 'the developers';
+}
+
 function nextActionAi_(rec) {
   var hasStudent = issueHasStudent_(rec);
   var staff = !hasStudent ||
@@ -4791,10 +4881,18 @@ function nextActionAi_(rec) {
     device_info: rec.device_info || '',
     assignee: rec.assignee || '',
     logged: String(rec.submitted_at || '').slice(0, 10),
-    handed_to_developers_on: rec.dev_passed_at ? String(rec.dev_passed_at).slice(0, 10) : '',
-    marked_fixed_on: rec.dev_fixed_at ? String(rec.dev_fixed_at).slice(0, 10) : '',
-    developer_notes: String(rec.dev_notes || '').slice(0, 2000),
-    open_question_from_the_team: rec.dev_query_at ? String(rec.dev_query || '') : '',
+    // Round 59, FB-0215. These three used to say "developers" whatever the
+    // issue was, and the reasoner reads the key names. On Tim's wording tweak -
+    // a course improvement, already sitting with the course team - it duly came
+    // back "chase the developers for a status update". Edd: "the developers are
+    // not needed (except maybe course creators)". A course error belongs to the
+    // course team; nothing about it ever goes near a developer, so the record
+    // stops calling them that.
+    which_team_owns_this: owningTeam_(rec),
+    handed_to_that_team_on: rec.dev_passed_at ? String(rec.dev_passed_at).slice(0, 10) : '',
+    that_team_marked_it_fixed_on: rec.dev_fixed_at ? String(rec.dev_fixed_at).slice(0, 10) : '',
+    notes_from_that_team: String(rec.dev_notes || '').slice(0, 2000),
+    open_question_from_that_team: rec.dev_query_at ? String(rec.dev_query || '') : '',
     open_question_is_for: rec.dev_query_at ? String(rec.dev_query_target || 'admins') : '',
     resolution_note: String(rec.resolution_note || '').slice(0, 1000),
     images_attached: String(rec.image_urls || '') ? String(rec.image_urls).split(',').length : 0,
@@ -4803,20 +4901,39 @@ function nextActionAi_(rec) {
     chase_on: rec.chase_at ? String(rec.chase_at).slice(0, 10) : ''
   };
 
+  var already = alreadySaidTo_(rec);
+  var symptoms = symptomNote_(rec);
+
   var prompt = 'You are the most experienced person on the support desk at Ardent Training, an online RYA sailing school. ' +
     'An instructor has this issue open in front of them and wants ONE genuinely useful next action.\n\n' +
     'THE HARD RULES, in order of importance:\n' +
     (hasStudent ? '' :
       '0. THERE IS NO STUDENT ON THIS ONE. It was logged by one of the team about something they hit themselves, and a_student_is_involved is false. So there is nobody to ask, nobody to relay a step to, and nobody waiting on an update. Do NOT return an action that asks the student anything, tells us to contact or update a student, or waits on a student reply, and do NOT ask for information only a student could give. student_ask must be an empty string and instructor_side must be true. The useful action here is one WE take: reproduce it ourselves and pin down exactly when it happens, check whether anyone else on the team sees it, or hand it to the developers with what we already know.\n') +
-    '1. NEVER ask the student for something the thread already gives you. If they have told us the device, the iOS version, the browser, or sent a screenshot or video, that question is answered.\n' +
-    '2. NEVER suggest anything the thread shows has already been tried, and never suggest a variation of it in different words.\n' +
+    '1. START FROM THE LAST THING THAT WAS SAID, AND CARRY ON FROM THERE. The block headed WHAT WE HAVE ALREADY PUT TO THE STUDENT is the state of play. The next action must be the step that follows ON from it. An action that would undo, repeat, or re-ask something already sent is not an action, it is going backwards, and it is the single worst answer this box can give. Read the most recent entry first and treat everything before it as settled.\n' +
+    '2. NEVER suggest anything already suggested. Not the same words, not different words, not "as a first step", not "to be sure". If we have sent them a login link, do not send a login link. If we have asked them to try a portal, do not ask them to try a portal. If the thread shows it has been said, it is spent.\n' +
+    '2b. IF WE ARE WAITING ON THEM, SAY SO. When the last thing in the thread is a suggestion of ours that they have not answered yet, the honest next action is to wait, or to chase it if it has been long enough, and to say which. Give the date we last wrote and how long it has been quiet. Do NOT invent a new step to fill the silence: a fresh instruction on top of an unanswered one confuses the student and loses the thread of what we were testing. Working out that there is nothing to do yet IS a useful answer, and it is the right one more often than it gets given.\n' +
+    '2c. MATCH THE FIX TO THE SYMPTOM THE STUDENT DESCRIBED, not to whatever the playbook or the checklist happens to list first. Their own words for what is going wrong outrank every generic ordering in here. If they say the login does not recognise them, the fault is with the account or the portal, and a password step is beside the point however standard it is. Read the SYMPTOM NOTES below before you choose.\n' +
+    '3a. NEVER ask the student for something the thread already gives you. If they have told us the device, the iOS version, the browser, or sent a screenshot or video, that question is answered.\n' +
     '3. A troubleshooting step that could not possibly explain THIS fault is not a next action, however untried it is. A layout that breaks only in portrait, or a video that stops at the same second every time, is not going to be fixed by a different network, a hard refresh or a VPN being turned off. Ignore untried steps that do not fit the symptom, and say so in the why line if that is the interesting part.\n' +
     '4. The fastest resolution is often something WE do. The instructor can reset a password from the students tab of the instructor portal, assign a course to an account, extend an account by hand, mark an exam manually from photos, post an answer in the course live chat, re-send an ebook, or raise an invoice. When one of those settles it, THAT is the action, phrased as a thing we do.\n' +
-    '5. When the troubleshooting has genuinely gone as far as it can and the fault is real, the action is to move it on, not to keep poking the student: hand it to the developers (or the course team for a content error) with the specific evidence that will let them reproduce it, chase whoever already has it if it has sat too long, or answer the question they have asked us.\n' +
-    '6. If the thread shows the developers or the course team are already on it and there is nothing new to give them, say plainly that the useful next action is to leave the student alone and chase internally, and name what we would chase for.\n' +
-    '7. Notice what the ISSUE RECORD says versus what the thread says. If the conversation says the developers are working on it but the record was never handed to them, saying so IS the useful action, because nothing in our system is tracking it.\n' +
+    '5. When the troubleshooting has genuinely gone as far as it can and the fault is real, the action is to move it on, not to keep poking the student: hand it on with the specific evidence that will let them reproduce it, chase whoever already has it if it has sat too long, or answer the question they have asked us. Hand it to the team named in which_team_owns_this and to nobody else. A course error - wrong wording, a wrong diagram, a confusing question - is the COURSE TEAM\'s, always. Never say \"the developers\" about a course error; no developer will ever touch it.\n' +
+    '6. If the thread shows that team is already on it and there is nothing new to give them, say plainly that the useful next action is to leave the student alone and chase internally, and name what we would chase for.\n' +
+    '7. Notice what the ISSUE RECORD says versus what the thread says. If the conversation says somebody is working on it but the record was never handed to them, saying so IS the useful action, because nothing in our system is tracking it.\n' +
     '8. Read the student. Somebody who has diagnosed the fault themselves and offered to help does not need to be walked through the basics.\n' +
     '9. One action. Concrete, plain English, addressed to the instructor, no jargon, no lists, no hedging between two options.\n\n' +
+    // Round 59, FB-0214. Ahead of the record, ahead of the checklist, ahead of
+    // the playbook. What a human has already put to this student is the one
+    // thing the answer has to be consistent with, so it goes first and it is
+    // named for what it is.
+    (already.length
+      ? 'WHAT WE HAVE ALREADY PUT TO THIS STUDENT (oldest first, so the LAST one is where things stand). Everything in here is spent: it has been said, and saying it again takes us backwards:\n' +
+        already.map(function (u) {
+          return '- ' + (u.on || 'undated') + ', ' + u.by + ' logged: ' + u.said;
+        }).join('\n') + '\n\n'
+      : 'WHAT WE HAVE ALREADY PUT TO THIS STUDENT: nothing has been logged since the report came in, so this is still at the start.\n\n') +
+    (symptoms.length
+      ? 'SYMPTOM NOTES (read these before choosing, they beat the generic ordering below):\n- ' + symptoms.join('\n- ') + '\n\n'
+      : '') +
     'THE ISSUE RECORD (our system\'s own view):\n' + JSON.stringify(state, null, 1) + '\n\n' +
     'THE PRE-DEVELOPER CHECKLIST (what the team has ticked off, as evidence - NOT a list to read the next line from):\n' +
     checklistEvidence_(rec, staff) + '\n\n' +
@@ -4833,7 +4950,8 @@ function nextActionAi_(rec) {
     '{"action": "<the single next action, one or two sentences, addressed to the instructor as something to do>",\n' +
     ' "why": "<one short line saying why this and not the obvious alternative - name the thing in the thread that decided it>",\n' +
     ' "instructor_side": true or false (true when this is something WE do; false when it is something the student is asked to do or tell us),\n' +
-    ' "student_ask": "<empty string when instructor_side is true; otherwise the one thing to ask the student, in plain words a non-technical sailor can act on>"}';
+    ' "student_ask": "<empty string when instructor_side is true; otherwise the one thing to ask the student, in plain words a non-technical sailor can act on>",\n' +
+    ' "waiting_on_student": true or false (true when the honest position is that we have already asked and the ball is in their court)}';
 
   var got = anthropicRaw_(NEXT_ACTION_MODEL, prompt, 16000);
   if (!got.json || !got.json.action) {
@@ -4845,6 +4963,7 @@ function nextActionAi_(rec) {
     why: String(got.json.why || '').slice(0, 400),
     instructor_side: !!got.json.instructor_side,
     student_ask: String(got.json.student_ask || '').slice(0, 400),
+    waiting_on_student: !!got.json.waiting_on_student,
     messages: tr.messages
   };
 }
@@ -4873,7 +4992,8 @@ function nextActionCached_(found, opts) {
   }
   var store = {
     action: out.action, why: out.why, instructor_side: out.instructor_side,
-    student_ask: out.student_ask, messages: out.messages,
+    student_ask: out.student_ask, waiting_on_student: !!out.waiting_on_student,
+    messages: out.messages,
     sig: sig, at: new Date().toISOString(), model: NEXT_ACTION_MODEL
   };
   try {
@@ -4894,6 +5014,7 @@ function nextAction_(data) {
   return {
     ok: true, issue_id: id, action: out.action, why: out.why,
     instructor_side: !!out.instructor_side, student_ask: out.student_ask || '',
+    waiting_on_student: !!out.waiting_on_student,
     messages: out.messages || 0, at: out.at, cached: !!out.cached
   };
 }

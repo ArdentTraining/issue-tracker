@@ -843,7 +843,7 @@
       <div id="sortedRow" class="field hidden" style="margin-top:6px;">
         <label style="display:inline;font-size:13px;color:var(--text);">
           <input type="checkbox" id="f_student_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;">
-          This student is sorted, no follow-up needed</label>
+          This student needs no further contact</label>
         <div class="small muted" style="margin-top:4px;">For when we've worked round it by hand and they have what they need. The issue stays open for the developers, we just stop chasing this student about it.</div>
       </div>
 
@@ -1366,7 +1366,7 @@ function audienceBadge(i) {
 // An open issue whose student is already sorted. Worth showing on the card so
 // nobody picks it up thinking somebody is sitting there waiting on us.
 function sortedBadge(i) {
-  return isTrue(i && i.student_sorted) ? '<span class="badge type-badge" title="This student needs no follow-up. The fault is still open for the developers.">Student sorted</span>' : "";
+  return isTrue(i && i.student_sorted) ? '<span class="badge type-badge" title="This student needs nothing more from us. The fault itself is still open.">No further contact needed</span>' : "";
 }
 var SECTION_LABEL = { website: "Website", instructor_portal: "Instructor portal", partner_portal: "Partner portal", course_player: "Course player", app: "App", other: "Other" };
 function sectionBadge(s) {
@@ -1383,7 +1383,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r58 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r59 · 2026-08-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1818,9 +1818,20 @@ function priBadge(p) {
 // leave this unless more people report it" state (Edd, 26 Jul). A fresh report
 // wakes it back up (see addReportToIssue_).
 var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", parked: "parked", resolved_tbc: "resolved - TBC", resolved: "resolved", past: "past" };
-function statusBadge(s) {
+// A wrong diagram or a clumsy question is written, not coded, so it goes to the
+// course team and no developer ever sees it. The badge said "with developers"
+// on every one of them, which is half of why Tim's wording tweak read as a
+// developer job (Edd, FB-0215). Pass the issue and the two handover statuses
+// name whoever actually has it.
+var STATUS_LABEL_COURSE = { with_dev: "with the course team", dev_fixed: "fixed by the course team" };
+function statusLabel(s, issue) {
   s = (s || "open").toLowerCase();
-  return '<span class="badge st st-' + s + '">' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + "</span>";
+  if (issue && catOf(issue) === "course_error" && STATUS_LABEL_COURSE[s]) return STATUS_LABEL_COURSE[s];
+  return STATUS_LABEL[s] || s.replace(/_/g, " ");
+}
+function statusBadge(s, issue) {
+  s = (s || "open").toLowerCase();
+  return '<span class="badge st st-' + s + '">' + statusLabel(s, issue) + "</span>";
 }
 function typeBadge(t) {
   if (!t) return "";
@@ -2507,7 +2518,17 @@ function myActionItems() {
     // on unbothered (a wording tweak, a cosmetic niggle), no update is needed
     // until it's fixed. Blocked students are the ones who deserve a "still on
     // it" note. Also wants age AND quiet, so sending the update clears it.
+    // Round 59, FB-0215. An IMPROVEMENT is not blocking anybody by definition -
+    // it is a suggestion for making something better, not a report of something
+    // broken - so it never earns a "reassure the student" job however long it
+    // sits or however it was prioritised. Tim's issue is the case: a request to
+    // reword an IRPCS question, which Tom had already answered for him, showing
+    // up in Actions at HIGH after 36 days telling somebody to go and reassure
+    // him. Edd: "This is a course improvement not a student tech issue." That
+    // is this lane's own rule from 24 July, it just had no way to tell a
+    // suggestion from a fault.
     if (String(i.priority || "").toLowerCase() === "high" &&
+        kindOf(i) !== "improvement" &&
         (st === "open" || st === "in_progress" || st === "with_dev") &&
         (now - new Date(i.submitted_at)) > ACTIONS_LONG_OPEN_DAYS * day &&
         (now - new Date(i.updated_at || i.submitted_at)) > 7 * day &&
@@ -2523,7 +2544,7 @@ function updateActionsTabCount() {
   t.textContent = n ? "Actions (" + n + ")" : "Actions";
 }
 function actionCardTop(i) {
-  return '<div style="margin-bottom:4px;">' + priBadge(i.priority) + " " + statusBadge(i.status) +
+  return '<div style="margin-bottom:4px;">' + priBadge(i.priority) + " " + statusBadge(i.status, i) +
     (refOf(i) || i.lesson_code ? ' <span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
     (i.instructor_name ? ' <span class="badge type-badge">' + esc(i.instructor_name) + '</span>' : '') +
     '</div>';
@@ -2668,7 +2689,7 @@ function draftEmailFor(id, kind) { draftStudentMessage(id, kind); }
 function scannedSorted(id) {
   apiPost({ action: "updateIssue", issue_id: id, student_sorted: "true" }).then(function (res) {
     if (!res || !res.ok) { toast("Could not update: " + ((res && res.error) || "unknown")); return; }
-    toast("Marked sorted - the fix stays in its queue.");
+    toast("Marked as needing no further contact - the fix stays in its queue.");
     loadIssues();
   }).catch(function () { toast("Update failed."); });
 }
@@ -2731,10 +2752,10 @@ function renderActions() {
     // the issue itself, one click away.
     var btn = "";
     if (r.kind === "scanned") btn = r.i._waiting
-      ? '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'scannedSorted(\'' + id + '\')">Student\'s sorted</button>' +
+      ? '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'scannedSorted(\'' + id + '\')">No more contact needed</button>' +
         ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft another message</button>'
       : '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft message to student</button>' +
-        ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'scannedSorted(\'' + id + '\')">Student\'s sorted</button>';
+        ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'scannedSorted(\'' + id + '\')">No more contact needed</button>';
     else if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 days</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Sorted</button>';
     else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
@@ -2906,7 +2927,7 @@ function renderLiveDetail() {
       '<span class="badge chat-badge">issue filed</span> ' +
       (linkedIssue
         ? '<a href="#" onclick="liveOpenIssue(\'' + esc(c.issue_id) + '\');return false;" style="color:var(--accent);">' + esc(shortId(linkedIssue)) + '</a> ' +
-          statusBadge(linkedIssue.status) + ' ' + priBadge(linkedIssue.priority)
+          statusBadge(linkedIssue.status, linkedIssue) + ' ' + priBadge(linkedIssue.priority)
         : '') +
       (c.chat_still_open ? ' <span class="badge chat-badge">chat still open in Chatwoot</span>' : '') +
     '</div>';
@@ -3190,10 +3211,11 @@ function contentSuggResolve(id, accept) {
 // dropdown. Resolving still wants a note, so it opens the drawer's field.
 function detailSetStatus(id, status) {
   if (status === "resolved") {
-    var note = $("d_resolution_note") ? $("d_resolution_note").value.trim() : "";
-    if (!note) {
-      if ($("d_status")) { $("d_status").value = "resolved"; onStatusChange(); }
-      if ($("d_resolution_note")) $("d_resolution_note").focus();
+    // One box does both jobs now (FB-0211), so flip it into resolution mode
+    // first and then look, otherwise a note already typed reads as missing.
+    if ($("d_status")) { $("d_status").value = "resolved"; onStatusChange(); }
+    if (!detailResolutionNote()) {
+      if ($("d_update_text")) $("d_update_text").focus();
       toast("Add a line on what fixed it, then press Save.");
       return;
     }
@@ -4140,7 +4162,7 @@ function renderDupCard(entry, idx) {
       (match.instructor_name && !imported ? ', logged by ' + esc(match.instructor_name) : '') +
       (fmtDate(match.submitted_at) ? ' on ' + fmtDate(match.submitted_at) : '') +
       ' (' + esc(shortId(match)) + ')</div>' +
-    '<div>' + priBadge(match.priority) + ' ' + statusBadge(match.status) +
+    '<div>' + priBadge(match.priority) + ' ' + statusBadge(match.status, match) +
       (where ? ' <span class="code">' + esc(where) + '</span>' : '') +
       (reportCount(match) > 1 ? ' <span class="badge type-badge">×' + reportCount(match) + ' reports</span>' : '') +
       (imported ? ' <span class="badge type-badge">Imported from the old log</span>' : '') + '</div>' +
@@ -4668,7 +4690,7 @@ function showExisting(matches) {
       : 'Check it is the same problem, then add this as an update to keep it in one entry, or log it as new.') + '</div>' +
     matches.map(function (m) {
       return '<div class="exrow" data-id="' + esc(m.issue_id) + '" onclick="chooseExisting(\'' + esc(m.issue_id) + '\')">' +
-        '<div>' + priBadge(m.priority) + ' ' + statusBadge(m.status) +
+        '<div>' + priBadge(m.priority) + ' ' + statusBadge(m.status, m) +
           (m.lesson_code ? ' <span class="code">' + esc(m.lesson_code) + '</span>' : '') +
           ' <span class="recTag small" style="display:none;color:var(--medium);font-weight:600;">recommended</span></div>' +
         '<div style="margin-top:4px;">' + esc(summaryText(m)) + '</div>' +
@@ -5637,7 +5659,7 @@ function renderAdmin() {
     var imgs = parseImageUrls(i.image_urls).length;
     return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status) + catBadge(catOf(i)) + audienceBadge(i) + sortedBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) + chatOpenBadge(i) +
+        priBadge(i.priority) + statusBadge(i.status, i) + catBadge(catOf(i)) + audienceBadge(i) + sortedBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) + chatOpenBadge(i) +
         (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
         (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
@@ -5925,7 +5947,9 @@ function nextActionHtml(issue) {
     '<button class="ghost small" style="padding:3px 10px;" onclick="loadNextAction(\'' + esc(id) + '\',true)">Rethink this</button>';
 
   if (got) {
-    return (got.instructor_side ? '<div class="small" style="color:var(--accent);margin-bottom:2px;">One for us to do, not the student:</div>' : '') +
+    return (got.waiting_on_student
+        ? '<div class="small" style="color:var(--accent);margin-bottom:2px;">We have asked, and the ball is with the student:</div>'
+        : got.instructor_side ? '<div class="small" style="color:var(--accent);margin-bottom:2px;">One for us to do, not the student:</div>' : '') +
       '<div style="font-size:13.5px;">' + esc(got.action) + '</div>' +
       (got.why ? '<div class="small muted" style="margin-top:3px;">' + esc(got.why) + '</div>' : '') +
       '<div class="small muted" style="margin-top:3px;">Read off the whole thread' +
@@ -6001,7 +6025,7 @@ function openDetail(issue) {
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
     '<div style="margin-bottom:12px;">' +
       '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
-      priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + sortedBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) + chatOpenBadge(issue) +
+      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + sortedBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) + chatOpenBadge(issue) +
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
 
@@ -6064,7 +6088,13 @@ function openDetail(issue) {
     nextActionHtml(issue) + '</div>';
   html += '<!--CONTROLS-->';
 
-  html += '<details class="acc"><summary>Details</summary><div class="kv">' +
+  // Round 59, FB-0216. Edd: "reorder this screen to put the troubleshooting
+  // checklist above details and developers. So troubleshooting checklist, then
+  // developers, then details, then reports and updates. In fact, reports and
+  // updates could be within details." The pane is built into pieces now and
+  // assembled in his order at the bottom: what an instructor ACTS on first,
+  // the reference material last and folded inside Details.
+  var detailsKv = '<div class="kv">' +
     kv("Submitted by", issue.instructor_name) +
     kv("Logged", fmtDate(issue.submitted_at)) +
     kv("Assigned to", issue.assignee) +
@@ -6083,20 +6113,21 @@ function openDetail(issue) {
     kv("Affects", audienceOf(issue) === "internal" ? "Us (internal)" : "Students") +
     (audienceOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "—") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
     kv("Priority reason", issue.priority_reason) +
-  '</div></details>';
+  '</div>';
 
   // Handoff section: developers for tech issues, the course team for course errors.
   // Folded unless something in it needs an answer (a fixed claim or a question).
+  var devHtml = "";
   if (catOf(issue) === "tech_issue" || catOf(issue) === "course_error") {
     var isCourseIssue = catOf(issue) === "course_error";
     var whoTeam = isCourseIssue ? "course team" : "developers";
     var devActionable = !!(issue.dev_query_at || String(issue.status || "").toLowerCase() === "dev_fixed");
-    html += '<details class="acc"' + (devActionable ? ' open' : '') + '><summary>' + (isCourseIssue ? "Course fixes" : "Developers") + '</summary>';
+    devHtml += '<details class="acc"' + (devActionable ? ' open' : '') + '><summary>' + (isCourseIssue ? "Course fixes" : "Developers") + '</summary>';
     if (!issue.dev_passed_at) {
-      html += '<div class="small muted" style="margin-bottom:6px;">Not passed to the ' + whoTeam + ' yet.</div>' +
+      devHtml += '<div class="small muted" style="margin-bottom:6px;">Not passed to the ' + whoTeam + ' yet.</div>' +
         ((state.perms && state.perms.users) ? '<button class="ghost small" style="padding:5px 12px;" onclick="adminPassToDev(\'' + esc(issue.issue_id) + '\')">Pass to ' + whoTeam + '</button>' : '');
     } else {
-      html += '<div class="kv">' +
+      devHtml += '<div class="kv">' +
         kv("Passed", fmtDate(issue.dev_passed_at)) +
         (issue.dev_fixed_at ? kv("Fixed", fmtDate(issue.dev_fixed_at)) : "") +
         (issue.dev_fixed_at
@@ -6107,7 +6138,7 @@ function openDetail(issue) {
       if ((issue.status || "").toLowerCase() === "dev_fixed") {
         // Marked fixed is a claim, not a fact, and sometimes the right answer
         // is neither resolve nor reopen but park (Edd, 27 Jul).
-        html += '<div class="batch" style="background:rgba(70,192,138,0.10);border-color:var(--low);">' +
+        devHtml += '<div class="batch" style="background:rgba(70,192,138,0.10);border-color:var(--low);">' +
           '<strong>' + (isCourseIssue ? "The course team" : "The developer") + ' says this is fixed.</strong>' +
           '<div class="small" style="margin:4px 0 8px;">Check it, then close the loop: resolve it and tell the students, or send it back if it is not right. If it is not really fixed and not worth chasing, park it instead.</div>' +
           '<div class="row">' +
@@ -6122,7 +6153,7 @@ function openDetail(issue) {
     // show here too, so an admin can see them and step in if needed.
     if (issue.dev_query_at) {
       var forInstructor = issue.dev_query_target === 'instructor';
-      html += '<div class="batch" style="background:rgba(221,139,0,0.10);border-color:var(--medium);">' +
+      devHtml += '<div class="batch" style="background:rgba(221,139,0,0.10);border-color:var(--medium);">' +
         '<strong>Question from ' + esc(issue.dev_query_by || (isCourseIssue ? "the course team" : "the developer")) +
           (forInstructor ? ' for ' + esc(issue.instructor_name || 'the instructor') : '') + '</strong>' +
         (forInstructor ? '<div class="small muted" style="margin-top:2px;">It\'s in ' + esc(issue.instructor_name || 'their') + '\'s Actions tab; replying here answers it on their behalf.</div>' : '') +
@@ -6135,16 +6166,21 @@ function openDetail(issue) {
     // lands in that instructor's Actions tab like any other question.
     if (state.perms && state.perms.users && !issue.dev_query_at && issue.instructor_name &&
         issue.instructor_name !== (state.user && state.user.name)) {
-      html += '<h3>Need more info?</h3>' +
+      devHtml += '<h3>Need more info?</h3>' +
         '<div class="field"><textarea id="d_ask_logger" rows="2" placeholder="Ask ' + esc(issue.instructor_name) + ' for more detail on this report..."></textarea></div>' +
         '<button class="ghost small" style="margin-bottom:10px;padding:4px 10px;" onclick="askLoggerFromTrack(\'' + esc(issue.issue_id) + '\')">Ask ' + esc(issue.instructor_name) + '</button>';
     }
-    html += '</details>';
+    devHtml += '</details>';
   }
 
   // Pre-dev troubleshooting checklist (tech issues only), folded away.
   var ckHtml = detailChecklistHtml(issue).replace('<h3>Troubleshooting checklist</h3>', '');
-  if (ckHtml) html += '<details class="acc"><summary>Troubleshooting checklist</summary>' + ckHtml + '</details>';
+  // Top of the pane now (FB-0216). It is the one thing an instructor works
+  // THROUGH, so it opens by default rather than hiding behind a fold they have
+  // to remember is there.
+  var ckBlock = ckHtml
+    ? '<details class="acc" open><summary>Troubleshooting checklist</summary>' + ckHtml + '</details>'
+    : '';
 
   var reps = parseReports(issue);
 
@@ -6153,8 +6189,9 @@ function openDetail(issue) {
   for (var ri = reps.length - 1; ri >= 0; ri--) {
     if (reps[ri].recommended_steps && reps[ri].recommended_steps.length) { recSteps = reps[ri].recommended_steps; break; }
   }
+  var refHtml = '';
   if (recSteps && recSteps.length) {
-    html += '<details class="acc"><summary>Steps suggested at submission</summary>' +
+    refHtml += '<details class="acc"><summary>Steps suggested at submission</summary>' +
       '<div class="tshoot" style="margin:0 0 4px;"><ol>' +
       recSteps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join("") + '</ol></div></details>';
   }
@@ -6167,7 +6204,7 @@ function openDetail(issue) {
     '<div class="field"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Status</label><select id="d_status" onchange="onStatusChange()">' +
       ['open','in_progress','with_dev','dev_fixed','parked','resolved_tbc','resolved','past'].map(function (s) {
         var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
-        return '<option value="' + s + '"' + sel + '>' + (STATUS_LABEL[s] || s.replace(/_/g, " ")) + '</option>';
+        return '<option value="' + s + '"' + sel + '>' + statusLabel(s, issue) + '</option>';
       }).join("") +
     '</select></div>' +
     '<div class="field"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Priority</label><select id="d_priority">' +
@@ -6180,26 +6217,39 @@ function openDetail(issue) {
         return '<option value="' + p + '"' + sel + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
       }).join("") +
     '</select></div></div>' +
-    // The update box, right below the status row (Edd, FB-0173). "Fetch update"
-    // looks in Chatwoot for a conversation with this student newer than the
-    // issue's last activity and pulls the news in itself.
-    '<div class="field" style="margin-top:8px;"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Post an update</label>' +
+    // ONE box, not two (Edd, FB-0211): "doesn't feel like we need 'post an
+    // update' and 'resolution note'. Can the post an update box just turn into
+    // resolution note if the status is changed to resolved?" So it does. Set
+    // the status to Resolved and this box relabels itself, keeps whatever is
+    // already typed, and saves to the resolution note instead of posting an
+    // update. onStatusChange does the switching; d_update_mode records which
+    // job the box is currently doing so saveDetail knows where the text goes.
+    // "Fetch update" looks in Chatwoot for a conversation with this student
+    // newer than the issue's last activity and pulls the news in itself.
+    '<div class="field" style="margin-top:8px;"><label class="small" id="d_update_label" style="display:block;margin-bottom:2px;color:var(--muted);">Post an update</label>' +
       '<textarea id="d_update_text" rows="3" placeholder="Paste a new message or conversation to add to this issue…"></textarea></div>' +
-    '<div class="row" style="margin-bottom:8px;">' +
+    // What the box holds for the OTHER mode, parked here so switching back and
+    // forth never loses anybody's typing.
+    '<input type="hidden" id="d_update_mode" value="update">' +
+    '<input type="hidden" id="d_resnote_saved" value="' + esc(issue.resolution_note || "") + '">' +
+    '<div class="row" style="margin-bottom:8px;" id="d_update_btns">' +
       '<button class="ghost small" style="padding:5px 12px;" onclick="postUpdateFromDetail(\'' + esc(issue.issue_id) + '\')">Extract and add update</button>' +
       '<button class="ghost small" style="padding:5px 12px;" onclick="fetchUpdateFromDetail(\'' + esc(issue.issue_id) + '\')" title="Look in Chatwoot for a newer conversation with this student and pull anything relevant in">Fetch update</button>' +
     '</div>' +
+    '<div class="small muted hidden" id="d_resnote_hint" style="margin-bottom:8px;">Saved as the resolution note when you press Save changes.</div>' +
     // Fetch/post outcomes land here and STAY here (Edd, FB-0191/0193): a
     // toast alone vanished before it was read, which looked like the button
     // doing nothing at all.
     '<div id="fetchUpdNote" class="small muted" style="margin-bottom:8px;"></div>' +
-    '<div class="field' + (/^(resolved|past)/.test((issue.status || "").toLowerCase()) ? '' : ' hidden') + '" id="d_resnote_wrap">' +
-      '<label>Resolution note</label><textarea id="d_resolution_note" rows="3">' + esc(issue.resolution_note || "") + '</textarea>' +
+    // FB-0212. Edd: "i changed the status to open, so the mark still happening
+    // (reopen) should disappear." It used to be drawn from the status the pane
+    // loaded with, so it sat there contradicting the dropdown until something
+    // forced a redraw. It is always in the markup now and onStatusChange shows
+    // or hides it off what is CURRENTLY selected.
+    '<div id="d_tbc_wrap" class="hidden">' +
+      '<div class="small muted" style="margin-bottom:6px;">Awaiting confirmation. Auto-resolves after 7 days with no further reports.</div>' +
+      '<button class="ghost small" style="margin-bottom:10px;padding:5px 12px;" onclick="reopenIssue(\'' + esc(issue.issue_id) + '\')">Mark still happening (reopen)</button>' +
     '</div>' +
-    (String(issue.status).toLowerCase() === "resolved_tbc"
-      ? '<div class="small muted" style="margin-bottom:6px;">Awaiting confirmation. Auto-resolves after 7 days with no further reports.</div>' +
-        '<button class="ghost small" style="margin-bottom:10px;padding:5px 12px;" onclick="reopenIssue(\'' + esc(issue.issue_id) + '\')">Mark still happening (reopen)</button>'
-      : '') +
     (issue.resolved_at ? '<div class="small muted" style="margin-bottom:10px;">Resolved at ' + fmtDate(issue.resolved_at) + '</div>' : '');
 
   // One row for the two ticks (Edd, FB-0171).
@@ -6207,12 +6257,18 @@ function openDetail(issue) {
     '<label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
     (String(issue.notified_students) === "true" ? " checked" : "") + '> Students notified</label>' +
     '<label style="display:inline;"><input type="checkbox" id="d_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
-    (isTrue(issue.student_sorted) ? " checked" : "") + '> Student sorted, no follow-up needed</label></div>' +
-    '<div class="small muted" style="margin-top:3px;">"Sorted" keeps the fault open for the developers, this student just doesn\'t need chasing.</div>';
+    (isTrue(issue.student_sorted) ? " checked" : "") + '> Student needs no further contact</label></div>' +
+    // FB-0213. Edd: "what exactly happens if we press student notified? Sorted
+    // is explained..." So it gets the same one line, saying plainly what it
+    // changes and what it does not. Both stay on screen rather than behind a ?
+    // - the FB-0210 rule is that guidance which stops a mistake stays visible,
+    // and these two both look like they close an issue and neither does.
+    '<div class="small muted" style="margin-top:3px;">"Notified" ticks off the tell-the-student job and drops this out of the Actions list. It doesn\'t resolve the fault.</div>' +
+    '<div class="small muted" style="margin-top:2px;">"No further contact" stops us chasing this one student. The fault stays open for the developers.</div>';
 
   // Full reports/updates text and screenshots, kept at the bottom for reference.
   if (reps.length) {
-    html += '<details class="acc"><summary>Reports &amp; updates (' + reps.length + ')</summary>';
+    refHtml += '<details class="acc"><summary>Reports &amp; updates (' + reps.length + ')</summary>';
     reps.forEach(function (rp, i) {
       var kindLabel = { update: "Update", question: "Question", answer: "Reply" }[rp.kind] || "Report";
       var meta = kindLabel +
@@ -6220,25 +6276,35 @@ function openDetail(issue) {
         (rp.date ? " · " + fmtDate(rp.date) : "") +
         (rp.student_contact ? " · " + esc(rp.student_contact) : "");
       var head = esc(rp.summary || rp.student_name || ("Entry " + (i + 1)));
-      html += '<details' + (i === reps.length - 1 ? " open" : "") + ' style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-bottom:6px;background:var(--bg);">' +
+      refHtml += '<details' + (i === reps.length - 1 ? " open" : "") + ' style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-bottom:6px;background:var(--bg);">' +
         '<summary style="cursor:pointer;">' + head + ' <span class="small muted">(' + meta + ')</span></summary>' +
         '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px;">' + esc(rp.raw_text || rp.summary || "") + clipNote(issue) + '</div>' +
       '</details>';
     });
-    html += '</details>';
+    refHtml += '</details>';
   } else if (issue.raw_text) {
-    html += '<details class="acc"><summary>Report</summary><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' + esc(issue.raw_text) + clipNote(issue) + '</div></details>';
+    refHtml += '<details class="acc"><summary>Report</summary><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' + esc(issue.raw_text) + clipNote(issue) + '</div></details>';
   }
-  html += '<div class="row" style="margin:4px 0 10px;">' +
+  refHtml += '<div class="row" style="margin:4px 0 10px;">' +
     (reportCount(issue) > 1 ? '<button class="ghost small" onclick="splitIssueAction(\'' + esc(issue.issue_id) + '\')">Split apart</button>' : '') +
     '<button class="ghost small" onclick="openLinkPicker(\'' + esc(issue.issue_id) + '\')">Link into another report</button>' +
   '</div>' +
   '<div id="linkPicker" class="hidden" style="margin-bottom:10px;"></div>';
   if (images.length) {
-    html += '<details class="acc"><summary>Screenshots (' + images.length + ')</summary><div class="thumbs">' + images.map(function (u) {
+    refHtml += '<details class="acc"><summary>Screenshots (' + images.length + ')</summary><div class="thumbs">' + images.map(function (u) {
       return '<a class="thumb" href="' + esc(driveOpen(u)) + '" target="_blank"><img src="' + esc(driveImg(u, 600)) + '" /></a>';
     }).join("") + '</div></details>';
   }
+
+  // Edd's order, assembled (FB-0216): the checklist an instructor works
+  // through, then whoever the fix has been handed to, then everything that is
+  // only there to be looked up. Reports, the steps we suggested and the
+  // screenshots all live inside Details now, so the summary line says so -
+  // buried reference material nobody can find is worse than a long pane.
+  html += ckBlock + devHtml +
+    '<details class="acc"><summary>Details, reports and screenshots</summary>' +
+      detailsKv + refHtml +
+    '</details>';
 
   sideCol += '<div class="row" style="margin-top:10px;">' +
     '<button class="primary" onclick="saveDetail()">Save changes</button>' +
@@ -6254,6 +6320,9 @@ function openDetail(issue) {
 
   $("drawer").innerHTML = html;
   presentDetail("admin");
+  // Set the update/resolution box and the reopen button off the status the
+  // pane opened with, using the same code that runs on every later change.
+  onStatusChange();
   if (refold) drawerFoldRestore(refold);
   // Once per issue per session, and it usually answers from its own cache
   // without touching the AI. Every re-render of the same issue comes straight
@@ -6343,10 +6412,37 @@ function markActiveCard() {
 }
 
 function kv(k, v) { return '<div class="k">' + esc(k) + '</div><div>' + (v ? esc(v) : "—") + '</div>'; }
+// The controls follow the dropdown, not the status the pane opened with
+// (Edd, FB-0212), and the one text box changes job with it (FB-0211).
+// Called once on render and on every change of the status select.
 function onStatusChange() {
-  // Show the resolution note for Resolved, Resolved - TBC, and Past.
-  var sv = $("d_status").value;
-  $("d_resnote_wrap").classList.toggle("hidden", sv.indexOf("resolved") !== 0 && sv !== "past");
+  var sel = $("d_status");
+  if (!sel) return;
+  var sv = sel.value;
+  // Resolved and Past are the two that want a resolution note. Resolved - TBC
+  // is a workaround waiting on confirmation, so it stays an update box.
+  var wantsNote = (sv === "resolved" || sv === "past");
+  var box = $("d_update_text"), mode = $("d_update_mode");
+  if (box && mode) {
+    mode.value = wantsNote ? "resolution" : "update";
+    // Whatever is in the box STAYS in the box (Edd: "keeps whatever was
+    // typed"). Somebody part way through writing what happened, who then sets
+    // the status to Resolved, has already written the resolution note - taking
+    // it away and handing back a blank field would be the rude version of this
+    // feature. The only time anything is put in is when the box is empty and
+    // the issue already has a note saved on it, which is what opening an
+    // already-resolved issue should show.
+    if (wantsNote && !box.value && $("d_resnote_saved")) box.value = $("d_resnote_saved").value;
+    $("d_update_label").textContent = wantsNote ? "Resolution note" : "Post an update";
+    box.placeholder = wantsNote
+      ? "What sorted it? A line here is what everyone reads later…"
+      : "Paste a new message or conversation to add to this issue…";
+  }
+  // The Extract/Fetch buttons belong to an update. In resolution mode the text
+  // goes in with Save changes, so the buttons would only mislead.
+  if ($("d_update_btns")) $("d_update_btns").classList.toggle("hidden", wantsNote);
+  if ($("d_resnote_hint")) $("d_resnote_hint").classList.toggle("hidden", !wantsNote);
+  if ($("d_tbc_wrap")) $("d_tbc_wrap").classList.toggle("hidden", sv !== "resolved_tbc");
 }
 function closeDetail() {
   $("overlay").classList.remove("show");
@@ -6355,9 +6451,22 @@ function closeDetail() {
   markActiveCard();
 }
 
+// The resolution note, wherever it currently lives. One box does both jobs
+// now (FB-0211), so which one holds the note depends on the mode: in
+// resolution mode it is on screen, otherwise it is in the stash, and failing
+// both it is whatever was already saved on the issue.
+function detailResolutionNote() {
+  var mode = $("d_update_mode") ? $("d_update_mode").value : "";
+  if (mode === "resolution") return ($("d_update_text") ? $("d_update_text").value : "").trim();
+  // Not resolving, so the box is holding an update. Any note already on the
+  // issue is left exactly as it is rather than being blanked by a save that
+  // was never about the resolution.
+  return ($("d_resnote_saved") ? $("d_resnote_saved").value : "").trim();
+}
+
 function saveDetail() {
   var status = $("d_status").value;
-  var note = $("d_resolution_note") ? $("d_resolution_note").value.trim() : "";
+  var note = detailResolutionNote();
   // Make sure we capture how it was fixed when fully resolving.
   if (status === "resolved" && !note) { toast("Add a resolution note before resolving."); return; }
   var payload = {
@@ -6914,7 +7023,7 @@ function courseCardHtml(i) {
     '<div class="top">' +
       priBadge(i.priority) +
       (reps > 1 ? '<span class="badge type-badge">×' + reps + ' reports</span>' : '') +
-      (done ? statusBadge(i.status) : "") +
+      (done ? statusBadge(i.status, i) : "") +
       // A suggested improvement is not a fault, and reading a queue where the
       // two sit unlabelled next to each other is how a wishlist item gets
       // treated as a bug (Edd, FB-0206). The Developers queue has said this in
@@ -7225,7 +7334,7 @@ function openDevDetail(id) {
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
     '<div style="margin-bottom:12px;">' +
       '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
-      priBadge(issue.priority) + " " + statusBadge(issue.status) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
+      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
     '<div class="kv">' +
       kv("Submitted by", issue.instructor_name) +
