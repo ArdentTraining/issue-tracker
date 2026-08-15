@@ -1155,6 +1155,11 @@
     <input id="liveCwInput" placeholder="Chatwoot link or number" autocomplete="one-time-code" style="flex:1;min-width:0;max-width:340px;" onkeydown="if(event.key==='Enter'){event.preventDefault();openLiveCase();}" />
     <button type="button" class="primary" style="white-space:nowrap;" onclick="openLiveCase()">Open a case</button>
     <button type="button" class="ghost" style="white-space:nowrap;" onclick="openChatwootPicker(openLiveCaseFromPicker)">Browse recent</button>
+    <!-- Cases are shared, so the list on screen goes out of date the moment
+         somebody else picks one up (Edd, FB-0230). Re-reads the list and the
+         open case from the sheet; the AI re-read is still the separate
+         "Refresh the brief" button inside the case, because that one costs. -->
+    <button type="button" class="ghost small" id="liveRefreshBtn" style="padding:5px 12px;white-space:nowrap;" onclick="liveRefreshList()">Refresh</button>
   </div>
   <div class="split-host" id="liveSplitHost">
     <div class="list-col" id="liveList"></div>
@@ -1453,6 +1458,12 @@
   <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">Suggested playbook updates</h3>
   <div id="playbookSuggestions"></div>
 
+  <!-- FB-0231. An instructor was shown a known fix that didn't apply. Same
+       approve-or-reject shape as the playbook queue above, and the same rule:
+       nothing in the known-fixes memory changes until Edd presses something. -->
+  <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">Corrections to the known fixes</h3>
+  <div id="kfCorrections"></div>
+
   <div class="card" id="playbookCard" style="margin-top:18px;">
     <h2>Troubleshooting playbook</h2>
     <p class="small muted">The rulebook the AI uses to suggest steps to instructors. Edit it directly here, or approve the suggestions above to add to it.</p>
@@ -1579,6 +1590,51 @@
 <div class="modal-bg" id="liveMergeModal">
   <div class="modal" style="max-width:540px;">
     <div id="liveMergePanel" class="suggest" style="margin:0;"></div>
+  </div>
+</div>
+
+<!-- FB-0232: filing a conversation that is already finished. The note is the
+     whole point of the popup - it is what the record is worth reading for
+     later, and what the next student with the same fault ends up being told. -->
+<div class="modal-bg" id="liveOutcomeModal">
+  <div class="modal" style="max-width:560px;">
+    <h3 id="liveOutcomeTitle">File it as already sorted</h3>
+    <p class="small muted" id="liveOutcomeSub" style="margin-top:0;"></p>
+    <label class="small" for="liveOutcomeNote" id="liveOutcomeLabel" style="display:block;margin-bottom:4px;">What actually sorted it?</label>
+    <textarea id="liveOutcomeNote" rows="4" style="width:100%;font-size:13px;"></textarea>
+    <div class="small muted" id="liveOutcomePrefill" style="margin-top:4px;"></div>
+    <div class="btns" style="margin-top:12px;">
+      <button class="primary" id="liveOutcomeGo" onclick="liveOutcomeSubmit()">File it</button>
+      <button class="ghost" onclick="closeLiveOutcome()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- FB-0231: a known fix that was offered where it did not apply. Goes to Edd
+     as a correction to approve; it never rewrites the corpus entry on its own. -->
+<div class="modal-bg" id="kfFlagModal">
+  <div class="modal" style="max-width:560px;">
+    <h3>This suggestion was wrong here</h3>
+    <p class="small muted" style="margin-top:0;">It goes to Edd to approve. Nothing in the known-fixes memory changes until he does.</p>
+    <div class="small" id="kfFlagShown" style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;"></div>
+    <label class="small" for="kfFlagWhy" style="display:block;margin-bottom:4px;">What was wrong about it?</label>
+    <textarea id="kfFlagWhy" rows="3" style="width:100%;font-size:13px;" placeholder="e.g. this only applied to really old Day Skipper accounts, never Yachtmaster"></textarea>
+    <label class="small" for="kfFlagScope" style="display:block;margin:10px 0 4px;">Which course does it actually apply to? <span class="muted">(optional)</span></label>
+    <select id="kfFlagScope" style="width:100%;">
+      <option value="">Not sure / leave it as is</option>
+      <option>Essential Navigation</option>
+      <option>Day Skipper</option>
+      <option>Yachtmaster</option>
+      <option>Fast Track</option>
+      <option>SRC</option>
+      <option>PPR</option>
+    </select>
+    <label class="small" for="kfFlagWhen" style="display:block;margin:10px 0 4px;">Anything else that has to be true for it to apply? <span class="muted">(optional)</span></label>
+    <input id="kfFlagWhen" style="width:100%;" placeholder="e.g. accounts created before the 2024 signup change" />
+    <div class="btns" style="margin-top:12px;">
+      <button class="primary" onclick="kfFlagSubmit()">Send the correction to Edd</button>
+      <button class="ghost" onclick="closeKfFlag()">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -1742,7 +1798,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r64 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r65 · 2026-08-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2290,6 +2346,68 @@ function refType(i) {
   if (/\.\s*M\.?$/i.test(s)) return "ma";
   return "lesson";
 }
+// ============ ROUND 65: WHERE A BADGE BELONGS (Edd, FB-0233 / FB-0234) ============
+// Edd: "there are too many which sort of defeats the point of them (you stop
+// paying attention to the important ones when they are buried in a pile)". A
+// card was carrying up to fourteen tags, and a card with fourteen tags has none
+// - the eye gives up and reads the summary instead, which is the one thing the
+// badges were supposed to help it skip.
+//
+// The rule, and the reason for it:
+//   The LIST COLUMN is a scanning surface. It answers one question, which of
+//   these do I look at next, and only two things decide that: how bad it is and
+//   what stage it is at. So the list gets priority and status, and one number -
+//   how many people have reported it - because that is the third thing that
+//   changes the answer and it reads as a count, not a tag.
+//   The DETAIL PANE is where the full picture belongs. Everything demoted from
+//   the list is there, in full, as it always was.
+//   Nothing appears in both without a reason. Priority and status do, and the
+//   reason is that they are the two things the detail pane lets you CHANGE, so
+//   the badge is the current value of a control rather than a repeat.
+//
+// Everything else keeps its information and loses its colour: same facts, plain
+// muted text, on a line the eye can skip. In the narrow split-view list column
+// that line is hidden by CSS along with the who/date line, so the scanning
+// surface is exactly priority, status, reference and summary.
+function cardBadges(i) {
+  return priBadge(i.priority) + statusBadge(i.status, i) +
+    (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '');
+}
+// The demoted facts, as plain text. Order runs widest to narrowest: what kind
+// of thing it is, then where it lives, then who has it, then the extras.
+function cardMetaBits(i) {
+  var bits = [];
+  var c = catOf(i);
+  if (CATEGORY_LABEL[c]) bits.push(CATEGORY_LABEL[c]);
+  if (audienceOf(i) === "internal") bits.push("Internal");
+  if (kindOf(i) === "improvement") bits.push("Improvement");
+  if (i.section && SECTION_LABEL[i.section]) bits.push(SECTION_LABEL[i.section]);
+  var rt = refType(i);
+  if (rt === "kc") bits.push("Knowledge check");
+  else if (rt === "ma") bits.push("Module assessment");
+  var p = String(i.platform || "").toLowerCase();
+  if (p === "browser") bits.push("Browser");
+  else if (p === "app") bits.push("App");
+  else if (p === "both") bits.push("Browser + app");
+  if (isTrue(i && i.student_sorted)) bits.push("no further contact needed");
+  if (i.dev_query_at) bits.push("question open");
+  if (hasOpenChat(i && i.issue_id)) bits.push("chat open");
+  if (i.assignee) bits.push("→ " + i.assignee);
+  var imgs = parseImageUrls(i.image_urls).length;
+  if (imgs) bits.push(imgs + " img");
+  return bits;
+}
+function cardMetaLine(i, extra) {
+  var bits = cardMetaBits(i).concat(extra || []);
+  return bits.length ? '<div class="small muted" style="margin-top:4px;">' + esc(bits.join(" · ")) + '</div>' : "";
+}
+// The same facts as a sentence for the detail pane, where the full picture is
+// the job. Priority and status stay as badges up there; these do not.
+function detailFilingLine(i) {
+  var bits = cardMetaBits(i);
+  return bits.length ? '<div class="small muted" style="margin-bottom:12px;">' + esc(bits.join(" · ")) + '</div>' : "";
+}
+
 function refBadge(i) {
   var t = refType(i);
   if (t === "kc") return '<span class="badge type-badge">KC</span>';
@@ -3289,10 +3407,14 @@ function renderActions() {
     if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
     if (r.kind === "question" && i.dev_query) sub.push('"' + String(i.dev_query).slice(0, 60) + '"');
     if (r.kind === "longopen") sub.push(Math.floor((Date.now() - new Date(i.submitted_at)) / 864e5) + " days open");
+    // r65: the one badge that was sitting inside the row title joins the rest of
+    // the facts on the sub-line. The coloured action word is the only tag an
+    // Actions row needs, and it is already the loudest thing on it.
+    if (hasOpenChat(i.issue_id)) sub.push("chat open");
 
     return '<div class="act-row" data-id="' + id + '" onclick="actionOpen(\'' + id + '\')">' +
         '<span class="act-word" style="background:' + r.colour + ';color:#02121f;">' + esc(r.word) + '</span>' +
-        '<div><div class="act-title">' + esc(cardTitle(i)) + chatOpenBadge(i) + '</div>' +
+        '<div><div class="act-title">' + esc(cardTitle(i)) + '</div>' +
           (sub.length ? '<div class="act-sub">' + esc(sub.join(" · ")) + '</div>' : '') + '</div>' +
         '<div><span class="act-do">' + esc(r.act) + '</span>' + btn + '</div>' +
       '</div>';
@@ -3465,6 +3587,15 @@ function renderLiveDetail() {
       '<strong>We\'ve seen this before</strong>' +
       '<div class="small" style="margin:4px 0 2px;">' + esc(b.fix) + '</div>' +
       (b.fix_based_on ? '<div class="small muted">Based on: ' + esc(b.fix_based_on) + '</div>' : '') +
+      // FB-0231. A fix that only holds under a condition says so before anyone
+      // passes it to a student, and there is a way to say it was wrong here.
+      (b.fix_applies_when
+        ? '<div class="small" style="margin-top:6px;color:var(--medium);">Only if: ' + esc(b.fix_applies_when) + '</div>'
+        : '') +
+      '<div style="margin-top:8px;"><a href="#" style="color:var(--muted);font-size:12px;" onclick="openKfFlag(' +
+        JSON.stringify(String(b.fix_corpus_id || "")) + ',' + JSON.stringify(String(b.fix)) + ',' +
+        JSON.stringify(String(c.conversation_id || "")) + ',' + JSON.stringify(String(b.summary || c.summary || "")) +
+        ');return false;">This doesn\'t apply here</a></div>' +
     '</div>';
   }
 
@@ -3472,6 +3603,12 @@ function renderLiveDetail() {
     '<button class="primary" onclick="liveDraftReply()">Draft a reply</button>' +
     '<button class="ghost" onclick="liveCheckReply()">Check for new reply</button>' +
     '<button class="ghost" onclick="liveCheckpoint()">' + (c.issue_id ? 'Checkpoint - add an update' : 'Checkpoint - file the issue') + '</button>' +
+    // FB-0232. The log form has had "Submit and resolve" and "Submit and park"
+    // for rounds; a conversation sorted in the chat had no equivalent here, so
+    // it went in as a fresh open high and joined a fix queue for work that was
+    // already done. Same two outcomes, same words.
+    '<button class="ghost" onclick="liveFileOutcome(\'resolved\')">' + (c.issue_id ? 'Sorted - resolve the issue' : 'File it as already sorted') + '</button>' +
+    '<button class="ghost" onclick="liveFileOutcome(\'parked\')">' + (c.issue_id ? 'Park the issue' : 'File it parked') + '</button>' +
     '<button class="ghost" onclick="liveRefreshBrief()">Refresh the brief</button>' +
     '<button class="ghost" style="color:var(--high);" onclick="liveCloseCase()">Close case</button>' +
   '</div>';
@@ -3495,6 +3632,39 @@ function renderLiveDetail() {
 }
 function liveOpenIssue(id) { openIssueById(id, false); }
 
+// ---- corpus corrections (Round 65, FB-0231) --------------------------------
+// Edd was offered a fix that "only applied to really old day skipper accounts.
+// Not Yachtmaster ever" and had nowhere to say so, which meant the memory kept
+// offering it and the next person made the same wasted trip. This records the
+// objection and sends it to Edd. It never rewrites the entry on one click.
+function openKfFlag(corpusId, shownFix, conversationId, caseSummary) {
+  state._kfFlag = { corpus_id: corpusId || "", shown_fix: shownFix || "",
+    conversation_id: conversationId || "", case_summary: caseSummary || "", issue_id: state._kfFlagIssueId || "" };
+  state._kfFlagIssueId = "";
+  $("kfFlagShown").innerHTML = '<div class="muted" style="margin-bottom:3px;">What it suggested:</div>' + esc(shownFix || "");
+  $("kfFlagWhy").value = "";
+  $("kfFlagScope").value = "";
+  $("kfFlagWhen").value = "";
+  $("kfFlagModal").classList.add("show");
+  setTimeout(function () { $("kfFlagWhy").focus(); }, 30);
+}
+function closeKfFlag() { $("kfFlagModal").classList.remove("show"); }
+function kfFlagSubmit() {
+  var why = String($("kfFlagWhy").value || "").trim();
+  if (!why) { toast('Say what was wrong about it - "wrong" on its own tells the next person nothing.'); $("kfFlagWhy").focus(); return; }
+  var f = state._kfFlag || {};
+  apiPost({ action: "flagKnownFix", corpus_id: f.corpus_id, shown_fix: f.shown_fix,
+    conversation_id: f.conversation_id, case_summary: f.case_summary, issue_id: f.issue_id,
+    why: why, course_scope: $("kfFlagScope").value, applies_when: String($("kfFlagWhen").value || "").trim()
+  }).then(function (res) {
+    if (!res || !res.ok) { toast("Couldn't send it: " + ((res && res.error) || "unknown")); return; }
+    closeKfFlag();
+    toast(res.stamped
+      ? "Sent to Edd, and noted against that entry so it comes with your caveat in the meantime."
+      : "Sent to Edd. The suggestion didn't name which entry it came from, so it can't caveat itself until he's looked.");
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
+
 function openLiveCase(convInput) {
   var v = convInput || ($("liveCwInput") ? $("liveCwInput").value.trim() : "");
   if (!v) { toast("Paste a Chatwoot link or number first."); return; }
@@ -3511,6 +3681,30 @@ function openLiveCase(convInput) {
 function openLiveCaseFromPicker(id) {
   if (state.view !== "live") setView("live");
   openLiveCase(String(id));
+}
+// FB-0230. A plain re-read: the case list, and the open case redrawn from
+// whatever came back. No page reload, and no AI, so it costs nothing and can be
+// pressed as often as anyone likes. Keeps the selected case selected as long as
+// it is still open - if somebody else closed it while we were looking, the
+// detail closes with it rather than sitting there stale.
+function liveRefreshList() {
+  var btn = $("liveRefreshBtn");
+  var was = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
+  var keep = state.liveSelected;
+  return apiPost({ action: "listLiveCases" }).then(function (res) {
+    if (btn) { btn.disabled = false; btn.textContent = was || "Refresh"; }
+    if (!res || !res.ok) { toast("Refresh failed: " + ((res && res.error) || "unknown")); return; }
+    state.liveCases = res.cases || [];
+    state.liveLoaded = true;
+    state.liveSelected = keep;
+    updateRailBadges();
+    renderLive();
+    toast(state.liveCases.length + (state.liveCases.length === 1 ? " open conversation." : " open conversations."));
+  }).catch(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = was || "Refresh"; }
+    toast("Error. See console."); console.error(e);
+  });
 }
 function liveRefreshBrief() {
   var c = liveCaseById(state.liveSelected);
@@ -3572,35 +3766,108 @@ function liveCheckpoint(decision) {
   var payload = { action: "caseCheckpoint", conversation_id: c.conversation_id, app_url: APP_URL };
   if (decision && decision.merge_into) payload.merge_into = decision.merge_into;
   if (decision && decision.no_merge) payload.no_merge = true;
-  busyShow(c.issue_id ? "Adding the checkpoint to the issue…" : "Reading it back and filing the issue…");
+  // The outcome has to survive the merge question, or answering "log it as new"
+  // would quietly file the sorted conversation as an open one after all.
+  if (decision && decision.outcome) {
+    payload.outcome = decision.outcome;
+    payload.resolution_note = decision.resolution_note || "";
+  }
+  var outcome = payload.outcome || "";
+  busyShow(outcome === "resolved" ? "Filing it as sorted…"
+    : outcome === "parked" ? "Filing it parked…"
+    : c.issue_id ? "Adding the checkpoint to the issue…" : "Reading it back and filing the issue…");
   apiPost(payload).then(function (res) {
     busyHide();
     if (!res || !res.ok) { toast("Checkpoint failed: " + ((res && res.error) || "unknown")); return; }
-    if (res.needs_confirm && res.match) { showLiveMergeConfirm(res.match); return; }
-    if (res.updated) toast("Checkpoint added to the issue.");
-    else if (res.merged) toast("Rolled into the case the team is already on. This case stays open here.");
+    if (res.needs_confirm && res.match) { showLiveMergeConfirm(res.match, decision); return; }
+    if (res.merged) {
+      // Merging into a live issue deliberately does not resolve or park it:
+      // the fault is still live for everyone else on it.
+      toast(res.merged_stays_open
+        ? "Added to the case the team is already on. That one stays open - it's still live for the others on it."
+        : "Rolled into the case the team is already on. This case stays open here.");
+    } else if (res.resolved) toast(res.updated ? "Issue resolved, with your note saved." : "Filed as resolved. Nothing routed, nobody pinged.");
+    else if (res.parked) toast(res.updated ? "Issue parked, with your reason saved." : "Filed and parked. It wakes up if anyone else reports it.");
+    else if (res.updated) toast("Checkpoint added to the issue.");
     else toast("Issue filed" + (String(res.priority || "").toLowerCase() === "high" ? " - high priority, so the team has been pinged." : "."));
     loadLiveCasesThenRender();
     loadIssues();
   }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
 }
+
+// FB-0232. Ask for the note before anything is filed. Pre-filled from the
+// brief's known fix or its next step when there is one, because the answer is
+// usually already sitting there in the conversation, but always editable -
+// what the instructor actually said beats what the brief guessed.
+function liveFileOutcome(kind) {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  var b = c.brief || {};
+  var resolved = kind !== "parked";
+  state._liveOutcomeKind = resolved ? "resolved" : "parked";
+  var pre = resolved ? String(b.fix || b.next || "") : "";
+  $("liveOutcomeTitle").textContent = resolved
+    ? (c.issue_id ? "Resolve the issue from this conversation" : "File it as already sorted")
+    : (c.issue_id ? "Park the issue" : "File it parked");
+  $("liveOutcomeSub").textContent = resolved
+    ? "It still gets filed, with the answer saved against it. It won't route to a fix queue and it won't ping anyone, because there's nothing left to do."
+    : "Filed, with the reason saved, and out of everyone's queue. It wakes itself up if somebody else reports the same fault.";
+  $("liveOutcomeLabel").textContent = resolved ? "What actually sorted it?" : "Why are we parking it?";
+  $("liveOutcomeNote").value = pre;
+  $("liveOutcomePrefill").textContent = pre
+    ? "Pre-filled from the brief. Change it to what you actually told them."
+    : "";
+  $("liveOutcomeGo").textContent = resolved ? "File it as resolved" : "File it parked";
+  $("liveOutcomeModal").classList.add("show");
+  setTimeout(function () { $("liveOutcomeNote").focus(); }, 30);
+}
+function closeLiveOutcome() { $("liveOutcomeModal").classList.remove("show"); }
+function liveOutcomeSubmit() {
+  var note = String($("liveOutcomeNote").value || "").trim();
+  var kind = state._liveOutcomeKind === "parked" ? "parked" : "resolved";
+  if (!note) {
+    toast(kind === "resolved"
+      ? "Put what sorted it in the box first - that answer is what the next student with the same fault gets."
+      : "Say why it's being parked - a parked issue with no reason is just an open one nobody looks at.");
+    $("liveOutcomeNote").focus();
+    return;
+  }
+  closeLiveOutcome();
+  liveCheckpoint({ outcome: kind, resolution_note: note });
+}
 // Merge asks first (Edd's call): one click to confirm it's the case the team
 // is already on, or to log it as new - same pattern as the same-issue popup.
-function showLiveMergeConfirm(m) {
+function showLiveMergeConfirm(m, decision) {
+  // Whatever outcome was chosen before the question rides through both answers.
+  state._liveMergeDecision = decision || null;
+  var carry = (decision && decision.outcome)
+    ? '<div class="small muted" style="margin-bottom:8px;">Adding it to that one leaves it open, because the fault is still live for the other people on it. Logging it as new files yours as ' +
+      (decision.outcome === "parked" ? "parked" : "resolved") + '.</div>'
+    : '';
   $("liveMergePanel").innerHTML =
     '<div class="h">This looks like a case the team is already on</div>' +
     '<div style="font-size:13.5px;margin-bottom:4px;">' + esc(m.summary || "(no summary)") + '</div>' +
     '<div class="small muted" style="margin-bottom:10px;">' +
       (m.lesson_code ? esc(m.lesson_code) + ' · ' : '') + esc(m.status || 'open') +
-      (m.report_count > 1 ? ' · ×' + m.report_count + ' reports' : '') + '</div>' +
+      (m.report_count > 1 ? ' · ×' + m.report_count + ' reports' : '') + '</div>' + carry +
     '<div class="btns">' +
-      '<button class="primary" onclick="closeLiveMerge();liveCheckpoint({merge_into:\'' + esc(m.issue_id) + '\'})">Yes - add this student to it</button>' +
-      '<button class="ghost" onclick="closeLiveMerge();liveCheckpoint({no_merge:true})">No - log it as new</button>' +
+      '<button class="primary" onclick="closeLiveMerge();liveMergeAnswer({merge_into:\'' + esc(m.issue_id) + '\'})">Yes - add this student to it</button>' +
+      '<button class="ghost" onclick="closeLiveMerge();liveMergeAnswer({no_merge:true})">No - log it as new</button>' +
     '</div>' +
     '<div class="small" style="margin-top:8px;"><a href="#" onclick="closeLiveMerge();return false;" style="color:var(--muted);">Cancel - decide later</a></div>';
   $("liveMergeModal").classList.add("show");
 }
 function closeLiveMerge() { $("liveMergeModal").classList.remove("show"); }
+// Re-joins the merge answer to the outcome the instructor picked first, so a
+// "file it as sorted" that hits the merge question stays a "file it as sorted".
+function liveMergeAnswer(answer) {
+  var d = state._liveMergeDecision || {};
+  state._liveMergeDecision = null;
+  liveCheckpoint({
+    merge_into: answer.merge_into, no_merge: answer.no_merge,
+    outcome: d.outcome, resolution_note: d.resolution_note
+  });
+}
 function liveCloseCase() {
   var c = liveCaseById(state.liveSelected);
   if (!c) return;
@@ -4664,10 +4931,13 @@ function requestSuggestion() {
     summary: getField("f_summary"),
     raw_text: getField("rawText"),
     category: cat,
+    // The form knows the course, so scoped corpus entries for a different one
+    // never make it into the shortlist (FB-0231).
+    course: getField("f_course"),
     lesson_code: getField("f_lesson_code")
   };
-  apiPost({ action: "suggestFix", new_issue: newIssue, candidates: candidates }).then(function (res) {
-    if (res && res.ok && res.found && res.fix) showSuggestion(res.fix, res.based_on);
+  apiPost({ action: "suggestFix", new_issue: newIssue, candidates: candidates, course: newIssue.course }).then(function (res) {
+    if (res && res.ok && res.found && res.fix) showSuggestion(res.fix, res.based_on, res.applies_when, res.corpus_id);
   }).catch(function (e) { console.error(e); });
 }
 
@@ -4685,12 +4955,18 @@ function wizardClosed() {
   if (next) setTimeout(function () { $(next).classList.add("show"); }, 150);
 }
 
-function showSuggestion(fix, basedOn) {
+function showSuggestion(fix, basedOn, appliesWhen, corpusId) {
   state.suggestedFix = fix;
   $("suggestPanel").innerHTML =
     '<div class="h">Suggested fix from a past issue</div>' +
     '<div>' + esc(fix) + '</div>' +
     (basedOn ? '<div class="small muted" style="margin-top:6px;">Based on: ' + esc(basedOn) + '</div>' : '') +
+    // FB-0231: the condition before the fix goes anywhere near a student, and a
+    // way to say it was wrong here.
+    (appliesWhen ? '<div class="small" style="margin-top:6px;color:var(--medium);">Only if: ' + esc(appliesWhen) + '</div>' : '') +
+    '<div class="small" style="margin-top:6px;"><a href="#" style="color:var(--muted);" onclick="openKfFlag(' +
+      JSON.stringify(String(corpusId || "")) + ',' + JSON.stringify(String(fix)) + ',"",' +
+      JSON.stringify(String(getField("f_summary") || "")) + ');return false;">This doesn\'t apply here</a></div>' +
     '<div class="small" style="margin-top:8px;">Still submit this so we can track how many people hit it.</div>' +
     '<label style="display:block;margin-top:6px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="tbcApplied" style="width:auto;margin-right:6px;vertical-align:-1px;">' +
@@ -6579,18 +6855,17 @@ function renderAdmin() {
       '</div>'
     : "";
 
+  // Round 65 badge pass: priority, status and the report count on the card;
+  // everything else on the muted line under the summary. See cardBadges().
   $("adminList").innerHTML = list.length ? visible.map(function (i) {
-    var imgs = parseImageUrls(i.image_urls).length;
     return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
       '<div class="top">' +
-        priBadge(i.priority) + statusBadge(i.status, i) + catBadge(catOf(i)) + audienceBadge(i) + sortedBadge(i) + reqBadge(kindOf(i)) + sectionBadge(i.section) + refBadge(i) + queryBadge(i) + chatOpenBadge(i) +
-        (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + ' reports</span>' : '') +
+        cardBadges(i) +
         (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
-        (imgs ? '<span class="small muted">' + imgs + ' img</span>' : '') +
-        (i.assignee ? '<span class="badge type-badge">→ ' + esc(i.assignee) + '</span>' : '') +
         '<span class="who">' + esc(i.instructor_name) + ' · ' + fmtDate(i.submitted_at) + '</span>' +
       '</div>' +
       '<div class="sum clamp4">' + esc(summaryText(i)) + '</div>' +
+      cardMetaLine(i) +
     '</div>';
   }).join("") + moreBar : '<p class="muted">No issues match these filters.</p>';
   markActiveCard();
@@ -6620,13 +6895,15 @@ function kanbanHtml(list) {
         return '<div class="kcard kpri-' + ((i.priority || "low").toLowerCase()) + '" draggable="true" ' +
           'ondragstart="kanbanDrag(event, \'' + esc(i.issue_id) + '\')" ' +
           'onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
-          '<div class="ktop">' + priBadge(i.priority) + catBadge(catOf(i)) + audienceBadge(i) + sectionBadge(i.section) + refBadge(i) +
+          // The column IS the status here, so the board never repeats it. That
+          // leaves priority and the report count, per the r65 rule.
+          '<div class="ktop">' + priBadge(i.priority) +
             (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
             (reportCount(i) > 1 ? '<span class="badge type-badge">×' + reportCount(i) + '</span>' : '') + '</div>' +
           '<div class="ktitle">' + esc(cardTitle(i)) + '</div>' +
           '<div class="ksum clamp4">' + esc(summaryText(i)) + '</div>' +
-          '<div class="small muted" style="margin-top:4px;">' + esc(i.instructor_name || "") + ' · ' + fmtDate(i.submitted_at) +
-            (i.assignee ? ' · → ' + esc(i.assignee) : '') + '</div>' +
+          '<div class="small muted" style="margin-top:4px;">' + esc([i.instructor_name || "", fmtDate(i.submitted_at)]
+            .filter(Boolean).concat(cardMetaBits(i)).join(" · ")) + '</div>' +
         '</div>';
       }).join("") +
     '</div>';
@@ -7006,9 +7283,15 @@ function openDetail(issue) {
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
     '<div style="margin-bottom:12px;">' +
       '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
-      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) + " " + catBadge(catOf(issue)) + " " + audienceBadge(issue) + " " + sortedBadge(issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) + chatOpenBadge(issue) +
+      // Round 65 (FB-0233/0234). Priority and status keep their badges here for
+      // one reason: they are the two things this pane lets you change, so the
+      // badge is the current value of a control rather than a repeat of the
+      // card. The rest of the filing reads as a line underneath - same facts,
+      // nothing shouting.
+      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) +
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
-      (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>';
+      (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
+    detailFilingLine(issue);
 
   // Two columns on desktop: reference/read info on the left (this main column),
   // the resolve/act controls collected on the right (sideCol). Stacks to one
@@ -8062,28 +8345,30 @@ function courseCardHtml(i) {
   var st = (i.status || "").toLowerCase();
   var done = st === "dev_fixed" || st === "resolved";
   var part = String(i.media_kind || "").toLowerCase();
-  var partBadge = part === "video" ? '<span class="badge type-badge">Video</span>'
-    : part === "text" ? '<span class="badge type-badge">Text</span>' : "";
   // Fix-first card: the code and what needs doing, fluff behind the drawer.
   var lessonLine = dispLesson(i);
+  // Round 65 badge pass. This queue is already filtered to course errors, so
+  // the category tag never said anything here; the rest drops to the muted line
+  // with the lesson. Status only when it is DONE, because that is the one
+  // status on this queue that changes what you do next - the r65 rule read the
+  // way it applies to a single-category queue.
+  var extra = [];
+  if (part === "video") extra.push("Video");
+  else if (part === "text") extra.push("Text");
   return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
     '<div class="top">' +
       priBadge(i.priority) +
       (reps > 1 ? '<span class="badge type-badge">×' + reps + ' reports</span>' : '') +
       (done ? statusBadge(i.status, i) : "") +
-      // A suggested improvement is not a fault, and reading a queue where the
-      // two sit unlabelled next to each other is how a wishlist item gets
-      // treated as a bug (Edd, FB-0206). The Developers queue has said this in
-      // its sub-line since FB-0164; the course queue now says it too.
-      (kindOf(i) === "improvement" ? reqBadge("improvement") : "") +
-      refBadge(i) + queryBadge(i) +
       (ref ? '<span class="code">' + esc(ref) + '</span>' : '') +
-      partBadge +
-      (i.assignee ? '<span class="badge type-badge">&rarr; ' + esc(i.assignee) + '</span>' : '') +
     '</div>' +
     (lessonLine ? '<div class="small muted" style="margin-bottom:2px;">' + esc(lessonLine) + '</div>' : '') +
     '<div class="sum"><strong>' + esc(cardTitle(i)) + '</strong></div>' +
     '<div class="sum clamp4 small" style="color:var(--muted);">' + esc(summaryText(i)) + '</div>' +
+    // A suggested improvement is not a fault, and reading a queue where the two
+    // sit unlabelled next to each other is how a wishlist item gets treated as
+    // a bug (Edd, FB-0206). It still says so, in words rather than a tag.
+    cardMetaLine(i, extra) +
   '</div>';
 }
 
@@ -8561,8 +8846,10 @@ function openDevDetail(id) {
     '<h2>' + esc(cardTitle(issue)) + '</h2>' +
     '<div style="margin-bottom:12px;">' +
       '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
-      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) + " " + reqBadge(kindOf(issue)) + platformBadge(issue) +
+      // r65: two badges, then the filing as a line. Same rule as the main pane.
+      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
+    detailFilingLine(issue) +
     '<div class="kv">' +
       kv("Submitted by", issue.instructor_name) +
       kv(issue.dev_passed_at ? ("Passed to " + (catOf(issue) === "course_error" ? "course team" : "devs")) : "Reported", fmtDate(issue.dev_passed_at || issue.submitted_at)) +
@@ -8944,6 +9231,7 @@ function renderUsers() {
   }).catch(function (e) { console.error(e); });
   loadPlaybook();
   loadSuggestions();
+  loadKfCorrections();
   renderFeedback();
 }
 
@@ -9190,6 +9478,57 @@ function suggestionRowHtml(s) {
     '</div>' +
   '</div>';
 }
+// FB-0231. Edd's queue. Approving is the only thing in the whole app that
+// writes a scope onto a corpus row, which is why the row is shown exactly as
+// the instructor described it and every field stays editable up to the press.
+function loadKfCorrections() {
+  if (!$("kfCorrections")) return;
+  apiGet("listKnownFixFlags").then(function (res) {
+    if (!res || !res.ok) { $("kfCorrections").innerHTML = ""; return; }
+    var list = res.corrections || [];
+    $("kfCorrections").innerHTML = list.length ? list.map(kfCorrectionRowHtml).join("") :
+      '<p class="muted small">Nothing waiting. When a suggested known fix turns out not to apply, whoever was shown it can say so and it lands here.</p>';
+  }).catch(function (e) { console.error(e); });
+}
+function kfCorrectionRowHtml(k) {
+  var id = esc(k.id);
+  var scopeOpts = ["", "Essential Navigation", "Day Skipper", "Yachtmaster", "Fast Track", "SRC", "PPR"].map(function (o) {
+    return '<option value="' + esc(o) + '"' + (String(k.course_scope || "") === o ? " selected" : "") + '>' +
+      (o || "Leave the scope as it is") + '</option>';
+  }).join("");
+  return '<div class="card" style="margin-bottom:8px;border-color:var(--accent);">' +
+    '<div class="small muted" style="margin-bottom:4px;">' + esc(k.by || "someone") + ' · ' + esc(fmtDate(k.created_at)) +
+      (k.corpus_id ? ' · corpus entry ' + esc(k.corpus_id) : ' · <span style="color:var(--medium);">the suggestion didn\'t name an entry, so approving can\'t change anything</span>') + '</div>' +
+    (k.shown_fix ? '<div class="small" style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;"><span class="muted">It suggested:</span> ' + esc(k.shown_fix) + '</div>' : '') +
+    '<div style="margin-bottom:8px;"><strong>Why it was wrong:</strong> ' + esc(k.why || "") + '</div>' +
+    (k.case_summary ? '<div class="small muted" style="margin-bottom:8px;">On: ' + esc(k.case_summary) + '</div>' : '') +
+    '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px;">' +
+      '<label class="small" style="flex:1;min-width:180px;">Scope it to<select id="kfsc_' + id + '" style="width:100%;">' + scopeOpts + '</select></label>' +
+      '<label class="small" style="flex:2;min-width:220px;">Applies when<input id="kfaw_' + id + '" style="width:100%;" value="' + esc(k.applies_when || "") + '" placeholder="the condition, in plain English" /></label>' +
+    '</div>' +
+    '<div class="row">' +
+      '<button class="primary small" onclick="resolveKfCorrection(\'' + id + '\', true, false)">Approve - narrow the entry</button>' +
+      '<button class="ghost small" style="color:var(--high);" onclick="resolveKfCorrection(\'' + id + '\', true, true)">Retire the entry</button>' +
+      '<button class="ghost small" onclick="resolveKfCorrection(\'' + id + '\', false, false)">Reject</button>' +
+    '</div>' +
+  '</div>';
+}
+function resolveKfCorrection(id, approve, drop) {
+  if (drop && !confirm("Retire this entry? It stops being offered, but the row stays in the sheet as history.")) return;
+  var payload = { action: "resolveKnownFixFlag", id: id, approve: approve, drop_entry: !!drop };
+  if (approve && !drop) {
+    if ($("kfsc_" + id)) payload.course_scope = $("kfsc_" + id).value;
+    if ($("kfaw_" + id)) payload.applies_when = $("kfaw_" + id).value;
+  }
+  apiPost(payload).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast(!approve ? "Correction dismissed. The entry is unchanged."
+      : res.applied ? (drop ? "Entry retired. It won't be offered again." : "Entry narrowed. It'll only be offered inside that scope now.")
+      : "Correction cleared, but nothing was written - it didn't point at an entry we could find.");
+    loadKfCorrections();
+  }).catch(function (e) { toast("Error."); console.error(e); });
+}
+
 function resolveSuggestion(id, approve, editedText) {
   var payload = { action: "resolvePlaybookSuggestion", id: id, approve: approve };
   if (approve && editedText && editedText.trim()) payload.suggestion = editedText.trim();

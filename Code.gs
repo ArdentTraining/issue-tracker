@@ -271,6 +271,7 @@ function doGet(e) {
     if (action === 'listUsers') return jsonOut(listUsers_());
     if (action === 'getPlaybook') return jsonOut(getPlaybookEndpoint_());
     if (action === 'listPlaybookSuggestions') return jsonOut(listPlaybookSuggestions_());
+    if (action === 'listKnownFixFlags') return jsonOut(listKnownFixFlags_());
     if (action === 'getFeedback') return jsonOut(getFeedback_());
     if (action === 'getAssignees') return jsonOut(listAssignees_());
     return jsonOut({ ok: false, error: 'Unknown GET action: ' + action });
@@ -327,6 +328,7 @@ function doPost(e) {
     if (action === 'listUsers') return jsonOut(listUsers_());
     if (action === 'getPlaybook') return jsonOut(getPlaybookEndpoint_());
     if (action === 'listPlaybookSuggestions') return jsonOut(listPlaybookSuggestions_());
+    if (action === 'listKnownFixFlags') return jsonOut(listKnownFixFlags_());
     if (action === 'getFeedback') return jsonOut(getFeedback_());
     if (action === 'getAssignees') return jsonOut(listAssignees_());
 
@@ -384,6 +386,8 @@ function doPost(e) {
     if (action === 'savePlaybook') return jsonOut(savePlaybook_(body));
     if (action === 'resolvePlaybookSuggestion') return jsonOut(resolvePlaybookSuggestion_(body));
     if (action === 'suggestPlaybook') return jsonOut(suggestPlaybook_(body));
+    if (action === 'flagKnownFix') return jsonOut(flagKnownFix_(body));
+    if (action === 'resolveKnownFixFlag') return jsonOut(resolveKnownFixFlag_(body));
     if (action === 'addFeedback') return jsonOut(addFeedback_(body));
     if (action === 'updateFeedback') return jsonOut(updateFeedback_(body));
     if (action === 'deleteFeedback') return jsonOut(deleteFeedback_(body));
@@ -505,10 +509,15 @@ function reqPerm_(action) {
     // user, and cases are shared - anyone can pick one up and carry on.
     case 'listLiveCases': case 'caseBrief': case 'caseCheckReply': case 'caseDraftReply':
     case 'caseCheckpoint': case 'caseClose': case 'caseTouch': case 'batchStudentDrafts': return 'log';
+    // Saying "this suggestion was wrong here" belongs to whoever was shown it,
+    // so it sits at the same tier as the case. Approving the correction, and
+    // therefore changing a corpus row, is Edd's alone (FB-0231).
+    case 'flagKnownFix': return 'log';
     // Confusion -> content-tweak suggestions sit with anyone who works a queue.
     case 'listContentSuggestions': case 'resolveContentSuggestion': case 'runConfusionReview': return 'work';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion': case 'suggestPlaybook':
+    case 'listKnownFixFlags': case 'resolveKnownFixFlag':
     case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
     // Available to any logged-in user: feedback and its screenshots, and
     // changing your own password. These used to ride on the old open default;
@@ -1087,7 +1096,7 @@ function invalidateIssueCache_() {
 // so a new write action is safe by default.
 var READ_ONLY_ACTIONS = {
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
-  listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, getFeedback: 1, getAssignees: 1,
+  listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1, getAssignees: 1,
   getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1,
   listVoiceGuides: 1, listContentSuggestions: 1, getManifest: 1, extract: 1, askIssues: 1,
   suggestFix: 1, troubleshoot: 1, matchUpdate: 1, draftStudentMessage: 1, listLiveCases: 1,
@@ -1218,6 +1227,9 @@ function bootstrap_(user) {
   ms.scans = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('listPlaybookSuggestions'))) {
     try { out.playbook_suggestions = getSuggestions_() || []; } catch (e) {}
+  }
+  if (hasPerm_(user, reqPerm_('listKnownFixFlags'))) {
+    try { out.knownfix_corrections = getKfCorrections_() || []; } catch (e) {}
   }
   ms.total = Date.now() - t0;
   out.ms = ms;   // cumulative milliseconds at each step
@@ -3425,6 +3437,9 @@ function runSetup_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
   setup();
+  // Round 65: touching the corpus sheet is what appends its three new header
+  // cells, so the post-deploy runSetup covers KnownFixes as well as Issues.
+  try { knownFixesSheet_(false); } catch (e) {}
   return { ok: true };
 }
 
@@ -3737,7 +3752,8 @@ function suggestFix_(data) {
   if (!data._kf_included) {
     try {
       candidates = candidates.concat(
-        fixCandidatesFor_((newIssue.summary || '') + ' ' + String(newIssue.raw_text || '').slice(0, 3000), null, true)
+        fixCandidatesFor_((newIssue.summary || '') + ' ' + String(newIssue.raw_text || '').slice(0, 3000), null, true,
+          data.course || newIssue.course || '')
       ).slice(0, 16);
     } catch (e) {}
   }
@@ -3758,9 +3774,22 @@ function suggestFix_(data) {
     'unless the matching past issue was genuinely resolved by exactly that step - the logging form already walks instructors ' +
     'through the generic checklist, so repeating it here is noise. A wrong suggestion wastes the student\'s time and the ' +
     'instructor\'s trust; when in doubt, return found false. Most new issues do NOT have a matching past fix.\n\n' +
+    // Round 65 (Edd, FB-0231). A past fix can carry a scope, because plenty of
+    // them only ever applied to one course or one era of account. Edd's case:
+    // a fix that "only applied to really old day skipper accounts, not
+    // Yachtmaster ever" was offered on a Yachtmaster conversation. Out-of-scope
+    // entries are already dropped before they get here when we know the course;
+    // this rule covers the ones where we don't.
+    'SCOPE. Some past entries carry "course_scope" (the course or courses the fix applies to) and "applies_when" ' +
+    '(a condition: an account age, an old signup route, a particular app version). A scope is a hard limit, not a hint. ' +
+    'If the new issue is outside it, the answer is found false however well the words match. ' +
+    'If you cannot tell from the new issue whether it falls inside the scope, you may still recommend the fix, but you MUST ' +
+    'return the condition in "applies_when" so the instructor can check it before passing anything to the student - ' +
+    'and say so plainly in the fix itself. An entry marked "flagged_wrong_before" has already been reported as a wrong ' +
+    'suggestion by an instructor, so hold an even higher bar for it.\n\n' +
     'NEW issue:\n' + JSON.stringify(newIssue) + '\n\n' +
     'PAST resolved issues (summary + how it was fixed, most relevant first):\n' + JSON.stringify(candidates) + '\n\n' +
-    'Return ONLY JSON: {"found": true or false, "fix": "<the recommendation, or empty string>", "based_on": "<short reference to the matching past issue, or empty string>"}. No prose, no markdown fences.';
+    'Return ONLY JSON: {"found": true or false, "fix": "<the recommendation, or empty string>", "based_on": "<short reference to the matching past issue, or empty string>", "corpus_id": "<the corpus_id of the entry you based it on, if it had one, else empty string>", "applies_when": "<the condition the instructor must check before using this, or empty string when there is none>"}. No prose, no markdown fences.';
 
   var res;
   try {
@@ -3782,7 +3811,10 @@ function suggestFix_(data) {
   var out; try { out = JSON.parse(text); } catch (e) { return { ok: true, found: false }; }
 
   if (!out || !out.found || !out.fix) return { ok: true, found: false };
-  return { ok: true, found: true, fix: String(out.fix), based_on: String(out.based_on || '') };
+  return { ok: true, found: true, fix: String(out.fix), based_on: String(out.based_on || ''),
+    // Which corpus entry this came from, so "this suggestion was wrong here"
+    // has something to point at, and the caveat that has to be checked first.
+    corpus_id: String(out.corpus_id || ''), applies_when: String(out.applies_when || '') };
 }
 
 // Pull a JSON object out of a model reply. Requiring the WHOLE reply to parse
@@ -4687,7 +4719,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r64 · 2026-08-15';
+var CODE_STAMP = 'r65 · 2026-08-15';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4877,7 +4909,7 @@ var NEXT_ACTION_CAP = 24000;   // characters of thread the reasoner reads
 // still be sitting there. The revision rides in the fingerprint, so changing it
 // retires every stored answer in one go and each issue recomputes when it is
 // next opened. Cheap because it is still one call per issue, only once.
-var NEXT_ACTION_REV = 'r63';   // Round 63 changed the reasoning (the scope gate), so every stored answer retires
+var NEXT_ACTION_REV = 'r65';   // Round 65 changed what reaches the reasoner (corpus scope, FB-0231), so every stored answer retires
 var NEXT_ACTION_MODEL = ANTHROPIC_MODEL;   // sonnet: this runs often, and it is plenty for the job
 
 // The whole conversation, oldest first, attributed and dated, because who said
@@ -5062,7 +5094,10 @@ function nextActionAi_(rec) {
   // a shortlist ranker is, and one call is the whole point.
   var pastFixes = [];
   try {
-    pastFixes = fixCandidatesFor_(String(rec.summary || '') + ' ' + tr.text.slice(0, 3000)).slice(0, 6);
+    // The issue knows its own course, so scoped corpus entries for a different
+    // one never reach the reasoner (FB-0231).
+    pastFixes = fixCandidatesFor_(String(rec.summary || '') + ' ' + tr.text.slice(0, 3000), null, false,
+      kfNormaliseScope_(rec.course)).slice(0, 6);
   } catch (e) { pastFixes = []; }
 
   var state = {
@@ -5667,6 +5702,10 @@ function briefAi_(transcript, issueId) {
     'Return ONLY JSON, no prose, no fences:\n' +
     '{"summary": "<one or two plain sentences: who the student is, what is going wrong, and on what device or platform if known>",\n' +
     ' "device": "<their device / OS / browser or app if mentioned, else empty string>",\n' +
+    // Round 65 (FB-0231). One extra field on a call we were already making, so
+    // the known-fix lookup can rule out entries scoped to a different course.
+    // Without it every corpus entry reads as applying to everybody.
+    ' "course": "<which of our courses this student is on, if the conversation says: Essential Navigation, Day Skipper, Yachtmaster, Fast Track, SRC or PPR. Empty string if it does not say - do not guess>",\n' +
     ' "tried": ["<each thing already tried, one short plain-English entry each - empty list if nothing yet>"],\n' +
     ' "next": "<the single recommended next step, short and practical, addressed to the instructor>",\n' +
     ' "next_why": "<one short line saying why this one and not the obvious alternative - name the thing in the conversation or the issue record that decided it>",\n' +
@@ -5689,7 +5728,13 @@ var FIX_STOPWORDS = { 'the': 1, 'and': 1, 'that': 1, 'this': 1, 'with': 1, 'have
 // KnownFixes rows by resolved_date. Live use passes nothing and sees it all.
 // kfOnly skips the Issues sweep - for callers that already have their own
 // issue candidates and only want the KnownFixes corpus folded in.
-function fixCandidatesFor_(text, cutoffIso, kfOnly) {
+// course (Round 65, FB-0231) is the course THIS case is on, when we know it. A
+// corpus entry scoped to other courses is dropped outright rather than left for
+// the AI to talk itself out of, because the scoring below cannot tell the
+// difference: a Day Skipper enrolment fix and a Yachtmaster enrolment fault
+// share nearly every word, so word overlap will always rank the wrong one high.
+// The scoring weights themselves are untouched.
+function fixCandidatesFor_(text, cutoffIso, kfOnly, course) {
   var words = {};
   String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
     if (w.length > 3 && !FIX_STOPWORDS[w]) words[w] = true;
@@ -5723,10 +5768,24 @@ function fixCandidatesFor_(text, cutoffIso, kfOnly) {
       var kd = kf.resolved_date ? new Date(kf.resolved_date).getTime() : 0;
       if (!kd || kd >= cutoff) return;
     }
+    // Out of scope for this course: not a candidate at all (FB-0231).
+    var verdict = kfScopeVerdict_(kf.course_scope, course);
+    if (verdict === 'no') return;
     var hay = ((kf.problem || '') + ' ' + (kf.fix || '') + ' ' + (kf.lesson_code || '')).toLowerCase();
     var score = scoreHay(hay);
     if (score >= 3) scored.push({ score: score, c: { summary: kf.problem || '', resolution_note: kf.fix || '',
-      lesson_code: kf.lesson_code || '', section: '', issue_type: kf.category || '' } });
+      lesson_code: kf.lesson_code || '', section: '', issue_type: kf.category || '',
+      // Carried through to suggestFix_ and out to the screen: an entry offered
+      // on a case whose course we don't know still has to show its scope, so
+      // whoever reads it can see the condition and rule it out themselves.
+      corpus_id: String(kf.conversation_id || ''),
+      course_scope: String(kf.course_scope || ''),
+      applies_when: String(kf.applies_when || ''),
+      scope_uncertain: verdict === 'maybe',
+      // An instructor has already said this one was wrong somewhere. Not a
+      // reason to hide it (they may have been wrong about it being wrong), but
+      // the model should hold a higher bar and the caveat rides along.
+      flagged_wrong_before: kfFlagCount_(kf) } });
   });
   scored.sort(function (a, b) { return b.score - a.score; });
   return scored.slice(0, 12).map(function (x) { return x.c; });
@@ -5739,11 +5798,15 @@ function caseBriefCore_(imp, cutoffIso, issueId) {
   if (!got.json) return { error: 'The AI read of the conversation failed: ' + got.why + '. Try again in a minute.' };
   var brief = got.json;
   var fix = { found: false };
+  // The course the student is on, read off the same brief call. When the
+  // conversation doesn't say, this stays empty and scoped entries come through
+  // carrying their caveat instead of being dropped (FB-0231).
+  var briefCourse = kfNormaliseScope_(brief.course);
   try {
-    var cands = fixCandidatesFor_((brief.summary || '') + ' ' + String(imp.transcript || '').slice(0, 3000), cutoffIso);
+    var cands = fixCandidatesFor_((brief.summary || '') + ' ' + String(imp.transcript || '').slice(0, 3000), cutoffIso, false, briefCourse);
     if (cands.length) {
-      fix = suggestFix_({ new_issue: { summary: brief.summary || '', raw_text: String(imp.transcript || '').slice(0, 4000) },
-        candidates: cands, _kf_included: true }) || { found: false };
+      fix = suggestFix_({ new_issue: { summary: brief.summary || '', course: briefCourse, raw_text: String(imp.transcript || '').slice(0, 4000) },
+        candidates: cands, course: briefCourse, _kf_included: true }) || { found: false };
     }
   } catch (e) { fix = { found: false }; }
   return { bj: {
@@ -5754,8 +5817,13 @@ function caseBriefCore_(imp, cutoffIso, issueId) {
     next_why: String(brief.next_why || ''),
     instructor_action: !!brief.instructor_action,
     images_note: String(brief.images_note || ''),
+    course: briefCourse,
     fix: fix && fix.found ? String(fix.fix) : '',
     fix_based_on: fix && fix.found ? String(fix.based_on || '') : '',
+    // The condition to check before the fix goes anywhere near the student, and
+    // which corpus entry to point at if it turns out to be wrong (FB-0231).
+    fix_applies_when: fix && fix.found ? String(fix.applies_when || '') : '',
+    fix_corpus_id: fix && fix.found ? String(fix.corpus_id || '') : '',
     message_count: imp.message_count,
     images: imp.images || [],
     link: imp.link || '',
@@ -5947,11 +6015,29 @@ function caseDraftReply_(data) {
 // while the conversation keeps adding detail. When the AI matches an open case
 // the team already has, we ask first (needs_confirm) rather than merging
 // silently - same pattern as the same-issue popup on the form.
+// Round 65 (Edd, FB-0232). Some conversations are already finished by the time
+// anyone presses the button - the answer was given in the chat and the student
+// said thanks. Filing that as a fresh open high sends it to a fix queue, pings
+// Slack, and drops it into somebody's Actions list, all for a job that is done.
+// `outcome` says how it goes in: 'resolved' or 'parked' get the same treatment
+// as the log form's Submit and resolve / Submit and park, which the live case
+// has never had an equivalent of. It still gets filed either way - Edd wants
+// the record, he just doesn't want it treated as live work.
 function caseCheckpoint_(data) {
   var id = chatwootConvId_(data.conversation_id || data.conversation);
   var rec = liveCaseFind_(id);
   if (!rec) return { ok: false, error: 'No live case for that conversation.' };
   var who = (data._user && data._user.name) || '';
+  var outcome = String(data.outcome || '').toLowerCase();
+  if (outcome !== 'resolved' && outcome !== 'parked') outcome = '';
+  var outNote = String(data.resolution_note || '').trim();
+  // A resolved issue with no note is a closed one nobody can learn from, and
+  // that note is what the next student with the same fault ends up getting.
+  if (outcome && !outNote) {
+    return { ok: false, error: outcome === 'resolved'
+      ? 'Put what actually sorted it in the box first - that answer is what the next student with the same fault gets.'
+      : 'Say why it is being parked - a parked issue with no reason is just an open one nobody looks at.' };
+  }
   var imp = chatwootImport_({ conversation: id });
   if (!imp || !imp.ok) return { ok: false, error: (imp && imp.error) || 'Could not read the conversation.' };
   var now = new Date().toISOString();
@@ -5959,20 +6045,27 @@ function caseCheckpoint_(data) {
 
   // Later checkpoints: the issue exists, so the fresh state lands as an update.
   if (rec.issue_id) {
-    var r0 = addUpdate_({
+    var upd = {
       issue_id: rec.issue_id, instructor_name: who,
-      summary: 'Checkpoint from the live case' + (bj.summary ? ': ' + String(bj.summary).slice(0, 140) : ''),
+      summary: (outcome === 'resolved' ? 'Sorted in the live case'
+        : outcome === 'parked' ? 'Parked from the live case' : 'Checkpoint from the live case') +
+        (bj.summary ? ': ' + String(bj.summary).slice(0, 140) : ''),
       raw_text: '[Live case checkpoint, Chatwoot conversation ' + id + ']\n' + (bj.summary || '') +
+        (outNote ? '\n\nOutcome: ' + outNote : '') +
         '\n\nLatest transcript:\n' + String(imp.transcript || '').slice(0, 5000),
       student_name: imp.student_name || '', student_contact: imp.student_contact || '',
       image_urls: (bj.images_note ? '' : ((imp.images && imp.images.length) ? imp.images.join(',') : '')),  // coursework screenshots stay off the report (Edd, FB-0179)
-      app_url: data.app_url || getAppUrl_(), _user: data._user });
+      app_url: data.app_url || getAppUrl_(), _user: data._user };
+    if (outcome === 'resolved') { upd.resolved = true; upd.resolution_note = outNote; }
+    else if (outcome === 'parked') { upd.park = true; upd.resolution_note = outNote; }
+    var r0 = addUpdate_(upd);
     if (!r0 || !r0.ok) return { ok: false, error: 'Could not add the update: ' + ((r0 && r0.error) || 'unknown') };
     bj.message_count = imp.message_count;
     rec.brief_json = JSON.stringify(bj);
     rec.last_activity = now; rec.last_touched_by = who;
     liveCaseSave_(rec);
-    return { ok: true, updated: true, issue_id: rec.issue_id };
+    return { ok: true, updated: true, issue_id: rec.issue_id,
+      resolved: outcome === 'resolved', parked: outcome === 'parked' };
   }
 
   // First checkpoint: extract, check for an open case the team is already on
@@ -6002,6 +6095,30 @@ function caseCheckpoint_(data) {
     chatwoot_conversation_id: id,
     app_url: data.app_url || getAppUrl_()
   };
+
+  // Going in already sorted, or already stalled. addIssue_ reads these the same
+  // way the log form's two buttons do: status and resolved_at set on the row,
+  // the routing block skipped (nothing to hand to a fix queue), and no Slack,
+  // because the alert exists to make somebody drop what they are doing.
+  if (outcome === 'resolved') {
+    payload.resolved = true;
+    payload.resolution_note = outNote;
+    payload.resolved_by = who;
+  } else if (outcome === 'parked') {
+    payload.parked = true;
+    payload.resolution_note = outNote;
+  }
+  // The extraction reads urgency off the words in the transcript, and a student
+  // who was stuck writes an urgent-sounding message even when the thing got
+  // sorted three replies later. High means "drop everything and look at this",
+  // so a finished conversation cannot be high - there is nothing left to drop
+  // anything for. Down a notch, with the reason kept so the stats still say
+  // what it felt like at the time (Edd, FB-0232).
+  if (outcome === 'resolved' && String(payload.priority).toLowerCase() === 'high') {
+    payload.priority_reason = 'Filed from a conversation that was already sorted, so it is a record rather than live work. ' +
+      'It read as high priority while it was happening' + (payload.priority_reason ? ': ' + payload.priority_reason : '.');
+    payload.priority = 'medium';
+  }
 
   if (data.merge_into) {
     payload.merge_into = data.merge_into;
@@ -6036,7 +6153,13 @@ function caseCheckpoint_(data) {
   rec.last_activity = now; rec.last_touched_by = who;
   liveCaseSave_(rec);
   return { ok: true, filed: true, merged: !!r.merged, issue_id: issueId,
-    summary: payload.summary, priority: String((r.issue && r.issue.priority) || payload.priority || '') };
+    summary: payload.summary, priority: String((r.issue && r.issue.priority) || payload.priority || ''),
+    resolved: outcome === 'resolved' && !r.merged, parked: outcome === 'parked' && !r.merged,
+    // A merge deliberately does NOT resolve or park the issue it joins: that
+    // fault is still live for everybody else on it, and one student getting
+    // sorted is no reason to stop work (the same rule addReportToIssue_ keeps
+    // for a "Submit and park" that merges).
+    merged_stays_open: !!r.merged && !!outcome };
 }
 
 // Manual close - for the conversations that fizzle out, or once everything is
@@ -6936,8 +7059,19 @@ function markNewFeedbackNeedsTesting() {
 // order randomised.
 
 var KNOWNFIXES_SHEET = 'KnownFixes';
+// Round 65 (Edd, FB-0231). The last three are APPENDED, never inserted - the
+// array order IS the sheet column order, so an insert misaligns every existing
+// row (the taxonomy rule, learned the hard way in Round 23).
+//
+// A fix is only a fix somewhere. Edd hit this on a Yachtmaster case that was
+// offered a fix which "only applied to really old day skipper accounts, not
+// Yachtmaster ever" - the corpus had no idea a fix HAS a scope, so every entry
+// read as universal. course_scope is a canonical course name (or several,
+// comma-separated) and applies_when is the plain-English caveat the
+// conversation gave us. Blank means unscoped, which is how every row
+// backfilled before today reads, so nothing changes for them.
 var KNOWNFIX_HEADERS = ['conversation_id', 'resolved_date', 'problem', 'fix', 'category', 'lesson_code',
-  'message_count', 'source', 'extracted_at', 'dup_of'];
+  'message_count', 'source', 'extracted_at', 'dup_of', 'course_scope', 'applies_when', 'flags_json'];
 var BACKTESTLOG_SHEET = 'BacktestLog';
 var BACKTESTLOG_HEADERS = ['type', 'conversation_id', 'data_json', 'created_at'];
 var BACKFILL_OLDEST = '2026-02-10T00:00:00Z';  // ~6 months back, per the cap
@@ -6954,8 +7088,139 @@ function knownFixesSheet_(create) {
     sh.getRange(1, 1, 1, KNOWNFIX_HEADERS.length).setValues([KNOWNFIX_HEADERS]);
     sh.setFrozenRows(1);
   }
+  // Round 65: the three appended columns land on a sheet that already has 930
+  // rows under a ten-column header. knownFixRows_ maps values by the header
+  // row, so without this the new cells would be written and never read back.
+  // Appending only, and only what is missing, so it is safe to run on any
+  // access and does nothing at all once the header is up to date.
+  if (sh) {
+    try {
+      var last = sh.getLastColumn();
+      if (last < KNOWNFIX_HEADERS.length) {
+        var head = last ? sh.getRange(1, 1, 1, last).getValues()[0] : [];
+        var add = [];
+        for (var c = last; c < KNOWNFIX_HEADERS.length; c++) add.push(KNOWNFIX_HEADERS[c]);
+        // Only append when what is already there is our header, in our order.
+        var sane = true;
+        for (var h = 0; h < head.length; h++) if (String(head[h]) !== KNOWNFIX_HEADERS[h]) sane = false;
+        if (sane && add.length) sh.getRange(1, last + 1, 1, add.length).setValues([add]);
+      }
+    } catch (e) {}
+  }
   return sh;
 }
+// ---- corpus corrections (Round 65, FB-0231) --------------------------------
+// A shown known fix that was wrong needs somewhere to go. Edd: "this only
+// applied to really old day skipper accounts. Not Yachtmaster ever." Until now
+// there was nothing to press, so the corpus kept offering it and the next
+// instructor made the same wasted trip.
+//
+// Two deliberate limits. The instructor's report NEVER rewrites the row: it is
+// recorded against the entry as a flag and queued for Edd, the same
+// approve-or-reject shape the playbook suggestions use. And a flag on its own
+// only ever adds a caveat to future suggestions - narrowing or rewording the
+// entry is Edd's press, not the machine's.
+function kfFlagCount_(kf) {
+  try { var a = JSON.parse(kf.flags_json || '[]'); return Array.isArray(a) ? a.length : 0; } catch (e) { return 0; }
+}
+function getKfCorrections_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('KNOWNFIX_CORRECTIONS');
+  if (!raw) return [];
+  try { var a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function saveKfCorrections_(arr) {
+  PropertiesService.getScriptProperties().setProperty('KNOWNFIX_CORRECTIONS', JSON.stringify(arr || []));
+}
+function listKnownFixFlags_() { return { ok: true, corrections: getKfCorrections_() }; }
+
+// Filed by whoever was shown the suggestion. Records the objection on the row
+// (a count and a note, nothing overwritten) and queues it for Edd.
+function flagKnownFix_(body) {
+  var why = String((body && body.why) || '').trim();
+  if (!why) return { ok: false, error: 'Say what was wrong about it - "wrong" on its own tells the next person nothing.' };
+  var corpusId = String((body && body.corpus_id) || '').trim();
+  var who = (body && body._user && body._user.name) || '';
+  var now = new Date().toISOString();
+  var scope = kfNormaliseScope_(body && body.course_scope);
+  var appliesWhen = String((body && body.applies_when) || '').trim().slice(0, 400);
+
+  // Stamp the flag on the entry itself when we know which one it was. The
+  // suggestion is AI-written from a shortlist, so it does not always come back
+  // with an id; a correction with no id still reaches Edd, it just cannot
+  // caveat future suggestions on its own.
+  var stamped = false;
+  if (corpusId) {
+    var sh = knownFixesSheet_(false);
+    var rows = sh ? knownFixRows_() : [];
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i].conversation_id) !== corpusId) continue;
+      var flags = [];
+      try { flags = JSON.parse(rows[i].flags_json || '[]'); } catch (e) { flags = []; }
+      if (!Array.isArray(flags)) flags = [];
+      flags.push({ by: who, at: now, why: why.slice(0, 400) });
+      if (flags.length > 20) flags = flags.slice(flags.length - 20);
+      var col = KNOWNFIX_HEADERS.indexOf('flags_json') + 1;
+      sh.getRange(rows[i]._rowNum, col).setValue(JSON.stringify(flags));
+      stamped = true;
+      break;
+    }
+  }
+
+  var arr = getKfCorrections_();
+  arr.push({
+    id: Utilities.getUuid(),
+    corpus_id: corpusId,
+    by: who,
+    created_at: now,
+    why: why.slice(0, 1000),
+    course_scope: scope,
+    applies_when: appliesWhen,
+    shown_fix: String((body && body.shown_fix) || '').slice(0, 800),
+    case_summary: String((body && body.case_summary) || '').slice(0, 400),
+    conversation_id: String((body && body.conversation_id) || ''),
+    issue_id: String((body && body.issue_id) || ''),
+    stamped: stamped
+  });
+  if (arr.length > 60) arr = arr.slice(arr.length - 60);
+  saveKfCorrections_(arr);
+  return { ok: true, stamped: stamped };
+}
+
+// Edd's press, and the ONLY thing that changes a corpus row's wording or scope.
+// Approving writes the scope he confirmed onto the entry; rejecting drops the
+// correction and leaves the entry exactly as it was.
+function resolveKnownFixFlag_(body) {
+  var arr = getKfCorrections_();
+  var kept = [], matched = null;
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i].id === body.id) matched = arr[i]; else kept.push(arr[i]);
+  }
+  if (!matched) return { ok: false, error: 'Correction not found (it may have already been actioned).' };
+  var applied = false;
+  if (body.approve && matched.corpus_id) {
+    var scope = kfNormaliseScope_(body.course_scope !== undefined ? body.course_scope : matched.course_scope);
+    var appliesWhen = String((body.applies_when !== undefined ? body.applies_when : matched.applies_when) || '').slice(0, 400);
+    var drop = !!body.drop_entry;
+    var sh = knownFixesSheet_(false);
+    var rows = sh ? knownFixRows_() : [];
+    for (var j = 0; j < rows.length; j++) {
+      if (String(rows[j].conversation_id) !== String(matched.corpus_id)) continue;
+      if (drop) {
+        // Retired rather than deleted: dup_of is already how this corpus takes
+        // a row out of the lookup, and the history is still worth keeping.
+        sh.getRange(rows[j]._rowNum, KNOWNFIX_HEADERS.indexOf('dup_of') + 1).setValue('retired_' + new Date().toISOString().slice(0, 10));
+      } else {
+        if (scope) sh.getRange(rows[j]._rowNum, KNOWNFIX_HEADERS.indexOf('course_scope') + 1).setValue(scope);
+        if (appliesWhen) sh.getRange(rows[j]._rowNum, KNOWNFIX_HEADERS.indexOf('applies_when') + 1).setValue(appliesWhen);
+      }
+      applied = true;
+      break;
+    }
+  }
+  saveKfCorrections_(kept);
+  return { ok: true, applied: applied };
+}
+
 function knownFixRows_() {
   var sh = knownFixesSheet_(false);
   if (!sh) return [];
@@ -7092,7 +7357,7 @@ function btBackfill_(body) {
       }
       kfSheet.appendRow([id, lastAt || t.ended_at, String(f.problem).slice(0, 800), String(f.fix).slice(0, 800),
         String(f.category || 'other'), String(f.lesson_code || ''), t.turns.length, 'chatwoot_backfill',
-        new Date().toISOString(), '']);
+        new Date().toISOString(), '', kfNormaliseScope_(f.course_scope), String(f.applies_when || '').slice(0, 400), '']);
       stats.added++;
     }
     if (stats.hit_oldest || stats.hit_cap) break;
@@ -7116,7 +7381,41 @@ function btExtractPrompt_(transcript) {
     ' "problem": "<one or two plain sentences: what was going wrong, with the device or platform if relevant>",\n' +
     ' "fix": "<one or two plain sentences: the specific thing that fixed it or the answer given>",\n' +
     ' "category": "<one of: tech_issue, course_error, shipping, admin, other>",\n' +
-    ' "lesson_code": "<e.g. DS.09.04 if one specific lesson is identifiable, else empty string>"}';
+    ' "lesson_code": "<e.g. DS.09.04 if one specific lesson is identifiable, else empty string>",\n' +
+    // Round 65 (FB-0231). The scope has to come from the conversation, not from
+    // a guess: an entry wrongly narrowed stops firing where it would have
+    // helped, and one wrongly widened is the fault Edd reported. Say nothing
+    // rather than say something shaky.
+    ' "course_scope": "<ONLY if the thread makes clear the fix applies to one course and not others, name it from: Essential Navigation, Day Skipper, Yachtmaster, Fast Track, SRC, PPR. Several allowed, comma-separated. Empty string when the thread does not say, or when it plainly applies to any course - do NOT infer a scope from which course the student happened to be on>",\n' +
+    ' "applies_when": "<ONLY if the thread states a condition on when this fix applies (an account age, an old signup route, a particular device or app version, a specific enrolment type), one short plain-English line saying it. Empty string otherwise>"}';
+}
+
+// Canonical course names only, so the comparison later is a straight match
+// rather than a fuzzy one. Anything the model volunteers that is not one of
+// our six is dropped: a scope we cannot compare against is worse than none,
+// because it would silently exclude every case.
+var KF_COURSES = ['Essential Navigation', 'Day Skipper', 'Yachtmaster', 'Fast Track', 'SRC', 'PPR'];
+function kfNormaliseScope_(raw) {
+  var s = String(raw || '').toLowerCase();
+  if (!s.trim()) return '';
+  var out = [];
+  KF_COURSES.forEach(function (c) { if (s.indexOf(c.toLowerCase()) > -1) out.push(c); });
+  return out.join(', ');
+}
+// Does a corpus entry apply to the case in front of us?
+//   'yes'   - no scope recorded, or the course matches. Offer it as normal.
+//   'no'    - scoped to other courses and we KNOW this case is not one of them.
+//             Drop it: this is the Yachtmaster-offered-a-Day-Skipper-fix case.
+//   'maybe' - scoped, but we do not know the case's course. Offer it WITH the
+//             caveat attached rather than pretending the scope isn't there.
+function kfScopeVerdict_(scope, course) {
+  var sc = String(scope || '').trim();
+  if (!sc) return 'yes';
+  var c = String(course || '').trim().toLowerCase();
+  if (!c) return 'maybe';
+  var list = sc.toLowerCase().split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+  for (var i = 0; i < list.length; i++) if (list[i] && c.indexOf(list[i]) > -1) return 'yes';
+  return 'no';
 }
 
 // Near-identical pairs get marked, not deleted: dup_of points at the row that
