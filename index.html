@@ -1165,7 +1165,7 @@
 
 <!-- ===================== ADMIN VIEW ===================== -->
 <div id="adminView" class="wrap hidden">
-  <div class="area-toggle" style="display:flex;gap:10px;flex-wrap:wrap;">
+  <div id="adminAreaHome" class="ctl-stow"><div class="area-toggle" id="adminAreaSegs" style="display:flex;gap:10px;flex-wrap:wrap;">
     <div class="seg" id="areaSeg">
       <button type="button" id="area_all" class="active" onclick="setArea('all')">All</button>
       <button type="button" id="area_course" onclick="setArea('course_error')">Course errors</button>
@@ -1186,7 +1186,7 @@
       <button type="button" id="tv_list" class="active" onclick="setTrackView('list')">List</button>
       <button type="button" id="tv_board" onclick="setTrackView('board')">Board</button>
     </div>
-  </div>
+  </div></div>
 
   <div class="summary-row">
     <div class="stat"><div class="n" id="statOpen">–</div><div class="l">Open issues</div></div>
@@ -1215,7 +1215,8 @@
   <div class="fchips" id="adminChips"></div>
   <div id="adminAskHost"></div>
 
-  <div id="adminFiltersHome"><div class="filterbar ctl-stow" id="adminFilters" data-home="adminFiltersHome">
+  <div id="adminFiltersHome"><div class="ctl-stow" id="adminFilters" data-home="adminFiltersHome">
+  <div class="filterbar">
     <select id="flt_status" onchange="renderAdmin()">
       <option value="">All statuses</option>
       <option value="needs_action">Needs action (anything unresolved)</option>
@@ -1255,6 +1256,8 @@
       <option>SRC</option>
       <option>PPR</option>
     </select>
+  </div>
+  <div id="adminAreaSlot"></div>
   </div></div>
 
   <div id="filterClear" class="small hidden" style="margin-bottom:10px;">
@@ -4036,10 +4039,25 @@ function stateChip(key, prefix, value, clearFn) {
   if (!v || v === "all") return null;
   return { label: prefix + ": " + (value || v), clear: clearFn + "('" + key + "','all')" };
 }
+// The three pill groups that used to shout across the top of Issues are
+// filters like any other, so they move into the popup with the dropdowns.
+// Moved once, in the DOM, so setArea / setAudience / setReqFilter keep the
+// very buttons and handlers they have always had.
+function ctlAdoptAreaSegs() {
+  var segs = $("adminAreaSegs"), slot = $("adminAreaSlot");
+  if (segs && slot && segs.parentElement !== slot) slot.appendChild(segs);
+}
+var AREA_CHIP = { course_error: "Course errors", tech_issue: "Tech issues", shipping: "Shipping" };
+var AUD_CHIP = { student: "Student-facing", internal: "Internal" };
+var REQ_CHIP = { fix: "Fixes", improvement: "Improvements" };
 function adminChipList() {
-  return [selChip("flt_status", "Status"), selChip("flt_priority", "Priority"),
-          selChip("flt_type", "Type"), selChip("flt_course", "Course")]
-    .filter(function (c) { return !!c; });
+  var out = [];
+  if (state.area && state.area !== "all") out.push({ label: "Area: " + (AREA_CHIP[state.area] || state.area), clear: "setArea('all')" });
+  if (state.audienceFilter && state.audienceFilter !== "all") out.push({ label: "Shown for: " + (AUD_CHIP[state.audienceFilter] || state.audienceFilter), clear: "setAudience('all')" });
+  if (state.reqFilter && state.reqFilter !== "all") out.push({ label: "Asking for: " + (REQ_CHIP[state.reqFilter] || state.reqFilter), clear: "setReqFilter('all')" });
+  return out.concat([selChip("flt_status", "Status"), selChip("flt_priority", "Priority"),
+                     selChip("flt_type", "Type"), selChip("flt_course", "Course")]
+    .filter(function (c) { return !!c; }));
 }
 function devChipList() {
   return [stateChip("devSection", "Where", SECTION_LABEL[state.devSection], "setDevSel"),
@@ -4085,7 +4103,7 @@ function refreshCtlChips() { Object.keys(CTL_CHIPS).forEach(renderCtlChips); }
 function ctlClearAll(which) {
   if (which === "admin") {
     ["flt_status", "flt_priority", "flt_type", "flt_course"].forEach(function (id) { var el = $(id); if (el) el.value = ""; });
-    renderAdmin();
+    setAudience("all"); setReqFilter("all"); setArea("all");
   } else if (which === "dev") {
     ["devSection", "devKind", "devType", "devSize"].forEach(function (k) { state[k] = "all"; });
     renderDev();
@@ -6455,6 +6473,7 @@ function areaBase() {
 }
 
 function renderAdmin() {
+  ctlAdoptAreaSegs();
   var base = areaBase();
 
   var openIssues = base.filter(isOpen);
