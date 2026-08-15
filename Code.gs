@@ -3863,6 +3863,85 @@ var DEFAULT_PLAYBOOK = [
   '- Anything that looks like it is hitting every student rather than one (a page, video host, or the site itself down or erroring for everyone). User-side steps cannot fix a server that is down.'
 ].join('\n');
 
+// ---- The scope gate (Round 63, Edd FB-0226) --------------------------------
+// Some faults are not "user side" or "our side" until somebody actually looks,
+// and looking takes about ten seconds. A 404 on a lesson, a video that will not
+// play, an error page: the instructor can open that same lesson on their own
+// account and settle it there and then, and every piece of advice after that
+// depends on the answer. Edd, on a 404 report: "the instructor should confirm
+// the 404 by loading the same lesson first. They should confirm if this is a
+// 404 affecting everyone or isolated to one person. Then the advice given here
+// is only true if it affects everyone."
+//
+// The playbook has carried a replicate-it-yourself line since Round 37 (browser
+// step 2), but it sits in the middle of a list the model reads in order, so on
+// a fault like this it arrived third or not at all, and the steps above it had
+// already assumed a scope nobody had established. So the gate is applied here
+// rather than left to the prompt to remember.
+var SCOPE_SHAPED_RE = new RegExp(
+  // The boundary has to exclude letters and a leading dot, not just digits.
+  // A digits-only boundary matched the milliseconds in an ISO timestamp
+  // (".404Z") and the middle of a Google Drive file id ("X404W"), which is two
+  // of the five it fired on across the open log before this line was tightened.
+  '(^|[^0-9a-z.])404([^0-9a-z]|$)' +
+  '|page (not found|cannot be found|could not be found|does ?n.?t exist)' +
+  '|(error|not found) page' +
+  // Bounded on purpose: a bare "500" is a price or a student count far more
+  // often than it is a status code, so it only counts next to a word that makes
+  // it one.
+  '|\\b50[0234]\\b\\s*(error|status|response|page)|(error|status|http)\\s*(code\\s*)?50[0234]\\b' +
+  '|server error' +
+  '|blank (page|screen)' +
+  '|(lesson|video|page|module|slide|quiz|test|assessment|exam|course|player|content|image|diagram|pdf|document)s?\\b[^.!?]{0,60}\\b(w(on|ould\\s?n).?t|will not|does ?n.?t|do ?n.?t|did ?n.?t|fail(s|ed)? to|unable to|cannot|can.?t|never)\\s+(load|play|open|start|display|show|appear|render|come up)' +
+  '|(w(on|ould\\s?n).?t|does ?n.?t|will not|fail(s|ed)? to)\\s+load' +
+  '|(missing|broken|dead) (page|link|lesson|video)',
+  'i');
+// Has anybody actually looked yet? Only an explicit statement counts, the same
+// strict rule the checklist uses. "The student tried again" is not us looking.
+var SCOPE_SETTLED_RE = new RegExp(
+  '(i|we|you)\\s+(have\\s+)?(just\\s+)?(tried|loaded|opened|checked|tested|ran|run|looked at|viewed|replicated|reproduced)[^.!?]{0,70}\\b(myself|ourselves|yourself|too|as well|also|my own|our own|the same (lesson|page|module|course|thing))' +
+  '|(works?|loads?|opens?|plays?) (fine|ok|okay|normally|perfectly) (for|on) (me|us|my|our)' +
+  '|(fails?|404s?|errors?|breaks?) (for|on) (me|us) (too|as well)' +
+  '|(i|we) (can|could)(\\s?n.?t| not)? (see|load|open|replicate|reproduce) (it|the (same|error|page|404))' +
+  '|been able to replicate|able to reproduce|replicated (it|the (issue|error|fault))' +
+  '|(everyone|all students|every student|all of them) (is|are|were|is being) (affected|hit|getting)' +
+  '|(it is|it.?s|this is) (happening to|affecting) (everyone|all|every)',
+  'i');
+// The gate is open only while BOTH are true: it is the shape of fault where the
+// scope decides the advice, and nothing in front of us says anyone has looked.
+function scopeGateOn_(text) {
+  var t = String(text || '');
+  if (!t) return false;
+  return SCOPE_SHAPED_RE.test(t) && !SCOPE_SETTLED_RE.test(t);
+}
+// Step one, in the two framings. The purpose is stated because a step without
+// its reason gets skipped, and this one is only worth doing for its answer.
+function scopeStepText_(staff) {
+  return staff
+    ? 'First, settle the scope before anything else: ask someone else on the team to open the same page in the same portal, and get a colleague to try it too. We are answering one question, is this hitting everyone or only this machine? If it fails for them too it is server or content side and the developers need it now, so do not spend time on your own cache. If it loads fine for them, it is your session, cache, extensions or device, and the steps below are the ones worth working.'
+    : 'First, settle the scope before advising anything: open the same course, module and lesson yourself, in the same portal, on your own account and device. We are answering one question, is this hitting everyone or just this one student? Hold the steps below until it is answered.';
+}
+// The branch. Everything after step one is conditional on its answer, and the
+// instructor is told so in plain words rather than being handed a list that
+// quietly assumes one of the two answers is already true.
+function scopeBranchText_(staff, team) {
+  var who = team || 'the developers';
+  return staff
+    ? 'If it failed for your colleague too, stop here and log it for ' + who + ' with the exact page and the time. If it was only you, work down the list below.'
+    : 'If it fails for you too, it is our end, not theirs: log it for ' + who + ' now with the exact lesson and what you saw, and do not send the student round the houses clearing caches for a fault that is not on their machine. If it loads fine for you, then either it is this student\'s session, account, portal or device, or it was a blip that has since cleared, and the user-side steps below are the right ones to work through with them.';
+}
+// Round 63. The model is told the gate is open, and told plainly that the list
+// it usually reaches for is not the answer until the first step has been taken.
+function scopeGateBlock_(staff, team) {
+  return 'ESTABLISH THE SCOPE FIRST. THIS BEATS EVERY ORDERING BELOW:\n' +
+    'This report is the shape of fault where nobody yet knows whether it is happening to everyone or to one person, and nothing in the conversation says anybody has looked. That answer decides which advice is even true, so it is not something to get to later.\n' +
+    '- YOUR FIRST STEP IS OURS, NOT THE STUDENT\'S. It is: ' + scopeStepText_(staff) + ' Say it as step one, in those terms, and say what it is for.\n' +
+    '- EVERY STEP AFTER IT IS CONDITIONAL ON THE ANSWER, and must say so in the step itself. ' + scopeBranchText_(staff, team) + '\n' +
+    '- Do NOT put a hard refresh, a different browser, a different network, an incognito window, clearing a cache or any other user-side step ABOVE that first step, and never give one as unconditional advice. Each of them is only worth the student\'s time once we know the fault is theirs alone.\n' +
+    '- Equally, do NOT tell them to escalate it, flag it urgently or hand it on as though it were confirmed to be hitting everyone. That is just as much of an assumption, and it is the one that was made on the report this rule came from.\n' +
+    '- Mark the "tried the same course, lesson and portal yourself" checklist item as todo, never na and never done, unless the conversation explicitly says somebody did it.\n\n';
+}
+
 // Read the conversation the instructor pasted, work out what has been tried,
 // and suggest the next steps from the playbook (pointing out anything missed).
 function troubleshoot_(data) {
@@ -3875,10 +3954,17 @@ function troubleshoot_(data) {
   // systems (an internal task, the instructor portal) and, since FB-0207, any
   // report an instructor logged without attaching a student to it.
   var staff = (data.staff === true || data.staff === 'true');
+  // Round 63, FB-0226. Decided here rather than left to the model, because the
+  // playbook line it comes from sits in the middle of a list and kept losing to
+  // whatever the model read first.
+  var scopeText = raw + ' ' + String(data.existing_history || '') + ' ' + String(data.summary || '');
+  var gate = scopeGateOn_(scopeText);
+  var gateTeam = String(data.category || '') === 'course_error' ? 'the course team' : 'the developers';
 
   var prompt = (staff
     ? 'You are helping an Ardent Training staff member troubleshoot a fault THEY have hit and reported themselves. There is NO student on the other end of this report: nobody has been in touch about it, and there is nobody to relay steps to. It is either one of our own systems (the instructor portal, an internal task) or a bug an instructor spotted while using the platform. Address every step to them directly ("try a hard refresh", "ask someone else on the team to load it"), and NEVER phrase anything as "get the student to", "ask the student", or "send the student" - there is no student to ask, and doing it anyway is the single thing we have been told off for. Skip anything about a student\'s account, their email address, their password, or a partner portal login, because none of it applies. Everything else still counts: staff hit stale caches, bad extensions and flaky networks like anyone else, and knowing whether a hard refresh or another browser clears it tells the developers whether it is everyone or one session. '
     : 'You are helping an Ardent Training instructor troubleshoot a student tech issue. ') +
+    (gate ? '\n\n' + scopeGateBlock_(staff, gateTeam) : '') +
     'Below is the troubleshooting playbook, then the conversation or notes the instructor pasted. ' +
     'Work out what has ALREADY been tried in the conversation, then list the NEXT things the instructor should get the student to try, in the playbook order, skipping anything already done. ' +
     'Only count a step as already tried if it is EXPLICITLY described in the conversation or history. Do not assume or infer that a step was tried. In particular, the app working on another device (such as their phone) does NOT mean a different network was tried, so never list "a different network" as already tried unless the student actually says they tried one. ' +
@@ -3936,12 +4022,41 @@ function troubleshoot_(data) {
 
   var got = attempt();
   if (!got.obj) got = attempt();          // one retry: most of these are transient
-  if (!got.obj) return fallbackSteps_(staff, got.why);
+  if (!got.obj) return fallbackSteps_(staff, got.why, gate, gateTeam);
   var out = got.obj;
   var checklist = normaliseChecklist_(out.checklist, staff);
   var steps = (out && out.found && out.steps && out.steps.length) ? out.steps : stepsFromChecklist_(checklist, staff);
-  if (!steps.length) return fallbackSteps_(staff, 'the helper returned no steps');
-  return { ok: true, found: true, steps: steps, escalate: !!(out && out.escalate), note: (out && out.note) || '', checklist: checklist };
+  if (!steps.length) return fallbackSteps_(staff, 'the helper returned no steps', gate, gateTeam);
+  var note = (out && out.note) || '';
+  // The prompt asks for it; this makes sure of it. A prompt rule that only holds
+  // most of the time is no use on the one report where it matters, and the whole
+  // point of the gate is that nothing downstream should read as settled advice
+  // while the scope is still open.
+  if (gate) {
+    if (checklist.replicated !== 'done') checklist.replicated = 'todo';
+    steps = withScopeStepFirst_(steps, staff, gateTeam);
+    note = 'Everything after step one depends on the answer to step one, so hold the rest until the lesson has been loaded ' +
+      (staff ? 'by someone else on the team' : 'on your own account') + '.' + (note ? ' ' + note : '');
+  }
+  return { ok: true, found: true, steps: steps, escalate: !!(out && out.escalate), note: note, checklist: checklist };
+}
+
+// Put step one at the top and take out anything the model wrote that says the
+// same thing, so the instructor is not told to load it themselves twice, and
+// drop any bare escalate-now line, which is the assumption the gate exists to
+// stop. Everything else it suggested is kept and is now read as the "if it
+// works for you" branch, which the branch line says out loud.
+function withScopeStepFirst_(steps, staff, team) {
+  var mine = scopeStepText_(staff);
+  var kept = (steps || []).filter(function (s) {
+    var t = String(s || '');
+    if (/\b(yourself|your own account|on your end|from your side|someone else on the team|a colleague)\b/i.test(t) &&
+        /\b(load|open|try|log ?in|check|see)\b/i.test(t)) return false;
+    if (/\b(flag|escalat|straight to|urgent|submit it now|log it now|raise it)\b/i.test(t) &&
+        !/\bif it\b/i.test(t)) return false;
+    return true;
+  });
+  return [mine, scopeBranchText_(staff, team)].concat(kept).slice(0, 5);
 }
 
 // The instructor should always come away with something to try where anything
@@ -3979,11 +4094,16 @@ var FALLBACK_STEPS_STAFF = [
 // not being able to log in was the whole problem, with everything already tried
 // sitting there in the transcript (Edd, FB-0150). Better a visible "I couldn't
 // read this one" than confident advice that contradicts the notes.
-function fallbackSteps_(staff, why) {
+function fallbackSteps_(staff, why, gate, team) {
+  var steps = staff ? FALLBACK_STEPS_STAFF : FALLBACK_STEPS;
+  // Round 63. If the scope is open, it is open whether or not the helper
+  // answered, so the generic list gets the same treatment: step one first, and
+  // the branch said out loud (FB-0226).
+  if (gate) steps = withScopeStepFirst_(steps, staff, team);
   return { ok: true, found: true, degraded: true, reason: why || 'the helper did not answer',
-           steps: staff ? FALLBACK_STEPS_STAFF : FALLBACK_STEPS, escalate: false,
+           steps: steps, escalate: false,
            note: 'These are the standard first steps, NOT read off this conversation. Check them against what has already been tried before passing any on.',
-           checklist: {} };
+           checklist: gate ? { replicated: 'todo' } : {} };
 }
 
 function stepsFromChecklist_(checklist, staff) {
@@ -4533,7 +4653,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r62 · 2026-08-15';
+var CODE_STAMP = 'r63 · 2026-08-15';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4723,7 +4843,7 @@ var NEXT_ACTION_CAP = 24000;   // characters of thread the reasoner reads
 // still be sitting there. The revision rides in the fingerprint, so changing it
 // retires every stored answer in one go and each issue recomputes when it is
 // next opened. Cheap because it is still one call per issue, only once.
-var NEXT_ACTION_REV = 'r59.2';
+var NEXT_ACTION_REV = 'r63';   // Round 63 changed the reasoning (the scope gate), so every stored answer retires
 var NEXT_ACTION_MODEL = ANTHROPIC_MODEL;   // sonnet: this runs often, and it is plenty for the job
 
 // The whole conversation, oldest first, attributed and dated, because who said
@@ -4952,6 +5072,18 @@ function nextActionAi_(rec) {
 
   var already = alreadySaidTo_(rec);
   var symptoms = symptomNote_(rec);
+  // Round 63, FB-0226. Same gate as the troubleshooting steps, asked of the
+  // whole record and the whole thread. The stored checklist gets a say: if
+  // somebody has already ticked "tried it yourself", the scope is settled and
+  // the gate stays shut.
+  var ckNow = {};
+  try { ckNow = rec.checklist_json ? JSON.parse(rec.checklist_json) : {}; } catch (e) { ckNow = {}; }
+  // An improvement is somebody asking for something to be better, not a fault,
+  // so there is no scope to establish: a clumsy diagram is clumsy for everyone.
+  // Same reasoning as the Round 59 fix to the long-open Actions lane.
+  var scopeGate = String(rec.request_kind || 'fix') !== 'improvement' &&
+    String(ckNow.replicated || '') !== 'done' &&
+    scopeGateOn_(String(rec.summary || '') + ' ' + String(rec.raw_text || '') + ' ' + tr.text);
 
   var prompt = 'You are the most experienced person on the support desk at Ardent Training, an online RYA sailing school. ' +
     'An instructor has this issue open in front of them and wants ONE genuinely useful next action.\n\n' +
@@ -4964,6 +5096,16 @@ function nextActionAi_(rec) {
     '2a. BEFORE YOU ANSWER, READ YOUR OWN ACTION BACK AND STRIKE OUT ANY PART OF IT WE HAVE ALREADY DONE. Actions go wrong by being bundled: one genuinely new step, quietly welded to a repeat of something already sent. "Look her up and then send her the login link" is not a new action, it is a new action with an old one stapled to it, and the student receives the old one. Keep the new part. Delete the rest. Return ONE step, and if the step you are left with is small, that is correct.\n' +
     '2b. IF WE ARE WAITING ON THEM, SAY SO. When the last thing in the thread is a suggestion of ours that they have not answered yet, the honest next action is to wait, or to chase it if it has been long enough, and to say which. Give the date we last wrote and how long it has been quiet. Do NOT invent a new step to fill the silence: a fresh instruction on top of an unanswered one confuses the student and loses the thread of what we were testing. Working out that there is nothing to do yet IS a useful answer, and it is the right one more often than it gets given.\n' +
     '2c. MATCH THE FIX TO THE SYMPTOM THE STUDENT DESCRIBED, not to whatever the playbook or the checklist happens to list first. Their own words for what is going wrong outrank every generic ordering in here. If they say the login does not recognise them, the fault is with the account or the portal, and a password step is beside the point however standard it is. Read the SYMPTOM NOTES below before you choose.\n' +
+    // Round 63, FB-0226. It sits here on purpose: below rules 1, 1b and 2, so it
+    // can never override a plan an instructor has already put to the student,
+    // and above everything that reads off the playbook or the checklist, so a
+    // generic user-side step can never outrank it.
+    (scopeGate
+      ? '2d. WE DO NOT YET KNOW IF THIS IS EVERYONE OR ONE PERSON, AND THAT DECIDES THE ANSWER. This is the shape of fault where the scope is unknown and can be settled in about ten seconds, and nothing on this record says anybody has looked. ' +
+        'Unless rule 1 or 1b gives you a step that plainly follows on from something already said, the next action is OURS: ' + scopeStepText_(staff) + ' ' +
+        'Say in the why line what the answer would tell us: ' + scopeBranchText_(staff, owningTeam_(rec)) + ' ' +
+        'Do not return a user-side step (a hard refresh, another browser, another network, clearing a cache) as the action, because none of them is worth asking for until we know the fault is on their side. Do not return "hand it on" or "flag it urgently" either, because that assumes the other answer. instructor_side must be true and student_ask must be empty, since this is a thing we do and there is nothing to ask them for.\n'
+      : '') +
     '3a. NEVER ask the student for something the thread already gives you. If they have told us the device, the iOS version, the browser, or sent a screenshot or video, that question is answered.\n' +
     '3. A troubleshooting step that could not possibly explain THIS fault is not a next action, however untried it is. A layout that breaks only in portrait, or a video that stops at the same second every time, is not going to be fixed by a different network, a hard refresh or a VPN being turned off. Ignore untried steps that do not fit the symptom, and say so in the why line if that is the interesting part.\n' +
     '4. The fastest resolution is often something WE do. The instructor can reset a password from the students tab of the instructor portal, assign a course to an account, extend an account by hand, mark an exam manually from photos, post an answer in the course live chat, re-send an ebook, or raise an invoice. When one of those settles it, THAT is the action, phrased as a thing we do.\n' +

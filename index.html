@@ -1577,7 +1577,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r62 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r63 · 2026-08-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1713,6 +1713,7 @@ var state = {
   troubleshootSteps: null,    // current "things to try" list
   troubleshootAck: false,     // has the instructor dismissed the popup?
   existingMatches: null,      // open issues the same student already has
+  existingChoice: null,       // 'update' | 'new' once they have decided (Round 63, FB-0225)
   updateTargetId: null,       // if set, submit adds an update to this issue
   fbImages: [],               // screenshots attached to a feedback message
   checklist: {},              // pre-dev troubleshooting checklist on the form (item id -> done|na|todo)
@@ -4663,7 +4664,12 @@ function dupChoice(merge) {
   if (merge) {
     state.dupDismissed = false;
     if (n) {
-      n.innerHTML = 'Will be added to ' + esc(dupChosenLabel()) + ' as another report - <a href="#" onclick="renderDupPanel();wizardShow(\'dupModal\');return false;" style="color:var(--accent);">change</a>';
+      // Round 63, FB-0225. Same rule as the existing-issue panel above: once a
+      // choice is made, the line on the form is a statement of what happens
+      // next, not a lingering offer. It says the decision, then how to undo it.
+      n.innerHTML = '<strong>This will be added to ' + esc(dupChosenLabel()) + ' as another report.</strong> ' +
+        'Repeat reports push the fault up the list, so that is the useful place for it. ' +
+        '<a href="#" onclick="renderDupPanel();wizardShow(\'dupModal\');return false;" style="color:var(--accent);">Change this</a>';
       n.classList.remove("hidden");
     }
   } else {
@@ -5026,7 +5032,7 @@ function buildSubEdits() {
 function onSplitToggle(on) {
   state.splitMode = on;
   syncSubIssues();
-  if (on) { hideResolutionSuggestion(); hideExisting(); state.updateTargetId = null; }
+  if (on) { hideResolutionSuggestion(); hideExisting(); state.updateTargetId = null; state.existingChoice = null; }
   else onSplitDismissed();
 }
 function dismissSplit() {
@@ -5094,6 +5100,11 @@ function findOpenIssuesByEmail(email) {
   }).sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
 }
 function detectExistingIssue() {
+  // Round 63, FB-0225. hideExisting() wipes the choice along with the panel, so
+  // anything that re-runs the detection (unticking a split, for instance) used
+  // to bring the question back after it had been answered. Carry the decision
+  // over when the same issue is still on the list.
+  var hadChoice = state.existingChoice, hadTarget = state.updateTargetId;
   hideExisting();
   if (state.editingId) return;
   // If we're about to split this paste into several issues, don't also try to
@@ -5103,14 +5114,21 @@ function detectExistingIssue() {
   var matches = findOpenIssuesByEmail(getField("f_student_contact"));
   if (!matches.length) return;
   state.existingMatches = matches;
-  state.updateTargetId = matches[0].issue_id; // default to the most recent
+  // Restore the decision if it was about one of these same issues. A choice the
+  // instructor has already made is not something a background re-scan gets to
+  // quietly undo.
+  var stillThere = hadTarget && matches.filter(function (m) { return m.issue_id === hadTarget; }).length;
+  state.existingChoice = (hadChoice === "new" || (hadChoice === "update" && stillThere)) ? hadChoice : null;
+  state.updateTargetId = (state.existingChoice === "new") ? null
+    : (stillThere ? hadTarget : matches[0].issue_id); // default to the most recent
   showExisting(matches);
   highlightChosen();
-  if (matches.length > 1) recommendUpdateTarget(matches);
+  if (!state.existingChoice && matches.length > 1) recommendUpdateTarget(matches);
 }
-function showExisting(matches) {
+// The question, drawn only while it is still a question.
+function existingQuestionHtml(matches) {
   var multi = matches.length > 1;
-  var html = '<div class="h">This student already has ' + (multi ? matches.length + ' open issues' : 'an open issue') + '</div>' +
+  return '<div class="h">This student already has ' + (multi ? matches.length + ' open issues' : 'an open issue') + '</div>' +
     '<div class="small" style="margin-bottom:6px;">' + (multi
       ? 'Pick which one this is an update to (check the details to see if it is the same problem), or log it as new.'
       : 'Check it is the same problem, then add this as an update to keep it in one entry, or log it as new.') + '</div>' +
@@ -5128,12 +5146,50 @@ function showExisting(matches) {
       '<button class="primary small" id="confirmSameBtn" onclick="confirmSameIssue()">Confirm same issue - add as update</button>' +
       '<button class="ghost small" id="newModeBtn" onclick="chooseExisting(null)">Log as a new issue instead</button>' +
     '</div>';
+}
+// Round 63, FB-0225. Edd pressed "Confirm same issue - add as update" and the
+// panel carried on asking him the same question, buttons and all: the toast was
+// the only thing that acknowledged the press, and a toast is gone in a moment.
+// So once a choice is made the panel stops being a question and becomes a
+// statement of what will happen, with a way back. Same shape as the duplicate
+// popup's note, which has read this way since Round 16.
+function existingSettledHtml() {
+  var m = (state.existingMatches || []).filter(function (x) { return x.issue_id === state.updateTargetId; })[0];
+  var undo = ' <a href="#" onclick="undoExistingChoice();return false;" style="color:var(--accent);">Change this</a>';
+  if (state.existingChoice === "new") {
+    return '<div class="h">This will be logged as a new issue</div>' +
+      '<div class="small">It will not be added to the open issue this student already has.' + undo + '</div>';
+  }
+  var where = m && (m.lesson_code ? " (" + esc(m.lesson_code) + ")" : "");
+  return '<div class="h">This will be added to ' + (m ? esc(shortId(m)) + (where || "") : "the open issue") + ' as another report</div>' +
+    (m ? '<div class="small" style="margin-bottom:4px;">' + esc(summaryText(m)) + '</div>' : '') +
+    '<div class="small muted">Press <strong>Add update</strong> when the fields look right.' + undo + '</div>';
+}
+// Drawing and popping are two different jobs, kept apart on purpose: a redraw
+// after a decision must never make the popup jump back up at somebody who has
+// just answered it.
+function renderExisting() {
+  if (!state.existingMatches || !state.existingMatches.length) return;
+  var settled = !!state.existingChoice;
+  var html = settled ? existingSettledHtml() : existingQuestionHtml(state.existingMatches);
   $("existingPanel").innerHTML = html +
-    '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="openExistingModal()">Show again</button>';
+    (settled ? '' : '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="openExistingModal()">Show again</button>');
   $("existingPanel").classList.remove("hidden");
   // Same content in the popup, so the choice is made rather than scrolled past.
   $("existingModalBody").innerHTML = html +
     '<div class="row" style="margin-top:10px;"><button class="primary" onclick="closeExistingModal()">Continue</button></div>';
+  highlightChosen();
+}
+function showExisting(matches) {
+  renderExisting();
+  if (!state.existingChoice) wizardShow("existingModal");
+}
+function undoExistingChoice() {
+  state.existingChoice = null;
+  if (!state.updateTargetId && state.existingMatches && state.existingMatches.length) {
+    state.updateTargetId = state.existingMatches[0].issue_id;
+  }
+  renderExisting();
   wizardShow("existingModal");
 }
 function openExistingModal() {
@@ -5150,13 +5206,16 @@ function confirmSameIssue() {
   if (!state.updateTargetId && state.existingMatches && state.existingMatches.length) {
     state.updateTargetId = state.existingMatches[0].issue_id;
   }
-  highlightChosen();
+  state.existingChoice = "update";
   closeExistingModal();
+  renderExisting();          // the panel now says what will happen, not what to decide
   toast("Same issue confirmed - press Add update when the fields look right.");
 }
 function chooseExisting(id) {
   state.updateTargetId = id || null;
-  if (id === null) closeExistingModal();   // "log as new" is a decision, so let them get on
+  // "Log as new" is a decision, so it settles the panel the same way confirming
+  // does. Clicking a card is only a selection, so it leaves the question up.
+  if (id === null) { state.existingChoice = "new"; closeExistingModal(); renderExisting(); }
   // Picking an existing issue to update rules out splitting this same paste into
   // new issues, so clear the split so the two can't contradict each other.
   if (id && state.splitMode) hideSplitSuggestion();
@@ -5178,6 +5237,9 @@ function recommendUpdateTarget(matches) {
     // If a split was turned on while this async call was in flight, don't let the
     // late match quietly re-select an update target and override the split.
     if (isSplitting()) return;
+    // Round 63, FB-0225: a late recommendation must not move a target the
+    // instructor has already confirmed. Their decision outranks our guess.
+    if (state.existingChoice) return;
     if (res && res.ok && res.match_id) {
       state.updateTargetId = res.match_id;
       highlightChosen();
@@ -5187,6 +5249,7 @@ function recommendUpdateTarget(matches) {
   }).catch(function (e) { console.error(e); });
 }
 function hideExisting() {
+  state.existingChoice = null;
   $("existingPanel").classList.add("hidden");
   $("existingPanel").innerHTML = "";
   if ($("existingModal")) $("existingModal").classList.remove("show");
@@ -6284,6 +6347,40 @@ function setDetailChecklist(issueId, itemId, val) {
 // it got told to try a different network. The real answer comes from the
 // server's reasoner, which reads the whole thread; this is what we show while
 // that lands, or if it fails - and when we show it, we say so.
+// ---- the scope gate, front-end half (Round 63, Edd FB-0226) ---------------
+// Kept deliberately in step with SCOPE_SHAPED_RE / SCOPE_SETTLED_RE in Code.gs:
+// same two patterns, same rule. If either side is edited, edit both, the same
+// way CHECKLIST and CHECKLIST_ITEMS have to stay in step.
+//
+// The question it answers is not "what is wrong" but "how many people is it
+// wrong for", and on a 404 or a lesson that will not load, that is knowable in
+// about ten seconds and it decides which advice is even true (Edd, FB-0226).
+var SCOPE_SHAPED = new RegExp(
+  '(^|[^0-9a-z.])404([^0-9a-z]|$)' +
+  '|page (not found|cannot be found|could not be found|does ?n.?t exist)' +
+  '|(error|not found) page' +
+  '|\\b50[0234]\\b\\s*(error|status|response|page)|(error|status|http)\\s*(code\\s*)?50[0234]\\b' +
+  '|server error' +
+  '|blank (page|screen)' +
+  '|(lesson|video|page|module|slide|quiz|test|assessment|exam|course|player|content|image|diagram|pdf|document)s?\\b[^.!?]{0,60}\\b(w(on|ould\\s?n).?t|will not|does ?n.?t|do ?n.?t|did ?n.?t|fail(s|ed)? to|unable to|cannot|can.?t|never)\\s+(load|play|open|start|display|show|appear|render|come up)' +
+  '|(w(on|ould\\s?n).?t|does ?n.?t|will not|fail(s|ed)? to)\\s+load' +
+  '|(missing|broken|dead) (page|link|lesson|video)',
+  'i');
+var SCOPE_SETTLED = new RegExp(
+  '(i|we|you)\\s+(have\\s+)?(just\\s+)?(tried|loaded|opened|checked|tested|ran|run|looked at|viewed|replicated|reproduced)[^.!?]{0,70}\\b(myself|ourselves|yourself|too|as well|also|my own|our own|the same (lesson|page|module|course|thing))' +
+  '|(works?|loads?|opens?|plays?) (fine|ok|okay|normally|perfectly) (for|on) (me|us|my|our)' +
+  '|(fails?|404s?|errors?|breaks?) (for|on) (me|us) (too|as well)' +
+  '|(i|we) (can|could)(\\s?n.?t| not)? (see|load|open|replicate|reproduce) (it|the (same|error|page|404))' +
+  '|been able to replicate|able to reproduce|replicated (it|the (issue|error|fault))' +
+  '|(everyone|all students|every student|all of them) (is|are|were|is being) (affected|hit|getting)' +
+  '|(it is|it.?s|this is) (happening to|affecting) (everyone|all|every)',
+  'i');
+function scopeGateOn(i) {
+  if (!i) return false;
+  if (String(i.request_kind || "fix") === "improvement") return false;
+  var t = String(i.summary || "") + " " + String(i.raw_text || "");
+  return SCOPE_SHAPED.test(t) && !SCOPE_SETTLED.test(t);
+}
 function nextActionFor(i) {
   var s = String(i.status || "open").toLowerCase();
   if (i.dev_query_at) return "Answer the question below - it is holding up the fix.";
@@ -6299,9 +6396,18 @@ function nextActionFor(i) {
   if (s === "resolved" || s === "past") return String(i.notified_students) === "true"
     ? "Done." : "Done - if students were affected, let them know.";
   if (catOf(i) === "course_error") return "Confirm the error, then pass it to the course team.";
-  // Name the actual next step off the checklist (Edd, FB-0186), rather than
-  // pointing vaguely at the fold below.
+  // Round 63, FB-0226. The reasoned action is the one that normally shows here;
+  // this is the standard suggestion behind it, and it walked the checklist in
+  // list order, which put "confirmed what's failing" and "noted the device"
+  // ahead of the one step that decides whether any of the rest is worth doing.
+  // While the scope of a fault like this is open, replicating it IS the next
+  // step, so it jumps the queue rather than waiting its turn.
   var staffI = issueIsStaffTroubleshooting(i), mapI = checklistMapOf(i), itemsI = checklistFor(staffI), nextI = null;
+  if (scopeGateOn(i) && mapI.replicated !== "done" && mapI.replicated !== "na") {
+    return staffI
+      ? "Get someone else on the team to load the same thing first, so we know whether it is everyone or just this machine."
+      : "Load the same lesson yourself first, so we know whether this is hitting everyone or just this student. What we advise depends on the answer.";
+  }
   for (var ni = 0; ni < itemsI.length; ni++) {
     var stI = mapI[itemsI[ni].id];
     if (stI !== "done" && stI !== "na") { nextI = itemsI[ni]; break; }
