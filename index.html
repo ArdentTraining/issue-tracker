@@ -413,6 +413,10 @@
   .exrow { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer; background: var(--bg); }
   .exrow:hover { border-color: var(--medium); }
   .exrow.sel { border-color: var(--medium); background: rgba(221,139,0,0.10); }
+  /* A single candidate is nothing to choose between, so it must not behave like
+     a chooser: no pointer, no hover lift, nothing that says "click me". */
+  .exrow.nopick { cursor: default; }
+  .exrow.nopick:hover { border-color: var(--line); }
   /* pre-dev troubleshooting checklist */
   .checklist { background: rgba(94,114,235,0.08); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin: 0 0 12px; }
   .checklist .h { font-weight: 600; margin-bottom: 2px; color: var(--accent); }
@@ -526,6 +530,28 @@
   .permrow label { display: inline-flex; align-items: center; margin-right: 14px; }
   .permrow input { width: auto; margin-right: 5px; vertical-align: -1px; }
   .hidden { display: none !important; }
+
+  /* The little "?" (Edd, FB-0210: "There is still so much small text... Put some
+     of it behind a little ? button which can be pressed?"). The guidance that
+     stops a mistake stays on screen; the background reasoning lives in here.
+     The text is a block so it drops onto its own line under whatever the dot
+     sits beside. Keep both out of a .row - every child of one stretches. */
+  .helpdot {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 17px; height: 17px; padding: 0; margin-left: 6px;
+    border: 1px solid var(--line); border-radius: 50%; background: transparent;
+    color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1;
+    cursor: pointer; vertical-align: 1px; flex: none;
+  }
+  .helpdot:hover { color: var(--text); border-color: var(--muted); }
+  .helpdot.on { color: var(--text); border-color: var(--accent); }
+  .helptext { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+
+  /* The instructor's own draft on the duplicate popup. Deliberately NOT a card:
+     card chrome on that popup means "on the log, and pickable", and two boxes
+     in the same styling is what made Edd read his own text as a second
+     candidate (Round 58). */
+  .dupmine { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line); }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: -2px; }
   /* Round 54. Edd: "never know if a click we made actually registered". Every
      press now shows in the same frame it happens, before anything is asked of
@@ -618,7 +644,7 @@
       <div class="field">
         <label>Paste transcript</label>
         <textarea id="rawText" rows="6" placeholder="Paste the email, chat transcript, or your own notes here - or pull it from a live chat above."></textarea>
-        <div class="small muted" style="margin-top:4px;">Coming back to something already logged? Paste the new part of the conversation in the same way and we'll offer to add it as an update to the existing report.</div>
+        <span class="helphost" data-help="Coming back to something already logged? Paste the new part of the conversation the same way and we'll offer to add it as an update to the existing report."></span>
       </div>
 
       <div class="field">
@@ -664,7 +690,7 @@
           <option value="tech_issue">Tech issue - login, access, progress, formatting, or anything not about lesson content</option>
           <option value="shipping">Shipping - a pack, chart or almanac that hasn't arrived, or arrived wrong</option>
         </select>
-        <div class="small muted" style="margin-top:4px;">Tech issues don't need a lesson: login, account, progress, and formatting problems all go here, and the course fields can stay blank.</div>
+        <span class="helphost" data-help="Tech issues don't need a lesson: login, account, progress, and formatting problems all go here, and the course fields can stay blank."></span>
       </div>
 
       <div class="field"><label>Summary</label><textarea id="f_summary" rows="2"></textarea></div>
@@ -689,13 +715,13 @@
             <select id="f_courier" style="max-width:170px;"></select>
             <input id="f_tracking_number" placeholder="Tracking number" autocomplete="off" oninput="checkTracking()" style="flex:1;min-width:0;text-transform:uppercase;" />
           </div>
-          <div class="small muted" style="margin-top:4px;">The tracking number is what joins the threads. Paste a second or third email about the same parcel and it folds into the existing issue instead of starting a new one.</div>
+          <span class="helphost" data-help="The tracking number is what joins the threads. Paste a second or third email about the same parcel and it folds into the existing issue instead of starting a new one."></span>
           <div class="small" id="trackingMatch" style="margin-top:4px;"></div>
         </div>
         <div class="field hidden" id="field_chase">
           <label>Chase it on</label>
           <input id="f_chase_at" type="date" />
-          <div class="small muted" style="margin-top:4px;">Left blank it defaults to three days. You get a Slack nudge on the day, and the date clears once it fires.</div>
+          <span class="helphost" data-help="Left blank it defaults to three days. You get a Slack nudge on the day, and the date clears once it fires."></span>
         </div>
       </details>
 
@@ -788,7 +814,7 @@
         <div class="field" id="field_priority_reason">
           <label>Priority reason</label>
           <input id="f_priority_reason" name="ait-priority-note" autocomplete="off" />
-          <div class="small muted" style="margin-top:4px;">Written by the extraction. It's here if it needs correcting, but it doesn't need reading every time (Edd, FB-0135).</div>
+          <span class="helphost" data-help="Written by the extraction. It's here if it needs correcting, but it doesn't need reading every time."></span>
         </div>
         <div class="field" id="field_impact">
           <label>Impact of this improvement</label>
@@ -807,8 +833,9 @@
         <summary>Where did this end up? <span class="gsum" id="gsum_outcome">optional</span></summary>
         <div class="field">
           <textarea id="f_outcome" rows="2" placeholder="e.g. Could not fix over chat, raised with the devs; student has a workaround for now."></textarea>
-          <div class="small muted" style="margin-top:4px;">For anything that happened after the pasted conversation. It's saved into the issue's record.
-            <button type="button" class="ghost small" id="outcomeSuggestBtn" style="padding:3px 10px;margin-left:6px;" onclick="useOutcomeSuggestion()">Use suggested text</button>
+          <div style="margin-top:4px;">
+            <button type="button" class="ghost small" id="outcomeSuggestBtn" style="padding:3px 10px;" onclick="useOutcomeSuggestion()">Use suggested text</button>
+            <span class="helphost" data-help="For anything that happened after the pasted conversation. It's saved into the issue's record."></span>
           </div>
         </div>
       </details>
@@ -1356,7 +1383,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r57 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r58 · 2026-08-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1996,6 +2023,7 @@ function shortId(i) {
 // ============================ INIT ============================
 function init() {
   initPressFeedback();
+  mountHelpDots();
   var cs = $("f_courier");
   if (cs) cs.innerHTML = COURIERS.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("");
   updateThemeBtn();
@@ -2508,6 +2536,37 @@ function actionOpen(id) { openIssueById(id, false); }
 // from scratch every time.
 // Busy overlay helpers (Edd, FB-0169). Show for anything slow enough that a
 // corner toast gets missed.
+// The little "?" - FB-0210. Edd: "There is still so much small text... any way
+// we can hide a lot of this? Make it more simple looking to the instructor? Put
+// some of it behind a little ? button which can be pressed?" The rule for what
+// goes behind it: guidance that stops a mistake stays on screen (what counts as
+// high priority, what student-sorted means), background reasoning goes in here.
+// One helper so every ? in the app opens and closes the same way.
+// The text block drops onto its own line, so keep both out of a .row - every
+// child of one stretches to equal width.
+function helpDot(id, text) {
+  return '<button type="button" class="helpdot" id="helpdot_' + id + '" aria-expanded="false"' +
+      ' aria-controls="help_' + id + '" title="What is this?"' +
+      ' onclick="helpToggle(\'' + id + '\');return false;">?</button>' +
+    '<span id="help_' + id + '" class="helptext hidden">' + esc(text) + '</span>';
+}
+// The static form markup can't call helpDot(), so it carries the words on a
+// placeholder instead: <span class="helphost" data-help="..."></span>. One
+// implementation, one behaviour, whether the ? is written in HTML or built in JS.
+function mountHelpDots() {
+  var hosts = document.querySelectorAll(".helphost[data-help]");
+  for (var i = 0; i < hosts.length; i++) {
+    if (hosts[i].getAttribute("data-mounted")) continue;
+    hosts[i].setAttribute("data-mounted", "1");
+    hosts[i].innerHTML = helpDot("m" + i, hosts[i].getAttribute("data-help"));
+  }
+}
+function helpToggle(id) {
+  var el = $("help_" + id); if (!el) return;
+  var open = !el.classList.toggle("hidden");
+  var btn = $("helpdot_" + id);
+  if (btn) { btn.setAttribute("aria-expanded", open ? "true" : "false"); btn.classList.toggle("on", open); }
+}
 function busyShow(msg) { $("busyMsg").textContent = msg || "Working…"; $("busyOverlay").style.display = "flex"; }
 function busyHide() { $("busyOverlay").style.display = "none"; }
 
@@ -3505,8 +3564,14 @@ function runExtract() {
   if (!raw) { toast("Paste some text first."); return; }
   var btn = $("extractBtn");
   btn.disabled = true;
-  $("extractStatus").innerHTML = '<span class="spinner"></span> reading…';
-  busyShow("Reading the report…");  // can't-miss overlay while the slow call runs (Edd, FB-0169)
+  // One spinner, not two (Edd, FB-0209: "when I press extract I don't need the
+  // reading spinning wheel in addition to the extract spinning wheel"). The
+  // overlay is the can't-miss one and it stays (FB-0169); the line beside the
+  // button just says what is happening. Extract was the only place in the app
+  // running both at once - post an update, fetch update, case brief and the
+  // course review all use the overlay alone.
+  $("extractStatus").textContent = "reading…";
+  busyShow("Reading the report…");
   apiPost({ action: "extract", raw_text: raw }).then(function (res) {
     busyHide();
     btn.disabled = false;
@@ -3874,11 +3939,22 @@ function isSplitting() {
 // agrees with it. The penalty only applies when BOTH sides actually have a
 // code: website, portal and purchase bugs have none, and penalising them would
 // undo Round 56's whole fix.
+//
+// Round 58 puts a second condition on that penalty, because Round 57 shipped it
+// too wide. Our courses share their content, so the same fault gets written up
+// once against Yachtmaster, once against Fast Track and once against Day
+// Skipper, on three different lesson codes. Under r57 those could never be
+// offered as a merge, and they are the clearest duplicates in the whole log:
+// six pairs of identical-summary twins sit in the open course errors, among
+// them YM.08.04 and FT.12.04 both asking for real transit images rather than
+// slide images. A different lesson WITHIN a course really is a different slide
+// and so a different fault. A different COURSE says nothing either way, so it
+// earns no penalty and no bonus, and the words decide it on their own.
 var DUP_SURE   = 3;     // show the merge offer outright
 var DUP_MAYBE  = 1.5;   // close enough to be worth asking the AI matcher about
 var WORD_FLOOR = 1.2;   // the words have to say something before circumstance counts
 var BONUS_CAP  = 1.5;   // and circumstance can never carry it over the line on its own
-var CODE_CLASH = 2;     // two different lessons is evidence of two different faults
+var CODE_CLASH = 2;     // two different lessons in the SAME course means two different faults
 var DENOM_FLOOR = 6;    // a candidate this thin can't be matched on ratio alone
 var DUP_SHOW_MAX = 3;   // how many to put in front of the instructor to choose from
 // Compare codes at LESSON level, never as raw strings. Edd's own report carried
@@ -3893,11 +3969,17 @@ function lessonKey(code) {
   var parts = String(code || "").trim().toUpperCase().split(".");
   return parts.length > 3 ? parts.slice(0, 3).join(".") : parts.join(".");
 }
+// The two-letter course prefix: YM, FT, DS, EN. Everything before the first dot.
+function courseKey(code) {
+  return String(code || "").trim().toUpperCase().split(".")[0];
+}
 function dupCandidates() {
   var out = { best: null, score: 0, list: [] };
   if (state.editingId || state.updateTargetId) return out;
   if (isSplitting()) return out;
-  var myRef = lessonKey(getField("f_lesson_code"));
+  var myCode = getField("f_lesson_code");
+  var myRef = lessonKey(myCode);
+  var myCourse = courseKey(myCode);
   // Compare on the summary AND the top of what was actually pasted, so a
   // report submitted before the summary settles still has words to match on.
   // Distinct words, not every occurrence. Counting occurrences let the SAME word
@@ -3917,7 +3999,14 @@ function dupCandidates() {
     if (myEmail && String(i.student_contact || "").trim().toLowerCase() === myEmail) return; // same-student path handles this
     var score = 0;
     var iRef = lessonKey(i.lesson_code);
-    if (myRef && iRef) score += (myRef === iRef ? 2 : -CODE_CLASH);
+    if (myRef && iRef) {
+      // Same lesson is still worth the full +2. A clash only counts against us
+      // inside one course, where a different code genuinely means a different
+      // slide. Across courses the same fault sits on different codes by design,
+      // so neither side of that comparison tells us anything (Round 58).
+      if (myRef === iRef) score += 2;
+      else if (myCourse === courseKey(i.lesson_code)) score -= CODE_CLASH;
+    }
     var word = 0;
     var theirs = uniqueWords(tokensOf(faultWords(i).text));
     if (theirs.length) {
@@ -4025,7 +4114,9 @@ function showDupSuggestion(forced) {
 }
 // One card per candidate, and the card is the control. Before Round 57 the card
 // was rendered with cursor:default and no handler, so clicking it did nothing at
-// all - which is exactly what Edd reported.
+// all - which was the wrong reading of what Edd reported (see renderDupPanel).
+// Only a candidate is ever drawn as a card, so card chrome now means one thing
+// on this popup: something on the log that we can merge into.
 function renderDupCard(entry, idx) {
   var match = entry.issue;
   var words = faultWords(match);
@@ -4039,8 +4130,8 @@ function renderDupCard(entry, idx) {
   // They are often a single line written years ago, and a one-line summary is
   // very easy to overlap by accident, so say so on the card.
   var imported = String(match.instructor_name || "").trim().toLowerCase() === "imported";
-  return '<div class="exrow' + (many && sel ? ' sel' : '') + '" data-id="' + esc(match.issue_id) + '"' +
-      (many ? ' onclick="dupPick(\'' + esc(match.issue_id) + '\');return false;"' : ' style="cursor:default;"') + '>' +
+  return '<div class="exrow' + (many ? (sel ? ' sel' : '') : ' nopick') + '" data-id="' + esc(match.issue_id) + '"' +
+      (many ? ' onclick="dupPick(\'' + esc(match.issue_id) + '\');return false;"' : '') + '>' +
     (many
       ? '<div class="small" style="margin-bottom:4px;"><span style="color:var(--accent);">' +
           (sel ? '● ' : '○ ') + '</span>' + (sel ? 'This is the one' : 'Pick this one instead') + '</div>'
@@ -4054,7 +4145,7 @@ function renderDupCard(entry, idx) {
       (reportCount(match) > 1 ? ' <span class="badge type-badge">×' + reportCount(match) + ' reports</span>' : '') +
       (imported ? ' <span class="badge type-badge">Imported from the old log</span>' : '') + '</div>' +
     (imported
-      ? '<div class="small muted" style="margin-top:6px;">This one was imported from the old spreadsheets rather than logged on this form, so it may be a single line of shorthand. Read it carefully before merging into it.</div>'
+      ? '<div class="small muted" style="margin-top:6px;">One line of old shorthand, so read it before merging.</div>'
       : '') +
     (clipped
       ? '<div class="small" style="margin-top:6px;">' +
@@ -4066,26 +4157,39 @@ function renderDupCard(entry, idx) {
       : '<div class="small muted" style="margin-top:6px;">That one has no description saved, so there is nothing to compare against. Log separately if in any doubt.</div>') +
     '</div>';
 }
+// Round 57 was built on a misread, and this is the real fix. Edd said "I can't
+// seem to choose which of the reports it matches. It matches one but not the
+// other. I click on them but nothing happens." Nothing was broken. The popup
+// drew TWO boxes in the same exrow card styling - the logged candidate, and
+// underneath it his own draft under the heading "What we are reporting now" -
+// so it read as a list of two candidates, one of which matched perfectly.
+// Of course it did: it was his own text, and it was never clickable because it
+// was never a candidate.
+//
+// So the draft is no longer a card. It sits BELOW the buttons, with no border,
+// no background and a label that says whose it is, and card chrome on this
+// popup now means one thing only: a fault on the log we could merge into.
 function renderDupPanel() {
   var picks = state.dupList || [];
   if (!picks.length) return;
   var many = picks.length > 1;
   $("dupPanel").innerHTML =
-    '<div class="h">Looks like a fault already on the log</div>' +
-    '<div class="small muted" style="margin-bottom:8px;">' +
-      (many
-        ? 'There are ' + picks.length + ' that look close. Have a read and click the one that is the same fault as the one we are reporting now, or log separately if none of them are.'
-        : 'Have a read of the logged one below and see if it is the same fault as the one we are reporting now.') +
+    '<div class="h" style="margin-bottom:8px;">' +
+      (many ? 'Is it one of these already on the log?' : 'Is this the same fault, already on the log?') +
+      helpDot('dupWhy', 'Adding it on keeps one trail and pushes the fault up the priority list, which is what repeat reports are for. If you are not sure, log it separately - merging two later is easy.') +
     '</div>' +
+    (many
+      ? '<div class="small muted" style="margin-bottom:8px;">Click the one that is the same fault.</div>'
+      : '') +
     picks.map(renderDupCard).join('') +
-    '<div class="exrow" style="cursor:default;">' +
-      '<div class="small muted" style="margin-bottom:4px;">What we are reporting now</div>' +
-      '<div class="small">' + esc(getField("f_summary") || "(no summary yet)") + '</div>' +
-    '</div>' +
-    '<div class="small" style="margin:8px 0;">Same fault? Adding this student as another report keeps one trail and pushes the fault up the priority list - exactly what repeat reports are for. Not sure? Log it separately, it is easy to merge later.</div>' +
     '<div class="row" style="margin-top:10px;">' +
-      '<button class="primary" onclick="dupChoice(true)">' + (many ? 'Add as another report on the one I picked' : 'Add as another report') + '</button>' +
-      '<button class="ghost" onclick="dupChoice(false)">It\'s different - log separately</button></div>';
+      '<button class="primary" onclick="dupChoice(true)">' + (many ? 'Yes - add mine to the one I picked' : 'Yes - add mine to it') + '</button>' +
+      '<button class="ghost" onclick="dupChoice(false)">No - log mine separately</button>' +
+    '</div>' +
+    '<div class="dupmine">' +
+      '<div class="small muted" style="margin-bottom:2px;">Your report, the one you are about to log</div>' +
+      '<div class="small muted">' + esc(getField("f_summary") || "(no summary yet)") + '</div>' +
+    '</div>';
 }
 function dupPick(id) {
   if (!id) return;
@@ -5693,8 +5797,8 @@ function detailChecklistHtml(issue) {
   var cleared = checklistCleared(map, staff);
   return '<h3>Troubleshooting checklist</h3>' +
     '<div class="checklist" style="margin:0 0 12px;">' +
-      '<div class="small muted" style="margin-bottom:2px;">What has been ruled out before this reaches the developers. ' +
-        cleared + " of " + items.length + " cleared.</div>" +
+      '<div class="small muted" style="margin-bottom:2px;">' + cleared + ' of ' + items.length + ' cleared.' +
+        helpDot('clWhy', 'What has been ruled out before this reaches the developers.') + '</div>' +
       checklistBody(map, "setDetailChecklist", issue.issue_id, staff) +
     "</div>";
 }
