@@ -627,6 +627,11 @@
   /* The topbar keeps the brand and the quiet "updating…" chip; the tab strip
      inside it is hidden by the rule above. */
   body.shell header.topbar { padding: 10px 20px; }
+  /* The view-as bar has lived in the bottom-left corner since it was built,
+     which is now exactly where the rail's user menu sits. Push it clear of
+     the rail rather than moving the menu, so the bar keeps the corner it has
+     always had and the two stop fighting. */
+  body.shell .viewas-bar { left: 88px; }
 
   /* Issues: three segments over one list and one detail pane. */
   #issuesSegWrap { display: none; }
