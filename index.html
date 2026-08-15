@@ -3879,12 +3879,16 @@ var DUP_MAYBE  = 1.5;   // close enough to be worth asking the AI matcher about
 var WORD_FLOOR = 1.2;   // the words have to say something before circumstance counts
 var BONUS_CAP  = 1.5;   // and circumstance can never carry it over the line on its own
 var CODE_CLASH = 2;     // two different lessons is evidence of two different faults
+var DENOM_FLOOR = 6;    // a candidate this thin can't be matched on ratio alone
 var DUP_SHOW_MAX = 3;   // how many to put in front of the instructor to choose from
 // Compare codes at LESSON level, never as raw strings. Edd's own report carried
 // YM.05.06.6 - lesson plus slide - while the logged rows carry YM.05.06. A
 // straight string compare would have called those two different lessons and
 // penalised the very pair we most want to catch, turning this fix into a fresh
 // false negative.
+function uniqueWords(a) {
+  return a.filter(function (w, i) { return a.indexOf(w) === i; });
+}
 function lessonKey(code) {
   var parts = String(code || "").trim().toUpperCase().split(".");
   return parts.length > 3 ? parts.slice(0, 3).join(".") : parts.join(".");
@@ -3896,7 +3900,11 @@ function dupCandidates() {
   var myRef = lessonKey(getField("f_lesson_code"));
   // Compare on the summary AND the top of what was actually pasted, so a
   // report submitted before the summary settles still has words to match on.
-  var mine = tokensOf(getField("f_summary") + " " + String(getField("rawText") || "").slice(0, 600));
+  // Distinct words, not every occurrence. Counting occurrences let the SAME word
+  // score twice: a paste saying "lesson ... slide ... lesson ... slide" scored 4
+  // shared against a four-word candidate, a flawless match on two words said
+  // twice each. Found on the live corpus while checking this round's own fix.
+  var mine = uniqueWords(tokensOf(getField("f_summary") + " " + String(getField("rawText") || "").slice(0, 600)));
   if (!mine.length) return out;
   var myEmail = String(getField("f_student_contact") || "").trim().toLowerCase();
   var mySection = String(getField("f_section") || "").trim().toLowerCase();
@@ -3911,10 +3919,15 @@ function dupCandidates() {
     var iRef = lessonKey(i.lesson_code);
     if (myRef && iRef) score += (myRef === iRef ? 2 : -CODE_CLASH);
     var word = 0;
-    var theirs = tokensOf(faultWords(i).text);
+    var theirs = uniqueWords(tokensOf(faultWords(i).text));
     if (theirs.length) {
       var shared = mine.filter(function (w) { return theirs.indexOf(w) > -1; }).length;
-      word = 4 * (shared / Math.min(mine.length, theirs.length));
+      // Dividing by the shorter side alone made a thin candidate almost
+      // unmissable: 64 of the 386 open issues carry fewer than five meaningful
+      // words, mostly one-line rows imported from the old spreadsheets, and on a
+      // four-word row two coincidental words already read as half a match. The
+      // floor says a summary that short cannot clear the bar on ratio alone.
+      word = 4 * (shared / Math.max(DENOM_FLOOR, Math.min(mine.length, theirs.length)));
       score += word;
     }
     // The two circumstantial points below only count once the words have said
