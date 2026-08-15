@@ -8043,6 +8043,13 @@ function renderChatScan(targetId) {
   // everything else instead of starting its own 3-4 second call each time the
   // tab opens. refreshScans() is for after we act on a row.
   if (state._scans) { drawChatScan(box, targetId, state._scans); return; }
+  // Round 60. The app now lands on Waiting on me, which draws this block
+  // before the bootstrap has been applied - applyPerms picks the view, and
+  // applyBootstrap fills the state a moment later. Starting our own call in
+  // that gap put a second request on the wire for something already in the
+  // air, which is exactly what r54 got rid of. Wait for it: applyBootstrap
+  // redraws the current view as soon as it lands.
+  if (!state._issuesLoaded) { box.innerHTML = ""; return; }
   box.innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
   refreshScans().then(function () { drawChatScan(box, targetId, state._scans || []); });
 }
