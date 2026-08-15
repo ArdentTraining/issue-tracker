@@ -572,6 +572,106 @@
   .live-brief li { margin-bottom: 4px; font-size: 13.5px; }
   #liveSplitHost:not(.split-on) > .split-dock { display: block; margin-top: 14px; }
   #liveSplitHost:not(.split-on) > .col-drag { display: none; }
+
+  /* ===================== ROUND 60: ONE DASHBOARD =====================
+     Eight tabs across the top became an icon rail down the side, so the whole
+     instructor job (log it, the conversations, the issues) is one surface that
+     can drop into another portal as a single page. Nothing below rewrites a
+     view: the rail calls the same setView() the tabs called, and the views
+     themselves are untouched. Everything here hangs off body.shell, so
+     ?classic=1 (which never adds the class) is the old app exactly as it was.
+
+     The rail is fixed on desktop and becomes a bottom bar on a phone. */
+  .rail { display: none; }
+  body.shell .rail {
+    display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+    position: fixed; left: 0; top: 0; bottom: 0; width: 74px; z-index: 40;
+    background: var(--surface); border-right: 1px solid var(--line);
+    padding: 8px 6px; overflow-y: auto; overflow-x: hidden;
+  }
+  body.shell #shellMain { margin-left: 74px; }
+  body.shell .switcher { display: none; }
+  .rail-item {
+    background: transparent; border: none; border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; padding: 8px 2px 7px; color: var(--muted); width: 100%;
+    position: relative; line-height: 1.15; cursor: pointer;
+  }
+  .rail-item svg { width: 22px; height: 22px; display: block; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .rail-item .ri-word { font-size: 10px; letter-spacing: 0.01em; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .rail-item:hover { background: var(--bg); color: var(--text); filter: none; }
+  .rail-item.active { background: var(--surface-2); color: var(--text); }
+  .rail-item.active::before {
+    content: ""; position: absolute; left: -6px; top: 8px; bottom: 8px; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--accent);
+  }
+  /* New report is the composer, so it reads as an action and not as another
+     place to browse. */
+  .rail-item.rail-new { background: var(--accent); color: #fff; margin-bottom: 6px; }
+  .rail-item.rail-new:hover { background: var(--coral); color: #021231; }
+  .rail-item.rail-new.active::before { display: none; }
+  .rail-badge {
+    position: absolute; top: 3px; right: 8px; min-width: 17px; height: 17px;
+    border-radius: 999px; background: var(--high); color: #021231;
+    font-size: 10px; font-weight: 700; line-height: 17px; text-align: center;
+    padding: 0 4px; display: none;
+  }
+  .rail-badge.on { display: block; }
+  .rail-badge.quiet { background: var(--accent); color: #fff; }
+  .rail-div { height: 1px; background: var(--line); margin: 7px 4px; flex-shrink: 0; }
+  .rail-foot { margin-top: auto; padding-top: 8px; }
+  body.shell .rail-foot #userbox { position: relative; display: block; text-align: center; }
+  body.shell .rail-foot #userbox > button { width: 100%; padding: 8px 4px; white-space: normal; word-break: break-word; }
+  body.shell .rail-foot #userMenu { left: calc(100% + 6px); right: auto; top: auto; bottom: 0; }
+
+  /* The topbar keeps the brand and the quiet "updating…" chip; the tab strip
+     inside it is hidden by the rule above. */
+  body.shell header.topbar { padding: 10px 20px; }
+
+  /* Issues: three segments over one list and one detail pane. */
+  #issuesSegWrap { display: none; }
+  body.shell #issuesSegWrap.on { display: block; padding: 14px 28px 0; }
+  @media (min-width: 1600px) { body.shell #issuesSegWrap.on { padding: 14px 56px 0; } }
+  @media (min-width: 2000px) { body.shell #issuesSegWrap.on { padding: 14px 110px 0; } }
+  body.shell #issuesSegWrap .seg { display: inline-flex; }
+  /* The segment says what this is, so the old page headings and the separate
+     List/Board switch would only repeat it. */
+  body.shell #actionsView > h2, body.shell #actionsView > p.small,
+  body.shell #liveView > h2, body.shell #liveView > p.small,
+  body.shell #trackViewSeg { display: none; }
+  body.shell #actionsView.wrap, body.shell #adminView.wrap { padding-top: 12px; }
+
+  /* ---- phone: rail becomes a bottom bar, one column at a time ---- */
+  @media (max-width: 760px) {
+    body.shell .rail {
+      flex-direction: row; left: 0; right: 0; top: auto; bottom: 0; width: auto;
+      height: 58px; border-right: none; border-top: 1px solid var(--line);
+      padding: 4px 2px; gap: 0; overflow-x: auto; overflow-y: hidden;
+    }
+    body.shell #shellMain { margin-left: 0; }
+    body.shell .wrap { padding-bottom: 78px; }
+    body.shell #issuesSegWrap.on { padding: 12px 12px 0; }
+    .rail-item { flex: 1 0 58px; padding: 5px 2px; }
+    .rail-item .ri-word { font-size: 9.5px; }
+    .rail-item.active::before { left: 6px; right: 6px; top: -4px; bottom: auto; width: auto; height: 3px; border-radius: 0 0 3px 3px; }
+    .rail-item.rail-new { margin-bottom: 0; border-radius: 10px; }
+    .rail-div { display: none; }
+    .rail-foot { margin-top: 0; padding-top: 0; flex: 1 0 58px; }
+    body.shell .rail-foot #userbox > button { padding: 6px 2px; font-size: 11px; }
+    body.shell .rail-foot #userMenu { left: auto; right: 4px; bottom: calc(100% + 6px); top: auto; }
+    /* The feedback pill and the view-as bar sit above the bar, not under it. */
+    body.shell .fab { bottom: 70px; }
+    body.shell .viewas-bar { bottom: 70px; }
+    /* Tapping a row slides the detail in over the list, with a back arrow
+       instead of a close cross. It is the same drawer the app always used;
+       on a phone it already filled the screen, so this only adds the slide
+       and the arrow. */
+    body.shell .overlay.show .drawer { animation: slideIn 0.16s ease-out; }
+    @keyframes slideIn { from { transform: translateX(22px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+    body.shell .drawer { padding-top: 46px; }
+    body.shell .drawer .close { left: 10px; right: auto; color: var(--text); font-size: 0; }
+    body.shell .drawer .close::before { content: "\2190  Back"; font-size: 14px; }
+  }
 </style>
 </head>
 <body>
@@ -580,6 +680,50 @@
   <div class="spinner" style="width:30px;height:30px;border-width:3px;border-color:rgba(94,114,235,0.35);border-top-color:#5e72eb;"></div>
 </div>
 
+<!-- ===================== ROUND 60: THE RAIL =====================
+     One dashboard. The rail replaces the eight tabs, and every item calls the
+     same setView() the tabs did, so no view, no render function and no data
+     path changed underneath. Permission-gated items are hidden by applyPerms
+     exactly as the tabs were. -->
+<nav class="rail" id="rail" aria-label="Sections">
+  <button type="button" class="rail-item rail-new" id="railNew" onclick="railGo('instructor')" title="Log a new report">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    <span class="ri-word">New</span>
+  </button>
+  <button type="button" class="rail-item" id="railChats" onclick="railGo('live')" title="Open conversations">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.3-.6L3 21l1.7-5a8.2 8.2 0 0 1-.7-3.4 8.4 8.4 0 0 1 8.5-8.5 8.4 8.4 0 0 1 8.5 8.4z"/></svg>
+    <span class="ri-word">Chats</span>
+    <span class="rail-badge quiet" id="railBadgeChats"></span>
+  </button>
+  <button type="button" class="rail-item" id="railIssues" onclick="railGo('issues')" title="Issues">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.6 2.4 17a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
+    <span class="ri-word">Issues</span>
+    <span class="rail-badge" id="railBadgeIssues"></span>
+  </button>
+  <div class="rail-div" id="railDiv"></div>
+  <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+    <span class="ri-word">Dev</span>
+  </button>
+  <button type="button" class="rail-item" id="railCourse" onclick="railGo('course')" title="Course fixes">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="15" y2="11"/></svg>
+    <span class="ri-word">Course</span>
+  </button>
+  <button type="button" class="rail-item" id="railStats" onclick="railGo('analytics')" title="Analytics">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>
+    <span class="ri-word">Stats</span>
+  </button>
+  <button type="button" class="rail-item" id="railUsers" onclick="railGo('users')" title="Admin">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/></svg>
+    <span class="ri-word">Admin</span>
+  </button>
+  <!-- The user menu (theme, password, log out) moves down here in the shell;
+       applyShell() carries the existing #userbox node in, so it is the same
+       menu with the same handlers, not a second copy. -->
+  <div class="rail-foot" id="railFoot"></div>
+</nav>
+
+<div id="shellMain">
 <header class="topbar">
   <div class="brand">Bugs <small>course issue log</small></div>
   <div style="display:flex;align-items:center;gap:14px;">
@@ -609,6 +753,18 @@
     </div>
   </div>
 </header>
+
+<!-- ===================== ISSUES SEGMENTS (Round 60) =====================
+     Three ways into the same log, sharing one list column and one detail
+     pane. "Waiting on me" is the Actions view, "All issues" and "Board" are
+     Track's two views, all rendered by the functions that already drew them. -->
+<div id="issuesSegWrap">
+  <div class="seg" id="issuesSeg">
+    <button type="button" id="iseg_mine" class="active" onclick="setIssuesSeg('mine')">Waiting on me</button>
+    <button type="button" id="iseg_all" onclick="setIssuesSeg('all')">All issues</button>
+    <button type="button" id="iseg_board" onclick="setIssuesSeg('board')">Board</button>
+  </div>
+</div>
 
 <!-- ===================== INSTRUCTOR VIEW ===================== -->
 <div id="instructorView" class="wrap">
@@ -642,9 +798,12 @@
       </div>
 
       <div class="field">
-        <label>Paste transcript</label>
+        <!-- The ? sits on the label, not under the box (Edd, FB-0218). The
+             dot is inline so it lands next to the words; its text block still
+             drops onto its own line underneath, which is where an explanation
+             belongs. -->
+        <label>Paste transcript<span class="helphost" data-help="Coming back to something already logged? Paste the new part of the conversation the same way and we'll offer to add it as an update to the existing report."></span></label>
         <textarea id="rawText" rows="6" placeholder="Paste the email, chat transcript, or your own notes here - or pull it from a live chat above."></textarea>
-        <span class="helphost" data-help="Coming back to something already logged? Paste the new part of the conversation the same way and we'll offer to add it as an update to the existing report."></span>
       </div>
 
       <div class="field">
@@ -1139,6 +1298,7 @@
   </div>
   </div>
 </div>
+</div><!-- /#shellMain -->
 
 <!-- DETAIL DRAWER -->
 <div class="overlay" id="overlay" onclick="if(event.target===this) closeDetail()">
@@ -1383,7 +1543,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r59 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r60 · 2026-08-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2201,6 +2361,15 @@ function applyPerms(user) {
   $("tabDev").style.display = p.dev ? "" : "none";
   $("tabCourse").style.display = p.course ? "" : "none";
   $("tabUsers").style.display = p.users ? "" : "none";
+  // Round 60: the rail is gated by exactly the same permissions the tabs
+  // were, one line each, so nothing can drift apart.
+  applyShell();
+  var railGate = [["railNew", p.log], ["railChats", p.log], ["railIssues", p.log || p.manage],
+                  ["railDev", p.dev], ["railCourse", p.course], ["railStats", p.analytics],
+                  ["railUsers", p.users]];
+  railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
+  // The divider only earns its place if there is something on both sides.
+  if ($("railDiv")) $("railDiv").style.display = (p.dev || p.course || p.analytics || p.users) ? "" : "none";
 
   // Everybody gets to say whether a student is behind this report (Edd,
   // FB-0206). It used to be an admins-only "internal task" switch, which left
@@ -2218,7 +2387,12 @@ function applyPerms(user) {
   var order = [["log", "instructor"], ["manage", "admin"], ["analytics", "analytics"], ["dev", "dev"], ["course", "course"], ["users", "users"]];
   var first = "instructor";
   for (var i = 0; i < order.length; i++) { if (p[order[i][0]]) { first = order[i][1]; break; } }
-  setView(first);
+  // Round 60: with the tabs gone, landing on the empty log form no longer
+  // reads as "the first tab" - it reads as the app having nothing to show. A
+  // dashboard opens on the work, and New report is one click away from
+  // anywhere, so anyone who can log lands on Waiting on me instead.
+  if (SHELL_ON && first === "instructor" && p.log) { setIssuesSeg("mine"); }
+  else setView(first);
   updateViewAsBar();
 }
 
@@ -2537,6 +2711,9 @@ function myActionItems() {
   return out;
 }
 function updateActionsTabCount() {
+  // The rail badge rides on the same call, so every place that already knew
+  // to refresh the count refreshes the badge too (Round 60).
+  updateRailBadges();
   var t = $("tabActions");
   if (!t || t.style.display === "none") return;
   var a = myActionItems();
@@ -2715,13 +2892,12 @@ function draftTemplateFor(id, kind) {
   }
   return text;
 }
-function renderActions() {
+// The rows the "Waiting on me" segment draws, most pressing first. Split out
+// in Round 60 so the rail badge counts exactly what the list shows, from the
+// same function - a badge and a list disagreeing is how you stop trusting the
+// badge.
+function actionRows() {
   var a = myActionItems();
-  // One flat list, most pressing first. Each row carries all three things at
-  // once: the status in a word, a few words on the issue, and the action
-  // needed with its button. Clicking the row opens the full issue in the
-  // right-hand pane, same as Track (Edd, 26 Jul - my first pass hid the
-  // action text on mobile and buried the detail in an accordion).
   var rows = []
     .concat((a.scanned || []).map(function (i) {
       // Replied already? The row hides for the grace days (FB-0196), then
@@ -2738,6 +2914,16 @@ function renderActions() {
     .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
     .concat(a.followups.map(function (i) { return { i: i, kind: "followup", word: "Workaround", colour: "var(--medium)", act: "Did it stick?" }; }))
     .concat(a.longOpen.map(function (i) { return { i: i, kind: "longopen", word: "Waiting", colour: "var(--high)", act: "Reassure the student" }; }));
+  return rows;
+}
+
+function renderActions() {
+  // One flat list. Each row carries all three things at once: the status in a
+  // word, a few words on the issue, and the action needed with its button.
+  // Clicking the row opens the full issue in the right-hand pane, same as
+  // Track (Edd, 26 Jul - my first pass hid the action text on mobile and
+  // buried the detail in an accordion).
+  var rows = actionRows();
 
   if (!rows.length) {
     $("actionsList").innerHTML = '<p class="muted small">Nothing waiting on you. Have a cup of tea.</p>';
@@ -2805,6 +2991,7 @@ function loadLiveCases() {
     if (!res || !res.ok) return;
     state.liveCases = res.cases || [];
     state.liveLoaded = true;
+    updateRailBadges();
     if (state.view === "live") renderLive();
     // The "chat open" badges ride on Track and Actions rows.
     else if (state.view === "admin") renderAdmin();
@@ -3327,6 +3514,99 @@ function setView(v) {
   if (v === "dev") renderDev();
   if (v === "course") renderCourse();
   if (v === "users") renderUsers();
+  updateRail();
+}
+
+// ===================== ROUND 60: ONE DASHBOARD =====================
+// A re-shell, not a rewrite. Eight tabs across the top are now an icon rail
+// down the side, and Actions and Track have stopped being two places: they
+// are three segments over one list column and one detail pane, so the whole
+// instructor job is a single surface that can be embedded elsewhere as one
+// page. Everything here is chrome. setView, renderActions, renderAdmin,
+// openDetail and the r54 bootstrap are untouched and still the only code
+// paths, which is the point: no future round should find two of anything.
+//
+// ?classic=1 keeps the old tab shell for one round, in case something here
+// was missed. It works by never adding body.shell, and the rail markup is
+// display:none without it.
+var SHELL_ON = true;
+try { SHELL_ON = new URLSearchParams(window.location.search).get("classic") !== "1"; } catch (e) {}
+
+function applyShell() {
+  if (!SHELL_ON) return;
+  document.body.classList.add("shell");
+  // The user menu is the same node, carried into the foot of the rail. Moving
+  // it rather than writing a second one means theme, change password and log
+  // out keep the handlers r48 gave them.
+  var foot = $("railFoot"), box = $("userbox");
+  if (foot && box && box.parentElement !== foot) foot.appendChild(box);
+}
+
+// Which of the three Issues segments is showing. Held here rather than
+// derived from state.view, because "All issues" and "Board" are both the
+// admin view and only trackView tells them apart.
+function currentIssuesSeg() {
+  if (state.view === "actions") return "mine";
+  if (state.view === "admin") return state.trackView === "board" ? "board" : "all";
+  return state.issuesSeg || "mine";
+}
+function setIssuesSeg(seg) {
+  state.issuesSeg = seg;
+  if (seg === "mine") { setView("actions"); return; }
+  // setTrackView renders admin itself, so set it before the view swap and let
+  // setView do the single render.
+  state.trackView = seg === "board" ? "board" : "list";
+  if ($("tv_list")) $("tv_list").className = state.trackView === "list" ? "active" : "";
+  if ($("tv_board")) $("tv_board").className = state.trackView === "board" ? "active" : "";
+  setView("admin");
+}
+// The rail's Issues button lands wherever you were last, and on "Waiting on
+// me" the first time - that is the number the badge is counting.
+function railGo(v) {
+  if (v === "issues") {
+    var seg = currentIssuesSeg();
+    var p = state.perms || {};
+    if (!p.manage && seg !== "mine") seg = "mine";
+    if (!p.log && seg === "mine") seg = "all";
+    setIssuesSeg(seg);
+    return;
+  }
+  setView(v);
+}
+function updateRail() {
+  if (!$("rail")) return;
+  var v = state.view;
+  var onIssues = (v === "actions" || v === "admin");
+  var pairs = [["railNew", v === "instructor"], ["railChats", v === "live"], ["railIssues", onIssues],
+               ["railDev", v === "dev"], ["railCourse", v === "course"],
+               ["railStats", v === "analytics"], ["railUsers", v === "users"]];
+  pairs.forEach(function (p) { var el = $(p[0]); if (el) el.classList.toggle("active", !!p[1]); });
+  // The segment bar belongs to Issues, so it only shows there.
+  var wrap = $("issuesSegWrap");
+  if (wrap) wrap.classList.toggle("on", onIssues && SHELL_ON);
+  var seg = currentIssuesSeg();
+  [["iseg_mine", "mine"], ["iseg_all", "all"], ["iseg_board", "board"]].forEach(function (p) {
+    var el = $(p[0]); if (el) el.className = seg === p[1] ? "active" : "";
+  });
+  updateRailBadges();
+}
+// Two badges, and only two. Chats counts the open conversations. Issues
+// counts the things waiting on somebody, NOT the size of the log - a number
+// that only means work is a number worth looking at.
+function updateRailBadges() {
+  var p = state.perms || {};
+  var chats = $("railBadgeChats");
+  if (chats) {
+    var n = (state.liveCases || []).length;
+    chats.textContent = n > 99 ? "99+" : String(n);
+    chats.classList.toggle("on", !!(n && p.log));
+  }
+  var iss = $("railBadgeIssues");
+  if (iss) {
+    var m = p.log ? actionRows().length : 0;
+    iss.textContent = m > 99 ? "99+" : String(m);
+    iss.classList.toggle("on", !!m);
+  }
 }
 
 // ============================ INSTRUCTOR: FORM ============================
