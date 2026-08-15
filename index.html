@@ -676,6 +676,83 @@
   body.shell #trackViewSeg { display: none; }
   body.shell #actionsView.wrap, body.shell #adminView.wrap { padding-top: 12px; }
 
+  /* ===================== ROUND 64: THE SUB-RAIL (FB-0229) =====================
+     Where a view has its own tabs (Issues' three segments, Analytics' areas,
+     Admin's three pages, the two fix queues' status views) they sat as a strip
+     of pills at the top of the page, competing with the filters underneath.
+     They go in a second narrow bar next to the rail instead, so the shape of
+     the app reads the same way at both levels: pick the place on the left,
+     pick the part of it next to that, work in the middle.
+
+     It only appears for a view that HAS sub-navigation, and only on a screen
+     wide enough for it. On a phone the bar would eat a third of the width, so
+     it stays away and the old pill strip comes back exactly as it was. */
+  .subrail { display: none; }
+  body.shell.subrail-on .subrail {
+    display: flex; flex-direction: column; gap: 2px;
+    position: fixed; left: 74px; top: 0; bottom: 0; width: 148px; z-index: 39;
+    background: var(--bg); border-right: 1px solid var(--line);
+    padding: 14px 8px; overflow-y: auto; overflow-x: hidden;
+  }
+  body.shell.subrail-on #shellMain { margin-left: 222px; }
+  body.shell.subrail-on .viewas-bar { left: 236px; }
+  .subrail-head {
+    font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); padding: 2px 10px 8px;
+  }
+  .subrail-item {
+    background: transparent; border: none; border-radius: 8px; width: 100%;
+    padding: 8px 10px; text-align: left; color: var(--muted); font-size: 13px;
+    line-height: 1.25; cursor: pointer; display: flex; align-items: center; gap: 8px;
+  }
+  .subrail-item:hover { background: var(--surface); color: var(--text); filter: none; }
+  .subrail-item.active { background: var(--surface-2); color: var(--text); font-weight: 600; }
+  .subrail-item .sn { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--muted); }
+  .subrail-item.active .sn { color: var(--text); }
+  /* The sub-rail replaces the pill strip rather than doubling it up. */
+  @media (min-width: 761px) {
+    body.shell.subrail-on #issuesSegWrap.on,
+    body.shell.subrail-on #anaSeg,
+    body.shell.subrail-on #usersSeg,
+    body.shell.subrail-on #devSeg { display: none; }
+  }
+  @media (max-width: 760px) {
+    body.shell.subrail-on .subrail { display: none; }
+    body.shell.subrail-on #shellMain { margin-left: 0; }
+    body.shell.subrail-on .viewas-bar { left: 10px; }
+  }
+
+  /* ===================== ROUND 64: THE CONTROL BAR (FB-0227/FB-0228) ========
+     Every queue used to open with a wall of dropdowns. They are all still
+     here, behind one Filter button, with chips underneath naming whatever is
+     actually on - a filter you cannot see is a list you cannot trust. Search
+     and sort stay out in the open because they are used on nearly every pass. */
+  .ctlbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .ctlbar .ctl-search { flex: 1 1 240px; min-width: 150px; padding: 7px 9px; }
+  .ctlbar select { width: auto; min-width: 150px; padding: 7px 8px; }
+  .ctlbar button { white-space: nowrap; }
+  .ctl-count {
+    display: inline-block; min-width: 16px; height: 16px; border-radius: 999px;
+    background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+    line-height: 16px; text-align: center; padding: 0 5px; margin-left: 7px;
+  }
+  .fchips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+  .fchips:empty { display: none; }
+  .fchip {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 5px 3px 11px;
+  }
+  .fchip button { background: transparent; border: none; color: var(--muted); font-size: 14px; line-height: 1; padding: 0 5px; cursor: pointer; }
+  .fchip button:hover { color: var(--text); filter: none; }
+  .ctl-stow { display: none !important; }
+  #ctlBody > * { margin-bottom: 0 !important; }
+  /* Asking costs a call and a few seconds, so it is its own panel and its own
+     button. The list underneath carries on filtering as it always did. */
+  .askpanel { border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; background: var(--surface); }
+  .askpanel .askrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .askpanel .askrow input { flex: 1 1 240px; min-width: 160px; padding: 7px 9px; }
+  #askOut2 { white-space: pre-wrap; margin-top: 10px; }
+
   /* ---- phone: rail becomes a bottom bar, one column at a time ---- */
   @media (max-width: 760px) {
     /* Every item shares the width rather than scrolling sideways: a bar you
@@ -762,6 +839,10 @@
        menu with the same handlers, not a second copy. -->
   <div class="rail-foot" id="railFoot"></div>
 </nav>
+
+<!-- ROUND 64: the sub-rail. Filled by renderSubRail() from whichever view is
+     open; empty and out of the way for a view with nothing to sub-divide. -->
+<nav class="subrail" id="subRail" aria-label="Section pages"></nav>
 
 <div id="shellMain">
 <header class="topbar">
@@ -1113,7 +1194,28 @@
     <div class="stat"><div class="n" id="statResolved">–</div><div class="l">Resolved this month</div></div>
   </div>
 
-  <div class="filterbar">
+  <!-- FB-0227. Every dropdown that used to sit across the top is still here,
+       it just lives behind Filter now. Search and sort stay out because they
+       are touched on nearly every pass, and Ask sits beside the search as the
+       deliberate, slower, paid-for question (FB-0228) - typing in the search
+       box never spends anything. -->
+  <div class="ctlbar" id="adminBar">
+    <input id="flt_search" class="ctl-search" placeholder="Search student, lesson, or any word in the report" oninput="renderAdmin()" />
+    <button type="button" class="ghost" onclick="askOpen('admin')" title="Ask a question about the logged issues. It reads the log with AI, so it takes a few seconds.">Ask</button>
+    <button type="button" class="ghost" onclick="ctlOpen('Filter issues','adminFilters')">Filter<span class="ctl-count hidden" id="adminFilterCount"></span></button>
+    <select id="flt_sort" onchange="renderAdmin()">
+      <option value="">Sort: priority</option>
+      <option value="longest">Sort: longest open</option>
+      <option value="newest">Sort: newest</option>
+      <option value="reports">Sort: most reported</option>
+      <option value="oldest">Sort: oldest first</option>
+      <option value="reporter">Sort: reported by (A-Z)</option>
+    </select>
+  </div>
+  <div class="fchips" id="adminChips"></div>
+  <div id="adminAskHost"></div>
+
+  <div id="adminFiltersHome"><div class="filterbar ctl-stow" id="adminFilters" data-home="adminFiltersHome">
     <select id="flt_status" onchange="renderAdmin()">
       <option value="">All statuses</option>
       <option value="needs_action">Needs action (anything unresolved)</option>
@@ -1153,15 +1255,7 @@
       <option>SRC</option>
       <option>PPR</option>
     </select>
-    <select id="flt_sort" onchange="renderAdmin()">
-      <option value="">Sort: priority (default)</option>
-      <option value="newest">Sort: most recent first</option>
-      <option value="oldest">Sort: oldest first</option>
-      <option value="reporter">Sort: reported by (A-Z)</option>
-      <option value="reports">Sort: most reported</option>
-    </select>
-    <input id="flt_search" placeholder="Search student, lesson, or any word in the report" oninput="renderAdmin()" />
-  </div>
+  </div></div>
 
   <div id="filterClear" class="small hidden" style="margin-bottom:10px;">
     <span class="muted">Filtered to <span class="code" id="filterClearCode"></span>.</span>
@@ -1237,9 +1331,25 @@
       <button type="button" id="dev_all" onclick="setDevFilter('all')">All</button>
     </div>
   </div>
+  <!-- FB-0227: search, ask and sort out here, the five dropdowns behind
+       Filter. The search input is static markup on purpose - it used to be
+       rebuilt on every keystroke and needed the caret putting back by hand. -->
+  <div class="ctlbar" id="devBar">
+    <input id="devSearch" type="search" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setDevSearch(this.value)" />
+    <button type="button" class="ghost" onclick="askOpen('dev')" title="Ask a question about the logged issues. It reads the log with AI, so it takes a few seconds.">Ask</button>
+    <button type="button" class="ghost" onclick="ctlOpen('Filter the developer queue','devFilters')">Filter<span class="ctl-count hidden" id="devFilterCount"></span></button>
+    <select id="devSortSel" onchange="setDevSel('devSort', this.value)">
+      <option value="priority">Sort: priority</option>
+      <option value="longest">Sort: longest open</option>
+      <option value="newest">Sort: newest</option>
+      <option value="reports">Sort: most reported</option>
+    </select>
+  </div>
+  <div class="fchips" id="devChips"></div>
+  <div id="devAskHost"></div>
   <!-- One row (Edd, FB-0202): without display:flex here the global
        "select { width:100% }" rule stacked the five dropdowns full-width. -->
-  <div class="area-toggle" id="devFilters" style="display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
+  <div id="devFiltersHome"><div class="area-toggle ctl-stow" id="devFilters" data-home="devFiltersHome" style="display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div></div>
   <div class="split-host" id="devSplitHost">
     <div class="list-col" id="devList"></div>
     <div class="col-drag" title="Drag to resize the list"></div>
@@ -1254,8 +1364,24 @@
     <div class="stat" style="cursor:pointer;" onclick="setCourseFilter('fixed')"><div class="n" id="courseStatFixed">–</div><div class="l">Fixed / done</div></div>
     <div class="stat"><div class="n" id="courseStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
-  <div class="area-toggle" id="courseFilters" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div>
+  <div class="ctlbar" id="courseBar">
+    <input id="courseSearch" type="search" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setCourseSearch(this.value)" />
+    <button type="button" class="ghost" onclick="askOpen('course')" title="Ask a question about the logged issues. It reads the log with AI, so it takes a few seconds.">Ask</button>
+    <button type="button" class="ghost" onclick="ctlOpen('Filter course fixes','courseFilters')">Filter<span class="ctl-count hidden" id="courseFilterCount"></span></button>
+    <select id="courseSortSel" onchange="setCourseSel('courseSort', this.value)">
+      <option value="priority">Sort: priority</option>
+      <option value="longest">Sort: longest open</option>
+      <option value="newest">Sort: newest</option>
+      <option value="reports">Sort: most reported</option>
+    </select>
+    <button type="button" class="ghost" onclick="ctlOpen('Assign a batch to one person','courseBulk')">Assign all…</button>
+  </div>
+  <div class="fchips" id="courseChips"></div>
+  <div id="courseAskHost"></div>
+  <div id="courseFiltersHome"><div class="area-toggle ctl-stow" id="courseFilters" data-home="courseFiltersHome" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div></div>
   <div class="area-toggle" id="courseTools" style="flex-wrap:wrap;gap:8px 10px;align-items:center;"></div>
+  <!-- The r62 condition builder, unchanged, living in the Assign all popup. -->
+  <div id="courseBulkHome"><div class="ctl-stow" id="courseBulk" data-home="courseBulkHome"></div></div>
   <div id="contentSuggPanel"></div>
   <div id="courseReviewPanel"></div>
   <div class="split-host" id="courseSplitHost">
@@ -1327,7 +1453,11 @@
   <div class="card" style="margin-top:18px;">
     <h2>Troubleshooting playbook</h2>
     <p class="small muted">The rulebook the AI uses to suggest steps to instructors. Edit it directly here, or approve the suggestions above to add to it.</p>
-    <div class="field"><textarea id="playbookText" rows="16" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;"></textarea></div>
+    <!-- FB-0222: the editor grows with the playbook instead of showing it
+         twelve lines at a time through its own little scrollbar. That is what
+         makes this a long editing surface, and it is what lets the save bar
+         (below) ever appear. -->
+    <div class="field"><textarea id="playbookText" rows="16" oninput="autoGrowEditor(this)" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-y:hidden;"></textarea></div>
     <button class="primary savebar-btn" onclick="savePlaybook()">Save playbook</button>
   </div>
   </div>
@@ -1407,6 +1537,38 @@
 <div class="modal-bg" id="dupModal">
   <div class="modal" style="max-width:540px;">
     <div id="dupPanel" class="suggest" style="margin:0;"></div>
+  </div>
+</div>
+
+<!-- ROUND 64 (FB-0227): the one popup every "put the controls away" button
+     uses. It does not copy the controls, it MOVES the real block in and puts
+     it back on close, so every handler, id and render function underneath
+     carries on working exactly as it did. -->
+<div class="modal-bg" id="ctlModal" onclick="if(event.target===this)ctlClose()">
+  <div class="modal" style="max-width:680px;max-height:86vh;overflow-y:auto;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <h3 id="ctlTitle" style="flex:1;margin:0;">Filter</h3>
+      <button type="button" class="ghost small" style="padding:4px 10px;" onclick="ctlClose()">Done</button>
+    </div>
+    <div id="ctlBody"></div>
+    <div class="small muted" style="margin-top:12px;" id="ctlNote"></div>
+  </div>
+</div>
+
+<!-- ROUND 64 (FB-0228): asking is a separate, deliberate act from searching.
+     One panel, moved to whichever queue asked for it. -->
+<div id="askHome" style="display:none;">
+  <div id="askPanel" class="askpanel hidden">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <strong style="flex:1;">Ask about our issues</strong>
+      <button type="button" class="ghost small" style="padding:3px 10px;" onclick="askClose()">Dismiss</button>
+    </div>
+    <div class="askrow">
+      <input id="askQ2" placeholder="e.g. which lesson has the most reports?" onkeydown="if(event.key==='Enter'){event.preventDefault();runAskPanel();}" />
+      <button type="button" class="primary" id="askBtn2" onclick="runAskPanel()">Ask</button>
+    </div>
+    <div class="small muted" style="margin-top:6px;">This one reads the whole log with AI, so give it a few seconds. The search box carries on filtering underneath either way.</div>
+    <div id="askOut2" class="small hidden"></div>
   </div>
 </div>
 
@@ -1577,7 +1739,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r63 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r64 · 2026-08-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1745,6 +1907,7 @@ var state = {
   coursePart: "all",          // all | text | video | other (which part of the lesson)
   courseAssignee: "all",      // all | unassigned | <person's name>
   courseKind: "all",          // all | fix | improvement (Edd, FB-0206: suggested improvements should be visible as such here too)
+  courseSort: "priority",     // priority | longest | newest | reports (FB-0227)
   courseSearch: "",           // free-text search, same fields as Track
   // Live cases (Round 45): the shared Open-conversations workspace.
   liveCases: [],              // open cases from the LiveCases sheet, newest activity first
@@ -2438,9 +2601,13 @@ function saveBarPick() {
     } else {
       if (document.documentElement.scrollHeight - window.innerHeight < SAVE_BAR_MIN_SCROLL) continue;
       if ((window.pageYOffset || document.documentElement.scrollTop || 0) < SAVE_BAR_MIN_MOVE) continue;
-      var railEl = $("rail");
-      var railW = (railEl && document.body.classList.contains("shell") && window.innerWidth > 760)
-        ? railEl.getBoundingClientRect().width : 0;
+      // The bar spans the working column, so it starts where the rails end.
+      // Round 64 put a second one there, and a bar that ignores it sits under
+      // the sub-rail.
+      var railEl = $("rail"), subEl = $("subRail");
+      var wide = document.body.classList.contains("shell") && window.innerWidth > 760;
+      var railW = (railEl && wide) ? railEl.getBoundingClientRect().width : 0;
+      if (subEl && wide && document.body.classList.contains("subrail-on")) railW += subEl.getBoundingClientRect().width;
       top = 0; bottom = window.innerHeight; left = railW; right = window.innerWidth;
       floor = saveBarFloor();
     }
@@ -3633,6 +3800,7 @@ function openDeepLinkedIssue() {
 // ============================ VIEW SWITCH ============================
 function setView(v) {
   if (state.detailId) closeDetail(); // a docked detail belongs to the old tab
+  if (state._ctlNode) ctlClose();    // and a control block belongs to its own view
   state.view = v;
   $("tabInstructor").classList.toggle("active", v === "instructor");
   $("tabActions").classList.toggle("active", v === "actions");
@@ -3733,6 +3901,7 @@ function updateRail() {
     var el = $(p[0]); if (el) el.className = seg === p[1] ? "active" : "";
   });
   updateRailBadges();
+  renderSubRail();
 }
 // Two badges, and only two. Chats counts the open conversations. Issues
 // counts the things waiting on somebody, NOT the size of the log - a number
@@ -3751,6 +3920,227 @@ function updateRailBadges() {
     iss.textContent = m > 99 ? "99+" : String(m);
     iss.classList.toggle("on", !!m);
   }
+}
+
+// ===================== ROUND 64: THE SUB-RAIL (FB-0229) =====================
+// Edd: "when there are further tabs, like here, I think the all, course
+// errors, tech issues, internal only etc should be on a new vertical sub bar
+// next to the existing new, chats, issues, etc."
+//
+// One registry, so a view that grows a set of tabs later gets a sub-rail by
+// adding an entry and nothing else. Each entry hands back the items, which one
+// is current, and the function that was ALREADY switching them - the pills are
+// still in the markup and still work, this is a second way in, not a second
+// code path. A count next to an item is optional and comes from the same list
+// the view draws, never from its own sum (the Round 60 rule).
+function subRailSpec() {
+  var v = state.view, p = state.perms || {};
+  if (v === "actions" || v === "admin") {
+    var items = [];
+    if (p.log) items.push({ key: "mine", label: "Waiting on me", n: actionRows().length });
+    if (p.manage) items.push({ key: "all", label: "All issues" }, { key: "board", label: "Board" });
+    return { head: "Issues", items: items, cur: currentIssuesSeg(), go: setIssuesSeg };
+  }
+  if (v === "analytics") return {
+    head: "Analytics", cur: state.anaArea, go: setAnaArea,
+    items: [{ key: "all", label: "All" }, { key: "course_error", label: "Course errors" },
+            { key: "tech_issue", label: "Tech issues" }, { key: "internal", label: "Internal only" }]
+  };
+  if (v === "users") return {
+    head: "Admin", cur: state.usersSection, go: setUsersSection,
+    items: [{ key: "people", label: "People" }, { key: "feedback", label: "Feedback" }, { key: "playbook", label: "Playbook" }]
+  };
+  if (v === "dev") return {
+    head: "Developers", cur: state.devFilter, go: setDevFilter,
+    items: [{ key: "todo", label: "To do" }, { key: "fixed", label: "Fixed" }, { key: "all", label: "All" }]
+  };
+  if (v === "course") return {
+    head: "Course fixes", cur: state.courseFilter, go: setCourseFilter,
+    items: [{ key: "todo", label: "To do" }, { key: "fixed", label: "Fixed / done" }, { key: "all", label: "All" }]
+  };
+  return null;
+}
+function renderSubRail() {
+  var bar = $("subRail");
+  if (!bar) return;
+  var spec = SHELL_ON ? subRailSpec() : null;
+  // Nothing to sub-divide (or only one way in) means no bar at all, rather
+  // than a strip of empty furniture.
+  if (!spec || !spec.items || spec.items.length < 2) {
+    document.body.classList.remove("subrail-on");
+    bar.innerHTML = "";
+    state._subRailGo = null;
+    scheduleSaveBar();
+    return;
+  }
+  state._subRailGo = spec.go;
+  bar.innerHTML = '<div class="subrail-head">' + esc(spec.head) + '</div>' +
+    spec.items.map(function (it) {
+      return '<button type="button" class="subrail-item' + (it.key === spec.cur ? " active" : "") + '" ' +
+        'onclick="subRailGo(\'' + esc(it.key) + '\')">' + esc(it.label) +
+        (it.n ? '<span class="sn">' + (it.n > 99 ? "99+" : it.n) + '</span>' : '') + '</button>';
+    }).join("");
+  document.body.classList.add("subrail-on");
+  scheduleSaveBar();
+}
+function subRailGo(k) {
+  var go = state._subRailGo;
+  if (go) go(k);
+  renderSubRail();
+}
+
+// ===================== ROUND 64: PUTTING THE CONTROLS AWAY (FB-0227) ========
+// Edd: "Can we hide to do, kind, course, etc all under a 'filter' icon/button?
+// And the assign all options under an 'assign all' button?"
+//
+// The popup MOVES the real control block in and puts it back on close. Nothing
+// is cloned and nothing is rebuilt, so every id, every inline handler and every
+// render function that writes into those containers carries on working. The
+// price of that is one rule: a movable block keeps its home in a data-home
+// attribute and gets .ctl-stow when it is back there.
+function ctlOpen(title, nodeId, note) {
+  var node = $(nodeId), body = $("ctlBody");
+  if (!node || !body) return;
+  if (state._ctlNode && state._ctlNode !== nodeId) ctlClose();
+  $("ctlTitle").textContent = title || "Filter";
+  $("ctlNote").textContent = note || "";
+  node.classList.remove("ctl-stow");
+  body.appendChild(node);
+  state._ctlNode = nodeId;
+  $("ctlModal").classList.add("show");
+}
+function ctlClose() {
+  var node = state._ctlNode ? $(state._ctlNode) : null;
+  if (node) {
+    var home = $(node.getAttribute("data-home"));
+    node.classList.add("ctl-stow");
+    if (home) home.appendChild(node);
+  }
+  state._ctlNode = null;
+  var m = $("ctlModal");
+  if (m) m.classList.remove("show");
+  refreshCtlChips();
+}
+
+// What is actually on, in words, under the list it is narrowing. A filter
+// nobody can see is the reason a queue looks empty and nobody knows why.
+function selChip(id, prefix) {
+  var el = $(id);
+  if (!el || !el.value) return null;
+  var text = el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : el.value;
+  return { label: prefix + ": " + text, clear: "ctlClearSel('" + id + "')" };
+}
+function ctlClearSel(id) { var el = $(id); if (el) el.value = ""; renderAdmin(); }
+function stateChip(key, prefix, value, clearFn) {
+  var v = state[key];
+  if (!v || v === "all") return null;
+  return { label: prefix + ": " + (value || v), clear: clearFn + "('" + key + "','all')" };
+}
+function adminChipList() {
+  return [selChip("flt_status", "Status"), selChip("flt_priority", "Priority"),
+          selChip("flt_type", "Type"), selChip("flt_course", "Course")]
+    .filter(function (c) { return !!c; });
+}
+function devChipList() {
+  return [stateChip("devSection", "Where", SECTION_LABEL[state.devSection], "setDevSel"),
+          stateChip("devKind", "Kind", null, "setDevSel"),
+          stateChip("devType", "Type", String(state.devType || "").replace(/_/g, " "), "setDevSel"),
+          stateChip("devSize", "Size", null, "setDevSel")]
+    .filter(function (c) { return !!c; });
+}
+function courseChipList() {
+  return [stateChip("courseKind", "Kind", null, "setCourseSel"),
+          stateChip("courseCourse", "Course", null, "setCourseSel"),
+          stateChip("courseModule", "Module", null, "setCourseSel"),
+          stateChip("courseLesson", "Lesson", null, "setCourseSel"),
+          stateChip("courseType", "Type", null, "setCourseSel"),
+          stateChip("coursePart", "Part", null, "setCourseSel"),
+          stateChip("courseAssignee", "Assignee", null, "setCourseSel")]
+    .filter(function (c) { return !!c; });
+}
+var CTL_CHIPS = {
+  admin:  { chips: adminChipList,  host: "adminChips",  count: "adminFilterCount" },
+  dev:    { chips: devChipList,    host: "devChips",    count: "devFilterCount" },
+  course: { chips: courseChipList, host: "courseChips", count: "courseFilterCount" }
+};
+function renderCtlChips(which) {
+  var spec = CTL_CHIPS[which];
+  if (!spec) return;
+  var host = $(spec.host), count = $(spec.count);
+  if (!host) return;
+  var chips = spec.chips();
+  host.innerHTML = chips.length
+    ? '<span class="small muted">Filtered to</span>' + chips.map(function (c) {
+        return '<span class="fchip">' + esc(c.label) +
+          '<button type="button" title="Drop this filter" onclick="' + c.clear + '">&times;</button></span>';
+      }).join("") +
+      (chips.length > 1 ? '<button class="ghost small" style="padding:3px 10px;" onclick="ctlClearAll(\'' + which + '\')">Clear all</button>' : '')
+    : "";
+  if (count) {
+    count.textContent = chips.length ? String(chips.length) : "";
+    count.classList.toggle("hidden", !chips.length);
+  }
+}
+function refreshCtlChips() { Object.keys(CTL_CHIPS).forEach(renderCtlChips); }
+function ctlClearAll(which) {
+  if (which === "admin") {
+    ["flt_status", "flt_priority", "flt_type", "flt_course"].forEach(function (id) { var el = $(id); if (el) el.value = ""; });
+    renderAdmin();
+  } else if (which === "dev") {
+    ["devSection", "devKind", "devType", "devSize"].forEach(function (k) { state[k] = "all"; });
+    renderDev();
+  } else if (which === "course") {
+    ["courseKind", "courseCourse", "courseModule", "courseLesson", "courseType", "coursePart", "courseAssignee"]
+      .forEach(function (k) { state[k] = "all"; });
+    renderCourse();
+  }
+}
+
+// ===================== ROUND 64: ASK, AS WELL AS SEARCH (FB-0228) ===========
+// Edd: "I don't want to replace it, I want both."
+//
+// Typing in the search box is instant, client-side and free, and none of that
+// changed. Asking a question is a different job: it reads the whole log with
+// AI, costs credits and takes seconds, so it only ever happens when somebody
+// presses Ask or presses Enter INSIDE the ask box. Nothing guesses whether
+// what was typed is a filter or a question, because guessing wrong either
+// spends money on a search or hides a list behind an answer.
+//
+// The answer lands above the list. The list underneath keeps filtering on
+// whatever is in the search box the whole time.
+function askOpen(view) {
+  var host = $(view + "AskHost"), panel = $("askPanel");
+  if (!host || !panel) return;
+  if (panel.parentElement === host && !panel.classList.contains("hidden")) { askClose(); return; }
+  host.appendChild(panel);
+  panel.classList.remove("hidden");
+  var q = $("askQ2");
+  if (q) q.focus();
+}
+function askClose() {
+  var panel = $("askPanel");
+  if (!panel) return;
+  panel.classList.add("hidden");
+  var out = $("askOut2");
+  if (out) { out.textContent = ""; out.classList.add("hidden"); }
+  var home = $("askHome");
+  if (home) home.appendChild(panel);
+}
+// Same askIssues action Analytics has always used. One AI feature, two ways in.
+function runAskPanel() {
+  var q = ($("askQ2").value || "").trim();
+  if (!q) { $("askQ2").focus(); return; }
+  var btn = $("askBtn2"), out = $("askOut2");
+  btn.disabled = true; btn.textContent = "Thinking…";
+  out.classList.remove("hidden");
+  out.textContent = "Reading through " + state.issues.length + " logged issues…";
+  apiPost({ action: "askIssues", question: q }).then(function (res) {
+    btn.disabled = false; btn.textContent = "Ask";
+    out.textContent = res && res.ok ? res.answer : ("Couldn't get an answer: " + ((res && res.error) || "unknown error"));
+  }).catch(function (e) {
+    btn.disabled = false; btn.textContent = "Ask";
+    out.textContent = "Couldn't get an answer: " + e;
+  });
 }
 
 // ============================ INSTRUCTOR: FORM ============================
@@ -6085,6 +6475,7 @@ function renderAdmin() {
   // Any change of filters, sort, area, or view starts the paging again from the top.
   var sig = [fs, fp, ft, fc, fq, fsort, state.area, state.reqFilter, state.trackView].join("|");
   if (sig !== state._adminFilterSig) { state._adminFilterSig = sig; state.adminShown = 20; }
+  renderCtlChips("admin");
 
   var list = base.filter(function (i) {
     if (fs) {
@@ -6108,6 +6499,15 @@ function renderAdmin() {
   // scanning by date or by who logged things.
   if (fsort === "newest") {
     list.sort(function (a, b) { return new Date(b.submitted_at) - new Date(a.submitted_at); });
+  } else if (fsort === "longest") {
+    // Longest open is not the same as oldest: something logged in March and
+    // resolved in April has not been open for five months, so anything still
+    // unresolved comes first and the finished ones follow.
+    list.sort(function (a, b) {
+      var oa = isOpen(a) ? 0 : 1, ob = isOpen(b) ? 0 : 1;
+      if (oa !== ob) return oa - ob;
+      return new Date(a.submitted_at) - new Date(b.submitted_at);
+    });
   } else if (fsort === "oldest") {
     list.sort(function (a, b) { return new Date(a.submitted_at) - new Date(b.submitted_at); });
   } else if (fsort === "reporter") {
@@ -6547,6 +6947,11 @@ function openDetail(issue) {
   var refold = (state.detailId === issue.issue_id && state.detailKind === "admin") ? drawerFoldState() : null;
   state.detailId = issue.issue_id;
   state.detailKind = "admin";
+  // FB-0212, re-filed. The reopen button belongs to an issue that IS Resolved
+  // - TBC, not to one somebody has merely picked that status for in the
+  // dropdown and not saved. Both tests have to pass, so the saved status is
+  // recorded here and read by onStatusChange.
+  state._detailStatus = String(issue.status || "open").toLowerCase();
   var sameLesson = issue.lesson_code
     ? state.issues.filter(function (i) { return i.lesson_code === issue.lesson_code; })
     : [issue];
@@ -6873,6 +7278,7 @@ function openDetail(issue) {
   presentDetail("admin");
   // Set the update/resolution box and the reopen button off the status the
   // pane opened with, using the same code that runs on every later change.
+  bindStatusSelect();
   onStatusChange();
   if (refold) drawerFoldRestore(refold);
   // Once per issue per session, and it usually answers from its own cache
@@ -6994,7 +7400,39 @@ function onStatusChange() {
   // goes in with Save changes, so the buttons would only mislead.
   if ($("d_update_btns")) $("d_update_btns").classList.toggle("hidden", wantsNote);
   if ($("d_resnote_hint")) $("d_resnote_hint").classList.toggle("hidden", !wantsNote);
-  if ($("d_tbc_wrap")) $("d_tbc_wrap").classList.toggle("hidden", sv !== "resolved_tbc");
+  // FB-0212, re-filed after it was claimed fixed in Round 59. Two conditions,
+  // not one: the issue has to actually BE Resolved - TBC (the line under the
+  // button promises a 7-day auto-resolve, which is only true of an issue that
+  // is really parked there), and the dropdown has to still be sitting on it.
+  // Move the status to anything else and the button goes, which is what Edd
+  // asked for: "i changed the status to open, so the mark still happening
+  // (reopen) should disappear."
+  if ($("d_tbc_wrap")) {
+    var showTbc = (sv === "resolved_tbc" && state._detailStatus === "resolved_tbc");
+    $("d_tbc_wrap").classList.toggle("hidden", !showTbc);
+  }
+}
+
+// The other half of FB-0212, and the reason it read as unfixed: the control
+// only followed the dropdown when a CHANGE EVENT fired. Anything that set the
+// value in code left the button contradicting the box, and so did any test
+// driving the pane by script. Follow the value itself and the question of how
+// it got there stops mattering.
+function bindStatusSelect() {
+  var sel = $("d_status");
+  if (!sel || sel._aitBound) return;
+  sel._aitBound = true;
+  sel.addEventListener("change", onStatusChange);
+  sel.addEventListener("input", onStatusChange);
+  var desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+  if (!desc || !desc.get || !desc.set) return;
+  try {
+    Object.defineProperty(sel, "value", {
+      configurable: true,
+      get: function () { return desc.get.call(this); },
+      set: function (v) { desc.set.call(this, v); onStatusChange(); }
+    });
+  } catch (e) {}
 }
 function closeDetail() {
   $("overlay").classList.remove("show");
@@ -7227,6 +7665,7 @@ function setAnaArea(a) {
   $("ana_tech").classList.toggle("active", a === "tech_issue");
   $("ana_internal").classList.toggle("active", a === "internal");
   renderAnalytics();
+  renderSubRail();
 }
 
 // ---- breakdown matrix: fixes / improvements / all, by course / tech / both ----
@@ -7449,6 +7888,11 @@ function renderDev() {
   list.sort(function (a, b) {
     if (state.devSort === "longest") return startOf(a) - startOf(b);   // oldest first
     if (state.devSort === "newest") return startOf(b) - startOf(a);
+    if (state.devSort === "reports") {
+      var ra = reportCount(a), rb = reportCount(b);
+      if (ra !== rb) return rb - ra;
+      return startOf(a) - startOf(b);
+    }
     var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
     if (pa !== pb) return pa - pb;
     return startOf(a) - startOf(b); // within a priority, oldest waiting first
@@ -7520,30 +7964,28 @@ function renderDevFilters(statusPool) {
     return '<select onchange="setDevSel(\'' + key + '\', this.value)" style="width:auto;min-width:120px;padding:7px 8px;">' + opts + '</select>';
   };
 
+  // Search and sort live out in the control bar now (FB-0227); what is left
+  // in here is what goes behind the Filter button.
   $("devFilters").innerHTML =
-    '<input id="devSearch" type="search" placeholder="Search summary, ref, student, lesson code…" ' +
-      'value="' + esc(state.devSearch || "") + '" oninput="setDevSearch(this.value)" ' +
-      'style="flex:1 1 220px;min-width:180px;padding:7px 9px;" />' +
-    drop("devSort", [["priority", "Sort: priority"], ["longest", "Sort: longest open"], ["newest", "Sort: newest"]]) +
     drop("devSection", [["all", "Where: all"]].concat(sections.map(function (s) { return [s, SECTION_LABEL[s] || s]; }))) +
     drop("devKind", [["all", "Kind: all"], ["fix", "Fixes"], ["improvement", "Improvements"]]) +
     drop("devType", [["all", "Type: all"]].concat(types.map(function (t) { return [t, t.replace(/_/g, " ")]; }))) +
     drop("devSize", [["all", "Size: all"], ["small", "Small"], ["medium", "Medium"], ["large", "Large"], ["unsized", "Not sized yet"]]);
+  var sortSel = $("devSortSel");
+  if (sortSel) sortSel.value = state.devSort || "priority";
+  renderCtlChips("dev");
 }
 
 function setDevSel(key, value) {
   state[key] = value;
   renderDev();
 }
-// Typing redraws the whole filter bar, which would steal the caret, so put it
-// back where it was.
+// Instant, client side, no network call, and Round 64 did not touch that
+// (FB-0228). The box is static markup now that it is out in the control bar,
+// so the caret dance this function used to do is gone with it.
 function setDevSearch(v) {
   state.devSearch = v;
-  var pos = null, el = $("devSearch");
-  if (el) pos = el.selectionStart;
   renderDev();
-  var again = $("devSearch");
-  if (again) { again.focus(); if (pos != null) { try { again.setSelectionRange(pos, pos); } catch (e) {} } }
 }
 // Every course fix that still needs doing or is awaiting verification. Unlike
 // the Developers queue this is NOT gated on dev_passed_at, so imported "open"
@@ -7664,13 +8106,31 @@ function renderCourse() {
   });
 
   // Default order: priority first, then lesson/slide, then newest activity.
-  list.sort(function (a, b) {
-    var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
-    if (pa !== pb) return pa - pb;
-    var ra = String(refOf(a) || a.lesson_code || "~~~"), rb = String(refOf(b) || b.lesson_code || "~~~");
-    if (ra !== rb) return ra < rb ? -1 : 1;
-    return new Date(b.updated_at || b.submitted_at || 0) - new Date(a.updated_at || a.submitted_at || 0);
-  });
+  // The sort dropdown (Edd, FB-0227: "we need a sort by option") swaps that
+  // for the three other ways a queue actually gets worked: oldest first when
+  // clearing a backlog, newest first when catching up, most reported when
+  // deciding what hurts the most students.
+  var courseStart = function (i) { return new Date(i.dev_passed_at || i.submitted_at || 0).getTime(); };
+  var cs = state.courseSort || "priority";
+  if (cs === "longest") {
+    list.sort(function (a, b) { return courseStart(a) - courseStart(b); });
+  } else if (cs === "newest") {
+    list.sort(function (a, b) { return courseStart(b) - courseStart(a); });
+  } else if (cs === "reports") {
+    list.sort(function (a, b) {
+      var ra = reportCount(a), rb = reportCount(b);
+      if (ra !== rb) return rb - ra;
+      return courseStart(a) - courseStart(b);
+    });
+  } else {
+    list.sort(function (a, b) {
+      var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
+      if (pa !== pb) return pa - pb;
+      var ra = String(refOf(a) || a.lesson_code || "~~~"), rb = String(refOf(b) || b.lesson_code || "~~~");
+      if (ra !== rb) return ra < rb ? -1 : 1;
+      return new Date(b.updated_at || b.submitted_at || 0) - new Date(a.updated_at || a.submitted_at || 0);
+    });
+  }
 
   $("courseList").innerHTML = list.length
     ? '<div class="small muted" style="margin:4px 0 10px;">' + list.length + ' fix' + (list.length === 1 ? "" : "es") + ' shown</div>' +
@@ -7861,13 +8321,16 @@ function renderCourseTools() {
 
   $("courseTools").innerHTML =
     '<button class="ghost small" style="padding:7px 14px;" onclick="courseReviewRun()">AI review: check the priorities</button>' +
-    '<button class="ghost small" style="padding:7px 14px;" onclick="runConfusionReview()" title="Any lesson with 3+ open student-confusion reports gets a drafted content tweak to accept or dismiss">Confusion hotspots: draft content tweaks</button>' +
-    '<div style="flex:1 1 100%;border-top:1px solid var(--line);margin-top:4px;padding-top:10px;">' +
-      conds.map(condRow).join("") +
-      '<div class="small muted" style="margin-top:7px;">' +
-        '<strong style="color:var(--text);">' + n + '</strong> open course fix' + (n === 1 ? "" : "es") + ' match: ' + esc(courseBulkSentence(conds)) + '.' +
-        (mixed ? ' <span style="opacity:0.85;">Read left to right.</span>' : '') +
-      '</div>' +
+    '<button class="ghost small" style="padding:7px 14px;" onclick="runConfusionReview()" title="Any lesson with 3+ open student-confusion reports gets a drafted content tweak to accept or dismiss">Confusion hotspots: draft content tweaks</button>';
+
+  // The conditions themselves live behind the Assign all button (FB-0227).
+  // Same builder, same sentence, same live count - only where it sits changed,
+  // and the count is still the same list the Assign writes to.
+  $("courseBulk").innerHTML =
+    conds.map(condRow).join("") +
+    '<div class="small muted" style="margin-top:9px;">' +
+      '<strong style="color:var(--text);">' + n + '</strong> open course fix' + (n === 1 ? "" : "es") + ' match: ' + esc(courseBulkSentence(conds)) + '.' +
+      (mixed ? ' <span style="opacity:0.85;">Read left to right.</span>' : '') +
     '</div>';
 }
 
@@ -7983,11 +8446,9 @@ function renderCourseFilters(statusPool) {
     return [["all", label + ": all"]].concat(extra || []).concat(values.map(function (v) { return [v, v]; }));
   };
 
+  // Search sits in the control bar, and To do / Fixed / All is the sub-rail
+  // now (FB-0229), so neither is repeated in here.
   $("courseFilters").innerHTML =
-    '<input id="courseSearch" type="search" placeholder="Search summary, ref, student, lesson code…" ' +
-      'value="' + esc(state.courseSearch || "") + '" oninput="setCourseSearch(this.value)" ' +
-      'style="min-width:0;padding:7px 9px;" />' +
-    drop("status", "setCourseFilter(this.value)", [["todo", "To do"], ["fixed", "Fixed / done"], ["all", "All"]]) +
     drop("courseKind", "setCourseSel('courseKind', this.value)", [["all", "Kind: all"], ["fix", "Fixes"], ["improvement", "Improvements"]]) +
     drop("courseCourse", "setCourseSel('courseCourse', this.value)", listOpts("Course", courses)) +
     drop("courseModule", "setCourseSel('courseModule', this.value)", listOpts("Module", modules)) +
@@ -7995,6 +8456,9 @@ function renderCourseFilters(statusPool) {
     drop("courseType", "setCourseSel('courseType', this.value)", [["all", "Type: all"], ["lesson", "Lessons"], ["kc", "Knowledge checks"], ["ma", "Module assessments"]]) +
     drop("coursePart", "setCourseSel('coursePart', this.value)", [["all", "Part: all"], ["text", "Text"], ["video", "Video"], ["other", "Other"]]) +
     drop("courseAssignee", "setCourseSel('courseAssignee', this.value)", listOpts("Assignee", assignees, [["unassigned", "Unassigned"]]));
+  var sortSel = $("courseSortSel");
+  if (sortSel) sortSel.value = state.courseSort || "priority";
+  renderCtlChips("course");
 }
 
 function setDevFilter(f) {
@@ -8003,18 +8467,18 @@ function setDevFilter(f) {
   $("dev_fixed").classList.toggle("active", f === "fixed");
   $("dev_all").classList.toggle("active", f === "all");
   renderDev();
+  renderSubRail();
 }
+// Instant and free, exactly as it was (FB-0228). Static markup now, so the
+// caret stays where the typist left it without any help.
 function setCourseSearch(v) {
   state.courseSearch = v;
-  var pos = null, el = $("courseSearch");
-  if (el) pos = el.selectionStart;
   renderCourse();
-  var again = $("courseSearch");
-  if (again) { again.focus(); if (pos != null) { try { again.setSelectionRange(pos, pos); } catch (e) {} } }
 }
 function setCourseFilter(f) {
   state.courseFilter = f;
   renderCourse();
+  renderSubRail();
 }
 // Set one of the Course Fixes dropdown filters. Course cascades to Module and
 // Module to Lesson, so changing an upper level clears the ones below it.
@@ -8467,6 +8931,8 @@ function setUsersSection(s) {
     var body = $("usec_" + k); if (body) body.classList.toggle("hidden", k !== s);
     var btn = $("us_" + k); if (btn) btn.className = k === s ? "active" : "";
   });
+  renderSubRail();
+  if (s === "playbook") autoGrowEditor($("playbookText"));
 }
 
 // ---- "Spotted in chat": the nightly scan's suggestions, awaiting a verdict --
@@ -8640,8 +9106,28 @@ function runChatScanNow() {
 
 function loadPlaybook() {
   apiGet("getPlaybook").then(function (res) {
-    if (res && res.ok) $("playbookText").value = res.playbook || "";
+    if (res && res.ok) {
+      $("playbookText").value = res.playbook || "";
+      autoGrowEditor($("playbookText"));
+    }
   }).catch(function (e) { console.error(e); });
+}
+// FB-0222, re-filed. Round 62 registered a save bar for the playbook and it
+// could never once have appeared, because the page it was measuring does not
+// scroll: 7,700 characters of playbook were being edited through a fixed
+// sixteen-row box with its own inner scrollbar, so the page around it stayed
+// exactly one screen tall and the bar's "has this been scrolled past" test
+// was asking a question the page could never answer yes to.
+//
+// So the box grows to its content. The editing surface really is long now,
+// the page really does scroll, and the existing bar does the rest. A textarea
+// with no height while it is hidden measures zero, so this is called again
+// when the section is shown rather than only when the text arrives.
+function autoGrowEditor(el) {
+  if (!el || !el.offsetParent) return;
+  el.style.height = "auto";
+  el.style.height = Math.max(el.scrollHeight + 4, 220) + "px";
+  scheduleSaveBar();
 }
 function savePlaybook() {
   apiPost({ action: "savePlaybook", playbook: $("playbookText").value }).then(function (res) {
