@@ -463,6 +463,25 @@
      never hidden behind it, whatever else is on screen (Charly, 31 Jul). */
   .submit-row { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0; z-index: 65; box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.45); }
 
+  /* Round 62, Edd FB-0222: on a long editing pane the save button follows you
+     down. It only appears once the pane it belongs to is actually on screen
+     and its own button is not, so a short pane never grows a bar it does not
+     need, and reaching the real button puts the bar away again. The log form
+     already had this: .submit-row above has been sticky since the form got
+     long, which is why it is not in the list of panes this covers. */
+  .savebar {
+    position: fixed; z-index: 70; display: none; box-sizing: border-box;
+    background: var(--surface); border-top: 1px solid var(--line);
+    box-shadow: 0 -8px 16px -10px rgba(0,0,0,0.6);
+    padding: 10px 20px; align-items: center; gap: 12px;
+  }
+  .savebar.on { display: flex; }
+  .savebar .savebar-what { color: var(--muted); font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Clearance, never less than there was: the bar adds its own room rather
+     than sitting on top of the last thing on the page (the Round 49 fix). */
+  body.savebar-drawer .drawer { padding-bottom: 80px; }
+  body.savebar-page #shellMain { padding-bottom: 80px; }
+
   /* Actions tab: one card per thing an instructor needs to do */
   /* Compact one-line rows (Edd, 26 Jul): status in a word, the issue in a
      line, the action in a few words. Everything else waits behind a click. */
@@ -817,9 +836,8 @@
       </div>
 
       <div class="field">
-        <label>Attach screenshots</label>
+        <label>Attach screenshots<span class="helphost" data-help="Up to 5 images, 5 MB each. JPG, PNG, GIF, or WebP."></span></label>
         <input type="file" id="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple onchange="onFilesPicked(event)" />
-        <span class="helphost" data-help="Up to 5 images, 5 MB each. JPG, PNG, GIF, or WebP."></span>
         <div class="thumbs" id="thumbs"></div>
       </div>
 
@@ -853,13 +871,12 @@
            what's inside, so nothing is hidden, it's just not all shouting at
            once (Edd, FB-0133). -->
       <div class="field" id="field_category">
-        <label>Category (auto-detected, change if wrong)</label>
+        <label>Category (auto-detected, change if wrong)<span class="helphost" data-help="Tech issues don't need a lesson: login, account, progress, and formatting problems all go here, and the course fields can stay blank."></span></label>
         <select id="f_category" onchange="onCategoryChange()">
           <option value="course_error">Course error - wrong or confusing lesson content</option>
           <option value="tech_issue">Tech issue - login, access, progress, formatting, or anything not about lesson content</option>
           <option value="shipping">Shipping - a pack, chart or almanac that hasn't arrived, or arrived wrong</option>
         </select>
-        <span class="helphost" data-help="Tech issues don't need a lesson: login, account, progress, and formatting problems all go here, and the course fields can stay blank."></span>
       </div>
 
       <div class="field"><label>Summary</label><textarea id="f_summary" rows="2"></textarea></div>
@@ -879,18 +896,16 @@
       <details class="fgroup" id="grp_parcel">
         <summary>The parcel <span class="gsum" id="gsum_parcel"></span></summary>
         <div class="field hidden" id="field_shipping">
-          <label>The consignment</label>
+          <label>The consignment<span class="helphost" data-help="The tracking number is what joins the threads. Paste a second or third email about the same parcel and it folds into the existing issue instead of starting a new one."></span></label>
           <div class="row" style="gap:8px;">
             <select id="f_courier" style="max-width:170px;"></select>
             <input id="f_tracking_number" placeholder="Tracking number" autocomplete="off" oninput="checkTracking()" style="flex:1;min-width:0;text-transform:uppercase;" />
           </div>
-          <span class="helphost" data-help="The tracking number is what joins the threads. Paste a second or third email about the same parcel and it folds into the existing issue instead of starting a new one."></span>
           <div class="small" id="trackingMatch" style="margin-top:4px;"></div>
         </div>
         <div class="field hidden" id="field_chase">
-          <label>Chase it on</label>
+          <label>Chase it on<span class="helphost" data-help="Left blank it defaults to three days. You get a Slack nudge on the day, and the date clears once it fires."></span></label>
           <input id="f_chase_at" type="date" />
-          <span class="helphost" data-help="Left blank it defaults to three days. You get a Slack nudge on the day, and the date clears once it fires."></span>
         </div>
       </details>
 
@@ -981,9 +996,8 @@
           </select>
         </div>
         <div class="field" id="field_priority_reason">
-          <label>Priority reason</label>
+          <label>Priority reason<span class="helphost" data-help="Written by the extraction. It's here if it needs correcting, but it doesn't need reading every time."></span></label>
           <input id="f_priority_reason" name="ait-priority-note" autocomplete="off" />
-          <span class="helphost" data-help="Written by the extraction. It's here if it needs correcting, but it doesn't need reading every time."></span>
         </div>
         <div class="field" id="field_impact">
           <label>Impact of this improvement</label>
@@ -1001,10 +1015,10 @@
       <details class="fgroup" id="grp_outcome">
         <summary>Where did this end up? <span class="gsum" id="gsum_outcome">optional</span></summary>
         <div class="field">
+          <label>What happened after the conversation<span class="helphost" data-help="For anything that happened after the pasted conversation. It's saved into the issue's record."></span></label>
           <textarea id="f_outcome" rows="2" placeholder="e.g. Could not fix over chat, raised with the devs; student has a workaround for now."></textarea>
           <div style="margin-top:4px;">
             <button type="button" class="ghost small" id="outcomeSuggestBtn" style="padding:3px 10px;" onclick="useOutcomeSuggestion()">Use suggested text</button>
-            <span class="helphost" data-help="For anything that happened after the pasted conversation. It's saved into the issue's record."></span>
           </div>
         </div>
       </details>
@@ -1012,8 +1026,7 @@
       <div id="sortedRow" class="field hidden" style="margin-top:6px;">
         <label style="display:inline;font-size:13px;color:var(--text);">
           <input type="checkbox" id="f_student_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;">
-          This student needs no further contact</label>
-        <div class="small muted" style="margin-top:4px;">For when we've worked round it by hand and they have what they need. The issue stays open for the developers, we just stop chasing this student about it.</div>
+          This student needs no further contact</label><span class="helphost" data-help="For when we've worked round it by hand and they have what they need. The issue stays open for the developers, we just stop chasing this student about it."></span>
       </div>
 
       <div class="row submit-row" style="margin-top:6px;">
@@ -1021,7 +1034,7 @@
         <button class="ghost" id="submitResolvedBtn" onclick="submitResolved()">Submit and resolve</button>
         <button class="ghost" id="submitParkedBtn" onclick="submitParked()">Submit and park</button>
         <button class="ghost" id="resetBtn" onclick="resetForm()">Clear / new</button>
-        <button class="ghost" id="deleteBtn" onclick="deleteFromForm()" style="display:none;color:var(--high);">Delete</button>
+        <button class="ghost" id="deleteBtn" onclick="deleteFromForm()" style="display:none;color:var(--high);" title="Takes the whole entry off the log for good">Delete this issue</button>
       </div>
       <div id="editingNote" class="small muted hidden" style="margin-top:8px;"></div>
       </div><!-- /detailsSection -->
@@ -1304,7 +1317,7 @@
     <h2>Troubleshooting playbook</h2>
     <p class="small muted">The rulebook the AI uses to suggest steps to instructors. Edit it directly here, or approve the suggestions above to add to it.</p>
     <div class="field"><textarea id="playbookText" rows="16" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;"></textarea></div>
-    <button class="primary" onclick="savePlaybook()">Save playbook</button>
+    <button class="primary savebar-btn" onclick="savePlaybook()">Save playbook</button>
   </div>
   </div>
 </div>
@@ -1553,7 +1566,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r61 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r62 · 2026-08-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1678,7 +1691,11 @@ var state = {
   devSize: "all",             // all | small | medium | large | unsized
   devSearch: "",              // developers view: free-text search, same fields as Track (Edd, FB-0205)
   courseFilter: "todo",       // course fixes view: todo / fixed / all
-  courseBulkKind: "kc",       // bulk assign: which kind of fix ("assign all X...")
+  // Bulk assign (Edd, FB-0224): a list of conditions rather than one kind, so
+  // "all Day Skipper knowledge checks" can be said in one go. Each row is
+  // { join: "and" | "or", field: <key in COURSE_BULK_FIELDS>, value: "" }, an
+  // empty value meaning "any". Row one's join is ignored.
+  courseBulkConds: [{ join: "and", field: "type", value: "kc" }],
   courseBulkWho: "",          // bulk assign: ...to whom
   courseReview: null,         // last AI review result: { reviewed, suggestions: [...] }
   anaArea: "all",             // analytics view area filter
@@ -2205,6 +2222,7 @@ function shortId(i) {
 function init() {
   initPressFeedback();
   mountHelpDots();
+  scheduleSaveBar();
   var cs = $("f_courier");
   if (cs) cs.innerHTML = COURIERS.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("");
   updateThemeBtn();
@@ -2354,6 +2372,98 @@ function positionViewAsBar() {
 }
 window.addEventListener("scroll", scheduleViewAsLift, true);
 window.addEventListener("resize", scheduleViewAsLift);
+
+// ---- the travelling save button (Edd, FB-0222) ----------------------------
+// Edd: "maybe the save changes button should just be a sticky save changes
+// button along the bottom of the screen? Only revealed once they reach that
+// far down the screen but then carried down?"
+//
+// One bar, one rule, and every pane that wants it says so here. A pane
+// qualifies when three things are true at once: it can actually be scrolled,
+// the pane itself is on screen (so we have "reached that far down"), and its
+// own save button is not in view. That last one is what keeps the bar off a
+// short pane, and what puts it away again the moment the real button appears.
+var SAVE_BARS = [
+  { btn: "#drawer .savebar-btn", surface: "#drawer", scroller: "#drawer", label: "Save changes", what: "this issue" },
+  { btn: "#usec_playbook .savebar-btn", surface: "#usec_playbook .card", scroller: null, label: "Save playbook", what: "the troubleshooting playbook" }
+];
+var SAVE_BAR_MIN_SCROLL = 200;   // below this the pane is short enough to leave alone
+var SAVE_BAR_H = 58;             // a button hiding behind the bar counts as hidden
+
+// The phone rail is a 60px bottom bar, so a page-level save bar sits on top of
+// it rather than under it. The drawer covers the rail on a phone, so a bar
+// belonging to the drawer does not need the lift.
+function saveBarFloor() {
+  var rail = $("rail");
+  if (!rail || !document.body.classList.contains("shell")) return 0;
+  return rail.getBoundingClientRect().top > 0 && window.innerWidth <= 760 ? 60 : 0;
+}
+
+function saveBarPick() {
+  for (var k = 0; k < SAVE_BARS.length; k++) {
+    var spec = SAVE_BARS[k];
+    var btn = document.querySelector(spec.btn);
+    if (!btn || !btn.offsetParent) continue;
+    var surface = document.querySelector(spec.surface);
+    if (!surface) continue;
+    var sc = spec.scroller ? document.querySelector(spec.scroller) : null;
+    var top, bottom, left, right, floor;
+    if (sc) {
+      if (sc.scrollHeight - sc.clientHeight < SAVE_BAR_MIN_SCROLL) continue;
+      var r = sc.getBoundingClientRect();
+      top = r.top; bottom = r.bottom; left = r.left; right = r.right;
+      floor = Math.max(saveBarFloor(), Math.round(window.innerHeight - r.bottom));
+      if (bottom >= window.innerHeight - 1) floor = 0;   // it covers the rail, so sit on the floor
+    } else {
+      if (document.documentElement.scrollHeight - window.innerHeight < SAVE_BAR_MIN_SCROLL) continue;
+      var railEl = $("rail");
+      var railW = (railEl && document.body.classList.contains("shell") && window.innerWidth > 760)
+        ? railEl.getBoundingClientRect().width : 0;
+      top = 0; bottom = window.innerHeight; left = railW; right = window.innerWidth;
+      floor = saveBarFloor();
+    }
+    var b = btn.getBoundingClientRect();
+    if (b.bottom > top && b.top < bottom - floor - SAVE_BAR_H) continue;   // the real button is there to be pressed
+    var sr = surface.getBoundingClientRect();
+    if (sr.top > bottom - 80 || sr.bottom < top + 80) continue;            // not at this pane yet, or past it
+    return { spec: spec, btn: btn, left: left, width: right - left, floor: floor, page: !sc };
+  }
+  return null;
+}
+
+function saveBarApply() {
+  var bar = $("saveBar");
+  if (!bar) return;
+  var pick = saveBarPick();
+  if (!pick) {
+    bar.classList.remove("on");
+    state._saveBarBtn = null;
+    document.body.classList.remove("savebar-drawer", "savebar-page");
+    return;
+  }
+  state._saveBarBtn = pick.btn;
+  $("saveBarBtn").textContent = pick.spec.label;
+  $("saveBarWhat").textContent = pick.spec.what || "";
+  bar.style.left = pick.left + "px";
+  bar.style.width = pick.width + "px";
+  bar.style.bottom = pick.floor + "px";
+  bar.classList.add("on");
+  document.body.classList.toggle("savebar-page", !!pick.page);
+  document.body.classList.toggle("savebar-drawer", !pick.page);
+}
+// It presses the real button, so there is one save path and not two.
+function saveBarGo() {
+  var btn = state._saveBarBtn;
+  if (btn) btn.click();
+}
+var saveBarQueued = false;
+function scheduleSaveBar() {
+  if (saveBarQueued) return;
+  saveBarQueued = true;
+  requestAnimationFrame(function () { saveBarQueued = false; saveBarApply(); });
+}
+window.addEventListener("scroll", scheduleSaveBar, true);
+window.addEventListener("resize", scheduleSaveBar);
 
 // Show only the pages this user has permission for, and land them on the first.
 function applyPerms(user) {
@@ -3526,6 +3636,7 @@ function setView(v) {
   if (v === "course") renderCourse();
   if (v === "users") renderUsers();
   updateRail();
+  scheduleSaveBar();   // the pane the save bar belonged to may have just gone
 }
 
 // ===================== ROUND 60: ONE DASHBOARD =====================
@@ -6551,20 +6662,24 @@ function openDetail(issue) {
     '</div>' +
     (issue.resolved_at ? '<div class="small muted" style="margin-bottom:10px;">Resolved at ' + fmtDate(issue.resolved_at) + '</div>' : '');
 
-  // One row for the two ticks (Edd, FB-0171).
-  sideCol += '<div class="field" style="margin-top:12px;display:flex;gap:20px;flex-wrap:wrap;align-items:center;">' +
-    '<label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
-    (String(issue.notified_students) === "true" ? " checked" : "") + '> Students notified</label>' +
-    '<label style="display:inline;"><input type="checkbox" id="d_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
-    (isTrue(issue.student_sorted) ? " checked" : "") + '> Student needs no further contact</label></div>' +
-    // FB-0213. Edd: "what exactly happens if we press student notified? Sorted
-    // is explained..." So it gets the same one line, saying plainly what it
-    // changes and what it does not. Both stay on screen rather than behind a ?
-    // - the FB-0210 rule is that guidance which stops a mistake stays visible,
-    // and these two both look like they close an issue and neither does.
-    '<div class="small muted" style="margin-top:3px;">"Notified" ticks off the tell-the-student job and drops this out of the Actions list. It doesn\'t resolve the fault.</div>' +
-    '<div class="small muted" style="margin-top:2px;">"No further contact" stops us chasing this one student. The fault stays open for ' +
-      (catOf(issue) === "course_error" ? 'the course team' : 'the developers') + '.</div>';
+  // One row for the two ticks (Edd, FB-0171), each with its own ? (FB-0220).
+  // FB-0213 wrote the two explainers and they are word for word the same here.
+  // They were left on screen under the FB-0210 rule (guidance that stops a
+  // mistake stays visible); Edd has since asked for them behind a dot, so the
+  // words are one tap away instead of always sitting under the ticks.
+  sideCol += '<div class="field" style="margin-top:12px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">' +
+    '<div style="flex:1 1 240px;min-width:0;">' +
+      '<label style="display:inline;"><input type="checkbox" id="d_notified" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
+      (String(issue.notified_students) === "true" ? " checked" : "") + '> Students notified</label>' +
+      helpDot("dnotified", '"Notified" ticks off the tell-the-student job and drops this out of the Actions list. It doesn\'t resolve the fault.') +
+    '</div>' +
+    '<div style="flex:1 1 240px;min-width:0;">' +
+      '<label style="display:inline;"><input type="checkbox" id="d_sorted" style="width:auto;margin-right:6px;vertical-align:-1px;"' +
+      (isTrue(issue.student_sorted) ? " checked" : "") + '> Student needs no further contact</label>' +
+      helpDot("dsorted", '"No further contact" stops us chasing this one student. The fault stays open for ' +
+        (catOf(issue) === "course_error" ? 'the course team' : 'the developers') + '.') +
+    '</div>' +
+  '</div>';
 
   // Full reports/updates text and screenshots, kept at the bottom for reference.
   if (reps.length) {
@@ -6607,9 +6722,9 @@ function openDetail(issue) {
     '</details>';
 
   sideCol += '<div class="row" style="margin-top:10px;">' +
-    '<button class="primary" onclick="saveDetail()">Save changes</button>' +
-    '<button class="ghost" onclick="editInForm(\'' + esc(issue.issue_id) + '\')">Open in form</button>' +
-    (canDelete(issue) ? '<button class="ghost" style="color:var(--high);" onclick="deleteIssueAction(\'' + esc(issue.issue_id) + '\')">Delete</button>' : '') +
+    '<button class="primary savebar-btn" onclick="saveDetail()">Save changes</button>' +
+    '<button class="ghost" title="Open this report back in the log form, where the text, the course and lesson, the category and the screenshots can be corrected. Saving there updates this issue, it does not make a new one." onclick="editInForm(\'' + esc(issue.issue_id) + '\')">Edit the report</button>' +
+    (canDelete(issue) ? '<button class="ghost" style="color:var(--high);" title="Takes the whole entry off the log for good" onclick="deleteIssueAction(\'' + esc(issue.issue_id) + '\')">Delete this issue</button>' : '') +
   '</div>';
 
   // One column now (Edd, FB-0159): the act controls sit in a neat card up top,
@@ -6661,6 +6776,7 @@ function presentDetail(kind) {
     $("overlay").classList.add("show");
   }
   markActiveCard();
+  scheduleSaveBar();
 }
 function closeSplit() {
   ["adminSplitHost", "devSplitHost", "courseSplitHost", "actionsSplitHost"].forEach(function (id) {
@@ -6749,6 +6865,7 @@ function closeDetail() {
   closeSplit();
   state.detailId = null;
   markActiveCard();
+  scheduleSaveBar();
 }
 
 // The resolution note, wherever it currently lives. One box does both jobs
@@ -6822,8 +6939,30 @@ function viewAllOnLesson(code) {
 
 function editInForm(id) { closeDetail(); openIssueById(id, true); }
 
+// What Delete actually removes, said plainly before it happens (Edd, FB-0221).
+// It is the whole spreadsheet row: every report merged into this one, every
+// update, the checklist, the resolution note and the developer handoff. The
+// screenshots themselves stay in Drive, the links to them do not. There is no
+// bin and no undo, which is exactly why the confirm counts things out.
+function deleteConfirmText(i) {
+  var n = 0;
+  try { n = parseReports(i).length; } catch (e) { n = 0; }
+  var imgs = parseImageUrls(i.image_urls).length;
+  var bits = ["Delete this issue for good?", ""];
+  bits.push("This takes the whole entry off the log: " +
+    (n > 1 ? "all " + n + " reports rolled into it" : "the report") +
+    ", every update, the checklist, the resolution note, and anything the developers have added.");
+  if (imgs) bits.push(imgs === 1
+    ? "The screenshot stays in Drive, the link to it goes."
+    : "The " + imgs + " screenshots stay in Drive, the links to them go.");
+  bits.push("");
+  bits.push("Nobody is contacted and no student record changes. There is no bin to fetch it back from, so this cannot be undone.");
+  return bits.join("\n");
+}
+
 function deleteIssueAction(id) {
-  if (!window.confirm("Delete this issue permanently? This cannot be undone.")) return;
+  var issue = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
+  if (!window.confirm(deleteConfirmText(issue))) return;
   apiPost({ action: "deleteIssue", issue_id: id }).then(function (res) {
     if (!res || !res.ok) { toast("Delete failed: " + ((res && res.error) || "unknown")); return; }
     toast("Issue deleted.");
@@ -7413,39 +7552,197 @@ function renderCourse() {
 // The queue tools (Edd, FB-0165): an AI pass over the priorities, and "assign
 // all X to Y" so a batch of knowledge checks or videos can land on one person
 // in one go rather than click-by-click.
+// ---- bulk assign: the conditions (Edd, FB-0224) ---------------------------
+// Each field knows its own words and its own test, so the rest of the builder
+// never has to know what a knowledge check is. The tests are the ones the
+// single dropdown used before: knowledge checks and module assessments come
+// out of the lesson-code suffix (refType), video and text out of the
+// media_kind column, so nothing that used to match stops matching.
+var COURSE_BULK_FIELDS = {
+  type: {
+    label: "item type",
+    opts: [["kc", "a knowledge check"], ["ma", "a module assessment"], ["lesson", "a lesson slide"],
+           ["video", "a video"], ["text", "text, a diagram or a quiz"], ["other", "anything else"]],
+    match: function (i, v) {
+      if (v === "kc" || v === "ma" || v === "lesson") return refType(i) === v;
+      var m = String(i.media_kind || "").toLowerCase();
+      if (v === "video" || v === "text") return m === v;
+      return m !== "video" && m !== "text";
+    }
+  },
+  course: {
+    label: "course",
+    opts: function (pool) {
+      // The canonical six first so they are always offerable, then anything
+      // else the queue actually holds (General / all courses, mostly).
+      var canon = ["Essential Navigation", "Day Skipper", "Yachtmaster", "Fast Track", "SRC", "PPR"];
+      var extra = courseUniq(pool, function (i) { return courseOf(i); })
+        .filter(function (c) { return canon.indexOf(c) < 0; });
+      return canon.concat(extra).map(function (c) { return [c, c]; });
+    },
+    match: function (i, v) { return courseOf(i) === v; }
+  },
+  kind: {
+    label: "request kind",
+    opts: [["fix", "a fix"], ["improvement", "an improvement"]],
+    match: function (i, v) { return kindOf(i) === v; }
+  },
+  priority: {
+    label: "priority",
+    opts: [["high", "high"], ["medium", "medium"], ["low", "low"]],
+    match: function (i, v) { return String(i.priority || "").toLowerCase() === v; }
+  },
+  section: {
+    label: "section",
+    opts: [["course_player", "the course player"], ["website", "the website"], ["instructor_portal", "the instructor portal"],
+           ["partner_portal", "the partner portal"], ["app", "the app"], ["other", "another section"], ["__none__", "not set"]],
+    match: function (i, v) {
+      var sec = String(i.section || "").toLowerCase();
+      return v === "__none__" ? !sec : sec === v;
+    }
+  },
+  assigned: {
+    label: "assigned to",
+    opts: [["__none__", "nobody yet"], ["__any__", "somebody already"]],
+    match: function (i, v) {
+      var a = String(i.assignee || "").trim();
+      return v === "__none__" ? !a : !!a;
+    },
+    phrase: function (v) { return v === "__none__" ? "nobody has it yet" : "somebody already has it"; }
+  }
+};
+var COURSE_BULK_FIELD_ORDER = ["type", "course", "kind", "priority", "section", "assigned"];
+
+function courseBulkOpts(key, pool) {
+  var f = COURSE_BULK_FIELDS[key];
+  if (!f) return [];
+  return typeof f.opts === "function" ? f.opts(pool || courseQueueAll()) : f.opts;
+}
+function courseBulkLabelFor(key, value) {
+  var opts = courseBulkOpts(key);
+  for (var i = 0; i < opts.length; i++) if (opts[i][0] === value) return opts[i][1];
+  return value;
+}
+
+// Straight left to right, no brackets and no precedence: "A and B or C" reads
+// the way it is written. A condition with no value chosen matches everything,
+// so a half-built row never silently empties the list.
+function courseBulkMatches(issue, conds) {
+  var out = null;
+  for (var k = 0; k < conds.length; k++) {
+    var c = conds[k], f = COURSE_BULK_FIELDS[c.field];
+    var m = (!f || !c.value) ? true : !!f.match(issue, c.value);
+    if (out === null) out = m;
+    else out = (c.join === "or") ? (out || m) : (out && m);
+  }
+  return out === null ? true : out;
+}
+
+// Every open course fix the conditions catch. Worked out client side over the
+// list we already hold (Round 54); the only thing that goes to the server is
+// the write itself.
+function courseBulkTargets(conds) {
+  conds = conds || state.courseBulkConds || [];
+  return courseQueueAll().filter(function (i) { return courseIsTodo(i.status); })
+    .filter(function (i) { return courseBulkMatches(i, conds); });
+}
+
+// "item type is a knowledge check, and course is Day Skipper" - the same
+// sentence on the count line and in the confirm, so what is about to happen is
+// said twice in the same words.
+function courseBulkSentence(conds) {
+  var parts = [];
+  (conds || []).forEach(function (c) {
+    if (!c.value || !COURSE_BULK_FIELDS[c.field]) return;
+    var f = COURSE_BULK_FIELDS[c.field];
+    var words = f.phrase ? f.phrase(c.value) : (f.label + " is " + courseBulkLabelFor(c.field, c.value));
+    parts.push(parts.length ? (c.join === "or" ? "or " : "and ") + words : words);
+  });
+  return parts.length ? parts.join(", ") : "everything still to do";
+}
+
+function courseCondSet(idx, key, value) {
+  var c = state.courseBulkConds[idx];
+  if (!c) return;
+  if (key === "field" && c.field !== value) c.value = "";   // the old field's value means nothing to the new one
+  c[key] = value;
+  renderCourseTools();
+}
+function courseCondAdd() {
+  // Opens on a field the rows above are not already using, so the second box
+  // is useful the moment it appears.
+  var used = state.courseBulkConds.map(function (c) { return c.field; });
+  var next = COURSE_BULK_FIELD_ORDER.filter(function (f) { return used.indexOf(f) < 0; })[0] || "course";
+  state.courseBulkConds.push({ join: "and", field: next, value: "" });
+  renderCourseTools();
+}
+function courseCondRemove(idx) {
+  state.courseBulkConds.splice(idx, 1);
+  if (!state.courseBulkConds.length) state.courseBulkConds = [{ join: "and", field: "type", value: "" }];
+  renderCourseTools();
+}
+
 function renderCourseTools() {
   var whos = (state.assignees || []).filter(function (a) { return a.course; }).map(function (a) { return a.name; });
-  var kindOpts = [["kc", "knowledge checks"], ["ma", "module assessments"], ["video", "video fixes"], ["text", "text fixes"], ["todo", "everything to do"]];
-  var kindSel = '<select onchange="state.courseBulkKind=this.value" style="min-width:150px;padding:7px 8px;">' +
-    kindOpts.map(function (o) { return '<option value="' + o[0] + '"' + (state.courseBulkKind === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") + '</select>';
-  var whoSel = '<select onchange="state.courseBulkWho=this.value" style="min-width:130px;padding:7px 8px;">' +
-    '<option value=""' + (state.courseBulkWho ? "" : " selected") + '>choose a person…</option>' +
-    whos.map(function (w) { return '<option value="' + esc(w) + '"' + (state.courseBulkWho === w ? " selected" : "") + '>' + esc(w) + '</option>'; }).join("") + '</select>';
+  var pool = courseQueueAll();
+  var conds = state.courseBulkConds;
+
+  var sel = function (attrs, opts, cur, blank) {
+    return '<select ' + attrs + ' style="padding:7px 8px;">' +
+      (blank ? '<option value=""' + (cur ? "" : " selected") + '>' + esc(blank) + '</option>' : "") +
+      opts.map(function (o) {
+        return '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>';
+      }).join("") + '</select>';
+  };
+  var fieldOpts = COURSE_BULK_FIELD_ORDER.map(function (k) { return [k, COURSE_BULK_FIELDS[k].label]; });
+
+  // One horizontal row (Edd, FB-0223): assign all ... to ... on a single line,
+  // with any extra conditions stacking underneath rather than stringing along.
+  var condRow = function (c, idx) {
+    var join = idx === 0
+      ? '<span class="small muted" style="white-space:nowrap;">Assign all</span>'
+      : sel('onchange="courseCondSet(' + idx + ',\'join\',this.value)"', [["and", "and is"], ["or", "or is"]], c.join);
+    return '<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:' + (idx ? "6px" : "0") + ';">' +
+      '<span style="flex:none;">' + join + '</span>' +
+      '<span style="flex:none;">' + sel('onchange="courseCondSet(' + idx + ',\'field\',this.value)"', fieldOpts, c.field) + '</span>' +
+      '<span style="flex:none;">' + sel('onchange="courseCondSet(' + idx + ',\'value\',this.value)"', courseBulkOpts(c.field, pool), c.value, "any") + '</span>' +
+      (idx === 0
+        ? '<button class="ghost small" style="flex:none;padding:5px 12px;font-weight:700;" title="Add another condition" onclick="courseCondAdd()">+</button>'
+        : '<button class="ghost small" style="flex:none;padding:5px 12px;" title="Drop this condition" onclick="courseCondRemove(' + idx + ')">×</button>') +
+      (idx === 0
+        ? '<span class="small muted" style="flex:none;margin:0 2px;">to</span>' +
+          '<span style="flex:none;">' + sel('onchange="state.courseBulkWho=this.value;renderCourseTools()"', whos.map(function (w) { return [w, w]; }), state.courseBulkWho, "choose a person…") + '</span>' +
+          '<button class="ghost small" style="flex:none;padding:7px 14px;" onclick="courseBulkAssign()">Assign</button>'
+        : "") +
+    '</div>';
+  };
+
+  // The count is on screen before the button is pressed, and it counts the
+  // same list the assign will write to.
+  var live = conds.filter(function (c, k) { return k && c.value; });
+  var mixed = live.some(function (c) { return c.join === "or"; }) && live.some(function (c) { return c.join === "and"; });
+  var n = courseBulkTargets(conds).length;
 
   $("courseTools").innerHTML =
     '<button class="ghost small" style="padding:7px 14px;" onclick="courseReviewRun()">AI review: check the priorities</button>' +
     '<button class="ghost small" style="padding:7px 14px;" onclick="runConfusionReview()" title="Any lesson with 3+ open student-confusion reports gets a drafted content tweak to accept or dismiss">Confusion hotspots: draft content tweaks</button>' +
-    '<span class="small muted" style="margin:0 2px 0 14px;">Assign all</span>' + kindSel +
-    '<span class="small muted" style="margin:0 2px;">to</span>' + whoSel +
-    '<button class="ghost small" style="padding:7px 14px;" onclick="courseBulkAssign()">Assign</button>';
-}
-
-// Which open fixes a bulk-assign kind covers. Knowledge checks and module
-// assessments live in the lesson-code suffix (refType); video and text are the
-// media_kind column; "todo" is the whole open queue.
-function courseBulkTargets(kind) {
-  var pool = courseQueueAll().filter(function (i) { return courseIsTodo(i.status); });
-  if (kind === "kc" || kind === "ma") return pool.filter(function (i) { return refType(i) === kind; });
-  if (kind === "video" || kind === "text") return pool.filter(function (i) { return String(i.media_kind || "").toLowerCase() === kind; });
-  return pool;
+    '<div style="flex:1 1 100%;border-top:1px solid var(--line);margin-top:4px;padding-top:10px;">' +
+      conds.map(condRow).join("") +
+      '<div class="small muted" style="margin-top:7px;">' +
+        '<strong style="color:var(--text);">' + n + '</strong> open course fix' + (n === 1 ? "" : "es") + ' match: ' + esc(courseBulkSentence(conds)) + '.' +
+        (mixed ? ' <span style="opacity:0.85;">Read left to right.</span>' : '') +
+      '</div>' +
+    '</div>';
 }
 
 function courseBulkAssign() {
   var who = state.courseBulkWho;
   if (!who) { toast("Choose who to assign them to first."); return; }
-  var targets = courseBulkTargets(state.courseBulkKind);
-  if (!targets.length) { toast("Nothing in the open queue matches that kind."); return; }
-  if (!confirm("Assign " + targets.length + " open fix" + (targets.length === 1 ? "" : "es") + " to " + who + "?")) return;
+  var targets = courseBulkTargets();
+  if (!targets.length) { toast("Nothing in the open queue matches those conditions."); return; }
+  if (!confirm("Assign " + targets.length + " open course fix" + (targets.length === 1 ? "" : "es") + " to " + who + "?\n\n" +
+    "Every one still to do where " + courseBulkSentence(state.courseBulkConds) + ".\n\n" +
+    "Anything already assigned to somebody else moves across to " + who + ".")) return;
   busyShow("Assigning " + targets.length + " to " + who + "…");
   apiPost({ action: "bulkAssign", issue_ids: targets.map(function (i) { return i.issue_id; }), assignee: who }).then(function (res) {
     busyHide();
@@ -8800,6 +9097,13 @@ init();
 </script>
 <!-- Busy overlay (Edd, FB-0169): a proper can't-miss "working on it" while a
      slow call runs, instead of a small toast in the corner. -->
+<!-- The travelling save button (Edd, FB-0222). One bar, moved and relabelled
+     for whichever pane is asking; see SAVE_BARS. -->
+<div class="savebar" id="saveBar">
+  <button class="primary" id="saveBarBtn" onclick="saveBarGo()">Save changes</button>
+  <span class="savebar-what" id="saveBarWhat"></span>
+</div>
+
 <div id="busyOverlay" style="display:none;position:fixed;inset:0;background:rgba(2,10,20,0.65);z-index:300;align-items:center;justify-content:center;">
   <div style="background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:24px 34px;text-align:center;">
     <span class="spinner" style="width:26px;height:26px;border-width:3px;"></span>
