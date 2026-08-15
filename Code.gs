@@ -383,6 +383,7 @@ function doPost(e) {
     if (action === 'adminResetLink') return jsonOut(adminResetLink_(body));
     if (action === 'savePlaybook') return jsonOut(savePlaybook_(body));
     if (action === 'resolvePlaybookSuggestion') return jsonOut(resolvePlaybookSuggestion_(body));
+    if (action === 'suggestPlaybook') return jsonOut(suggestPlaybook_(body));
     if (action === 'addFeedback') return jsonOut(addFeedback_(body));
     if (action === 'updateFeedback') return jsonOut(updateFeedback_(body));
     if (action === 'deleteFeedback') return jsonOut(deleteFeedback_(body));
@@ -507,7 +508,7 @@ function reqPerm_(action) {
     // Confusion -> content-tweak suggestions sit with anyone who works a queue.
     case 'listContentSuggestions': case 'resolveContentSuggestion': case 'runConfusionReview': return 'work';
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
-    case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':
+    case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion': case 'suggestPlaybook':
     case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
     // Available to any logged-in user: feedback and its screenshots, and
     // changing your own password. These used to ride on the old open default;
@@ -4189,6 +4190,24 @@ function addSuggestion_(s) {
 function getPlaybookEndpoint_() { return { ok: true, playbook: getPlaybook_() }; }
 function savePlaybook_(body) { setPlaybook_(body.playbook); return { ok: true }; }
 function listPlaybookSuggestions_() { return { ok: true, suggestions: getSuggestions_() }; }
+// Round 63. The playbook is never edited directly, it is Edd's document, so a
+// proposed wording change has to arrive in the same approve-or-reject queue the
+// learning path already feeds. Until now only the server could put something in
+// there, which meant a change spotted while building had nowhere to go except a
+// note in a file. Same admin permission as editing the playbook itself.
+function suggestPlaybook_(body) {
+  var text = String((body && body.suggestion) || '').trim();
+  if (!text) return { ok: false, error: 'Nothing suggested.' };
+  addSuggestion_({
+    id: Utilities.getUuid(),
+    issue_id: String((body && body.issue_id) || ''),
+    summary: String((body && body.summary) || ''),
+    suggestion: text.slice(0, 4000),
+    section: String((body && body.section) || ''),
+    created_at: new Date().toISOString()
+  });
+  return { ok: true };
+}
 function resolvePlaybookSuggestion_(body) {
   var arr = getSuggestions_();
   var kept = [];
