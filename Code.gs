@@ -186,7 +186,20 @@ var HEADERS = [
   // before this column existed, which reads as "work it out from the name and
   // contact" rather than as a no.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'student_involved'   // AV yes | no | '' (unknown, older rows)
+  'student_involved',  // AV yes | no | '' (unknown, older rows)
+  // Round 61. Who logged it, by account rather than by display name. Every
+  // ownership column we have (instructor_name, assignee, resolved_by) stores a
+  // name someone typed, so renaming a person in the Users sheet quietly orphans
+  // their history, and we already have a Charly and a Charlie. The email is the
+  // account's own key, stamped server-side from the session, so it cannot be
+  // spoofed or drift. Blank on every row logged before this column existed.
+  'instructor_email',  // AW
+  // Round 61. The Chatwoot contact id for the student on this issue. We were
+  // already fetching this on import and throwing it away, then searching our
+  // way back to it by email every time we needed it - and that search fell back
+  // to the first arbitrary result when nothing matched. This is the one stable
+  // student identifier we can actually get hold of, so we keep it.
+  'chatwoot_contact_id' // AX
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -394,6 +407,17 @@ var HASH_ROUNDS = 2000;
 // the token itself (token + "." + expiry-millis), so no extra column is needed;
 // a plain invite token with no "." is treated as non-expiring, as before.
 var RESET_TOKEN_MINUTES = 60;
+// Round 61: invite links now expire too. They used to be plain tokens with no
+// "." in them, which tokenExpired_ reads as "never expires" - so a months-old
+// invite email was still a live way into an account. Two weeks is long enough
+// for someone to get round to setting a password, short enough that a forwarded
+// or forgotten email stops being a key. An admin can always Resend.
+var INVITE_TOKEN_DAYS = 14;
+// An invite token in the same "<token>.<expiry-millis>" shape the reset links
+// already use, so tokenExpired_ handles both without knowing the difference.
+function newInviteToken_() {
+  return newToken_() + '.' + (Date.now() + INVITE_TOKEN_DAYS * 24 * 3600 * 1000);
+}
 
 function usersSheet_() { return sheetByName_(USERS_SHEET); }
 
@@ -435,6 +459,10 @@ function permsOf_(user) {
 }
 function hasPerm_(user, req) {
   if (req === 'any') return true;
+  // Round 61: the deny sentinel. reqPerm_ returns this for anything it does not
+  // recognise, so a new action wired into doPost without a matching case is shut
+  // rather than open. If a new action 403s, the fix is a case in reqPerm_.
+  if (req === 'none') return false;
   var p = permsOf_(user);
   if (req === 'devcourse') return !!(p.dev || p.course);
   // 'work' = anyone who actually works issues, so they can tick the checklist
@@ -481,11 +509,23 @@ function reqPerm_(action) {
     case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion':
     case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
-    // uploadImage and addFeedback are available to any logged-in user (feedback
-    // screenshots, etc.), handled by the default below.
+    // Available to any logged-in user: feedback and its screenshots, and
+    // changing your own password. These used to ride on the old open default;
+    // they are listed here now so the default can shut.
+    case 'uploadImage': case 'addFeedback': case 'changePassword': return 'any';
+    // deleteIssue also used to ride on the default. It has always checked
+    // ownership inside deleteIssue_ (your own, or the users permission), so this
+    // is the outer gate only: you have to be someone who works issues at all.
+    case 'deleteIssue': return 'work';
     case 'getIssues': case 'getIssuesList': case 'getIssue': case 'bootstrap':
     case 'getInstructors': case 'me': return 'any';
-    default: return 'any';
+    // Fail closed. Every action reaching this point is one nobody listed above,
+    // which means nobody decided who should be allowed to call it. The public
+    // and key-gated actions (login, acceptInvite, requestPasswordReset, ping,
+    // mirror, getInvite, getManifest, deployBackend, runSetup, setSlackWebhook,
+    // setChatwootConfig, runMigrateAudience, backtest) all return from doGet /
+    // doPost before this gate, so they are unaffected.
+    default: return 'none';
   }
 }
 function publicUser_(user) {
@@ -675,7 +715,7 @@ function inviteUser_(body) {
   if (!email || email.indexOf('@') < 0) return { ok: false, error: 'Enter a valid email.' };
   var perms = {};
   PERM_KEYS.forEach(function (k) { perms[k] = !!(body.perms && body.perms[k]); });
-  var token = newToken_();
+  var token = newInviteToken_();
   var existing = findUserByEmail_(email);
   if (existing) {
     setCell_(existing, 'name', body.name || existing.user.name || '');
@@ -728,7 +768,7 @@ function updateUser_(body) {
   }
   if (body.enable === true) setCell_(f, 'status', f.user.pass_hash ? 'active' : 'invited');
   if (body.resend === true) {
-    var token = newToken_();
+    var token = newInviteToken_();
     setCell_(f, 'invite_token', token);
     setCell_(f, 'status', 'invited');
     setCell_(f, 'pass_hash', '');
@@ -1205,6 +1245,9 @@ function recordToRow_(issue) {
 function addIssue_(data) {
   // The instructor is always the logged-in user, so it cannot be spoofed.
   if (data._user && data._user.name) data.instructor_name = data._user.name;
+  // The account behind that name, for the same reason (Round 61). The name is
+  // what we show; the email is what we can still join on in a year.
+  if (data._user && data._user.email) data.instructor_email = data._user.email;
   var now = new Date().toISOString();
   var category = (data.category || 'course_error').toLowerCase();
   // Legacy callers (and old saved drafts) may still send category 'internal'.
@@ -1221,6 +1264,7 @@ function addIssue_(data) {
     student_contact: data.student_contact || '',
     device_info: data.device_info || '',
     instructor_name: data.instructor_name || '',
+    instructor_email: data.instructor_email || '',
     summary: data.summary || '',
     priority: (data.priority || '').toLowerCase(),
     raw_text: data.raw_text || '',
@@ -1274,10 +1318,12 @@ function addIssue_(data) {
     submitted_at: now,
     updated_at: now,
     instructor_name: data.instructor_name || '',
+    instructor_email: data.instructor_email || '',
     category: category,
     raw_text: data.raw_text || '',
     student_name: data.student_name || '',
     student_contact: data.student_contact || '',
+    chatwoot_contact_id: String(data.chatwoot_contact_id || '').trim(),
     device_info: data.device_info || '',
     course: data.course || '',
     module: data.module || '',
@@ -2590,6 +2636,9 @@ function chatwootImport_(data) {
     conversation_id: id,
     student_name: sender.name || '',
     student_contact: sender.email || sender.phone_number || '',
+    // The contact id we just read anyway. Stable across a change of email or
+    // display name, which is more than either of the two fields above manage.
+    chatwoot_contact_id: sender.id ? String(sender.id) : '',
     transcript: lines.join('\n\n'),
     message_count: lines.length,
     images: savedImages,
@@ -4484,7 +4533,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r60 · 2026-08-15';
+var CODE_STAMP = 'r61 · 2026-08-15';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -5021,16 +5070,42 @@ function nextAction_(data) {
   };
 }
 
+// Find the Chatwoot contact for an email (Round 61).
+//
+// This used to end in "|| list[0]", so when the search turned up people but
+// none of them actually had that email, we opened whoever happened to be first.
+// A wrong contact and a right one looked identical from the outside, which is
+// the worst way for a lookup to fail. Now: an exact match wins; a single near
+// match is used but says so; several near matches with no exact one is a miss,
+// because picking between them is a guess and we should not be guessing about
+// which student we are looking at.
+function chatwootFindContact_(email) {
+  var out = chatwootCall_('/contacts/search?q=' + encodeURIComponent(email));
+  var list = (out && out.payload) || [];
+  var exact = list.filter(function (c) { return String(c.email || '').trim().toLowerCase() === email; })[0];
+  if (exact && exact.id) return { hit: exact, match: 'exact' };
+  if (list.length === 1 && list[0] && list[0].id) return { hit: list[0], match: 'near' };
+  return { hit: null, match: list.length ? 'ambiguous' : 'none' };
+}
+function contactMissMessage_(email, match) {
+  return match === 'ambiguous'
+    ? 'Chatwoot found several contacts for ' + email + ' but none with that exact email, so it is not safe to guess which one is the right student. Open Chatwoot and search by hand.'
+    : 'No Chatwoot contact matches ' + email + '.';
+}
+
 // ---- jump to a contact in Chatwoot (Edd, FB-0162) --------------------------
 function chatwootContactUrl_(data) {
+  var base = CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/contacts/';
+  // If the issue already carries the contact id, there is nothing to look up
+  // and nothing to get wrong (Round 61).
+  var known = String(data.contact_id || '').trim();
+  if (known) return { ok: true, url: base + known, match: 'id' };
   var email = String(data.email || '').trim().toLowerCase();
-  if (!email) return { ok: false, error: 'need an email' };
+  if (!email) return { ok: false, error: 'need an email or a contact id' };
   try {
-    var out = chatwootCall_('/contacts/search?q=' + encodeURIComponent(email));
-    var list = (out && out.payload) || [];
-    var hit = list.filter(function (c) { return String(c.email || '').toLowerCase() === email; })[0] || list[0];
-    if (!hit || !hit.id) return { ok: false, error: 'No Chatwoot contact matches ' + email };
-    return { ok: true, url: CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/contacts/' + hit.id };
+    var found = chatwootFindContact_(email);
+    if (!found.hit) return { ok: false, error: contactMissMessage_(email, found.match) };
+    return { ok: true, url: base + found.hit.id, match: found.match };
   } catch (e) { return { ok: false, error: String(e) }; }
 }
 
@@ -5063,13 +5138,20 @@ function fetchStudentUpdate_(data) {
   }
 
   // Contact, then their conversations.
-  var hit;
-  try {
-    var out = chatwootCall_('/contacts/search?q=' + encodeURIComponent(email));
-    var list = (out && out.payload) || [];
-    hit = list.filter(function (c) { return String(c.email || '').toLowerCase() === email; })[0] || list[0];
-  } catch (e) { return { ok: false, error: 'Chatwoot contact search failed: ' + String(e.message || e) }; }
-  if (!hit || !hit.id) return { ok: true, found: false, message: 'No Chatwoot contact matches ' + email + '.' };
+  // The stored contact id first: it is exact, and it costs no API call
+  // (Round 61). Only fall back to searching by email when we haven't got one.
+  var hit = null;
+  var stored = String(rec.chatwoot_contact_id || '').trim();
+  if (stored) {
+    hit = { id: stored };
+  } else {
+    var found;
+    try {
+      found = chatwootFindContact_(email);
+    } catch (e) { return { ok: false, error: 'Chatwoot contact search failed: ' + String(e.message || e) }; }
+    if (!found.hit) return { ok: true, found: false, message: contactMissMessage_(email, found.match) };
+    hit = found.hit;
+  }
 
   var convs;
   try {
@@ -6044,6 +6126,42 @@ function installTriggers() {
  * writes the header rows, and pre-populates the instructor names. Safe to run
  * again; it will not wipe existing rows.
  */
+// Round 61. Invite tokens made before this round have no expiry baked in, so
+// tokenExpired_ reads them as good forever - a year-old invite email is still a
+// way into an account. New ones carry an expiry (newInviteToken_), but the old
+// ones already sitting in the sheet have to be cleared by hand, and clearing one
+// is the only safe move: we cannot add an expiry to a token someone already has
+// in their inbox without changing it, which breaks their link anyway.
+//
+// So: any outstanding invite token with no expiry is wiped. Anyone caught by it
+// gets a fresh link from Resend on the Users page. Logs who, so there is a list
+// to work from rather than a silent change. Runs from setup(), and is safe to
+// run again - once they are cleared there is nothing left to find.
+function expireLegacyInviteTokens_() {
+  var sheet = usersSheet_();
+  if (!sheet) return [];
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var head = values[0]; var idx = {};
+  head.forEach(function (h, i) { idx[h] = i; });
+  if (idx['invite_token'] == null) return [];
+  var cleared = [];
+  for (var r = 1; r < values.length; r++) {
+    var tok = String(values[r][idx['invite_token']] || '');
+    // A dot means it already carries its own expiry, so leave it be.
+    if (!tok || tok.indexOf('.') > -1) continue;
+    sheet.getRange(r + 1, idx['invite_token'] + 1).setValue('');
+    cleared.push(String(values[r][idx['email']] || '(no email)'));
+  }
+  if (cleared.length) {
+    Logger.log('Round 61: cleared ' + cleared.length + ' invite link(s) that had no expiry. ' +
+      'These people need a fresh one via Resend on the Users page: ' + cleared.join(', '));
+  } else {
+    Logger.log('Round 61: no invite links without an expiry were outstanding.');
+  }
+  return cleared;
+}
+
 function setup() {
   var ss = ss_();
 
@@ -6107,7 +6225,7 @@ function setup() {
   // there is someone who can log in and invite the rest.
   if (!findUserByEmail_('ehewett@ardent-training.com')) {
     var allPerms = {}; PERM_KEYS.forEach(function (k) { allPerms[k] = true; });
-    var token = newToken_();
+    var token = newInviteToken_();
     var seed = {
       email: 'ehewett@ardent-training.com', name: 'Edd', status: 'invited',
       perms_json: JSON.stringify(allPerms), pass_hash: '', pass_salt: '',
@@ -6125,8 +6243,14 @@ function setup() {
   // review. Created once; re-running setup() won't duplicate them.
   try { ensureTriggers_(); } catch (e) { Logger.log('Trigger creation failed (create them by hand if needed): ' + e); }
 
+  // Round 61: clear any invite link still outstanding from before invites had
+  // an expiry. Logs who needs a fresh one.
+  var clearedInvites = [];
+  try { clearedInvites = expireLegacyInviteTokens_(); } catch (e) { Logger.log('Invite sweep failed: ' + e); }
+
   Logger.log('Setup complete. Course Errors, Tech Issues, Instructors, Users, and Feedback sheets are ready. ' +
-    'If APP_URL is not set yet, set it after deploying then run adminInviteLink() to get your setup link.');
+    'If APP_URL is not set yet, set it after deploying then run adminInviteLink() to get your setup link.' +
+    (clearedInvites.length ? ' NOTE: ' + clearedInvites.length + ' invite link(s) with no expiry were cleared - resend to: ' + clearedInvites.join(', ') : ''));
 }
 
 /**

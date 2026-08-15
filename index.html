@@ -1553,7 +1553,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r60 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r61 · 2026-08-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2795,7 +2795,8 @@ function openDraftModal(id, text, voiced) {
   $("draftVoiced").textContent = voiced ? "· in your voice" : "";
   setDraftActionNote("");
   var b = $("draftChatwootBtn"), c = String(i.student_contact || "");
-  if (c.indexOf("@") > 0) { b.style.display = ""; b.onclick = function () { openInChatwoot(c); }; }
+  var cwId = String(i.chatwoot_contact_id || "");
+  if (c.indexOf("@") > 0) { b.style.display = ""; b.onclick = function () { openInChatwoot(c, cwId); }; }
   else b.style.display = "none";
   // The tracker cannot see a message leave Chatwoot, so on a scan-logged issue
   // the popup offers an "I've sent it" marker (Edd, FB-0188): one click posts a
@@ -2833,7 +2834,7 @@ function draftMarkSent(id) {
 // placeholder window opens synchronously and gets pointed at the contact when
 // the URL arrives; if even the placeholder is blocked, a clickable link
 // appears instead of silence.
-function openInChatwoot(email) {
+function openInChatwoot(email, contactId) {
   var win = null;
   try { win = window.open("", "_blank"); } catch (e) {}
   if (win) {
@@ -2841,7 +2842,7 @@ function openInChatwoot(email) {
       String(email).replace(/[<>&]/g, "") + '…</body>'); } catch (e) {}
   }
   toast("Looking up the contact…");
-  apiPost({ action: "chatwootContactUrl", email: email }).then(function (res) {
+  apiPost({ action: "chatwootContactUrl", email: email, contact_id: contactId || "" }).then(function (res) {
     if (res && res.ok && res.url) {
       if (win && !win.closed) win.location = res.url;
       else showOpenLink(res.url, "The popup was blocked - open the Chatwoot contact here:");
@@ -4001,6 +4002,9 @@ function chatwootImport(value) {
     // Remember the conversation so the issue can carry a note back to it.
     state.chatwootConvId = res.conversation_id;
     state.chatwootLink = res.link || "";
+    // The contact id behind the conversation (Round 61). Stored on the issue so
+    // every later "open this student in Chatwoot" is exact rather than a search.
+    state.chatwootContactId = res.chatwoot_contact_id || "";
     // The student's details come from Chatwoot's contact record, which beats
     // whatever the AI can infer from the text.
     if (res.student_name) setField("f_student_name", res.student_name);
@@ -5577,6 +5581,7 @@ function submitIssue() {
     else if (state.dupDismissed) data.no_merge = true;
     // Imported from a live chat: the backend drops an internal note back on it.
     if (state.chatwootConvId) data.chatwoot_conversation_id = state.chatwootConvId;
+    if (state.chatwootContactId) data.chatwoot_contact_id = state.chatwootContactId;
     if (applyRes) {
       // The pasted conversation was already sorted out in the chat, so log it as
       // Resolved (or Resolved - TBC) with the answer saved, not as open work.
@@ -5684,6 +5689,10 @@ function resetForm() {
   state.forcePark = null;
   state.chatwootContact = null;
   state.chatwootConvId = null;
+  // Must clear with the rest of it. A contact id left behind would attach the
+  // last student we imported to the next issue logged without an import, which
+  // is the one mistake a student identifier must never make (Round 61).
+  state.chatwootContactId = "";
   // Abandoning the form leaves the scan suggestion where it was, unspent.
   state.scanConvId = null;
   state.chatwootLink = "";

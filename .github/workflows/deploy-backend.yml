@@ -48,3 +48,26 @@ jobs:
           else
             echo "::warning::Deploy submitted (doPost runs server-side, so it lands), but no JSON confirmation could be read back over curl. See the note above to enable strict confirmation."
           fi
+
+      - name: Run setup so any new columns and triggers land
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          EXEC_URL: https://script.google.com/macros/s/AKfycbxROZipuieRjz8BBW7tjR5tvbidB_oLwbDup2PHfD0-KUka4u6oQLlUNrjJT21O783qdg/exec
+        run: |
+          # HEADERS is append-only, and a sheet only has the columns it was given.
+          # Until setup() runs, every read and write is HEADERS.length wide against
+          # a narrower sheet, which throws. Every round that added a column used to
+          # need runSetup firing by hand afterwards; this does it automatically, a
+          # few seconds after the new code goes live. setup() is idempotent, so it
+          # is harmless on the rounds that changed no schema.
+          if [ -z "$DEPLOY_KEY" ]; then echo "No DEPLOY_KEY - skipping setup."; exit 0; fi
+          sleep 10
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+          jq -n --arg key "$DEPLOY_KEY" '{action:"runSetup", key:$key}' > setup.json
+          resp=$(curl -sSL -A "$UA" -X POST "$EXEC_URL" \
+            -H "Content-Type: text/plain;charset=utf-8" --data-binary @setup.json || true)
+          if printf '%s' "$resp" | grep -q '"ok":true'; then
+            echo "setup() ran and confirmed - new columns and triggers are in place."
+          else
+            echo "::warning::runSetup was submitted (doPost runs server-side, so it lands), but the confirmation could not be read back over curl. Same known limit as the deploy step above."
+          fi
