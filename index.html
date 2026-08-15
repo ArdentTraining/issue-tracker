@@ -2414,10 +2414,15 @@ function saveBarPick() {
     if (sc) {
       if (sc.scrollHeight - sc.clientHeight < SAVE_BAR_MIN_SCROLL) continue;
       if (sc.scrollTop < SAVE_BAR_MIN_MOVE) continue;
+      // Clipped to the window, because the bar is fixed to the window: a pane
+      // that runs off the bottom of the screen has its own bottom edge
+      // somewhere we cannot put a bar, and a button down there is not visible
+      // however much of the pane says it is.
       var r = sc.getBoundingClientRect();
-      top = r.top; bottom = r.bottom; left = r.left; right = r.right;
-      floor = Math.max(saveBarFloor(), Math.round(window.innerHeight - r.bottom));
-      if (bottom >= window.innerHeight - 1) floor = 0;   // it covers the rail, so sit on the floor
+      top = Math.max(r.top, 0); bottom = Math.min(r.bottom, window.innerHeight);
+      left = r.left; right = r.right;
+      floor = Math.max(saveBarFloor(), Math.round(window.innerHeight - bottom));
+      if (r.bottom >= window.innerHeight - 1) floor = 0;   // it covers the rail, so sit on the floor
     } else {
       if (document.documentElement.scrollHeight - window.innerHeight < SAVE_BAR_MIN_SCROLL) continue;
       if ((window.pageYOffset || document.documentElement.scrollTop || 0) < SAVE_BAR_MIN_MOVE) continue;
