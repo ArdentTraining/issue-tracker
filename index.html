@@ -2657,7 +2657,13 @@ var saveBarQueued = false;
 function scheduleSaveBar() {
   if (saveBarQueued) return;
   saveBarQueued = true;
-  requestAnimationFrame(function () { saveBarQueued = false; saveBarApply(); });
+  var run = function () { if (!saveBarQueued) return; saveBarQueued = false; saveBarApply(); };
+  requestAnimationFrame(run);
+  // A tab that is not on screen does not paint, so the frame never arrives,
+  // the flag never clears, and every later call returns early - the bar frozen
+  // wherever it was when you looked away. Whichever of these two fires first
+  // does the work and the other finds nothing to do.
+  setTimeout(run, 120);
 }
 window.addEventListener("scroll", scheduleSaveBar, true);
 window.addEventListener("resize", scheduleSaveBar);
