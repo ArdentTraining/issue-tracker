@@ -648,21 +648,26 @@
 
   /* ---- phone: rail becomes a bottom bar, one column at a time ---- */
   @media (max-width: 760px) {
+    /* Every item shares the width rather than scrolling sideways: a bar you
+       have to scroll to reach Admin is a bar that hides half the app. Seven
+       items and the user menu fit across 411px at about 50px each, which is
+       still a comfortable thumb target. */
     body.shell .rail {
       flex-direction: row; left: 0; right: 0; top: auto; bottom: 0; width: auto;
-      height: 58px; border-right: none; border-top: 1px solid var(--line);
-      padding: 4px 2px; gap: 0; overflow-x: auto; overflow-y: hidden;
+      height: 60px; border-right: none; border-top: 1px solid var(--line);
+      padding: 3px 2px; gap: 0; overflow: hidden;
     }
     body.shell #shellMain { margin-left: 0; }
-    body.shell .wrap { padding-bottom: 78px; }
+    body.shell .wrap { padding-bottom: 80px; }
     body.shell #issuesSegWrap.on { padding: 12px 12px 0; }
-    .rail-item { flex: 1 0 58px; padding: 5px 2px; }
-    .rail-item .ri-word { font-size: 9.5px; }
+    .rail-item { flex: 1 1 0; min-width: 0; padding: 4px 1px; gap: 2px; }
+    .rail-item svg { width: 20px; height: 20px; }
+    .rail-item .ri-word { font-size: 9px; }
     .rail-item.active::before { left: 6px; right: 6px; top: -4px; bottom: auto; width: auto; height: 3px; border-radius: 0 0 3px 3px; }
     .rail-item.rail-new { margin-bottom: 0; border-radius: 10px; }
     .rail-div { display: none; }
-    .rail-foot { margin-top: 0; padding-top: 0; flex: 1 0 58px; }
-    body.shell .rail-foot #userbox > button { padding: 6px 2px; font-size: 11px; }
+    .rail-foot { margin-top: 0; padding-top: 0; flex: 1 1 0; min-width: 0; align-self: center; }
+    body.shell .rail-foot #userbox > button { padding: 6px 1px; font-size: 10.5px; overflow: hidden; }
     body.shell .rail-foot #userMenu { left: auto; right: 4px; bottom: calc(100% + 6px); top: auto; }
     /* The feedback pill and the view-as bar sit above the bar, not under it. */
     body.shell .fab { bottom: 70px; }
