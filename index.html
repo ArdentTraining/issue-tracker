@@ -1224,7 +1224,9 @@
   <div class="filterbar">
     <select id="flt_status" onchange="renderAdmin()">
       <option value="">All statuses</option>
-      <option value="needs_action">Needs action (anything unresolved)</option>
+      <!-- FB-0235. "Needs action" was our words for it; unresolved is everyone
+           else's, and it is what the list opens on now. -->
+      <option value="needs_action" selected>Unresolved (anything still to do)</option>
       <option value="open">Open (waiting for triage)</option>
       <option value="in_progress">In progress (being worked on)</option>
       <option value="with_dev">With developers</option>
@@ -1798,7 +1800,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r65 · 2026-08-15";  // bump this with each round, it lands on every feedback report
+var BUILD = "r66 · 2026-08-17";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -1904,7 +1906,11 @@ var state = {
   editingId: null,
   attachedImages: [],
   detailId: null,
-  area: "all",                // all | course_error | tech_issue  (WHAT is broken)
+  // FB-0235. One area at a time meant "tech issues" and "shipping" could never
+  // be looked at together, which is most of a support morning: both are things
+  // WE chase, and course errors are the course team's queue. So it holds a list
+  // now, empty meaning everything, and it starts on the two we chase.
+  areas: ["tech_issue", "shipping"],   // [] = all  (WHAT is broken)
   audienceFilter: "all",      // all | student | internal          (WHO it hits)
   token: "",                  // session token for this login
   user: null,                 // logged-in user { email, name, perms }
@@ -3206,8 +3212,30 @@ function helpToggle(id) {
   var btn = $("helpdot_" + id);
   if (btn) { btn.setAttribute("aria-expanded", open ? "true" : "false"); btn.classList.toggle("on", open); }
 }
-function busyShow(msg) { $("busyMsg").textContent = msg || "Working…"; $("busyOverlay").style.display = "flex"; }
-function busyHide() { $("busyOverlay").style.display = "none"; }
+// FB-0239. "It took forever, just spinning and spinning." Some of these calls
+// genuinely do take half a minute, because they read a whole conversation with
+// AI, and a spinner that says nothing for that long reads as broken rather than
+// slow. So the overlay counts, and once it has been going a while it says what
+// it is waiting on. It does not make anything faster; it stops a long wait
+// looking like a hung one, which is the thing that had somebody watching it.
+var BUSY_T = null;
+function busyShow(msg) {
+  var el = $("busyMsg");
+  el.textContent = msg || "Working…";
+  $("busyOverlay").style.display = "flex";
+  var base = msg || "Working…", t0 = Date.now();
+  if (BUSY_T) clearInterval(BUSY_T);
+  BUSY_T = setInterval(function () {
+    var secs = Math.round((Date.now() - t0) / 1000);
+    if (secs < 4) return;
+    el.textContent = base + "  " + secs + "s" +
+      (secs >= 15 ? "  ·  reading it with AI, so it can take up to a minute" : "");
+  }, 1000);
+}
+function busyHide() {
+  if (BUSY_T) { clearInterval(BUSY_T); BUSY_T = null; }
+  $("busyOverlay").style.display = "none";
+}
 
 // The one draft path (Edd, FB-0161 + FB-0168): AI in the instructor's own
 // voice where a guide is on file, house template if the call fails, and the
@@ -3223,7 +3251,6 @@ function draftStudentMessage(id, kind) {
 function openDraftModal(id, text, voiced) {
   var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
   $("draftText").value = text || "";
-  $("draftVoiced").textContent = voiced ? "· in your voice" : "";
   setDraftActionNote("");
   var b = $("draftChatwootBtn"), c = String(i.student_contact || "");
   var cwId = String(i.chatwoot_contact_id || "");
@@ -3566,6 +3593,12 @@ function renderLiveDetail() {
     '</div>';
   }
 
+  // The background re-read (FB-0238) is visible on the thing it is changing,
+  // rather than in a toast that has gone by the time the brief catches up.
+  if (state.liveBriefBusy && String(state.liveBriefBusy) === String(c.conversation_id)) {
+    html += '<div class="small" style="margin:6px 0 2px;color:var(--accent);">Re-reading the conversation after the new reply. The brief below is the one from before it came in.</div>';
+  }
+
   html += '<h3>Where this stands</h3>' +
     '<div style="font-size:13.5px;">' + esc(b.summary || c.summary || "No summary yet - press Refresh the brief.") + '</div>' +
     (b.device ? '<div class="small muted" style="margin-top:3px;">' + esc(b.device) + '</div>' : '');
@@ -3706,15 +3739,36 @@ function liveRefreshList() {
     toast("Error. See console."); console.error(e);
   });
 }
-function liveRefreshBrief() {
-  var c = liveCaseById(state.liveSelected);
+// FB-0238/FB-0239. Two ways in. Pressed by hand it takes the screen, because
+// somebody is sat waiting on it. Run off the back of a new reply it does not:
+// the reply itself is already on screen, the brief is a re-read of something we
+// can already see, and there is no reason for an instructor to watch a spinner
+// for a result that will simply appear. Either way the brief says it is
+// re-reading, on the brief itself, so it is never quietly stale.
+function liveRefreshBrief(opts) {
+  var background = !!(opts && opts.background);
+  var conv = (opts && opts.conversation_id) || null;
+  var c = conv ? liveCaseById(conv) : liveCaseById(state.liveSelected);
   if (!c) return;
-  busyShow("Re-reading the conversation…");
-  apiPost({ action: "caseBrief", conversation: c.conversation_id }).then(function (res) {
-    busyHide();
-    if (!res || !res.ok) { toast("Refresh failed: " + ((res && res.error) || "unknown")); return; }
+  conv = String(c.conversation_id);
+
+  if (background) { state.liveBriefBusy = conv; renderLiveDetail(); }
+  else busyShow("Re-reading the conversation…");
+
+  return apiPost({ action: "caseBrief", conversation: conv }).then(function (res) {
+    if (background) state.liveBriefBusy = null; else busyHide();
+    if (!res || !res.ok) {
+      // A background failure still has to say so. Silently leaving an old brief
+      // under a new reply is the one outcome worse than making somebody wait.
+      toast("Couldn't re-read the brief: " + ((res && res.error) || "unknown"));
+      if (background) renderLiveDetail();
+      return;
+    }
     loadLiveCasesThenRender();
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) {
+    if (background) { state.liveBriefBusy = null; renderLiveDetail(); } else busyHide();
+    toast("Error. See console."); console.error(e);
+  });
 }
 function liveCheckReply() {
   var c = liveCaseById(state.liveSelected);
@@ -3728,6 +3782,12 @@ function liveCheckReply() {
       liveMarkSeen(c.conversation_id);
       loadLiveCasesThenRender();
       if (c.issue_id) loadIssues();
+      // FB-0238. A new reply is exactly the thing that makes the brief out of
+      // date: what has been tried and what to do next both just moved. Pressing
+      // Check and then having to press Refresh the brief was two presses for one
+      // event, and the gap between them was a brief that read as current and
+      // wasn't. It re-reads itself now, in the background.
+      liveRefreshBrief({ background: true, conversation_id: c.conversation_id });
     }
   }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
 }
@@ -3744,7 +3804,6 @@ function liveDraftReply() {
 // The same editable popup the issue drafts use, fed by a case instead.
 function openLiveDraftModal(text, voiced, contact, actionNote) {
   $("draftText").value = text || "";
-  $("draftVoiced").textContent = voiced ? "· in your voice" : "";
   setDraftActionNote(actionNote);
   var btn = $("draftChatwootBtn");
   if (contact && String(contact).indexOf("@") > 0) { btn.style.display = ""; btn.onclick = function () { openInChatwoot(contact); }; }
@@ -4330,7 +4389,11 @@ var AUD_CHIP = { student: "Student-facing", internal: "Internal" };
 var REQ_CHIP = { fix: "Fixes", improvement: "Improvements" };
 function adminChipList() {
   var out = [];
-  if (state.area && state.area !== "all") out.push({ label: "Area: " + (AREA_CHIP[state.area] || state.area), clear: "setArea('all')" });
+  // One chip per area, each clearable on its own, so it is obvious at a glance
+  // that course errors are being left out and one tap puts them back.
+  (state.areas || []).forEach(function (a) {
+    out.push({ label: "Area: " + (AREA_CHIP[a] || a), clear: "setArea('" + a + "')" });
+  });
   if (state.audienceFilter && state.audienceFilter !== "all") out.push({ label: "Shown for: " + (AUD_CHIP[state.audienceFilter] || state.audienceFilter), clear: "setAudience('all')" });
   if (state.reqFilter && state.reqFilter !== "all") out.push({ label: "Asking for: " + (REQ_CHIP[state.reqFilter] || state.reqFilter), clear: "setReqFilter('all')" });
   return out.concat([selChip("flt_status", "Status"), selChip("flt_priority", "Priority"),
@@ -4381,7 +4444,7 @@ function refreshCtlChips() { Object.keys(CTL_CHIPS).forEach(renderCtlChips); }
 function ctlClearAll(which) {
   if (which === "admin") {
     ["flt_status", "flt_priority", "flt_type", "flt_course"].forEach(function (id) { var el = $(id); if (el) el.value = ""; });
-    setAudience("all"); setReqFilter("all"); setArea("all");
+    setAudience("all"); setReqFilter("all"); $("flt_status").value = ""; setArea("all");
   } else if (which === "dev") {
     ["devSection", "devKind", "devType", "devSize"].forEach(function (k) { state[k] = "all"; });
     renderDev();
@@ -6704,19 +6767,31 @@ function openIssueById(id, intoForm) {
 }
 
 // ============================ ADMIN: DASHBOARD ============================
+// FB-0235. These read as tick boxes now rather than one-of-three: tap Tech
+// issues and Shipping and you get both. "All" is the way back to everything, and
+// turning the last one off lands there too, so it is never possible to filter
+// the list down to nothing at all.
+function areaOn(a) { return (state.areas || []).indexOf(a) > -1; }
 function setArea(a) {
   // A lesson drill-down (from Analytics or the batch panel) sets the search
   // box. Switching area with that still applied looked like "tech fixes is
   // empty" when it was really "no tech issues on DS.09.12" (Edd, 26 Jul).
-  if (state.area !== a) clearLessonFilter(true);
-  state.area = a;
-  $("area_all").classList.toggle("active", a === "all");
-  $("area_course").classList.toggle("active", a === "course_error");
-  $("area_course").classList.toggle("course", a === "course_error");
-  $("area_tech").classList.toggle("active", a === "tech_issue");
-  $("area_tech").classList.toggle("tech", a === "tech_issue");
-  if ($("area_shipping")) $("area_shipping").classList.toggle("active", a === "shipping");
+  clearLessonFilter(true);
+  if (a === "all") state.areas = [];
+  else if (areaOn(a)) state.areas = state.areas.filter(function (x) { return x !== a; });
+  else state.areas = (state.areas || []).concat([a]);
+  paintAreaButtons();
   renderAdmin();
+}
+function paintAreaButtons() {
+  var none = !(state.areas || []).length;
+  if ($("area_all")) $("area_all").classList.toggle("active", none);
+  [["area_course", "course_error", "course"], ["area_tech", "tech_issue", "tech"], ["area_shipping", "shipping", ""]]
+    .forEach(function (b) {
+      var el = $(b[0]); if (!el) return;
+      el.classList.toggle("active", areaOn(b[1]));
+      if (b[2]) el.classList.toggle(b[2], areaOn(b[1]));
+    });
 }
 
 // List vs kanban board in the Track tab. The board gives the whole pipeline
@@ -6749,8 +6824,9 @@ function setAudience(a) {
   renderAdmin();
 }
 function areaBase() {
-  var base = state.area === "all" ? state.issues
-    : state.issues.filter(function (i) { return catOf(i) === state.area; });
+  var areas = state.areas || [];
+  var base = !areas.length ? state.issues
+    : state.issues.filter(function (i) { return areas.indexOf(catOf(i)) > -1; });
   var aud = state.audienceFilter || "all";
   if (aud !== "all") base = base.filter(function (i) { return audienceOf(i) === aud; });
   if (state.reqFilter && state.reqFilter !== "all") {
@@ -6761,6 +6837,7 @@ function areaBase() {
 
 function renderAdmin() {
   ctlAdoptAreaSegs();
+  paintAreaButtons();   // the pills follow the state, including on the very first draw
   var base = areaBase();
 
   var openIssues = base.filter(isOpen);
@@ -6779,8 +6856,8 @@ function renderAdmin() {
       fsort = $("flt_sort") ? $("flt_sort").value : "";
 
   // Any change of filters, sort, area, or view starts the paging again from the top.
-  var sig = [fs, fp, ft, fc, fq, fsort, state.area, state.reqFilter, state.trackView].join("|");
-  if (sig !== state._adminFilterSig) { state._adminFilterSig = sig; state.adminShown = 20; }
+  var sig = [fs, fp, ft, fc, fq, fsort, (state.areas || []).join("+"), state.reqFilter, state.trackView].join("|");
+  if (sig !== state._adminFilterSig) { state._adminFilterSig = sig; state.adminShown = 20; state.adminOverflowShown = 10; }
   renderCtlChips("admin");
 
   var list = base.filter(function (i) {
@@ -6800,9 +6877,83 @@ function renderAdmin() {
     return true;
   });
 
-  // Default order is triage order (priority, then how many reports, then
-  // newest); the sort dropdown swaps that for a simple ordering when you're
-  // scanning by date or by who logged things.
+  sortIssueList(list, fsort);
+
+  // FB-0236. The filters are how the list is kept sane, so searching inside them
+  // is right. But a search is usually a hunt for one particular thing, and the
+  // filters that make the list sane are exactly what hides it: a student's name
+  // finds nothing because their issue was a course error, or was resolved last
+  // month. So the matches inside the filters come first, and anything else that
+  // matches sits underneath, said plainly, instead of the search quietly
+  // answering "no such student".
+  var overflow = [];
+  if (fq) {
+    var inList = {};
+    list.forEach(function (i) { inList[i.issue_id] = true; });
+    overflow = (state.issues || []).filter(function (i) {
+      return !inList[i.issue_id] && searchHay(i).indexOf(fq) > -1;
+    });
+    sortIssueList(overflow, fsort);
+  }
+
+  if (state.trackView === "board") {
+    $("adminList").innerHTML = kanbanHtml(list);
+    return;
+  }
+
+  // Render the top of the pile only; Show more extends it. With the imported
+  // history this list can run to hundreds, which made the page crawl.
+  var visible = list.slice(0, state.adminShown);
+  var moreBar = list.length > visible.length
+    ? '<div class="row" style="margin:10px 0;">' +
+        '<button class="ghost small" onclick="state.adminShown += 50; renderAdmin();">Show 50 more</button>' +
+        '<button class="ghost small" onclick="state.adminShown = 100000; renderAdmin();">Show all (' + list.length + ')</button>' +
+        '<span class="small muted" style="align-self:center;">Showing ' + visible.length + ' of ' + list.length + '</span>' +
+      '</div>'
+    : "";
+
+  var main = list.length ? visible.map(issueCardHtml).join("") + moreBar
+    : '<p class="muted">No issues match these filters' + (overflow.length ? ', but there are matches outside them' : '') + '.</p>';
+
+  var extra = "";
+  if (overflow.length) {
+    var showN = Math.min(overflow.length, state.adminOverflowShown || 10);
+    extra = '<div class="small" style="margin:20px 0 10px;border-top:1px solid var(--line);padding-top:12px;">' +
+        '<strong>' + overflow.length + ' more match' + (overflow.length === 1 ? 'es' : '') + ' "' + esc(fq) + '" outside these filters</strong>' +
+        '<span class="muted"> · a different area, or already resolved</span> ' +
+        '<button class="ghost small" style="margin-left:8px;" onclick="ctlClearAll(\'admin\')">Clear the filters</button>' +
+      '</div>' +
+      overflow.slice(0, showN).map(issueCardHtml).join("") +
+      (overflow.length > showN
+        ? '<div class="row" style="margin:10px 0;">' +
+            '<button class="ghost small" onclick="state.adminOverflowShown = (state.adminOverflowShown || 10) + 50; renderAdmin();">Show 50 more</button>' +
+            '<span class="small muted" style="align-self:center;">Showing ' + showN + ' of ' + overflow.length + '</span>' +
+          '</div>'
+        : "");
+  }
+
+  $("adminList").innerHTML = main + extra;
+  markActiveCard();
+}
+
+// Round 65 badge pass: priority, status and the report count on the card;
+// everything else on the muted line under the summary. See cardBadges().
+function issueCardHtml(i) {
+  return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
+    '<div class="top">' +
+      cardBadges(i) +
+      (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
+      '<span class="who">' + esc(i.instructor_name) + ' · ' + fmtDate(i.submitted_at) + '</span>' +
+    '</div>' +
+    '<div class="sum clamp4">' + esc(summaryText(i)) + '</div>' +
+    cardMetaLine(i) +
+  '</div>';
+}
+
+// Default order is triage order (priority, then how many reports, then
+// newest); the sort dropdown swaps that for a simple ordering when you're
+// scanning by date or by who logged things.
+function sortIssueList(list, fsort) {
   if (fsort === "newest") {
     list.sort(function (a, b) { return new Date(b.submitted_at) - new Date(a.submitted_at); });
   } else if (fsort === "longest") {
@@ -6839,36 +6990,6 @@ function renderAdmin() {
     });
   }
 
-  if (state.trackView === "board") {
-    $("adminList").innerHTML = kanbanHtml(list);
-    return;
-  }
-
-  // Render the top of the pile only; Show more extends it. With the imported
-  // history this list can run to hundreds, which made the page crawl.
-  var visible = list.slice(0, state.adminShown);
-  var moreBar = list.length > visible.length
-    ? '<div class="row" style="margin:10px 0;">' +
-        '<button class="ghost small" onclick="state.adminShown += 50; renderAdmin();">Show 50 more</button>' +
-        '<button class="ghost small" onclick="state.adminShown = 100000; renderAdmin();">Show all (' + list.length + ')</button>' +
-        '<span class="small muted" style="align-self:center;">Showing ' + visible.length + ' of ' + list.length + '</span>' +
-      '</div>'
-    : "";
-
-  // Round 65 badge pass: priority, status and the report count on the card;
-  // everything else on the muted line under the summary. See cardBadges().
-  $("adminList").innerHTML = list.length ? visible.map(function (i) {
-    return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openIssueById(\'' + esc(i.issue_id) + '\', false)">' +
-      '<div class="top">' +
-        cardBadges(i) +
-        (refOf(i) || i.lesson_code ? '<span class="code">' + esc(refOf(i) || i.lesson_code) + '</span>' : '') +
-        '<span class="who">' + esc(i.instructor_name) + ' · ' + fmtDate(i.submitted_at) + '</span>' +
-      '</div>' +
-      '<div class="sum clamp4">' + esc(summaryText(i)) + '</div>' +
-      cardMetaLine(i) +
-    '</div>';
-  }).join("") + moreBar : '<p class="muted">No issues match these filters.</p>';
-  markActiveCard();
 }
 
 // ---- kanban board: one column per stage ----
@@ -9675,7 +9796,7 @@ function captureFeedbackContext() {
   }
   if (state.view === "admin") {
     ctx.track_view = state.trackView;
-    ctx.area = state.area;
+    ctx.area = (state.areas || []).join("+") || "all";
     ctx.req_filter = state.reqFilter;
     var filters = {};
     [["flt_status", "status"], ["flt_priority", "priority"], ["flt_type", "type"], ["flt_course", "course"], ["flt_search", "search"]].forEach(function (p) {
@@ -9699,7 +9820,11 @@ function describeContext(ctx) {
   var names = { instructor: "Log an issue", actions: "Actions", admin: "Track", analytics: "Analytics", dev: "Developers", course: "Course fixes", users: "Admin" };
   var bits = [names[ctx.view] || ctx.view];
   if (ctx.view === "admin" && ctx.track_view === "board") bits.push("board view");
-  if (ctx.area && ctx.area !== "all") bits.push(CATEGORY_LABEL[ctx.area] || ctx.area);
+  // The area can be several now (FB-0235), so the label spells them out rather
+  // than printing "tech_issue+shipping" at somebody reading a feedback report.
+  if (ctx.area && ctx.area !== "all") {
+    bits.push(String(ctx.area).split("+").map(function (a) { return CATEGORY_LABEL[a] || a; }).join(" + "));
+  }
   if (ctx.form_mode === "internal") bits.push("internal form");
   if (ctx.editing_issue_id) bits.push("editing an issue");
   if (ctx.open_issue_id) {
@@ -10111,7 +10236,11 @@ init();
      the student's Chatwoot record. -->
 <div id="draftOverlay" style="display:none;position:fixed;inset:0;background:rgba(2,10,20,0.65);z-index:300;align-items:center;justify-content:center;">
   <div class="modal" style="width:660px;max-width:94vw;">
-    <h3 style="margin-top:0;">Draft message to student <span id="draftVoiced" class="small muted"></span></h3>
+    <!-- FB-0237. It used to say "· in your voice" up here. Every draft is written
+         from the voice guide when there is one, so the label was on nearly every
+         draft, told nobody anything they could act on, and the words in the box
+         say it better than a tag does. -->
+    <h3 style="margin-top:0;">Draft message to student</h3>
     <!-- r47: when the draft is written as if an instructor-side action is being
          done (a password reset, a course assignment, manual marking), this
          tells the instructor to actually do it before the message goes. -->

@@ -2751,6 +2751,48 @@ function scanRows_() {
 // and a truncated tail - by pulling out the outermost {...} it can find.
 // Written for the course review (Round 44), where the plain helper's silent
 // null made a real fault look like "try again in a minute" forever.
+// ---- Prompt caching (FB-0239) --------------------------------------------
+// The extraction prompt is roughly 35,000 tokens of course structure and field
+// definitions, and it was being read from scratch on every single call. That is
+// where the wait came from: a short student transcript still took nearly half a
+// minute, because the model was re-reading the whole syllabus first. Marking the
+// static half cacheable means the API keeps it for five minutes and later calls
+// skip it, so a run of reports costs the full read once instead of once each.
+//
+// The variable half must come SECOND, because a cache only ever matches from the
+// start of the message: put the transcript first and every call is a fresh one.
+//
+// If the API ever refuses the cache field the plain prompt goes straight back
+// out, and it says so in the response rather than quietly halving in speed or
+// failing (a fallback that hides itself is the trap from 6 Aug).
+function anthropicCachedFetch_(model, staticPart, variablePart, maxTokens) {
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) return { res: null, why: 'no API key configured', cached: false };
+
+  function send(useCache) {
+    var content = useCache
+      ? [{ type: 'text', text: staticPart, cache_control: { type: 'ephemeral' } },
+         { type: 'text', text: variablePart }]
+      : [{ type: 'text', text: staticPart + '\n' + variablePart }];
+    return UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({ model: model, max_tokens: maxTokens || 8192,
+        messages: [{ role: 'user', content: content }] })
+    });
+  }
+
+  var res;
+  try { res = send(true); } catch (e) { return { res: null, why: 'request failed (' + String(e).slice(0, 120) + ')', cached: false }; }
+  var code = res.getResponseCode();
+  if (code === 400 && /cache/i.test(String(res.getContentText() || ''))) {
+    Logger.log('Prompt caching refused by the API, falling back to the plain prompt: ' + String(res.getContentText()).slice(0, 300));
+    try { res = send(false); } catch (e2) { return { res: null, why: 'request failed (' + String(e2).slice(0, 120) + ')', cached: false }; }
+    return { res: res, why: '', cached: false, cache_refused: true };
+  }
+  return { res: res, why: '', cached: true };
+}
+
 function anthropicRaw_(model, prompt, maxTokens) {
   var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) return { json: null, why: 'no API key configured' };
@@ -3676,25 +3718,14 @@ function extract_(data) {
     return { ok: false, error: 'ANTHROPIC_API_KEY is not set in Script Properties' };
   }
 
-  var prompt = buildExtractionPrompt_(rawText);
-  var payload = {
-    // A single thread can now split into several full issue objects, so give the
-    // model enough room. 1024 truncated the JSON mid-string on long multi-topic
-    // threads (exactly the ones this splitting is for) and the parse then failed.
-    // A 16-message live-chat import still hit that ceiling on 27 Jul, so lifted
-    // again to 8192 (sonnet-5 handles it fine) to keep long transcripts whole.
-    model: EXTRACTION_MODEL,
-    max_tokens: 8192,
-    messages: [{ role: 'user', content: prompt }]
-  };
-
-  var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
-    method: 'post',
-    contentType: 'application/json',
-    muteHttpExceptions: true,
-    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    payload: JSON.stringify(payload)
-  });
+  // max_tokens 8192: a single thread can split into several full issue objects,
+  // so the model needs the room. 1024 truncated the JSON mid-string on long
+  // multi-topic threads (exactly the ones this splitting is for) and the parse
+  // then failed. A 16-message live-chat import still hit that ceiling on 27 Jul.
+  var t0 = Date.now();
+  var call = anthropicCachedFetch_(EXTRACTION_MODEL, extractionStaticPrompt_(), rawText + '\n"""', 8192);
+  if (!call.res) return { ok: false, error: 'Anthropic call failed: ' + (call.why || 'unknown') };
+  var res = call.res;
 
   var code = res.getResponseCode();
   var bodyText = res.getContentText();
@@ -3703,6 +3734,7 @@ function extract_(data) {
   }
 
   var parsed = JSON.parse(bodyText);
+  tallyAi_(parsed);
   var text = '';
   if (parsed.content && parsed.content.length) {
     for (var i = 0; i < parsed.content.length; i++) {
@@ -3734,7 +3766,17 @@ function extract_(data) {
       error: 'Could not parse model output as JSON' };
   }
 
-  return { ok: true, fields: fields };
+  // How long it took and whether the cache actually did anything, so a slow
+  // extraction can be looked at rather than guessed about.
+  var u = parsed.usage || {};
+  return { ok: true, fields: fields, diag: {
+    ms: Date.now() - t0,
+    cache_read: Number(u.cache_read_input_tokens) || 0,
+    cache_written: Number(u.cache_creation_input_tokens) || 0,
+    input: Number(u.input_tokens) || 0,
+    output: Number(u.output_tokens) || 0,
+    cache_refused: !!call.cache_refused
+  } };
 }
 
 // Given a new issue and a set of past RESOLVED issues (with the fix that was
@@ -4493,7 +4535,14 @@ function updateFeedback_(data) {
   return { ok: false, error: 'Feedback not found.' };
 }
 
+// The extraction prompt is two halves. The static half carries the entire course
+// structure and every field definition, it is byte-identical on every call, and
+// it is about 35,000 tokens on its own. Keeping it separate lets it be sent as a
+// cached block (anthropicCachedRaw_), which is where nearly all of the wait went.
 function buildExtractionPrompt_(rawText) {
+  return extractionStaticPrompt_() + '\n' + rawText + '\n"""';
+}
+function extractionStaticPrompt_() {
   return [
     'You are an assistant helping a sailing training company extract structured information from instructor reports about course issues.',
     '',
@@ -4557,8 +4606,6 @@ function buildExtractionPrompt_(rawText) {
     '- low: minor or cosmetic, a one-off, or something very likely solved by a simple relevant step the student has not tried yet.',
     '',
     'Raw text:',
-    '"""',
-    rawText,
     '"""'
   ].join('\n');
 }
@@ -4719,7 +4766,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r65 · 2026-08-15';
+var CODE_STAMP = 'r66 · 2026-08-17';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -4909,7 +4956,7 @@ var NEXT_ACTION_CAP = 24000;   // characters of thread the reasoner reads
 // still be sitting there. The revision rides in the fingerprint, so changing it
 // retires every stored answer in one go and each issue recomputes when it is
 // next opened. Cheap because it is still one call per issue, only once.
-var NEXT_ACTION_REV = 'r65';   // Round 65 changed what reaches the reasoner (corpus scope, FB-0231), so every stored answer retires
+var NEXT_ACTION_REV = 'r66';   // Round 66 added rule 4a (test the password you just set, FB-0240), so every stored answer retires
 var NEXT_ACTION_MODEL = ANTHROPIC_MODEL;   // sonnet: this runs often, and it is plenty for the job
 
 // The whole conversation, oldest first, attributed and dated, because who said
@@ -5178,6 +5225,11 @@ function nextActionAi_(rec) {
     '3a. NEVER ask the student for something the thread already gives you. If they have told us the device, the iOS version, the browser, or sent a screenshot or video, that question is answered.\n' +
     '3. A troubleshooting step that could not possibly explain THIS fault is not a next action, however untried it is. A layout that breaks only in portrait, or a video that stops at the same second every time, is not going to be fixed by a different network, a hard refresh or a VPN being turned off. Ignore untried steps that do not fit the symptom, and say so in the why line if that is the interesting part.\n' +
     '4. The fastest resolution is often something WE do. The instructor can reset a password from the students tab of the instructor portal, assign a course to an account, extend an account by hand, mark an exam manually from photos, post an answer in the course live chat, re-send an ebook, or raise an invoice. When one of those settles it, THAT is the action, phrased as a thing we do.\n' +
+    // FB-0240. Setting a password is not the same as knowing it works, and the
+    // instructor is the only person who can tell the difference before the
+    // student is told. Costs ten seconds, and saves a reply that says "I have
+    // reset your password" to somebody who still cannot get in.
+    '4a. A PASSWORD YOU HAVE JUST SET IS NOT A WORKING LOGIN UNTIL SOMEBODY HAS USED IT. Whenever the action is resetting or changing a student\'s password, the same action includes logging in yourself with that email and that password before anything is sent to them. If it lets you in, the reply can say so plainly. If it does not, we have learnt the fault was never the password, which is the more useful answer of the two and it arrives before the student has been told the wrong thing.\n' +
     '5. When the troubleshooting has genuinely gone as far as it can and the fault is real, the action is to move it on, not to keep poking the student: hand it on with the specific evidence that will let them reproduce it, chase whoever already has it if it has sat too long, or answer the question they have asked us. Hand it to the team named in which_team_owns_this and to nobody else. A course error - wrong wording, a wrong diagram, a confusing question - is the COURSE TEAM\'s, always. Never say \"the developers\" about a course error; no developer will ever touch it.\n' +
     '6. If the thread shows that team is already on it and there is nothing new to give them, say plainly that the useful next action is to leave the student alone and chase internally, and name what we would chase for.\n' +
     '7. Notice what the ISSUE RECORD says versus what the thread says. If the conversation says somebody is working on it but the record was never handed to them, saying so IS the useful action, because nothing in our system is tracking it.\n' +
@@ -5967,6 +6019,10 @@ function draftReplyPrompt_(ctx, tail, guide, signName) {
     '- No reassurance the student did not ask for, and no apologising for things that have not gone wrong.\n' +
     '- NEVER state a physical-world or account fact you have not been given: what is in their pack, what their error said, where their parcel is, what their account holds. If the right reply depends on a fact you do not hold, ask the ONE checking question that gets it ("have you checked the other side of the sheet?") rather than confidently arranging a fix - a wrong replacement or a wrong promise costs far more than a short question.\n' +
     '- If the recommended next step is an action WE take rather than the student (resetting their password, assigning a course to their account, marking their exam from photos, posting an answer in the course chat, re-sending an ebook, raising an invoice), write the reply as if that action is being done ("I\'ve reset your password - ...") and put the action itself in instructor_action as one short imperative line. The instructor will do it before sending. If no such action is needed, instructor_action is an empty string.\n' +
+    // FB-0240. The draft says "I have reset your password", so the reply is only
+    // true if the new password actually gets them in. Checking it is part of the
+    // action, not a nicety, and it happens before the message goes.
+    '- When that action is setting a password for them, instructor_action must also say to log in with that email and password to check it works first. The draft tells the student the problem is sorted, so somebody has to have proved it is.\n' +
     '- Never promise dates, never invent progress.\n' +
     '- If this reads as the first reply in a while, greet the student by first name; otherwise carry the conversation on naturally. Plain text only, no subject line.\n' +
     (guide
