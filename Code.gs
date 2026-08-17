@@ -7677,7 +7677,10 @@ function backtest_(body) {
     var hits = all.filter(function (r) { return !Object.keys(want).length || want[r.conversation_id]; });
     return { ok: true, rows: hits.map(function (r) {
       return { conversation_id: r.conversation_id, resolved_date: r.resolved_date, problem: r.problem,
-        fix: r.fix, category: r.category, lesson_code: r.lesson_code, source: r.source, dup_of: r.dup_of || '', row: r._rowNum };
+        fix: r.fix, category: r.category, lesson_code: r.lesson_code, source: r.source, dup_of: r.dup_of || '', row: r._rowNum,
+        // Round 65: a curation pass has to be able to see the scope, and this
+        // is also how the appended columns get checked from outside the sheet.
+        course_scope: r.course_scope || '', applies_when: r.applies_when || '', flags_json: r.flags_json || '' };
     }) };
   }
   if (op === 'kffix') {

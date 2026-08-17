@@ -8368,7 +8368,13 @@ function courseCardHtml(i) {
     // A suggested improvement is not a fault, and reading a queue where the two
     // sit unlabelled next to each other is how a wishlist item gets treated as
     // a bug (Edd, FB-0206). It still says so, in words rather than a tag.
-    cardMetaLine(i, extra) +
+    // "Course error" comes off: this queue is nothing but course errors, so
+    // printing it on every card is the same "not displaying all of it
+    // everywhere" Edd asked for, one level down.
+    (function () {
+      var bits = cardMetaBits(i).filter(function (b) { return b !== CATEGORY_LABEL.course_error; }).concat(extra);
+      return bits.length ? '<div class="small muted" style="margin-top:4px;">' + esc(bits.join(" · ")) + '</div>' : "";
+    })() +
   '</div>';
 }
 
