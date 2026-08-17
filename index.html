@@ -3482,7 +3482,9 @@ function updateScanCount() {
   if ($("us_chatscan")) $("us_chatscan").textContent = rows.length ? "Spotted in chat (" + rows.length + ")" : "Spotted in chat";
 }
 function loadLiveCasesThenRender() {
-  apiPost({ action: "listLiveCases" }).then(function (res) {
+  // Returns its promise so a caller can wait for the new brief to actually be on
+  // screen before it takes its "re-reading" note down (FB-0238).
+  return apiPost({ action: "listLiveCases" }).then(function (res) {
     if (res && res.ok) { state.liveCases = res.cases || []; state.liveLoaded = true; }
     renderLive();
   }).catch(function () { renderLive(); });
@@ -3756,15 +3758,21 @@ function liveRefreshBrief(opts) {
   else busyShow("Re-reading the conversation…");
 
   return apiPost({ action: "caseBrief", conversation: conv }).then(function (res) {
-    if (background) state.liveBriefBusy = null; else busyHide();
+    if (!background) busyHide();
     if (!res || !res.ok) {
+      state.liveBriefBusy = null;
       // A background failure still has to say so. Silently leaving an old brief
       // under a new reply is the one outcome worse than making somebody wait.
       toast("Couldn't re-read the brief: " + ((res && res.error) || "unknown"));
       if (background) renderLiveDetail();
       return;
     }
-    loadLiveCasesThenRender();
+    // The note comes down when the new brief is on screen, not when the call
+    // came back: in between, the pane is still showing the old one.
+    return loadLiveCasesThenRender().then(function () {
+      state.liveBriefBusy = null;
+      renderLiveDetail();
+    });
   }).catch(function (e) {
     if (background) { state.liveBriefBusy = null; renderLiveDetail(); } else busyHide();
     toast("Error. See console."); console.error(e);
