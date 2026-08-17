@@ -3837,6 +3837,9 @@ function liveCheckpoint(decision) {
     : c.issue_id ? "Adding the checkpoint to the issue…" : "Reading it back and filing the issue…");
   apiPost(payload).then(function (res) {
     busyHide();
+    // FB-0239. The server now says how long each part of the filing took, so a
+    // slow one can be looked at afterwards rather than remembered as "ages".
+    if (res && res.timings) console.log("checkpoint timings (ms)", res.timings);
     if (!res || !res.ok) { toast("Checkpoint failed: " + ((res && res.error) || "unknown")); return; }
     if (res.needs_confirm && res.match) { showLiveMergeConfirm(res.match, decision); return; }
     if (res.merged) {

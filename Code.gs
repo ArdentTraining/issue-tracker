@@ -6094,7 +6094,15 @@ function caseCheckpoint_(data) {
       ? 'Put what actually sorted it in the box first - that answer is what the next student with the same fault gets.'
       : 'Say why it is being parked - a parked issue with no reason is just an open one nobody looks at.' };
   }
+  // FB-0239. "It took forever, just spinning and spinning." Forever turned out
+  // to be four things in a row, and nobody could see which one was the slow one,
+  // so every press now returns how long each part took. A number in the response
+  // beats a guess about a spinner somebody has already walked away from.
+  var T = { t0: Date.now() }, TT = {};
+  function lap(k) { TT[k] = Date.now() - T.t0; T.t0 = Date.now(); }
+
   var imp = chatwootImport_({ conversation: id });
+  lap('read_conversation');
   if (!imp || !imp.ok) return { ok: false, error: (imp && imp.error) || 'Could not read the conversation.' };
   var now = new Date().toISOString();
   var bj = caseBriefJson_(rec);
@@ -6120,13 +6128,16 @@ function caseCheckpoint_(data) {
     rec.brief_json = JSON.stringify(bj);
     rec.last_activity = now; rec.last_touched_by = who;
     liveCaseSave_(rec);
+    lap('add_update');
     return { ok: true, updated: true, issue_id: rec.issue_id,
-      resolved: outcome === 'resolved', parked: outcome === 'parked' };
+      resolved: outcome === 'resolved', parked: outcome === 'parked', timings: TT };
   }
 
   // First checkpoint: extract, check for an open case the team is already on
   // (ask before merging), then file through the normal submit path.
   var ex = extract_({ raw_text: imp.transcript });
+  lap('extract');
+  if (ex && ex.diag) TT.extract_cache_read = ex.diag.cache_read;
   if (!ex || !ex.ok) return { ok: false, error: 'The extraction failed: ' + ((ex && ex.error) || 'unknown') };
   var f = ex.fields || {};
   var category = String(f.category || 'tech_issue').toLowerCase();
@@ -6183,6 +6194,7 @@ function caseCheckpoint_(data) {
   } else {
     var matchId = null;
     try { matchId = aiMatchIssue_(payload, category); } catch (e) { matchId = null; }
+    lap('duplicate_check');
     if (matchId) {
       var m = findRow_(matchId);
       if (m) {
@@ -6190,13 +6202,14 @@ function caseCheckpoint_(data) {
           issue_id: matchId, summary: m.record.summary || '', status: m.record.status || '',
           lesson_code: m.record.lesson_code || '', priority: m.record.priority || '',
           report_count: Number(m.record.report_count) || 1
-        }, fields: { summary: payload.summary, priority: payload.priority } };
+        }, fields: { summary: payload.summary, priority: payload.priority }, timings: TT };
       }
     }
     payload.no_merge = true; // the matcher already said no; no point running it twice inside addIssue_
   }
 
   var r = addIssue_(payload);
+  lap('file_the_issue');
   if (!r || !r.ok) return { ok: false, error: 'Could not file the issue: ' + ((r && r.error) || 'unknown') };
   var issueId = (r.issue && r.issue.issue_id) || '';
   rec.issue_id = issueId;
@@ -6215,7 +6228,7 @@ function caseCheckpoint_(data) {
     // fault is still live for everybody else on it, and one student getting
     // sorted is no reason to stop work (the same rule addReportToIssue_ keeps
     // for a "Submit and park" that merges).
-    merged_stays_open: !!r.merged && !!outcome };
+    merged_stays_open: !!r.merged && !!outcome, timings: TT };
 }
 
 // Manual close - for the conversations that fizzle out, or once everything is
