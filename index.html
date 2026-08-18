@@ -10031,12 +10031,35 @@ function captureFbShot() {
   state.fbShotPromise = new Promise(function (resolve) { state._fbShotResolve = resolve; });
   var go = function () {
     if (!window.html2canvas) { done(); return; }
+    // Round 67: with Reports open the page IS the iframe, and html2canvas
+    // draws a frame as an empty rectangle - a feedback report about a chart
+    // arriving with a blank navy box is worse than no picture at all. Same
+    // origin, so draw the embedded document itself instead.
+    var tgt = document.body, win = window, extra = null;
+    if (state.view === "reports") {
+      var rf = $("reportsFrame");
+      try {
+        if (rf && rf.contentDocument && rf.contentDocument.body) {
+          tgt = rf.contentDocument.body; win = rf.contentWindow;
+          // html2canvas 1.4.1 predates color-mix() and throws on it outright,
+          // and the Reports page uses it for every status pill. Flatten those
+          // few backgrounds in the throwaway clone: the pills read a little
+          // plainer in the picture, and without this there is no picture.
+          extra = function (cd) {
+            var st = cd.createElement("style");
+            st.textContent = ".pill,.ok,.warn,.idle,.quiz,.err{background:#163a70 !important;color:#f2f5fb !important}";
+            cd.head.appendChild(st);
+          };
+        }
+      } catch (e) {}
+    }
     try {
-      window.html2canvas(document.body, {
+      window.html2canvas(tgt, {
         logging: false, useCORS: true,
-        x: window.scrollX, y: window.scrollY,
-        width: window.innerWidth, height: window.innerHeight,
-        scale: Math.min(1, 1400 / Math.max(1, window.innerWidth)),
+        x: win.scrollX, y: win.scrollY,
+        width: win.innerWidth, height: win.innerHeight,
+        scale: Math.min(1, 1400 / Math.max(1, win.innerWidth)),
+        onclone: extra || undefined,
         ignoreElements: function (el) { return el.id === "feedbackModal"; }
       }).then(function (canvas) {
         state.fbShot = canvas.toDataURL("image/jpeg", 0.7);
