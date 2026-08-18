@@ -2195,20 +2195,45 @@ function apiPost(payload) {
   var startedAt = Date.now();
   var action = payload.action || "?";
   var busyEl = markCallBusy();   // the button that started this, if a press did
-  return fetch(APPS_SCRIPT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(payload)
-  }).then(function (r) { return r.json(); }).then(function (res) {
+  // Apps Script sometimes answers a burst of calls with a Google error PAGE
+  // rather than our JSON - seen live when the six bootstrap calls went out
+  // together and listPlaybookSuggestions came back as HTML after 14 seconds.
+  // r.json() turned that into a bare "Unexpected token '<'", which says nothing
+  // about what happened and left the panel empty with no explanation. Read the
+  // body as text, and if it is not JSON, say so plainly.
+  function send() {
+    return fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.text(); }).then(function (txt) {
+      try { return JSON.parse(txt); }
+      catch (e) { var err = new Error("backend returned a page, not JSON"); err.aitNotJson = true; err.aitBody = String(txt).slice(0, 200); throw err; }
+    });
+  }
+  return send().catch(function (e) {
+    // One retry, and only for calls that just read. Retrying a write on a
+    // response we could not read risks doing it twice, and a doubled issue or
+    // a doubled update is worse than an error message.
+    if (e && e.aitNotJson && RETRYABLE_READS[action]) return send();
+    throw e;
+  }).then(function (res) {
     releaseCallBusy(busyEl);
     diagApi(action, startedAt, (res && res.ok === false) ? ("error: " + (res.error || "unknown")) : "ok");
     return gateCheck(res);
   }).catch(function (e) {
     releaseCallBusy(busyEl);
-    diagApi(action, startedAt, "failed: " + e);
+    diagApi(action, startedAt, "failed: " + (e && e.aitNotJson ? ("not JSON: " + e.aitBody) : e));
     throw e;
   });
 }
+// Reads only. Anything that changes a row stays off this list on purpose.
+var RETRYABLE_READS = {
+  ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
+  listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1,
+  getAssignees: 1, chatwootList: 1, chatScanList: 1, listVoiceGuides: 1, listContentSuggestions: 1,
+  listLiveCases: 1, chatBackSweepState: 1
+};
 // If the backend rejects the session, drop it and show the login screen.
 function gateCheck(res) {
   if (res && res.ok === false && res.error === "unauthorized") {
