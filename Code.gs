@@ -1884,9 +1884,9 @@ function courseReview_(data) {
       // HTTP 400 read as "the button doesn't work" when the account was
       // simply out of API credit - and every AI feature was down with it).
       if (/credit balance is too low/i.test(String(got.why || ''))) {
-        return { ok: false, error: 'The Anthropic API account is out of credit, so the review (and every other AI feature - extraction, drafts, the scan) cannot run. Top up at console.anthropic.com > Plans & Billing, then press the button again. The button itself is fine.' };
+        return { ok: false, error: 'The account that pays for the automatic reading is out of credit, so this check (and extraction, drafts, and the scan with it) cannot run. Top up at console.anthropic.com > Plans & Billing, then press the button again. The button itself is fine.' };
       }
-      return { ok: false, error: 'The AI review call failed part-way (batch starting at ' + (b + 1) + ' of ' + pool.length + '): ' + got.why + '. Try again in a minute.' };
+      return { ok: false, error: 'The priority check failed part-way (batch starting at ' + (b + 1) + ' of ' + pool.length + '): ' + got.why + '. Try again in a minute.' };
     }
     (res.suggestions || []).forEach(function (s) {
       var i = byId[s.issue_id];
@@ -4771,7 +4771,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r67 · 2026-08-18';
+var CODE_STAMP = 'r68 · 2026-08-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -5502,7 +5502,7 @@ function fetchStudentUpdate_(data) {
   // anthropicRaw_ also says WHY when it fails instead of a bare null.
   var got1 = anthropicRaw_(FINDER_MODEL, p, 16000);
   var first = got1.json;
-  if (first === null) return { ok: false, error: 'The AI read of the conversation failed (' + (got1.why || 'no answer') + '). Try again in a minute.' };
+  if (first === null) return { ok: false, error: 'Reading the conversation failed (' + (got1.why || 'no answer') + '). Try again in a minute.' };
   if (!first.verdict || first.verdict === 'nothing_new') {
     return { ok: true, found: false,
       message: grown
@@ -5523,7 +5523,7 @@ function fetchStudentUpdate_(data) {
     'Return ONLY JSON: {"agree":true or false,"verdict":"fixed|still_broken|new_detail","note":"<corrected one sentence>"}. No prose, no fences.';
   var got2 = anthropicRaw_(VERIFIER_MODEL, vp, 16000);
   var second = got2.json;
-  if (second === null) return { ok: false, error: 'The AI second opinion failed (' + (got2.why || 'no answer') + '). Try again in a minute.' };
+  if (second === null) return { ok: false, error: 'The second-opinion read failed (' + (got2.why || 'no answer') + '). Try again in a minute.' };
   if (second.agree !== true) {
     return { ok: true, found: false, message: 'A newer conversation exists, but the second-opinion check was not convinced it relates to this issue. Worth a human read.', conversation: imp.link };
   }
@@ -5852,7 +5852,7 @@ function fixCandidatesFor_(text, cutoffIso, kfOnly, course) {
 // cutoffIso comes only from the backtest replay - live callers leave it out.
 function caseBriefCore_(imp, cutoffIso, issueId) {
   var got = briefAi_(imp.transcript, issueId);
-  if (!got.json) return { error: 'The AI read of the conversation failed: ' + got.why + '. Try again in a minute.' };
+  if (!got.json) return { error: 'Reading the conversation failed: ' + got.why + '. Try again in a minute.' };
   var brief = got.json;
   var fix = { found: false };
   // The course the student is on, read off the same brief call. When the
@@ -7048,11 +7048,11 @@ function askIssues_(body) {
       // wiring Ask into the queues, FB-0228). Same trap as Round 44.
       payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 8000, messages: [{ role: 'user', content: prompt }] })
     });
-  } catch (e) { return { ok: false, error: 'AI request failed: ' + e }; }
+  } catch (e) { return { ok: false, error: 'The request failed: ' + e }; }
   if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
-    return { ok: false, error: 'AI request failed (' + res.getResponseCode() + ').' };
+    return { ok: false, error: 'The request failed (' + res.getResponseCode() + ').' };
   }
-  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { ok: false, error: 'Bad AI response.' }; }
+  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { ok: false, error: 'The reply came back unreadable.' }; }
   tallyAi_(parsed);
   var text = '';
   if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
@@ -7062,7 +7062,7 @@ function askIssues_(body) {
   // looking at the front end for a fault that was a token budget all along.
   if (!text.trim()) {
     var blocks = (parsed.content || []).map(function (c) { return c.type + ':' + String(c.text || c.thinking || '').length; }).join(',');
-    return { ok: false, error: 'The AI replied with no answer in it (stopped: ' + (parsed.stop_reason || '?') +
+    return { ok: false, error: 'The reply came back with no answer in it (stopped: ' + (parsed.stop_reason || '?') +
       '; blocks ' + (blocks || 'none') + '; ' + ((parsed.usage && parsed.usage.output_tokens) || '?') + ' output tokens).' };
   }
   return { ok: true, answer: text.trim() };

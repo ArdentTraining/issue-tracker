@@ -652,7 +652,13 @@
   .rail-foot { margin-top: auto; padding-top: 8px; }
   body.shell .rail-foot #userbox { position: relative; display: block; text-align: center; }
   body.shell .rail-foot #userbox > button { width: 100%; padding: 8px 4px; white-space: normal; word-break: break-word; }
-  body.shell .rail-foot #userMenu { left: calc(100% + 6px); right: auto; top: auto; bottom: 0; }
+  /* FB-0241: the menu is NOT positioned here. It used to be, and it never
+     worked: #userMenu carries its position inline, and an inline style beats a
+     stylesheet rule, so this rule was dead from the day it was written. The
+     rail also scrolls (overflow-y) and the phone bar clips (overflow: hidden),
+     so anything the rule did place would have been cut off anyway. placeUserMenu()
+     moves the menu to <body>, fixes it to the viewport and works the coordinates
+     out from the trigger. Do not put a position rule back in here. */
 
   /* The topbar keeps the brand and the quiet "updating…" chip; the tab strip
      inside it is hidden by the rule above. */
@@ -782,7 +788,6 @@
     .rail-div { display: none; }
     .rail-foot { margin-top: 0; padding-top: 0; flex: 1 1 0; min-width: 0; align-self: center; }
     body.shell .rail-foot #userbox > button { padding: 6px 1px; font-size: 10.5px; overflow: hidden; }
-    body.shell .rail-foot #userMenu { left: auto; right: 4px; bottom: calc(100% + 6px); top: auto; }
     /* The feedback pill and the view-as bar sit above the bar, not under it. */
     body.shell .fab { bottom: 70px; }
     body.shell .viewas-bar { bottom: 70px; }
@@ -877,7 +882,9 @@
     <span class="small muted" id="updatingChip" style="display:none;margin-right:10px;"><span class="spinner"></span> updating&hellip;</span>
     <div class="small muted" id="userbox" style="display:none;">
       <button class="ghost small" style="padding:4px 10px;" onclick="toggleUserMenu(event)"><span id="whoami"></span> &#9662;</button>
-      <div id="userMenu" class="hidden" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,0.35);min-width:170px;text-align:left;">
+      <!-- No position in here (FB-0241). placeUserMenu() sets position, left
+           and top on every open, measured against the viewport. -->
+      <div id="userMenu" class="hidden" style="position:fixed;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,0.35);min-width:170px;text-align:left;">
         <button class="ghost small" id="themeBtn" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="event.stopPropagation();cycleTheme()">Theme</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();openChangePassword()">Change password</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();doLogout()">Log out</button>
@@ -1217,7 +1224,7 @@
        box never spends anything. -->
   <div class="ctlbar" id="adminBar">
     <input id="flt_search" class="ctl-search" placeholder="Search student, lesson, or any word in the report" oninput="renderAdmin()" />
-    <button type="button" class="ghost" onclick="askOpen('admin')" title="Ask a question about the logged issues. It reads the log with AI, so it takes a few seconds.">Ask</button>
+    <button type="button" class="ghost" onclick="askOpen('admin')" title="Ask a question about the logged issues. It reads the whole log to answer, so it takes a few seconds.">Ask</button>
     <button type="button" class="ghost" onclick="ctlOpen('Filter issues','adminFilters')">Filter<span class="ctl-count hidden" id="adminFilterCount"></span></button>
     <select id="flt_sort" onchange="renderAdmin()">
       <option value="">Sort: priority</option>
@@ -1357,7 +1364,7 @@
        rebuilt on every keystroke and needed the caret putting back by hand. -->
   <div class="ctlbar" id="devBar">
     <input id="devSearch" type="search" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setDevSearch(this.value)" />
-    <button type="button" class="ghost" onclick="askOpen('dev')" title="Ask a question about the logged issues. It reads the log with AI, so it takes a few seconds.">Ask</button>
+    <button type="button" class="ghost" onclick="askOpen('dev')" title="Ask a question about the logged issues. It reads the whole log to answer, so it takes a few seconds.">Ask</button>
     <button type="button" class="ghost" onclick="ctlOpen('Filter the developer queue','devFilters')">Filter<span class="ctl-count hidden" id="devFilterCount"></span></button>
     <select id="devSortSel" onchange="setDevSel('devSort', this.value)">
       <option value="priority">Sort: priority</option>
@@ -1387,7 +1394,7 @@
   </div>
   <div class="ctlbar" id="courseBar">
     <input id="courseSearch" type="search" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setCourseSearch(this.value)" />
-    <button type="button" class="ghost" onclick="askOpen('course')" title="Ask a question about the logged issues. It reads the log with AI, so it takes a few seconds.">Ask</button>
+    <button type="button" class="ghost" onclick="askOpen('course')" title="Ask a question about the logged issues. It reads the whole log to answer, so it takes a few seconds.">Ask</button>
     <button type="button" class="ghost" onclick="ctlOpen('Filter course fixes','courseFilters')">Filter<span class="ctl-count hidden" id="courseFilterCount"></span></button>
     <select id="courseSortSel" onchange="setCourseSel('courseSort', this.value)">
       <option value="priority">Sort: priority</option>
@@ -1479,7 +1486,7 @@
 
   <div class="card" id="playbookCard" style="margin-top:18px;">
     <h2>Troubleshooting playbook</h2>
-    <p class="small muted">The rulebook the AI uses to suggest steps to instructors. Edit it directly here, or approve the suggestions above to add to it.</p>
+    <p class="small muted">The rulebook behind the steps we suggest to instructors. Edit it directly here, or approve the suggestions above to add to it.</p>
     <!-- FB-0222: the editor grows with the playbook instead of showing it
          twelve lines at a time through its own little scrollbar. That is what
          makes this a long editing surface, and it is what lets the save bar
@@ -1612,7 +1619,7 @@
       <input id="askQ2" placeholder="e.g. which lesson has the most reports?" onkeydown="if(event.key==='Enter'){event.preventDefault();runAskPanel();}" />
       <button type="button" class="primary" id="askBtn2" onclick="runAskPanel()">Ask</button>
     </div>
-    <div class="small muted" style="margin-top:6px;">This one reads the whole log with AI, so give it a few seconds. The search box carries on filtering underneath either way.</div>
+    <div class="small muted" style="margin-top:6px;">This one reads the whole log to answer, so give it a few seconds. The search box carries on filtering underneath either way.</div>
     <div id="askOut2" class="small hidden"></div>
   </div>
 </div>
@@ -1829,7 +1836,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r67 · 2026-08-18";  // bump this with each round, it lands on every feedback report
+var BUILD = "r68 · 2026-08-18";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3265,7 +3272,7 @@ function busyShow(msg) {
     var secs = Math.round((Date.now() - t0) / 1000);
     if (secs < 4) return;
     el.textContent = base + "  " + secs + "s" +
-      (secs >= 15 ? "  ·  reading it with AI, so it can take up to a minute" : "");
+      (secs >= 15 ? "  ·  reading through it all, so it can take up to a minute" : "");
   }, 1000);
 }
 function busyHide() {
@@ -4966,7 +4973,7 @@ function runExtract() {
     // One-tap verdict on the extraction, logged so the prompt can be tuned on
     // real data rather than gut feel.
     $("extractStatus").innerHTML = esc($("extractStatus").textContent) +
-      ' <span id="rateBar" style="margin-left:8px;">How did the AI do? ' +
+      ' <span id="rateBar" style="margin-left:8px;">Did that come out right? ' +
       '<button type="button" class="ghost small" style="padding:2px 8px;" onclick="rateExtraction(\'good\')">Spot on</button> ' +
       '<button type="button" class="ghost small" style="padding:2px 8px;" onclick="rateExtraction(\'bad\')">Needed fixing</button></span>';
     // Ask for the student's email if we couldn't find one. Required for tech
@@ -8876,7 +8883,7 @@ function renderCourseTools() {
   var n = courseBulkTargets(conds).length;
 
   $("courseTools").innerHTML =
-    '<button class="ghost small" style="padding:7px 14px;" onclick="courseReviewRun()">AI review: check the priorities</button>' +
+    '<button class="ghost small" style="padding:7px 14px;" onclick="courseReviewRun()">Check the priorities</button>' +
     '<button class="ghost small" style="padding:7px 14px;" onclick="runConfusionReview()" title="Any lesson with 3+ open student-confusion reports gets a drafted content tweak to accept or dismiss">Confusion hotspots: draft content tweaks</button>';
 
   // The conditions themselves live behind the Assign all button (FB-0227).
@@ -8931,7 +8938,7 @@ function courseReviewFail(msg) {
   var el = $("courseReviewPanel");
   if (!el) { toast("Review failed: " + msg); return; }
   el.innerHTML = '<div class="card" style="margin-bottom:14px;border-color:var(--high);">' +
-    '<div style="color:var(--high);font-weight:600;margin-bottom:4px;">The AI review did not run</div>' +
+    '<div style="color:var(--high);font-weight:600;margin-bottom:4px;">The priority check did not run</div>' +
     '<div class="small" style="white-space:pre-wrap;">' + esc(msg) + '</div>' +
     '<div class="small muted" style="margin-top:6px;">Nothing was changed. Fix the cause above and press the button again.</div></div>';
 }
@@ -8942,7 +8949,7 @@ function renderCourseReview() {
   var r = state.courseReview;
   if (!r || !r.suggestions || !r.suggestions.length) { el.innerHTML = ""; return; }
   el.innerHTML = '<div class="card" style="margin-bottom:14px;">' +
-    '<h3 style="margin-top:2px;">AI review: ' + r.suggestions.length + ' priority suggestion' + (r.suggestions.length === 1 ? "" : "s") +
+    '<h3 style="margin-top:2px;">Priority check: ' + r.suggestions.length + ' suggestion' + (r.suggestions.length === 1 ? "" : "s") +
       ' <span class="small muted" style="font-weight:normal;">(from ' + r.reviewed + ' open fixes - nothing is applied until you say so)</span></h3>' +
     r.suggestions.map(function (s, n) {
       return '<div class="act-row" data-id="' + esc(s.issue_id) + '" onclick="openDevDetail(\'' + esc(s.issue_id) + '\')">' +
@@ -8959,10 +8966,10 @@ function courseReviewApply(n) {
   var r = state.courseReview;
   var s = r && r.suggestions && r.suggestions[n];
   if (!s) return;
-  apiPost({ action: "updateIssue", issue_id: s.issue_id, priority: s.suggest, priority_reason: "AI review: " + s.why }).then(function (res) {
+  apiPost({ action: "updateIssue", issue_id: s.issue_id, priority: s.suggest, priority_reason: "Priority check: " + s.why }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     var iss = state.issues.filter(function (i) { return i.issue_id === s.issue_id; })[0];
-    if (iss) { iss.priority = s.suggest; iss.priority_reason = "AI review: " + s.why; }
+    if (iss) { iss.priority = s.suggest; iss.priority_reason = "Priority check: " + s.why; }
     r.suggestions.splice(n, 1);
     toast("Priority set to " + s.suggest + ".");
     renderCourse();
@@ -9403,14 +9410,98 @@ function doAcceptInvite() {
 }
 // The little menu under the username (Edd, FB-0174). Click the name to open,
 // click anywhere else to close.
+//
+// FB-0241, and it is the same shape of fault as r64's save bar: a control
+// anchored at the bottom of a pane that runs off the bottom of the screen.
+// Since r60 the trigger lives in the foot of the rail, which is the very
+// bottom-left corner of the window, and the menu was opening DOWNWARDS from
+// it into nothing. Three separate things were wrong and any one of them was
+// enough on its own:
+//
+//   1. The menu carried "right:0; top:calc(100% + 6px)" as an INLINE style,
+//      and the two rules meant to re-place it in the rail were plain
+//      stylesheet rules. Inline wins. Both rules had been dead since r60
+//      (same trap as FB-0178).
+//   2. The rail is overflow-y:auto on desktop and overflow:hidden on a phone,
+//      so an absolutely positioned child could be clipped even if the rule
+//      had landed. Opening downwards also GREW the rail's scroll height,
+//      which is the "it makes me scroll down" Edd saw.
+//   3. Bottom-anchored means there is no room below, ever. Placement has to
+//      be measured, not declared.
+//
+// So the menu is moved to <body>, fixed to the viewport, and its coordinates
+// are worked out from the trigger every time it opens. Nothing above it can
+// clip it, nothing scrolls, and the clamp at the end guarantees it lands on
+// screen whatever the window size. The node is MOVED and put back, never
+// cloned (the r64 rule), so Theme, Change password and Log out keep the
+// handlers r48 gave them.
+function placeUserMenu() {
+  var m = $("userMenu"), box = $("userbox");
+  var btn = box && box.querySelector("button");
+  if (!m || !btn) return;
+  var r = btn.getBoundingClientRect();
+  var vw = document.documentElement.clientWidth;
+  var vh = document.documentElement.clientHeight;
+  m.style.position = "fixed";
+  m.style.right = "auto"; m.style.bottom = "auto";
+  var mw = m.offsetWidth, mh = m.offsetHeight;
+  var pad = 8, gap = 6, left, top;
+  if (!document.body.classList.contains("shell")) {
+    // Classic (?classic=1): trigger is top-right of the topbar, so down and
+    // right-aligned, which is where it has always been.
+    left = r.right - mw; top = r.bottom + gap;
+  } else if (vw <= 760) {
+    // Phone: the trigger is in the bottom bar, so the menu goes ABOVE it.
+    left = r.right - mw; top = r.top - mh - gap;
+  } else {
+    // Desktop rail: out to the right of the 74px rail, bottom edge level with
+    // the trigger, so it opens upwards rather than off the bottom.
+    left = r.right + gap; top = r.bottom - mh;
+  }
+  if (left + mw > vw - pad) left = vw - mw - pad;
+  if (left < pad) left = pad;
+  if (top + mh > vh - pad) top = vh - mh - pad;
+  if (top < pad) top = pad;
+  m.style.left = Math.round(left) + "px";
+  m.style.top = Math.round(top) + "px";
+}
+function openUserMenu() {
+  var m = $("userMenu");
+  if (!m) return;
+  if (m.parentElement !== document.body) {
+    m.setAttribute("data-home", "userbox");
+    document.body.appendChild(m);
+  }
+  // Measure it where it will be drawn, not where it is not drawn at all:
+  // .hidden is display:none !important, so offsetWidth is 0 until it is off.
+  // visibility keeps it out of sight for the one frame that takes.
+  m.style.visibility = "hidden";
+  m.classList.remove("hidden");
+  placeUserMenu();
+  m.style.visibility = "";
+  window.addEventListener("resize", placeUserMenu);
+  window.addEventListener("scroll", placeUserMenu, true);
+}
 function toggleUserMenu(e) {
   if (e) e.stopPropagation();
-  $("userMenu").classList.toggle("hidden");
+  var m = $("userMenu");
+  if (!m) return;
+  if (m.classList.contains("hidden")) openUserMenu(); else closeUserMenu();
 }
-function closeUserMenu() { $("userMenu").classList.add("hidden"); }
+function closeUserMenu() {
+  var m = $("userMenu");
+  if (!m) return;
+  m.classList.add("hidden");
+  window.removeEventListener("resize", placeUserMenu);
+  window.removeEventListener("scroll", placeUserMenu, true);
+  // Home again, so the topbar markup is whole if anything re-reads it and so
+  // logging out does not leave a stray menu parented on <body>.
+  var home = m.getAttribute("data-home") === "userbox" ? $("userbox") : null;
+  if (home && m.parentElement !== home) home.appendChild(m);
+}
 document.addEventListener("click", function () {
   var m = $("userMenu");
-  if (m && !m.classList.contains("hidden")) m.classList.add("hidden");
+  if (m && !m.classList.contains("hidden")) closeUserMenu();
 });
 
 function doLogout() {
@@ -9584,7 +9675,7 @@ function drawChatScan(box, targetId, rows) {
           '<a class="ghost small" href="' + chatLink(r.conversation_id) + '" target="_blank" style="padding:5px 12px;text-decoration:none;display:inline-block;border:1px solid var(--line);border-radius:8px;color:var(--muted);">Open the chat</a>' +
         '</div>' +
       '</div>';
-    }).join("") : '<p class="muted small">Nothing new spotted. The scan only queues what two different models both call a real problem.</p>';
+    }).join("") : '<p class="muted small">Nothing new spotted. Every conversation gets read twice over, and the scan only queues one when both reads call it a real problem.</p>';
     box.innerHTML = html;
   })();
 }
@@ -9699,7 +9790,7 @@ function loadSuggestions() {
     if (!res || !res.ok) { $("playbookSuggestions").innerHTML = ""; return; }
     var s = res.suggestions || [];
     $("playbookSuggestions").innerHTML = s.length ? s.map(suggestionRowHtml).join("") :
-      '<p class="muted small">Nothing waiting. As tech issues get resolved, the AI will propose playbook additions here for you to approve.</p>';
+      '<p class="muted small">Nothing waiting. As tech issues get resolved, new playbook additions get proposed here for you to approve.</p>';
   }).catch(function (e) { console.error(e); });
 }
 function suggestionRowHtml(s) {
@@ -10391,6 +10482,12 @@ init();
          draft, told nobody anything they could act on, and the words in the box
          say it better than a tag does. -->
     <h3 style="margin-top:0;">Draft message to student</h3>
+    <!-- FB-0242 keeps this one line on purpose. Everywhere else in the app the
+         machinery does not need naming, but this message goes out under the
+         instructor's own name, so they have to be able to tell it was drafted
+         for them rather than written by a colleague. That is about knowing
+         what you are signing, not about branding. Do not remove it. -->
+    <p class="small muted" style="margin:0 0 10px;">Suggested draft. Read it through and change anything that is not how you would put it.</p>
     <!-- r47: when the draft is written as if an instructor-side action is being
          done (a password reset, a course assignment, manual marking), this
          tells the instructor to actually do it before the message goes. -->
