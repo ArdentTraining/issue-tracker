@@ -351,6 +351,8 @@ function doPost(e) {
     if (action === 'chatScanList') return jsonOut(chatScanList_());
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
+    if (action === 'runChatBackSweep') return jsonOut(runChatBackSweep_(body));
+    if (action === 'chatBackSweepState') return jsonOut(chatBackSweepState_());
     if (action === 'saveChecklist') return jsonOut(saveChecklist_(body));
     if (action === 'assignIssue') return jsonOut(assignIssue_(body));
     if (action === 'bulkAssign') return jsonOut(bulkAssign_(body));
@@ -499,7 +501,7 @@ function reqPerm_(action) {
     // is small and whoever spots it first should be able to act. Kicking off a
     // manual scan stays with the admins.
     case 'chatScanList': case 'chatScanReview': return 'log';
-    case 'runChatScan': return 'users';
+    case 'runChatScan': case 'runChatBackSweep': case 'chatBackSweepState': return 'users';
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
     // The queue tools (Edd, FB-0165): reviewing and bulk-assigning are for
     // anyone who works a fix queue. Fetching a Chatwoot update sits with the
@@ -1102,7 +1104,7 @@ function invalidateIssueCache_() {
 var READ_ONLY_ACTIONS = {
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1, getAssignees: 1,
-  getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1,
+  getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1, chatBackSweepState: 1,
   listVoiceGuides: 1, listContentSuggestions: 1, getManifest: 1, extract: 1, askIssues: 1,
   suggestFix: 1, troubleshoot: 1, matchUpdate: 1, draftStudentMessage: 1, listLiveCases: 1,
   // Reads open issues and answers a question; writes nothing, so the cached
@@ -2725,6 +2727,12 @@ function tallyAi_(parsed) {
   }
 }
 var SCAN_MAX_CONVERSATIONS = 60;   // per run, keeps us inside the 6-minute trigger limit
+// FB-0244. How much history one press of the back sweep works through. Chatwoot
+// pages at 25, so four pages is up to 100 conversations looked at and at most
+// SCAN_MAX_CONVERSATIONS of them actually read. Deliberately small: this button
+// spends money, and a sweep that took an hour would get pressed once and never
+// trusted again. Press it repeatedly to keep walking backwards.
+var BACKSWEEP_PAGES = 4;
 var SCAN_BATCH = 8;                // conversations per finder call
 var SCAN_MAX_SUGGESTIONS = 10;     // a bigger night than this means the prompt is wrong
 var SCAN_BUDGET_MS = 4 * 60 * 1000;
@@ -2857,15 +2865,30 @@ function anthropicJson_(model, prompt, maxTokens) {
 // Counts from the last run, so a quiet night can be told apart from a broken
 // one (and so the finder/verifier ratio can be watched as we tune).
 var SCAN_STATS = {};
-function scanChatwoot() {
+// opts.back turns this into the back-catalogue sweep (FB-0244). The nightly run
+// only ever reads conversations that have moved since the last one, and the very
+// first run set that pointer to "now", so everything from before the scan existed
+// has never been read at all. A back sweep walks the list from the far end
+// instead: it ignores the pointer, never moves it, and works a fixed slice of
+// pages per press so one button can't run away with the AI bill. Conversations
+// already in the Scans sheet are dropped by the free filter before any AI call,
+// so pressing it twice costs almost nothing.
+function scanChatwoot(opts) {
+  opts = opts || {};
+  var back = !!opts.back;
   var started = Date.now();
-  SCAN_STATS = { listed: 0, candidates: 0, prepared: 0, flagged: 0, confirmed: 0, queued: 0, note: '' };
+  SCAN_STATS = { listed: 0, candidates: 0, prepared: 0, flagged: 0, confirmed: 0, queued: 0, note: '',
+                 back: back, pagesRead: 0, reachedEnd: false };
   var props = PropertiesService.getScriptProperties();
   var cfg = chatwootCfg_();
   if (!cfg.token || !cfg.account) return;
   var lastScan = Number(props.getProperty('CHATWOOT_LAST_SCAN') || 0);
   // First ever run starts clean from now (Edd's call): no back-catalogue sweep.
-  if (!lastScan) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
+  // That is what the back sweep is for, so it is exempt.
+  if (!back && !lastScan) { markScanned_(); return; }
+  // The pointer belongs to the nightly run. A back sweep reading old history
+  // must never move it, or the next night would skip a day.
+  function markScanned_() { if (!back) props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); }
 
   var seen = {};
   scanRows_().forEach(function (r) { seen[String(r.conversation_id)] = true; });
@@ -2874,14 +2897,24 @@ function scanChatwoot() {
   // silently miss half of them, so page back until we reach conversations
   // older than the last scan (or hit the cap).
   var list = [];
+  var firstPage = back ? Math.max(1, Number(opts.fromPage || 1)) : 1;
+  var lastPage = back ? (firstPage + BACKSWEEP_PAGES - 1) : 6;
   try {
-    for (var page = 1; page <= 6; page++) {
+    for (var page = firstPage; page <= lastPage; page++) {
       var out = chatwootCall_('/conversations?status=all&page=' + page);
       var chunk = (out && out.data && out.data.payload) || (out && out.payload) || [];
-      if (!chunk.length) break;
+      // An empty page on a back sweep means we have walked off the end of the
+      // history, which is the signal to start again from the top next time.
+      if (!chunk.length) { SCAN_STATS.reachedEnd = true; break; }
       list = list.concat(chunk);
-      var oldest = Math.min.apply(null, chunk.map(function (c) { return Number(c.last_activity_at || 0) * 1000; }));
-      if (oldest <= lastScan) break;           // we've gone back far enough
+      SCAN_STATS.pagesRead++;
+      // The nightly run stops as soon as it reaches conversations older than
+      // its pointer. A back sweep is reading exactly that old ground on
+      // purpose, so it works its whole slice.
+      if (!back) {
+        var oldest = Math.min.apply(null, chunk.map(function (c) { return Number(c.last_activity_at || 0) * 1000; }));
+        if (oldest <= lastScan) break;         // we've gone back far enough
+      }
       if (list.length >= SCAN_MAX_CONVERSATIONS) break;
       if (Date.now() - started > SCAN_BUDGET_MS / 2) break;
     }
@@ -2892,8 +2925,13 @@ function scanChatwoot() {
   // exchange, is not a report worth an AI call.
   var candidates = list.filter(function (c) {
     if (seen[String(c.id)]) return false;
-    var last = Number(c.last_activity_at || 0) * 1000;
-    if (last <= lastScan) return false;
+    // The date test is the nightly run's "has this moved since I last looked".
+    // On a back sweep every conversation is older than the pointer by
+    // definition, so applying it would throw the whole slice away.
+    if (!back) {
+      var last = Number(c.last_activity_at || 0) * 1000;
+      if (last <= lastScan) return false;
+    }
     return true;
   }).slice(0, SCAN_MAX_CONVERSATIONS);
   SCAN_STATS.candidates = candidates.length;
@@ -2911,7 +2949,7 @@ function scanChatwoot() {
     });
   });
   SCAN_STATS.prepared = prepared.length;
-  if (!prepared.length) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
+  if (!prepared.length) { markScanned_(); return; }
 
   // Who already has something open? Those conversations are followed up as
   // UPDATES rather than new issues - previously they were dropped at the
@@ -3009,7 +3047,7 @@ function scanChatwoot() {
   // The new-issue path only looks at students with nothing open.
   prepared = newCandidates;
   if (!prepared.length) {
-    props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now()));
+    markScanned_();
     if (updatesConfirmed.length) scanSlack_([], updAppliedList, updatesConfirmed.length - updApplied);
     return;
   }
@@ -3023,13 +3061,17 @@ function scanChatwoot() {
       'problems with their course platform or course content that a student described.\n\n' +
       'Flag a conversation when a student says something is BROKEN, WRONG, or genuinely CONFUSING: a video or page that will not ' +
       'load, progress not saving, a login or access failure, an error in a lesson or quiz answer, a mark or assessment behaving wrongly.\n\n' +
+      // FB-0244. Edd asked for shipping to be swept alongside tech and course
+      // errors. It was never in this prompt, so a parcel that never turned up
+      // could sit in Chatwoot unlogged however many times the scan ran.
+      'Also flag a SHIPPING problem: a pack or book that has not arrived, arrived damaged, or is the wrong item.\n\n' +
       'Do NOT flag: sales or pricing enquiries, course recommendations, mock exam marking or feedback on a student\'s work, ' +
       'extensions and admin, general sailing questions, praise, chit-chat, or a student simply not knowing how something works ' +
       'when the answer is "here is how". If the instructor answered a question and nothing was actually broken, that is not an issue.\n\n' +
       'Most conversations are NOT issues. Returning an empty list is the common, correct answer.\n\n' +
       'CONVERSATIONS:\n' + batch.map(function (b) { return '### id ' + b.id + '\n' + b.text; }).join('\n\n') + '\n\n' +
       'Return ONLY JSON: {"issues":[{"id":"<conversation id>","summary":"<one sentence, what is broken>",' +
-      '"category":"course_error|tech_issue","lesson_code":"<e.g. DS.09.12 or empty>","confidence":"high|medium|low"}]}. ' +
+      '"category":"course_error|tech_issue|shipping","lesson_code":"<e.g. DS.09.12 or empty>","confidence":"high|medium|low"}]}. ' +
       'No prose, no markdown fences.';
     var res = anthropicJson_(FINDER_MODEL, prompt, 1500);
     if (!res) SCAN_STATS.note = 'finder returned nothing parseable';
@@ -3041,7 +3083,7 @@ function scanChatwoot() {
     }
   }
   SCAN_STATS.flagged = found.length;
-  if (!found.length) { props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now())); return; }
+  if (!found.length) { markScanned_(); return; }
 
   // Stage 3: a different model checks each candidate, adversarially.
   var confirmed = [];
@@ -3049,7 +3091,8 @@ function scanChatwoot() {
     if (Date.now() - started > SCAN_BUDGET_MS) return;
     var vPrompt = 'A first-pass AI flagged this support conversation as containing an unreported problem with an online ' +
       'sailing course platform. Your job is to DISAGREE if it is wrong. Be strict: a genuine issue means the student described ' +
-      'something broken, wrong, or seriously confusing about the platform or course content. A question that was simply answered, ' +
+      'something broken, wrong, or seriously confusing about the platform or course content, or a parcel that has not arrived, ' +
+      'arrived damaged, or was the wrong item. A question that was simply answered, ' +
       'an enquiry, marking feedback, admin, or a student misunderstanding with no underlying fault is NOT an issue.\n\n' +
       'CLAIM: ' + JSON.stringify(f.x) + '\n\nFULL CONVERSATION:\n' + f.src.text + '\n\n' +
       'Return ONLY JSON: {"agree": true or false, "why":"<one short sentence>", "summary":"<corrected one-sentence summary if you agree, else empty>"}. No prose, no fences.';
@@ -3133,12 +3176,46 @@ function scanChatwoot() {
     });
   }
   if (fresh.length || updatesConfirmed.length) scanSlack_(newLoggedList, updAppliedList, (fresh.length - newLogged) + (updatesConfirmed.length - updApplied));
-  props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now()));
+  markScanned_();
   Logger.log('scanChatwoot: ' + prepared.length + ' read, ' + found.length + ' flagged, ' + confirmed.length + ' confirmed, ' + fresh.length + ' queued.');
   // Piggyback on the nightly run: when a lesson has collected three or more
   // open student-confusion reports, draft a content-tweak suggestion for the
   // course team's queue (suggestions only, never applied - Round 45).
   try { confusionReview_(); } catch (e) {}
+}
+
+// FB-0244. The back-catalogue sweep. Walks backwards through the Chatwoot
+// history a slice at a time, keeping its own page pointer so each press carries
+// on from where the last one stopped. It never touches the nightly pointer, and
+// anything already in the Scans sheet is dropped before an AI call, so the
+// overlap between presses is free. When it walks off the end of the history it
+// says so and starts again from the top next time.
+function runChatBackSweep_(data) {
+  var props = PropertiesService.getScriptProperties();
+  var page = Number(props.getProperty('CHATWOOT_BACKSWEEP_PAGE') || 1);
+  if (data && data.restart) page = 1;
+  scanChatwoot({ back: true, fromPage: page });
+  var stats = SCAN_STATS || {};
+  var reachedEnd = !!stats.reachedEnd;
+  var nextPage = reachedEnd ? 1 : page + BACKSWEEP_PAGES;
+  props.setProperty('CHATWOOT_BACKSWEEP_PAGE', String(nextPage));
+  return {
+    ok: true,
+    from_page: page,
+    next_page: nextPage,
+    reached_end: reachedEnd,
+    read: stats.prepared || 0,
+    flagged: stats.flagged || 0,
+    confirmed: stats.confirmed || 0,
+    queued: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }).length,
+    stats: stats
+  };
+}
+// How far back the sweep has walked, so the button can say so before it is
+// pressed rather than after.
+function chatBackSweepState_() {
+  var props = PropertiesService.getScriptProperties();
+  return { ok: true, next_page: Number(props.getProperty('CHATWOOT_BACKSWEEP_PAGE') || 1), pages: BACKSWEEP_PAGES };
 }
 
 // Run the scan on demand (admin button), so it can be tried without waiting
@@ -4771,7 +4848,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r68 · 2026-08-18';
+var CODE_STAMP = 'r69 · 2026-08-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

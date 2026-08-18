@@ -1184,6 +1184,8 @@
     <div class="col-drag" title="Drag to resize the list"></div>
     <div class="split-dock" id="liveDock" style="display:none;"></div>
   </div>
+  <!-- FB-0243: what is open in Chatwoot but not picked up here yet. -->
+  <div id="openChats" style="max-width:1300px;margin:0 auto;"></div>
 </div>
 
 <!-- ===================== ADMIN VIEW ===================== -->
@@ -1836,7 +1838,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r68 · 2026-08-18";  // bump this with each round, it lands on every feedback report
+var BUILD = "r69 · 2026-08-18";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3555,6 +3557,73 @@ function liveIsUnread(c) {
   return !!(c.last_activity && new Date(c.last_activity) > new Date(seen));
 }
 
+// FB-0243. Edd, looking at Chatwoot and then at this tab: "on chatwoot right
+// now I can see 3 open conversations which are tech issue related... so why are
+// none showing here?" The tab only ever listed cases somebody had already
+// opened, so a conversation nobody had picked up yet was invisible here and the
+// only way to reach it was Browse recent. The open Chatwoot list now draws
+// underneath the cases, so the tab shows what is actually live.
+function loadOpenChats(force) {
+  if (state._openChatsLoading) return;
+  if (state._openChats && !force) return;
+  state._openChatsLoading = true;
+  apiPost({ action: "chatwootList", status: "open" }).then(function (res) {
+    state._openChatsLoading = false;
+    state._openChats = (res && res.ok) ? (res.conversations || []) : [];
+    state._openChatsError = (res && res.ok) ? "" : ((res && res.error) || "unknown");
+    if (state.view === "live") renderLive();
+  }).catch(function (e) {
+    state._openChatsLoading = false;
+    state._openChats = [];
+    state._openChatsError = String(e && e.message || e);
+    if (state.view === "live") renderLive();
+  });
+}
+// The ones with no case open on them yet. A conversation somebody is already
+// working sits in the list above, so showing it twice would only make the tab
+// look busier than it is.
+function unpickedChats() {
+  var have = {};
+  (state.liveCases || []).forEach(function (c) { have[String(c.conversation_id)] = true; });
+  return (state._openChats || []).filter(function (c) { return !have[String(c.id)]; });
+}
+function renderOpenChats() {
+  var el = $("openChats");
+  if (!el) return;
+  if (state._openChatsLoading && !state._openChats) {
+    el.innerHTML = '<p class="muted small"><span class="spinner"></span> checking Chatwoot…</p>';
+    return;
+  }
+  if (state._openChatsError) {
+    el.innerHTML = '<p class="muted small">Could not reach Chatwoot: ' + esc(state._openChatsError) + '</p>';
+    return;
+  }
+  var rows = unpickedChats();
+  if (!rows.length) {
+    // Only say so once we have actually looked, or an empty box reads as "no
+    // conversations" when the truth is "not asked yet".
+    el.innerHTML = state._openChats
+      ? '<h3 style="margin-top:18px;">Open in Chatwoot</h3><p class="muted small">Every open conversation already has a case on it.</p>'
+      : "";
+    return;
+  }
+  var html = '<h3 style="margin-top:18px;">Open in Chatwoot</h3>' +
+    '<p class="small muted" style="margin-top:-6px;">' + rows.length +
+    (rows.length === 1 ? ' conversation is' : ' conversations are') +
+    ' open in Chatwoot with no case on ' + (rows.length === 1 ? 'it' : 'them') + ' yet. Pick one up to read it here.</p>';
+  html += rows.map(function (c) {
+    return '<div class="issue-card" onclick="openLiveCaseFromPicker(\'' + esc(String(c.id)) + '\')">' +
+      '<div class="top">' +
+        '<span class="code">#' + esc(String(c.id)) + '</span>' +
+        (c.student_name ? '<strong>' + esc(c.student_name) + '</strong>' : '') +
+        (c.student_contact ? '<span class="small muted">' + esc(c.student_contact) + '</span>' : '') +
+        '<span class="who">' + fmtDate(c.last_at) + '</span>' +
+      '</div>' +
+      (c.snippet ? '<div class="sum clamp4">' + esc(c.snippet) + '</div>' : '') +
+    '</div>';
+  }).join("");
+  el.innerHTML = html;
+}
 function renderLive() {
   var el = $("liveList");
   if (!el) return;
@@ -3564,7 +3633,8 @@ function renderLive() {
     return;
   }
   if (!cases.length) {
-    el.innerHTML = '<p class="muted small">No open cases. Paste a Chatwoot link above, or Browse recent, to open one.</p>';
+    el.innerHTML = '<p class="muted small">No open cases yet.' +
+      (unpickedChats().length ? ' There are open conversations in Chatwoot below - pick one up to start.' : ' Paste a Chatwoot link above, or Browse recent, to open one.') + '</p>';
   } else {
     el.innerHTML = cases.map(function (c) {
       var first = String(c.last_touched_by || c.opened_by || "").split(" ")[0];
@@ -3581,6 +3651,7 @@ function renderLive() {
       '</div>';
     }).join("");
   }
+  renderOpenChats();
   markLiveActive();
   if (state.liveSelected) {
     if (liveCaseById(state.liveSelected)) renderLiveDetail();
@@ -3778,6 +3849,10 @@ function liveRefreshList() {
     state.liveSelected = keep;
     updateRailBadges();
     renderLive();
+    // Refresh means "tell me what is live now", so it re-reads Chatwoot too -
+    // otherwise a conversation opened since the tab loaded stays invisible
+    // however many times it is pressed (FB-0243).
+    loadOpenChats(true);
     toast(state.liveCases.length + (state.liveCases.length === 1 ? " open conversation." : " open conversations."));
   }).catch(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = was || "Refresh"; }
@@ -4217,7 +4292,7 @@ function setView(v) {
   if ($("reportsView")) $("reportsView").classList.toggle("hidden", v !== "reports");
   if (v === "reports") mountReports();
   if (v === "actions") renderActions();
-  if (v === "live") { renderLive(); loadLiveCases(); }
+  if (v === "live") { renderLive(); loadLiveCases(); loadOpenChats(); }
   if (v === "admin") renderAdmin();
   if (v === "analytics") renderAnalytics();
   if (v === "dev") renderDev();
@@ -9620,12 +9695,30 @@ function renderChatScan(targetId) {
   box.innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
   refreshScans().then(function () { drawChatScan(box, targetId, state._scans || []); });
 }
+// FB-0244. "Scan now" only ever looks at the last 24 hours, because the nightly
+// run works forwards from where it last got to. "Look further back" walks the
+// other way, through history the scan has never read. Admins only, and drawn
+// whether or not the queue has anything in it.
+function adminScanControls() {
+  return '<div class="row" style="margin-bottom:6px;">' +
+    '<button class="ghost small" id="scanNowBtn" style="padding:5px 12px;" onclick="runChatScanNow()">Scan now</button>' +
+    '<button class="ghost small" id="backSweepBtn" style="padding:5px 12px;" onclick="runChatBackSweep()" title="Read older Chatwoot conversations the scan has never seen, a few pages at a time">Look further back</button>' +
+    '</div>' +
+    '<p class="small muted" id="backSweepNote" style="margin:-2px 0 10px;"></p>';
+}
 function drawChatScan(box, targetId, rows) {
   var inActions = targetId === "actionsScan";
   (function () {
     updateScanCount();
     // In Actions it's a secondary block, so stay quiet when there's nothing.
-    if (inActions && !rows.length) { box.innerHTML = ""; return; }
+    // The admin controls are the exception (FB-0244): an empty queue is exactly
+    // when somebody wants to go looking, and the early return used to take the
+    // buttons away with the rest of the block, so there was nothing to press.
+    if (inActions && !rows.length) {
+      box.innerHTML = (state.perms && state.perms.users) ? adminScanControls() : "";
+      if (state.perms && state.perms.users) refreshBackSweepNote();
+      return;
+    }
     var news = rows.filter(function (r) { return String(r.kind || "new") !== "update"; });
     var ups = rows.filter(function (r) { return String(r.kind || "") === "update"; });
     var VERDICT = {
@@ -9639,7 +9732,7 @@ function drawChatScan(box, targetId, rows) {
     // Scan now moved here from the removed Admin section (FB-0182), admins only.
     var html = "";
     if (inActions && state.perms && state.perms.users) {
-      html += '<div class="row" style="margin-bottom:6px;"><button class="ghost small" id="scanNowBtn" style="padding:5px 12px;" onclick="runChatScanNow()">Scan now</button></div>';
+      html += adminScanControls();
     }
     html += '<h3>Updates on open issues</h3>';
     html += ups.length ? ups.map(function (r) {
@@ -9686,6 +9779,7 @@ function drawChatScan(box, targetId, rows) {
       '</div>';
     }).join("") : '<p class="muted small">Nothing new spotted. Every conversation gets read twice over, and the scan only queues one when both reads call it a real problem.</p>';
     box.innerHTML = html;
+    if (inActions && state.perms && state.perms.users) refreshBackSweepNote();
   })();
 }
 // Send it to the log form, pre-filled from the conversation, and mark the
@@ -9748,6 +9842,47 @@ function chatScanDismiss(convId) {
     toast("Dismissed - it won't come back.");
     refreshScanViews();
   }).catch(function () { toast("Error."); });
+}
+// FB-0244. The sweep reads real conversations through two models, so it costs
+// real money every press. The note says how far back it has walked and roughly
+// what the next press will read, because a button that quietly spends is a
+// button nobody presses twice.
+function refreshBackSweepNote() {
+  var el = $("backSweepNote");
+  if (!el) return;
+  apiPost({ action: "chatBackSweepState" }).then(function (res) {
+    if (!res || !res.ok || !$("backSweepNote")) return;
+    var next = Number(res.next_page || 1);
+    $("backSweepNote").textContent = next <= 1
+      ? "Never swept. The next press reads the most recent " + (res.pages * 25) + " conversations it has not already seen."
+      : "Swept back " + ((next - 1) * 25) + " conversations so far. The next press picks up from there.";
+  }).catch(function () {});
+}
+function runChatBackSweep() {
+  var btn = $("backSweepBtn");
+  if (!confirm("Read older Chatwoot conversations the scan has never seen?\n\nThis reads up to " +
+      "60 conversations through two AI models, so it costs API credit each time. " +
+      "Anything already scanned is skipped for free.")) return;
+  if (btn) { btn.disabled = true; btn.textContent = "Reading…"; }
+  var note = $("backSweepNote");
+  if (note) note.textContent = "Reading older conversations. This can take a few minutes.";
+  apiPost({ action: "runChatBackSweep" }).then(function (res) {
+    if (btn) { btn.disabled = false; btn.textContent = "Look further back"; }
+    if (!res || !res.ok) { toast("Sweep failed: " + ((res && res.error) || "unknown")); refreshBackSweepNote(); return; }
+    var found = Number(res.confirmed || 0);
+    toast(res.reached_end
+      ? "Reached the end of the history. " + (found ? found + " spotted." : "Nothing new spotted.")
+      : Number(res.read || 0) + " read, " + (found ? found + " spotted." : "nothing new spotted."));
+    // Whatever it found lands in the same queue as the nightly run, so redraw it.
+    refreshScans().then(function () {
+      if (state.view === "actions") renderChatScan("actionsScan");
+      refreshBackSweepNote();
+    });
+  }).catch(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Look further back"; }
+    toast("Sweep error. See console."); console.error(e);
+    refreshBackSweepNote();
+  });
 }
 function runChatScanNow() {
   var btn = $("scanNowBtn");
