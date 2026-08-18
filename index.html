@@ -9457,6 +9457,15 @@ function placeUserMenu() {
     // Desktop rail: out to the right of the 74px rail, bottom edge level with
     // the trigger, so it opens upwards rather than off the bottom.
     left = r.right + gap; top = r.bottom - mh;
+    // r60 moved the view-as bar to left:88px to stop it fighting the menu for
+    // this corner. Opening sideways puts them back in the same 7px of screen,
+    // so when that bar is actually up, the menu steps above it rather than
+    // painting over the start of it.
+    var vb = $("viewAsBar");
+    if (vb && vb.classList.contains("show")) {
+      var v = vb.getBoundingClientRect();
+      if (v.width && left < v.right && left + mw > v.left && top + mh > v.top) top = v.top - mh - gap;
+    }
   }
   if (left + mw > vw - pad) left = vw - mw - pad;
   if (left < pad) left = pad;
