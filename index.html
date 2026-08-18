@@ -826,6 +826,10 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="15" y2="11"/></svg>
     <span class="ri-word">Course</span>
   </button>
+  <a class="rail-item" id="railReports" href="reports/" title="Reports">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><polyline points="7 14 11 9 15 12 20 6"/></svg>
+    <span class="ri-word">Reports</span>
+  </a>
   <button type="button" class="rail-item" id="railStats" onclick="railGo('analytics')" title="Analytics">
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>
     <span class="ri-word">Stats</span>
@@ -2812,7 +2816,7 @@ function applyPerms(user) {
   // were, one line each, so nothing can drift apart.
   applyShell();
   var railGate = [["railNew", p.log], ["railChats", p.log], ["railIssues", p.log || p.manage],
-                  ["railDev", p.dev], ["railCourse", p.course], ["railStats", p.analytics],
+                  ["railDev", p.dev], ["railCourse", p.course], ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
   // The divider only earns its place if there is something on both sides.

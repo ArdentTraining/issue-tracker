@@ -319,6 +319,7 @@ function doPost(e) {
     // Reads are served over POST too, so the front-end can keep the session
     // token in the request body rather than the URL (URLs leak into browser
     // history and logs; bodies don't). The GET versions below still work.
+    if (action === 'reportsTicket') return jsonOut(reportsTicket_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (action === 'bootstrap') return jsonOut(bootstrap_(user));
     if (action === 'getIssuesList') return jsonOut(getIssuesList_());
@@ -529,6 +530,10 @@ function reqPerm_(action) {
     case 'deleteIssue': return 'work';
     case 'getIssues': case 'getIssuesList': case 'getIssue': case 'bootstrap':
     case 'getInstructors': case 'me': return 'any';
+    // Ardent Reports vouching ticket. Reuses 'analytics' rather than adding a
+    // permission key: it is already held by exactly the accounts that should
+    // see Reports, and PERM_KEYS/the admin screen stay untouched.
+    case 'reportsTicket': return 'analytics';
     // Fail closed. Every action reaching this point is one nobody listed above,
     // which means nobody decided who should be allowed to call it. The public
     // and key-gated actions (login, acceptInvite, requestPasswordReset, ping,
@@ -7798,4 +7803,149 @@ function backtest_(body) {
       seen: btLogRows_('seen').length, replays: btLogRows_('replay').length };
   }
   return { ok: false, error: 'unknown backtest op: ' + op };
+}
+
+
+/**
+ * Ardent Reports ticket minting, for pasting into the Issue Tracker's Code.gs.
+ *
+ * WHAT THIS IS FOR
+ * The Reports dashboard reads course telemetry out of Supabase. It used to do
+ * that with one shared password baked into the page. That was survivable while
+ * the page lived on Edd's machine and is not survivable once it is served from
+ * a public GitHub Pages repo, where anyone could read the password out of the
+ * source.
+ *
+ * So instead the tracker, which already knows who people are, vouches for them.
+ * This mints a short-lived ticket saying "this is Charly, she holds analytics,
+ * valid for the next half hour", signs it, and hands it over. Supabase checks
+ * the signature and serves the data. The signing secret never leaves the two
+ * servers, so nothing sensitive is in the published page at all.
+ *
+ * Supabase does NOT call back here to check anything. That is deliberate: a
+ * round trip to Apps Script costs 1.8 to 2.8 seconds, and doing it per request
+ * would put that delay on every chart. Verifying a signature takes microseconds.
+ * This runs once when someone opens Reports, not once per query.
+ *
+ * ---------------------------------------------------------------------------
+ * INSTALLATION, four steps
+ *
+ * 1. Generate the shared secret ONCE, and paste the same value into both
+ *    places. Anything long and random works; from a terminal:
+ *
+ *        openssl rand -base64 48
+ *
+ *    Put it in Apps Script under Project Settings -> Script Properties, named
+ *        REPORTS_TICKET_SECRET
+ *    and in Supabase under Edge Functions -> Secrets, with the same name.
+ *
+ *    Do not paste it into a chat, a file in the repo, or an email. It only
+ *    needs to exist in those two boxes.
+ *
+ * 2. Paste this whole file at the end of Code.gs.
+ *
+ * 3. In doPost's action switch, add:
+ *        case 'reportsTicket': return reportsTicket_(user);
+ *    matching the style of the cases already there.
+ *
+ * 4. In reqPerm_(action), add:
+ *        case 'reportsTicket': return 'analytics';
+ *    Nothing else changes. 'analytics' is reused rather than a new permission
+ *    key added, because it already exists and is already held by exactly the
+ *    people who should see Reports. If that ever stops being true, change this
+ *    line and the matching REQUIRED_PERM constant in the Supabase function.
+ *
+ * There is no fifth step. No new sheet, no new column, no migration.
+ * ---------------------------------------------------------------------------
+ */
+
+/* Half an hour. Short enough that a ticket copied out of a browser is close to
+ * worthless, long enough that nobody re-mints mid-session. The dashboard
+ * refreshes silently when one expires, so this can be shortened without
+ * anybody noticing. */
+var REPORTS_TICKET_MINUTES = 30;
+
+/**
+ * Mint a Reports ticket for an authenticated user.
+ *
+ * Called only via the action switch, so by the time we are here reqPerm_ has
+ * already established that this person holds 'analytics'. The permission check
+ * below is therefore a second one, on purpose: this function hands out a
+ * credential to another system, and it should not depend on a caller elsewhere
+ * in the file having got its wiring right.
+ */
+function reportsTicket_(user) {
+  var secret = PropertiesService.getScriptProperties().getProperty('REPORTS_TICKET_SECRET');
+  if (!secret) {
+    // Configuration fault, not a permissions one, and worth saying so plainly:
+    // silently returning "denied" here would send someone hunting through the
+    // user list for a permission problem that does not exist.
+    return { ok: false, error: 'REPORTS_TICKET_SECRET is not set in Script Properties' };
+  }
+
+  var pub = publicUser_(user);
+  var perms = pub.perms || {};
+  if (perms.analytics !== true) {
+    return { ok: false, error: 'forbidden' };
+  }
+
+  var now = Math.floor(Date.now() / 1000);
+  var payload = {
+    email: pub.email,
+    name: pub.name || null,
+    // The whole permission set travels, not just the one being checked. It
+    // costs nothing and it means adding a second Reports view with a different
+    // permission later needs no change on this side.
+    perms: perms,
+    iat: now,
+    exp: now + REPORTS_TICKET_MINUTES * 60
+  };
+
+  var payloadB64 = b64UrlEncode_(Utilities.newBlob(JSON.stringify(payload)).getBytes());
+  var sig = Utilities.computeHmacSha256Signature(payloadB64, secret);
+  var ticket = payloadB64 + '.' + b64UrlEncode_(sig);
+
+  return {
+    ok: true,
+    ticket: ticket,
+    expires_at: payload.exp,
+    // Returned so the dashboard can name the person in its header without a
+    // second call. It is the same data that is inside the ticket.
+    email: pub.email,
+    name: pub.name || null
+  };
+}
+
+/**
+ * Base64url, unpadded. The URL-safe alphabet and the stripped '=' are what the
+ * Supabase side expects, and both are trivial to get subtly wrong, so this is
+ * the only place either is done.
+ */
+function b64UrlEncode_(bytes) {
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+}
+
+/**
+ * Optional, but worth running once after installing.
+ *
+ * Mints a ticket for whoever owns the script and prints the decoded payload to
+ * the log, so a broken secret or a missing permission shows up here rather
+ * than as a silent 401 in the browser three steps later.
+ */
+function testReportsTicket() {
+  var secret = PropertiesService.getScriptProperties().getProperty('REPORTS_TICKET_SECRET');
+  Logger.log('secret configured: ' + (secret ? 'yes, ' + secret.length + ' chars' : 'NO'));
+
+  var fake = { email: 'test@ardent-training.com', name: 'Test', perms: { analytics: true } };
+  var payload = {
+    email: fake.email, name: fake.name, perms: fake.perms,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + REPORTS_TICKET_MINUTES * 60
+  };
+  var b64 = b64UrlEncode_(Utilities.newBlob(JSON.stringify(payload)).getBytes());
+  var ticket = b64 + '.' + b64UrlEncode_(Utilities.computeHmacSha256Signature(b64, secret || 'unset'));
+
+  Logger.log('sample ticket length: ' + ticket.length);
+  Logger.log('payload decodes to: ' + Utilities.newBlob(
+    Utilities.base64DecodeWebSafe(b64)).getDataAsString());
 }

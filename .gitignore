@@ -1,5 +1,5 @@
-# This repo is public and only ever carries three files: the front end, the
-# backend, and the deploy workflow. Everything else in the working folder is
+# This repo is public and only ever carries the published front end (the tracker
+# and the Reports page), the backend, and the deploy workflow. Everything else in the working folder is
 # planning notes, backtest output, or - in one case - live secrets.
 #
 # mirror-sync-config.json holds the deploy key, which is remote code execution
@@ -7,11 +7,13 @@
 # been committed and this file is here to keep it that way, including if someone
 # ever copies the whole working folder into a clone.
 #
-# So: ignore everything, then allow back the three files that belong here.
+# So: ignore everything, then allow back the files that belong here.
 *
 !.gitignore
 !Code.gs
 !index.html
+!reports/
+!reports/index.html
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml

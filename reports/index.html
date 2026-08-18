@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reports — Ardent Training</title>
+
+<!--
+  Ardent Reports, Courses dashboard.
+
+  Deployed as /reports/index.html in the ArdentTraining/issue-tracker repo, so
+  it sits on the same origin as the tracker: https://ardenttraining.github.io.
+  That shared origin is what makes the whole thing cheap. localStorage is keyed
+  on origin and ignores the path, so this page can read the tracker's session
+  token directly. No second login, no iframe, no cross-origin dance.
+
+  NOTHING SECRET IS IN THIS FILE, and nothing secret may ever be added to it.
+  The repo is public. The old build had a shared bearer token hard-coded here,
+  which is exactly why it could not be published. The flow now is:
+
+    tracker session token (localStorage, set by the tracker at login)
+      -> POST to Apps Script, which checks the 'analytics' permission
+      -> short-lived signed ticket
+      -> Supabase 'courses' function verifies the signature and serves data
+
+  Apps Script is called once per half hour, not once per query, because it has
+  a floor of roughly 2 seconds per call and putting that on every chart would
+  make the page feel broken.
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;800&family=Hedvig+Letters+Serif&display=swap" rel="stylesheet">
+
+<script>
+  /* Theme before first paint, so switching in from the tracker does not flash
+     white. Same storage key the tracker uses, so the choice carries across. */
+  (function(){
+    try{
+      var t = localStorage.getItem('ait_theme') || 'auto';
+      var dark = t === 'dark' || (t === 'auto' && !window.matchMedia('(prefers-color-scheme: light)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    }catch(e){ document.documentElement.setAttribute('data-theme','dark'); }
+  })();
+</script>
+
+<style>
+  /* Brand Guidelines v4, copied from the tracker's :root block rather than
+     imported, because the tracker has no shared stylesheet to import from.
+     If its tokens change, these need copying again; there is no way around
+     that short of extracting a shared file, which would mean touching
+     index.html. Worth doing one day, not worth doing this week. */
+  :root[data-theme="dark"]{
+    --bg:#021231; --surface:#122241; --surface-2:#163a70; --line:#2b4a7d;
+    --accent:#5B69E1; --coral:#FFB698;
+    --text:#f2f5fb; --muted:#93a3c6;
+    --high:#ff9190; --medium:#fec195; --low:#46c08a;
+    --course:#797ef6; --tech:#54bcd6;
+    --radius:10px;
+    color-scheme: dark;
+  }
+  /* Approximate light theme. Replace by copying the tracker's
+     :root[data-theme="light"] block verbatim so the two match exactly. */
+  :root[data-theme="light"] {
+    --bg: #f2f5fb;          /* app background, soft blue-grey */
+    --surface: #ffffff;     /* cards */
+    --surface-2: #e5eaf6;   /* raised / active controls */
+    --line: #d2dbec;        /* borders */
+    --accent: #4a58d8;      /* darker Coastal Indigo so white text stays readable */
+    --coral: #f09a75;       /* deeper coral for light surfaces */
+    --text: #021231;        /* Midnight Navy text */
+    --muted: #56678a;
+    --high: #ff9190;
+    --medium: #fec195;
+    --low: #46c08a;
+    --course: #5b62e8;
+    --tech: #2f9fbb;
+    --radius: 10px;
+    color-scheme: light;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--text);
+       font-family:'Hanken Grotesk',system-ui,sans-serif; font-size:16px;
+       display:flex; min-height:100vh}
+  a{color:var(--accent)}
+
+  /* ---- rail ---- */
+  #rail{width:76px; flex:0 0 76px; background:var(--surface); border-right:1px solid var(--line);
+        display:flex; flex-direction:column; align-items:center; padding:14px 0; gap:4px;
+        position:sticky; top:0; height:100vh}
+  .rail-item{width:56px; padding:9px 0 7px; border-radius:var(--radius); text-align:center;
+             color:var(--muted); text-decoration:none; font-size:10.5px; font-weight:600;
+             letter-spacing:.02em; cursor:pointer; border:0; background:transparent;
+             font-family:inherit; display:block}
+  .rail-item .ico{display:block; font-size:19px; line-height:1.25; margin-bottom:2px}
+  .rail-item:hover{background:var(--surface-2); color:var(--text)}
+  .rail-item.active{background:var(--accent); color:#fff}
+  .rail-div{width:36px; height:1px; background:var(--line); margin:8px 0}
+  .rail-spacer{flex:1}
+  #whoami{font-size:10px; color:var(--muted); text-align:center; width:68px; line-height:1.3;
+          word-break:break-word; margin-bottom:6px}
+
+  /* ---- page ---- */
+  #page{flex:1; min-width:0}
+  header{padding:26px 32px 20px; border-bottom:1px solid var(--line); background:var(--surface)}
+  h1{font-family:'Hedvig Letters Serif',Georgia,serif; font-weight:400; font-size:32px;
+     margin:0 0 6px; letter-spacing:-0.01em}
+  .sub{font-size:14px; color:var(--muted); margin:0}
+  .bar{display:flex; gap:12px; align-items:center; margin-top:18px; flex-wrap:wrap}
+  button{font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; border:0;
+         border-radius:100px; padding:9px 20px; background:var(--accent); color:#fff}
+  button:hover{background:var(--coral); color:#021231}
+  select{font-family:inherit; font-size:14px; padding:8px 12px; border-radius:6px;
+         border:1px solid var(--line); background:var(--surface-2); color:var(--text)}
+  .grain{display:inline-flex; background:var(--surface-2); border-radius:100px; padding:3px}
+  .grain button{background:transparent; border-radius:100px; padding:7px 18px; font-size:13px; color:var(--muted)}
+  .grain button.on{background:var(--accent); color:#fff}
+  .grain button.locked{opacity:.6}
+  #stamp{font-size:13px; color:var(--muted)}
+
+  main{padding:24px 32px 48px; max-width:1180px}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; margin-bottom:26px}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:16px 18px}
+  .card .k{font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--muted); margin-bottom:6px}
+  .card .v{font-family:'Hedvig Letters Serif',Georgia,serif; font-size:32px; line-height:1.1}
+  .card .n{font-size:12px; color:var(--muted); margin-top:4px}
+  section{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:20px 22px; margin-bottom:22px}
+  h2{font-family:'Hedvig Letters Serif',Georgia,serif; font-weight:400; font-size:22px; margin:0 0 4px}
+  .hint{font-size:13px; color:var(--muted); margin:0 0 16px}
+  table{width:100%; border-collapse:collapse; font-size:14px}
+  th{text-align:left; font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase;
+     color:var(--muted); border-bottom:1px solid var(--line); padding:8px 10px 8px 0}
+  td{padding:10px 10px 10px 0; border-bottom:1px solid var(--line)}
+  tr:last-child td{border-bottom:0}
+  .lesson{font-weight:600}
+  .lesson small{display:block; font-weight:400; color:var(--muted); font-size:12px}
+  .barwrap{background:var(--surface-2); border-radius:100px; height:8px; width:100%; max-width:220px; overflow:hidden}
+  .barfill{background:var(--accent); height:100%; border-radius:100px}
+  .pill{display:inline-block; font-size:11px; font-weight:600; padding:3px 10px; border-radius:100px}
+  .ok{background:color-mix(in srgb, var(--low) 22%, transparent); color:var(--low)}
+  .warn{background:color-mix(in srgb, var(--medium) 22%, transparent); color:var(--medium)}
+  .idle{background:var(--surface-2); color:var(--muted)}
+  .quiz{background:color-mix(in srgb, var(--course) 22%, transparent); color:var(--course)}
+  .drop{display:flex; align-items:flex-end; gap:3px; height:120px; margin-top:8px}
+  .drop div{background:var(--accent); border-radius:2px 2px 0 0; flex:1; min-width:4px}
+  .drop div:hover{background:var(--coral)}
+  .droplab{display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:6px}
+  .note{background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--coral);
+        border-radius:var(--radius); padding:14px 18px; font-size:13px; color:var(--muted);
+        margin-bottom:22px; line-height:1.55}
+  .note b{color:var(--text)}
+  .locked-panel{background:var(--surface); border:1px dashed var(--line); border-radius:var(--radius); padding:28px 26px}
+  .locked-panel h3{font-family:'Hedvig Letters Serif',Georgia,serif; font-weight:400; font-size:24px; margin:0 0 10px}
+  .locked-panel p{font-size:14px; line-height:1.6; margin:0 0 12px; max-width:640px}
+  .locked-panel .why{color:var(--muted)}
+  .askbox{background:var(--surface-2); border-radius:6px; padding:14px 16px; font-size:13.5px;
+          line-height:1.6; margin-top:16px; max-width:640px}
+  .askbox b{display:block; margin-bottom:6px}
+  .err{background:color-mix(in srgb, var(--high) 15%, transparent); border:1px solid var(--high);
+       color:var(--text); padding:14px 18px; border-radius:var(--radius); font-size:14px; margin-bottom:20px; line-height:1.6}
+  .foot{font-size:12px; color:var(--muted); margin-top:26px; line-height:1.6}
+  .loading{color:var(--muted); font-size:14px; padding:18px 0}
+  code{background:var(--surface-2); padding:1px 5px; border-radius:4px; font-size:.92em}
+
+  /* ---- gate ---- */
+  #gate{max-width:560px; margin:12vh auto; background:var(--surface); border:1px solid var(--line);
+        border-radius:var(--radius); padding:34px 32px; text-align:center}
+  #gate h2{margin:0 0 12px}
+  #gate p{color:var(--muted); font-size:14.5px; line-height:1.65; margin:0 0 18px}
+  #gate a.btn{display:inline-block; background:var(--accent); color:#fff; text-decoration:none;
+              font-weight:600; font-size:14px; border-radius:100px; padding:10px 24px}
+  #gate a.btn:hover{background:var(--coral); color:#021231}
+
+  @media (max-width:760px){
+    body{flex-direction:column}
+    #rail{width:100%; flex:0 0 auto; height:auto; flex-direction:row; justify-content:space-around;
+          position:sticky; top:0; border-right:0; border-bottom:1px solid var(--line); z-index:10}
+    .rail-div,.rail-spacer,#whoami{display:none}
+    header,main{padding-left:18px; padding-right:18px}
+  }
+</style>
+</head>
+<body>
+
+<nav id="rail">
+  <a class="rail-item" id="railTracker" href="https://ardenttraining.github.io/issue-tracker/">
+    <span class="ico">&#9204;</span>Tracker
+  </a>
+  <div class="rail-div"></div>
+  <a class="rail-item active" href="#"><span class="ico">&#9634;</span>Reports</a>
+  <div class="rail-spacer"></div>
+  <div id="whoami"></div>
+  <button class="rail-item" onclick="toggleTheme()"><span class="ico">&#9681;</span>Theme</button>
+</nav>
+
+<div id="page">
+
+<div id="gate" style="display:none">
+  <h2 id="gateTitle">Sign in first</h2>
+  <p id="gateBody"></p>
+  <a class="btn" id="gateBtn" href="https://ardenttraining.github.io/issue-tracker/">Go to the tracker</a>
+</div>
+
+<div id="app" style="display:none">
+<header>
+  <h1>Courses — lesson telemetry</h1>
+  <p class="sub">Live from the Ardent learning-record store. Ardent Training internal.</p>
+  <div class="bar">
+    <button onclick="loadAll()">Refresh</button>
+    <span class="grain">
+      <button id="gVisit" class="on" onclick="setGrain('visit')">Per visit</button>
+      <button id="gStudent" class="locked" onclick="setGrain('student')">Per student</button>
+    </span>
+    <select id="courseFilter" onchange="render()"></select>
+    <span id="stamp"></span>
+  </div>
+</header>
+
+<main>
+  <div id="error"></div>
+  <div id="visitView">
+    <div class="note">
+      <b>How to read these numbers.</b> The grain is a <b>lesson visit</b>, not a student: one student
+      opening a lesson three times counts as three visits. <b>Active time</b> is counted only while the
+      tab was visible and focused (30&nbsp;seconds per heartbeat, derived server-side), so it is time
+      spent on the lesson rather than time the tab sat open. Medians throughout, and visits shorter
+      than one heartbeat are reported separately as bounces rather than dragged into the median.
+    </div>
+
+    <div class="cards" id="cards"></div>
+
+    <section>
+      <h2>Time per lesson</h2>
+      <p class="hint">Median active time per engaged visit. The bar shows the median; the range is the middle half. Bounces are excluded from the median and shown separately, so a quick look-and-leave never drags a lesson's time down.</p>
+      <div id="lessonTable" class="loading">Loading…</div>
+    </section>
+
+    <section>
+      <h2>Engaged versus bounced</h2>
+      <p class="hint">A bounce is a visit that ended before the first 30-second heartbeat: opened, glanced at, closed. A high bounce rate on a teaching lesson is worth a look; on a quiz it usually just means someone checking what is in it.</p>
+      <div id="engagement" class="loading">Loading…</div>
+    </section>
+
+    <section>
+      <h2>Where visits stop</h2>
+      <p class="hint">Share of visits reaching each slide. A cliff between two bars is where the lesson loses people. Quiz packages have no slides, so they do not appear here.</p>
+      <div id="dropoff" class="loading">Loading…</div>
+    </section>
+
+    <section>
+      <h2>Collection health</h2>
+      <p class="hint">Every registered lesson and whether it is reporting. "Quiz package" is expected for QuizMaker content and a problem for teaching lessons.</p>
+      <div id="health" class="loading">Loading…</div>
+    </section>
+  </div>
+
+  <div id="studentView" style="display:none">
+    <div class="locked-panel">
+      <h3>Per-student reporting is parked, by decision</h3>
+      <p>Everything on this page is real. This view is the one thing the data cannot answer, and it is
+         showing you exactly why rather than dressing visit counts up as student counts.</p>
+      <p class="why" id="lockReason"></p>
+      <div class="askbox">
+        <b>What reviving it would take</b>
+        <span id="lockUnlocks"></span>
+      </div>
+      <div class="askbox">
+        <b>A deliberate second reason</b>
+        Even a browser-level identifier (a random id stored on the device, no name attached) is
+        personal data under UK GDPR, so it would need a privacy-policy change, a lawful basis and a
+        retention period. That was considered on 12 August 2026 and parked on purpose. See
+        <code>PRIVACY.md</code>. What is on this page needs none of that: no names, no accounts, no
+        persistent identifiers, no IP addresses.
+      </div>
+      <div class="askbox">
+        <b>Signing in changed who can read this, not what is collected</b>
+        This page now sits behind your tracker account. That governs who may look at the aggregates.
+        It adds no identity to the store and does not make any of this data personal: the lessons
+        still report anonymously and cannot be tied to a student, including by us.
+      </div>
+    </div>
+  </div>
+
+  <p class="foot">
+    Source: <code>records.*</code> in the shared Supabase instance, read through the <code>courses</code>
+    endpoint as a role that can see aggregates only. Raw statements and launch tokens are not reachable
+    from this page. Access is granted by the <code>analytics</code> permission on your tracker account.
+  </p>
+</main>
+</div><!-- /app -->
+</div><!-- /page -->
+
+<script>
+/* ------------------------------------------------------------------ config */
+const ENDPOINT     = 'https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/courses';
+const APPS_SCRIPT  = 'https://script.google.com/macros/s/AKfycbxROZipuieRjz8BBW7tjR5tvbidB_oLwbDup2PHfD0-KUka4u6oQLlUNrjJT21O783qdg/exec';
+const TRACKER_URL  = 'https://ardenttraining.github.io/issue-tracker/';
+const SESSION_KEY  = 'ait_token';   /* set by the tracker at login, same origin */
+const THEME_KEY    = 'ait_theme';
+
+let DATA   = { stats: [], dropoff: [], health: [], identity: null };
+let GRAIN  = 'visit';
+let TICKET = null, TICKET_EXP = 0, VIEWER = null;
+let POLLING = null;
+
+/* ------------------------------------------------------------------- auth */
+
+/* Thrown for anything the user could act on, so the gate can say something
+   useful instead of showing a stack trace. `kind` drives the wording. */
+function AuthProblem(kind, detail){ this.kind = kind; this.detail = detail || ''; }
+
+async function getTicket(force){
+  const now = Math.floor(Date.now()/1000);
+  /* Re-mint a minute early rather than on expiry, so a slow request cannot
+     land after the ticket dies and bounce the user for no reason. */
+  if(!force && TICKET && TICKET_EXP > now + 60) return TICKET;
+
+  let session = null;
+  try{ session = localStorage.getItem(SESSION_KEY); }catch(e){}
+  if(!session) throw new AuthProblem('signin');
+
+  let res;
+  try{
+    /* text/plain keeps this a CORS-simple request. application/json would
+       trigger a preflight, and Apps Script does not answer OPTIONS usefully,
+       so the call would fail before it ever reached the script. */
+    res = await fetch(APPS_SCRIPT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'reportsTicket', token: session })
+    });
+  }catch(e){
+    throw new AuthProblem('network', e.message);
+  }
+  if(!res.ok) throw new AuthProblem('network', 'Apps Script returned ' + res.status);
+
+  let j;
+  try{ j = await res.json(); }
+  catch(e){ throw new AuthProblem('network', 'Apps Script did not return JSON'); }
+
+  /* doPost may return the handler's object directly or wrap it. Accept both
+     rather than guessing, so a wrapper convention on their side does not
+     silently break this page. */
+  const body = (j && j.ticket) ? j : (j && j.data && j.data.ticket ? j.data : j);
+
+  if(!body || !body.ticket){
+    const err = String((body && body.error) || (j && j.error) || 'unknown');
+    if(/forbid|permission|denied|none/i.test(err)) throw new AuthProblem('forbidden', err);
+    if(/auth|token|session|expire/i.test(err))     throw new AuthProblem('signin', err);
+    throw new AuthProblem('config', err);
+  }
+
+  TICKET     = body.ticket;
+  TICKET_EXP = Number(body.expires_at) || (now + 1500);
+  VIEWER     = { email: body.email || null, name: body.name || null };
+  return TICKET;
+}
+
+async function fetchData(){
+  let ticket = await getTicket(false);
+  let r = await fetch(ENDPOINT, { headers: { Authorization: 'Bearer ' + ticket } });
+
+  /* One silent retry with a fresh ticket. Covers the ordinary case of a ticket
+     that expired while the tab sat open, and clock skew between Google and
+     Deno. A second 401 is a real failure and is surfaced. */
+  if(r.status === 401){
+    ticket = await getTicket(true);
+    r = await fetch(ENDPOINT, { headers: { Authorization: 'Bearer ' + ticket } });
+  }
+  if(!r.ok) throw new Error('Reporting endpoint returned ' + r.status + ' — ' + (await r.text()).slice(0,160));
+  return r.json();
+}
+
+function showGate(kind, detail){
+  if(POLLING){ clearInterval(POLLING); POLLING = null; }
+  document.getElementById('app').style.display  = 'none';
+  document.getElementById('gate').style.display = '';
+  const t = document.getElementById('gateTitle');
+  const b = document.getElementById('gateBody');
+  const a = document.getElementById('gateBtn');
+  a.href = TRACKER_URL; a.style.display = '';
+  a.textContent = 'Go to the tracker';
+
+  if(kind === 'forbidden'){
+    t.textContent = 'You do not have access to Reports';
+    b.innerHTML = 'Your tracker account is signed in, but Reports needs the <code>analytics</code> '
+                + 'permission and yours does not have it. Ask Edd, Charly or Charlie, who can grant it '
+                + 'from the tracker’s Admin screen.';
+  }else if(kind === 'config'){
+    t.textContent = 'Reports is not configured yet';
+    b.innerHTML = 'The tracker could not mint an access ticket. This is a setup problem rather than '
+                + 'anything you did wrong, and the detail is: <code>' + esc(detail) + '</code>';
+    a.style.display = 'none';
+  }else if(kind === 'network'){
+    t.textContent = 'Could not reach the tracker';
+    b.innerHTML = 'Reports asks the tracker who you are before it will show anything. That request '
+                + 'failed: <code>' + esc(detail) + '</code><br><br>Worth one refresh before assuming it is broken.';
+    a.textContent = 'Open the tracker';
+  }else{
+    t.textContent = 'Sign in first';
+    b.innerHTML = 'Reports uses your Ardent Issue Tracker account. Sign in there, then come back to '
+                + 'this page. You should not have to do it again for thirty days.';
+  }
+}
+
+function showApp(){
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('app').style.display  = '';
+  const who = document.getElementById('whoami');
+  if(VIEWER) who.textContent = (VIEWER.name || VIEWER.email || '').split(' ')[0] || '';
+  if(!POLLING) POLLING = setInterval(loadAll, 60000);
+}
+
+function toggleTheme(){
+  const cur  = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try{ localStorage.setItem(THEME_KEY, next); }catch(e){}
+}
+
+/* --------------------------------------------------------------- helpers */
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function fmt(sec){
+  if(sec===null||sec===undefined) return '—';
+  sec=Math.round(sec);
+  if(sec<60) return sec+'s';
+  const m=Math.floor(sec/60), s=sec%60;
+  if(m<60) return m+'m'+(s?' '+s+'s':'');
+  return Math.floor(m/60)+'h '+(m%60)+'m';
+}
+function when(ts){
+  if(!ts) return 'never';
+  const mins=Math.round((Date.now()-new Date(ts))/60000);
+  if(mins<60) return mins+' min ago';
+  if(mins<1440) return Math.round(mins/60)+' h ago';
+  return Math.round(mins/1440)+' d ago';
+}
+
+function setGrain(g){
+  GRAIN = g;
+  document.getElementById('gVisit').className = g==='visit' ? 'on' : '';
+  document.getElementById('gStudent').className = g==='student' ? 'on locked' : 'locked';
+  document.getElementById('visitView').style.display = g==='visit' ? '' : 'none';
+  document.getElementById('studentView').style.display = g==='student' ? '' : 'none';
+}
+
+/* ------------------------------------------------------------------ load */
+async function loadAll(){
+  document.getElementById('error').innerHTML='';
+  try{
+    const j = await fetchData();
+    showApp();
+    DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity };
+    document.getElementById('lockReason').textContent = j.identity.reason;
+    document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
+
+    const courses=[...new Set(j.stats.map(s=>s.course_code))].sort();
+    const sel=document.getElementById('courseFilter');
+    if(sel.options.length!==courses.length+1){
+      sel.innerHTML='<option value="">All courses</option>'+courses.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
+    }
+    document.getElementById('stamp').textContent='updated '+new Date().toLocaleTimeString('en-GB');
+    render();
+  }catch(e){
+    if(e instanceof AuthProblem){ showGate(e.kind, e.detail); return; }
+    document.getElementById('error').innerHTML='<div class="err"><b>Could not load data.</b><br>'+esc(e.message)+'</div>';
+  }
+}
+
+/* ---------------------------------------------------------------- render */
+function render(){
+  const course=document.getElementById('courseFilter').value;
+  const stats=DATA.stats.filter(s=>!course||s.course_code===course);
+  const ids=new Set(stats.map(s=>s.lesson_id));
+
+  const totalSessions=stats.reduce((a,s)=>a+Number(s.sessions),0);
+  const totalBounces=stats.reduce((a,s)=>a+Number(s.bounced_sessions),0);
+  const withTime=stats.filter(s=>s.median_active_seconds!=null);
+  const typical=withTime.length?withTime.map(s=>Number(s.median_active_seconds)).sort((a,b)=>a-b)[Math.floor(withTime.length/2)]:null;
+  const longest=withTime.slice().sort((a,b)=>b.median_active_seconds-a.median_active_seconds)[0];
+
+  document.getElementById('cards').innerHTML=[
+    ['Lessons reporting',stats.length,'of '+DATA.health.length+' registered'],
+    ['Lesson visits',totalSessions,totalBounces+' bounced under 30s'],
+    ['Typical lesson',fmt(typical),'median across lessons'],
+    ['Longest lesson',longest?fmt(longest.median_active_seconds):'—',longest?longest.lesson_id:'']
+  ].map(c=>'<div class="card"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+'</div><div class="n">'+c[2]+'</div></div>').join('');
+
+  const maxMed=Math.max(1,...stats.map(s=>Number(s.median_active_seconds)||0));
+  document.getElementById('lessonTable').innerHTML=stats.length?(
+    '<table><thead><tr><th>Lesson</th><th>Visits</th><th>Median active time</th><th style="width:240px"></th><th>Middle half</th></tr></thead><tbody>'+
+    stats.map(s=>{
+      const med=Number(s.median_active_seconds)||0;
+      return '<tr><td class="lesson">'+s.lesson_id+'<small>'+esc((s.lesson_title||'').replace(/^[A-Z]{2,4}\.\d{2}\.\d{2}\s*-\s*/,''))+'</small></td>'+
+        '<td>'+s.sessions+(Number(s.bounced_sessions)?' <span class="pill idle">'+s.bounced_sessions+' bounced</span>':'')+'</td>'+
+        '<td><b>'+fmt(s.median_active_seconds)+'</b></td>'+
+        '<td><div class="barwrap"><div class="barfill" style="width:'+Math.round(100*med/maxMed)+'%"></div></div></td>'+
+        '<td style="color:var(--muted)">'+fmt(s.p25_active_seconds)+' – '+fmt(s.p75_active_seconds)+'</td></tr>';
+    }).join('')+'</tbody></table>'
+  ):'<p class="loading">No lessons reporting yet.</p>';
+
+  /* Engaged vs bounced. Needs no identifier: a bounce is a property of a
+     single visit, so this works without knowing who anyone is. */
+  document.getElementById('engagement').innerHTML = stats.length ? (
+    '<table><thead><tr><th>Lesson</th><th>Engaged visits</th><th>Bounced</th><th style="width:260px">Split</th><th>Bounce rate</th></tr></thead><tbody>'+
+    stats.map(s=>{
+      const total=Number(s.sessions), bounced=Number(s.bounced_sessions), engaged=total-bounced;
+      const pct = total ? Math.round(100*bounced/total) : 0;
+      return '<tr><td class="lesson">'+s.lesson_id+'</td>'+
+        '<td>'+engaged+'</td><td>'+bounced+'</td>'+
+        '<td><div class="barwrap" style="max-width:240px;display:flex">'+
+          '<div style="background:var(--accent);height:100%;width:'+(total?100*engaged/total:0)+'%"></div>'+
+          '<div style="background:var(--coral);height:100%;width:'+(total?100*bounced/total:0)+'%"></div>'+
+        '</div></td>'+
+        '<td style="color:'+(pct>=50?'var(--medium)':'var(--muted)')+'">'+pct+'%</td></tr>';
+    }).join('')+'</tbody></table>'+
+    '<p style="font-size:12px;color:var(--muted);margin:12px 0 0">'+
+    'Indigo is engaged, coral is bounced. Because visits cannot be linked to each other, a student who '+
+    'bounced once and returned later appears here as one bounce and one engaged visit.</p>'
+  ) : '<p class="loading">No data yet.</p>';
+
+  const byLesson={};
+  DATA.dropoff.filter(d=>ids.has(d.lesson_id)).forEach(d=>{(byLesson[d.lesson_id]=byLesson[d.lesson_id]||[]).push(d);});
+  const blocks=Object.keys(byLesson).sort().map(id=>{
+    const rows=byLesson[id].sort((a,b)=>a.slide_index-b.slide_index);
+    if(rows.length<2) return '';
+    const last=rows[rows.length-1];
+    return '<div style="margin-bottom:22px"><div style="display:flex;justify-content:space-between;align-items:baseline">'+
+      '<div class="lesson">'+id+'</div><div style="font-size:13px;color:var(--muted)">'+rows[0].total_sessions+
+      ' visits · '+Number(last.reached_pct).toFixed(0)+'% reached the last slide</div></div>'+
+      '<div class="drop">'+rows.map(r=>'<div style="height:'+Math.max(2,Number(r.reached_pct))+'%" title="Slide '+(r.slide_index+1)+': '+r.reached_pct+'% reached"></div>').join('')+'</div>'+
+      '<div class="droplab"><span>Slide 1</span><span>Slide '+rows.length+'</span></div></div>';
+  }).filter(Boolean);
+  document.getElementById('dropoff').innerHTML=blocks.length?blocks.join(''):'<p class="loading">No slide data yet.</p>';
+
+  const health=DATA.health.filter(h=>!course||h.lesson_id.startsWith(course+'.'));
+  document.getElementById('health').innerHTML=
+    '<table><thead><tr><th>Lesson</th><th>Visits</th><th>Last seen</th><th>Status</th></tr></thead><tbody>'+
+    health.map(h=>{
+      let cls='ok', label=h.status;
+      if(h.status==='no data yet') cls='idle';
+      else if(h.status==='silent 14d+') cls='warn';
+      else if(h.status==='no slide events'){ cls='quiz'; label='quiz package (no slides)'; }
+      return '<tr><td class="lesson">'+h.lesson_id+'<small>'+esc((h.lesson_title||'').replace(/^[A-Z]{2,4}\.\d{2}\.\d{2}\s*-\s*/,''))+
+        '</small></td><td>'+h.sessions+'</td><td style="color:var(--muted)">'+when(h.last_seen)+
+        '</td><td><span class="pill '+cls+'">'+label+'</span></td></tr>';
+    }).join('')+'</tbody></table>';
+}
+
+document.getElementById('railTracker').href = TRACKER_URL;
+loadAll();
+</script>
+</body>
+</html>
