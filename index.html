@@ -676,6 +676,13 @@
   body.shell #trackViewSeg { display: none; }
   body.shell #actionsView.wrap, body.shell #adminView.wrap { padding-top: 12px; }
 
+  /* ---- Round 67: Reports fills the content area, minus the topbar ----
+     The height is set in JS from the frame's own top edge, because the topbar
+     is one line on desktop and can wrap on a phone, and a guessed constant
+     would leave either a gap or a second scrollbar. */
+  #reportsFrame { display: block; width: 100%; border: 0; background: var(--bg); }
+  #reportsView.hidden { display: none; }
+
   /* ===================== ROUND 64: THE SUB-RAIL (FB-0229) =====================
      Where a view has its own tabs (Issues' three segments, Analytics' areas,
      Admin's three pages, the two fix queues' status views) they sat as a strip
@@ -826,10 +833,10 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="15" y2="11"/></svg>
     <span class="ri-word">Course</span>
   </button>
-  <a class="rail-item" id="railReports" href="reports/" title="Reports">
+  <button type="button" class="rail-item" id="railReports" onclick="railGo('reports')" title="Reports">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><polyline points="7 14 11 9 15 12 20 6"/></svg>
     <span class="ri-word">Reports</span>
-  </a>
+  </button>
   <button type="button" class="rail-item" id="railStats" onclick="railGo('analytics')" title="Analytics">
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>
     <span class="ri-word">Stats</span>
@@ -1482,6 +1489,24 @@
   </div>
   </div>
 </div>
+<!-- ===================== ROUND 67: REPORTS INSIDE THE SHELL =================
+     Edd: "can we fold it all in properly so the menu on the left doesn't
+     disappear when we click reports? Make it all feel like one website?"
+
+     Reports was an <a href="reports/">, so pressing it left the app: rail
+     gone, Feedback button gone, and the only way back was a link on the other
+     page. It is a normal rail destination now. The page itself is unchanged
+     and still stands on its own at /reports/ - it is loaded into an iframe
+     here, and because it is served from the same origin it goes on reading
+     ait_token and ait_theme out of the same localStorage exactly as before.
+     Nothing about the ticket flow changes.
+
+     The frame is built the first time Reports is opened and then left alive,
+     so coming back is instant rather than a fresh load and a fresh round of
+     Supabase queries every time. -->
+<div id="reportsView" class="hidden">
+  <div id="reportsFrameHost"></div>
+</div>
 </div><!-- /#shellMain -->
 
 <!-- DETAIL DRAWER -->
@@ -1804,7 +1829,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r66 · 2026-08-17";  // bump this with each round, it lands on every feedback report
+var BUILD = "r67 · 2026-08-18";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2197,6 +2222,8 @@ function applyTheme(mode) {
   if (mode === "auto") { try { localStorage.removeItem("ait_theme"); } catch (e) {} }
   else localSet("ait_theme", mode);
   updateThemeBtn();
+  // Round 67: the embedded Reports page follows immediately, no reload.
+  if (typeof syncReportsTheme === "function") syncReportsTheme();
 }
 function cycleTheme() {
   var order = ["auto", "light", "dark"];
@@ -2842,7 +2869,12 @@ function applyPerms(user) {
   // reads as "the first tab" - it reads as the app having nothing to show. A
   // dashboard opens on the work, and New report is one click away from
   // anywhere, so anyone who can log lands on Waiting on me instead.
-  if (SHELL_ON && first === "instructor" && p.log) { setIssuesSeg("mine"); }
+  // Round 67: ?view=reports opens straight into Reports, so a bookmark of the
+  // old standalone page still lands somewhere sensible once it is redirected.
+  var wantView = null;
+  try { wantView = new URLSearchParams(window.location.search).get("view"); } catch (e) {}
+  if (wantView === "reports" && p.analytics) { setView("reports"); }
+  else if (SHELL_ON && first === "instructor" && p.log) { setIssuesSeg("mine"); }
   else setView(first);
   updateViewAsBar();
 }
@@ -4173,6 +4205,10 @@ function setView(v) {
   $("devView").classList.toggle("hidden", v !== "dev");
   $("courseView").classList.toggle("hidden", v !== "course");
   $("usersView").classList.toggle("hidden", v !== "users");
+  // Round 67: Reports is a view like any other now. It is not in the list
+  // above because it has no render function - it has a page of its own.
+  if ($("reportsView")) $("reportsView").classList.toggle("hidden", v !== "reports");
+  if (v === "reports") mountReports();
   if (v === "actions") renderActions();
   if (v === "live") { renderLive(); loadLiveCases(); }
   if (v === "admin") renderAdmin();
@@ -4230,6 +4266,9 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 function railGo(v) {
+  // The rail item is hidden without the permission, but a deep link or a
+  // stale bookmark can still ask for the view, so the gate is here as well.
+  if (v === "reports" && !(state.perms || {}).analytics) return;
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -4246,7 +4285,8 @@ function updateRail() {
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railChats", v === "live"], ["railIssues", onIssues],
                ["railDev", v === "dev"], ["railCourse", v === "course"],
-               ["railStats", v === "analytics"], ["railUsers", v === "users"]];
+               ["railStats", v === "analytics"], ["railUsers", v === "users"],
+               ["railReports", v === "reports"]];
   pairs.forEach(function (p) { var el = $(p[0]); if (el) el.classList.toggle("active", !!p[1]); });
   // The segment bar belongs to Issues, so it only shows there.
   var wrap = $("issuesSegWrap");
@@ -4276,6 +4316,65 @@ function updateRailBadges() {
     iss.classList.toggle("on", !!m);
   }
 }
+
+// ===================== ROUND 67: REPORTS INSIDE THE SHELL =====================
+// Three small jobs: build the frame once, keep it in step with the theme, and
+// give it the right height. Everything the Reports page does for itself - the
+// session token, the signed ticket, the Supabase queries - is untouched.
+
+// Built on first open and then left alone. Switching away only hides the
+// container, so coming back is instant and does not re-run the page's queries.
+function mountReports() {
+  var host = $("reportsFrameHost");
+  if (!host) return;
+  var f = $("reportsFrame");
+  if (!f) {
+    f = document.createElement("iframe");
+    f.id = "reportsFrame";
+    f.title = "Ardent Reports";
+    f.setAttribute("scrolling", "yes");
+    f.addEventListener("load", function () { syncReportsTheme(); sizeReportsFrame(); });
+    f.src = "reports/";
+    host.appendChild(f);
+  }
+  syncReportsTheme();
+  sizeReportsFrame();
+}
+
+// "auto" means "whatever the browser is set to", and the tracker leaves that
+// to a CSS media query. The Reports page resolves it once at first paint, so
+// it needs the answer rather than the word.
+function resolvedTheme() {
+  var t = currentTheme();
+  if (t === "light" || t === "dark") return t;
+  try { return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; }
+  catch (e) { return "dark"; }
+}
+// Same origin, so we can set the attribute straight on the embedded document,
+// which works whether or not the Reports project has taken the message
+// listener yet. The postMessage is the documented way in for them, and sending
+// both means a redeploy from either side cannot leave the theme stuck.
+function syncReportsTheme() {
+  var f = $("reportsFrame");
+  if (!f) return;
+  var mode = resolvedTheme();
+  try {
+    var d = f.contentDocument;
+    if (d && d.documentElement) d.documentElement.setAttribute("data-theme", mode);
+  } catch (e) {}
+  try { f.contentWindow.postMessage({ type: "ait-theme", theme: mode }, window.location.origin); } catch (e) {}
+}
+// An iframe has no natural height, so it gets one from where it actually sits
+// on the page down to the bottom of the window - less the phone bottom bar,
+// which would otherwise cover the last inch of the report.
+function sizeReportsFrame() {
+  var f = $("reportsFrame");
+  if (!f || state.view !== "reports") return;
+  var top = f.getBoundingClientRect().top;
+  var bar = (document.body.classList.contains("shell") && window.innerWidth <= 760) ? 60 : 0;
+  f.style.height = Math.max(320, Math.round(window.innerHeight - top - bar)) + "px";
+}
+window.addEventListener("resize", sizeReportsFrame);
 
 // ===================== ROUND 64: THE SUB-RAIL (FB-0229) =====================
 // Edd: "when there are further tabs, like here, I think the all, course
@@ -9801,6 +9900,19 @@ function captureFeedbackContext() {
       document.querySelector(".wrap:not(.hidden)");
     if (srcEl) ctx.page_text = srcEl.innerText.replace(/\s+/g, " ").trim().slice(0, 2000);
   } catch (e) {}
+  // Round 67: with Reports open the visible page is an iframe, and the shell
+  // around it says nothing. Same origin, so read what is actually on screen -
+  // a feedback report about a chart is no use with the chart missing.
+  if (state.view === "reports") {
+    ctx.page_text = "";
+    try {
+      var rd = $("reportsFrame") && $("reportsFrame").contentDocument;
+      var rb = rd && (rd.getElementById("gate") && rd.getElementById("gate").style.display !== "none"
+        ? rd.getElementById("gate") : rd.body);
+      if (rb) ctx.page_text = rb.innerText.replace(/\s+/g, " ").trim().slice(0, 2000);
+    } catch (e) {}
+    if (!ctx.page_text) ctx.page_text = "(Reports is embedded and its text could not be read)";
+  }
   // Page-specific state, only where it says something useful.
   if (state.view === "instructor") {
     ctx.form_mode = state.formMode;
@@ -9832,7 +9944,7 @@ function captureFeedbackContext() {
 // A one-line human version for showing in the modal and the admin list.
 function describeContext(ctx) {
   if (!ctx || !ctx.view) return "";
-  var names = { instructor: "Log an issue", actions: "Actions", admin: "Track", analytics: "Analytics", dev: "Developers", course: "Course fixes", users: "Admin" };
+  var names = { instructor: "Log an issue", actions: "Actions", admin: "Track", analytics: "Analytics", dev: "Developers", course: "Course fixes", users: "Admin", reports: "Reports" };
   var bits = [names[ctx.view] || ctx.view];
   if (ctx.view === "admin" && ctx.track_view === "board") bits.push("board view");
   // The area can be several now (FB-0235), so the label spells them out rather
