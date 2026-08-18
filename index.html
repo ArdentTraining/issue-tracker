@@ -9725,9 +9725,9 @@ function renderChatScan(targetId) {
 // other way, through history the scan has never read. Admins only, and drawn
 // whether or not the queue has anything in it.
 function adminScanControls() {
-  return '<div class="row" style="margin-bottom:6px;">' +
-    '<button class="ghost small" id="scanNowBtn" style="padding:5px 12px;" onclick="runChatScanNow()">Scan now</button>' +
-    '<button class="ghost small" id="backSweepBtn" style="padding:5px 12px;" onclick="runChatBackSweep()" title="Read older Chatwoot conversations the scan has never seen, a few pages at a time">Look further back</button>' +
+  return '<div class="row" style="margin-bottom:6px;gap:8px;flex-wrap:wrap;justify-content:flex-start;">' +
+    '<button class="ghost small" id="scanNowBtn" style="padding:5px 12px;flex:0 0 auto;" onclick="runChatScanNow()">Scan now</button>' +
+    '<button class="ghost small" id="backSweepBtn" style="padding:5px 12px;flex:0 0 auto;" onclick="runChatBackSweep()" title="Read older Chatwoot conversations the scan has never seen, a few pages at a time">Look further back</button>' +
     '</div>' +
     '<p class="small muted" id="backSweepNote" style="margin:-2px 0 10px;"></p>';
 }
