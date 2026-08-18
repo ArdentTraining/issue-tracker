@@ -229,6 +229,13 @@
     .rail-div,.rail-spacer,#whoami{display:none}
     header,main{padding-left:18px; padding-right:18px}
   }
+  #boot{max-width:560px; margin:14vh auto; text-align:center; color:var(--muted); font-size:14.5px}
+  #boot .dot{display:inline-block; width:9px; height:9px; margin:0 3px; border-radius:50%;
+             background:var(--accent); animation:pulse 1.1s ease-in-out infinite}
+  #boot .dot:nth-child(2){animation-delay:.15s}
+  #boot .dot:nth-child(3){animation-delay:.3s}
+  @keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
+  #boot p{margin:16px 0 0}
 </style>
 </head>
 <body>
@@ -245,6 +252,11 @@
 </nav>
 
 <div id="page">
+
+<div id="boot">
+  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+  <p>Checking your tracker account…</p>
+</div>
 
 <div id="gate" style="display:none">
   <h2 id="gateTitle">Sign in first</h2>
@@ -427,7 +439,10 @@ async function fetchData(){
   return r.json();
 }
 
+function hideBoot(){ var b=document.getElementById('boot'); if(b) b.style.display='none'; }
+
 function showGate(kind, detail){
+  hideBoot();
   if(POLLING){ clearInterval(POLLING); POLLING = null; }
   document.getElementById('app').style.display  = 'none';
   document.getElementById('gate').style.display = '';
@@ -460,6 +475,7 @@ function showGate(kind, detail){
 }
 
 function showApp(){
+  hideBoot();
   document.getElementById('gate').style.display = 'none';
   document.getElementById('app').style.display  = '';
   const who = document.getElementById('whoami');
@@ -520,6 +536,10 @@ async function loadAll(){
     render();
   }catch(e){
     if(e instanceof AuthProblem){ showGate(e.kind, e.detail); return; }
+    /* The error panel lives inside #app, so on a first-load failure the shell
+       has to be revealed or the message is written somewhere still hidden and
+       the page just sits there blank. (Reports project, 18 Aug.) */
+    showApp();
     document.getElementById('error').innerHTML='<div class="err"><b>Could not load data.</b><br>'+esc(e.message)+'</div>';
   }
 }
