@@ -1757,9 +1757,6 @@ function updateIssue_(data) {
 
   var record = found.record;
   var wasResolved = String(record.status || '').toLowerCase() === 'resolved';
-  // Slack fires on the CHANGE to high, not on every save of something already
-  // there (Edd, 18 Aug 2026). Read it before the edit is applied.
-  var priorityBefore = String(record.priority || '').toLowerCase();
 
   // Without the manage permission (dev / course team), only the priority and
   // the estimated fix size may be tweaked - the two edits their drawer offers
@@ -2001,6 +1998,9 @@ function addUpdate_(data) {
   var found = findRow_(id);
   if (!found) return { ok: false, error: 'No issue found with id ' + id };
   var rec = found.record;
+  // Slack fires on the CHANGE to high, not on every update to something already
+  // there (Edd, 19 Aug 2026). Read it before this update touches the record.
+  var priorityBefore = String(rec.priority || '').toLowerCase();
 
   var who = (data._user && data._user.name) || data.instructor_name || 'someone';
   var stamp = new Date().toISOString().slice(0, 10);
@@ -4879,7 +4879,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r71 · 2026-08-19';
+var CODE_STAMP = 'r71.1 · 2026-08-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
