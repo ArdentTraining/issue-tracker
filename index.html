@@ -1844,7 +1844,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r73 · 2026-08-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r74 · 2026-08-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9901,11 +9901,23 @@ function drawChatScan(box, targetId, rows) {
       '</div>';
     }).join("") : '<p class="muted small">No news on anything already open.</p>';
 
+    // How the conversation ENDED, not just what broke (Edd, 19 Aug 2026). A
+    // fault the student solved at their own end is a different job from one
+    // still hurting, and "someone sorted them out by hand" is the one that
+    // hides a live fault, so it gets the loudest colour of the three.
+    var OUTCOME = {
+      still_broken:  { label: "Still broken",   colour: "var(--high)" },
+      worked_around: { label: "Worked around",  colour: "var(--medium)" },
+      self_resolved: { label: "Sorted itself",  colour: "var(--low)" },
+      fixed:         { label: "Already fixed",  colour: "var(--low)" }
+    };
     html += '<h3 style="margin-top:18px;">Possible new issues</h3>';
     html += news.length ? news.map(function (r) {
       var cid = esc(String(r.conversation_id));
+      var oc = OUTCOME[String(r.outcome || "")];
       return '<div class="issue-card" style="cursor:default;">' +
         '<div class="top">' +
+          (oc ? '<span class="badge" style="background:' + oc.colour + ';color:#02121f;">' + esc(oc.label) + '</span>' : '') +
           '<span class="badge type-badge">' + esc(String(r.confidence || "")) + ' confidence</span>' +
           catBadge(r.category) +
           (r.lesson_code ? '<span class="code">' + esc(r.lesson_code) + '</span>' : '') +
@@ -9913,6 +9925,7 @@ function drawChatScan(box, targetId, rows) {
           '<span class="who">' + fmtDate(r.scanned_at) + '</span>' +
         '</div>' +
         '<div class="sum">' + esc(r.summary || "") + '</div>' +
+        (r.outcome_note ? '<div class="small" style="margin-top:4px;">How it ended: ' + esc(r.outcome_note) + '</div>' : '') +
         (r.verifier_note ? '<div class="small muted" style="margin-top:4px;">Second opinion: ' + esc(r.verifier_note) + '</div>' : '') +
         '<div class="row" style="margin-top:8px;">' +
           '<button class="primary small" style="padding:5px 12px;" onclick="chatScanLogIt(\'' + cid + '\')">Log it</button>' +

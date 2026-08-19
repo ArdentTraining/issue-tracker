@@ -2785,9 +2785,12 @@ function chatwootNote_(convId, issue, appUrl) {
 // second opinion kills most false positives, and it only runs on the few
 // things the first one flagged.
 var SCAN_SHEET = 'Chat Scan';
+// outcome / outcome_note APPENDED (Edd, 19 Aug 2026): the new-issue path read
+// the fault and ignored how the conversation ended, so a problem the student
+// had already solved themselves was queued exactly like one still hurting.
 var SCAN_HEADERS = ['conversation_id', 'scanned_at', 'confidence', 'summary', 'category', 'lesson_code',
                     'student_name', 'student_contact', 'status', 'issue_id', 'reviewed_by', 'reviewed_at', 'verifier_note',
-                    'kind', 'verdict'];
+                    'kind', 'verdict', 'outcome', 'outcome_note'];
 var FINDER_MODEL = 'claude-sonnet-5';
 var VERIFIER_MODEL = 'claude-opus-5';
 
@@ -3120,7 +3123,10 @@ function scanChatwoot(opts) {
       if (applied) { updApplied++; updAppliedList.push({ id: u.issue.issue_id, summary: u.summary }); }
       ush.appendRow([u.id, unow, 'high', u.summary, catOf_(u.issue), u.issue.lesson_code || '',
                      u.name, u.contact, applied ? 'logged' : 'suggested', u.issue.issue_id,
-                     applied ? 'Overnight scan' : '', applied ? unow : '', '', 'update', u.verdict]);
+                     applied ? 'Overnight scan' : '', applied ? unow : '', '', 'update', u.verdict,
+                     // The update path already carries its verdict; the outcome
+                     // columns exist so every row is the same width.
+                     '', '']);
     });
   }
 
@@ -3175,14 +3181,29 @@ function scanChatwoot(opts) {
       'arrived damaged, or was the wrong item. A question that was simply answered, ' +
       'an enquiry, marking feedback, admin, or a student misunderstanding with no underlying fault is NOT an issue.\n\n' +
       'CLAIM: ' + JSON.stringify(f.x) + '\n\nFULL CONVERSATION:\n' + f.src.text + '\n\n' +
-      'Return ONLY JSON: {"agree": true or false, "why":"<one short sentence>", "summary":"<corrected one-sentence summary if you agree, else empty>"}. No prose, no fences.';
+      // Same call, one more field. How the conversation ENDED decides whether
+      // anyone needs to act now, and reading only the fault meant a problem the
+      // student had already solved was queued like one still hurting.
+      'Also say how the conversation ENDED, for this one student:\n' +
+      '- "still_broken": nobody solved it, or it was escalated and left open.\n' +
+      '- "worked_around": the student got moving again, but only because someone stepped in by hand or gave them a way round it. ' +
+      'The underlying fault was NOT fixed. Passwords reset by an agent, a tutor sending a missing image another way, and ' +
+      '"use a different browser" all count as worked around.\n' +
+      '- "self_resolved": it stopped happening on its own or through something the student changed at their end, ' +
+      'like updating their device or refreshing the page. Nobody fixed our platform.\n' +
+      '- "fixed": someone actually fixed the underlying fault and said so.\n' +
+      'When a student was helped by hand, that is "worked_around", never "fixed".\n\n' +
+      'Return ONLY JSON: {"agree": true or false, "why":"<one short sentence>", "summary":"<corrected one-sentence summary if you agree, else empty>", ' +
+      '"outcome":"still_broken|worked_around|self_resolved|fixed", "outcome_note":"<one short sentence on how it ended>"}. No prose, no fences.';
     var v = anthropicJson_(VERIFIER_MODEL, vPrompt, 400);
     if (v && v.agree === true) {
       confirmed.push({
         id: f.src.id, name: f.src.name, contact: f.src.contact,
         summary: v.summary || f.x.summary || '', category: f.x.category || 'tech_issue',
         lesson_code: f.x.lesson_code || '', confidence: f.x.confidence || 'medium',
-        note: v.why || ''
+        note: v.why || '',
+        outcome: String(v.outcome || 'still_broken').toLowerCase(),
+        outcome_note: v.outcome_note || ''
       });
     }
   });
@@ -3208,9 +3229,24 @@ function scanChatwoot(opts) {
     var now = new Date().toISOString();
     fresh.forEach(function (c) {
       var row = [c.id, now, c.confidence, c.summary, c.category, c.lesson_code,
-                 c.name, c.contact, 'suggested', '', '', '', c.note, 'new', ''];
+                 c.name, c.contact, 'suggested', '', '', '', c.note, 'new', '',
+                 c.outcome || '', c.outcome_note || ''];
+      // Edd, 19 Aug 2026: the scan read the fault and ignored how it ended, so
+      // a problem the student had already solved themselves was filed exactly
+      // like one still hurting.
+      //
+      // still_broken and worked_around are BOTH filed. A workaround is how a
+      // live fault stays invisible: two students were blocked by a broken
+      // password reset link on one morning, both were handed a password by
+      // hand, and nobody filed it (issue 6cee6cde). Being helped is not being
+      // fixed.
+      //
+      // self_resolved and fixed are not filed automatically. Nothing is lost:
+      // they sit in the queue with the outcome on them, so a human can log one
+      // in a click if the fault is worth chasing anyway.
+      var fileIt = (c.outcome !== 'self_resolved' && c.outcome !== 'fixed');
       try {
-        if (Date.now() - started <= SCAN_BUDGET_MS) {
+        if (fileIt && Date.now() - started <= SCAN_BUDGET_MS) {
           var imp = chatwootImport_({ conversation: c.id });
           var transcript = (imp && imp.ok && imp.transcript) ? String(imp.transcript) : '';
           if (transcript) {
@@ -4955,7 +4991,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r73.1 · 2026-08-19';
+var CODE_STAMP = 'r74 · 2026-08-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
