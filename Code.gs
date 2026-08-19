@@ -40,19 +40,49 @@ var DRIVE_FOLDER_ID = '1E9LB6phKF3VmJR-VsbTzeW7jorqZdrvd';
 //
 // Turn one back on by flipping it to true. Nothing else needs changing.
 var SLACK_NOTICES = {
-  high_priority:     true,   // new high-priority issue, or one escalating to high
-  feedback:          false,  // someone pressed the Feedback button
-  weekly_digest:     false,  // Mondays 8am
-  scan_summary:      false,  // what the 5am chat scan found
-  shipping_chase:    false,  // a parcel due a chase
-  monthly_checklist: false,  // 1st of the month, suggested checklist steps
-  notify_student:    false,  // fix done, a student needs telling
-  query_raised:      false,  // dev/course/admin asking a question
-  query_answered:    false,  // the reply coming back
-  recheck:           false,  // a workaround nobody could verify
-  shared_workaround: false   // 3+ issues in a week closed the same way
+  // on:  is this notice allowed out at all
+  // to:  the script property holding ITS channel's webhook. Empty, or a property
+  //      that has not been set yet, falls back to the current channel, so a
+  //      notice keeps working from the day it is switched on and moves the day
+  //      the property is filled in. No code change and no deploy to move one.
+  high_priority:     { on: true,  to: '' },                           // stays put
+  shipping_chase:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
+  notify_student:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
+  query_raised:      { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
+  query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
+  shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
+  // Off for good (Edd, 19 Aug 2026). All five still exist in the tracker.
+  feedback:          { on: false, to: '' },
+  weekly_digest:     { on: false, to: '' },
+  scan_summary:      { on: false, to: '' },
+  monthly_checklist: { on: false, to: '' },
+  recheck:           { on: false, to: '' }
 };
-function slackOn_(kind) { return SLACK_NOTICES[kind] === true; }
+function slackOn_(kind) { return !!(SLACK_NOTICES[kind] && SLACK_NOTICES[kind].on); }
+// The channel this notice belongs in, or the current one until that channel
+// exists. Never throws and never blocks the caller: a Slack failure has never
+// been allowed to stop a save.
+function slackUrlFor_(kind) {
+  var n = SLACK_NOTICES[kind];
+  if (n && n.to) {
+    var url = PropertiesService.getScriptProperties().getProperty(n.to);
+    if (url) return url;
+  }
+  return slackWebhook_();
+}
+// Every Slack message in the app goes through here. One choke point, so what
+// the channel carries is decided in the map above and nowhere else.
+function slackPost_(kind, text) {
+  if (!slackOn_(kind)) return;
+  var url = slackUrlFor_(kind);
+  if (!url) return;
+  try {
+    UrlFetchApp.fetch(url, {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ text: text })
+    });
+  } catch (e) {}
+}
 
 function slackWebhook_() {
   return PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_URL') || '';
@@ -2166,10 +2196,7 @@ function sendNotifyStudentSlack_(issue, appUrl) {
     'Instructors: please let the student know this is sorted (it\'s also in your Actions tab).',
     'Open this issue: ' + issueLink_(issue, appUrl)
   ].join('\n');
-  UrlFetchApp.fetch(slackWebhook_(), {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    payload: JSON.stringify({ text: text })
-  });
+  slackPost_('notify_student', text);
 }
 
 // A developer or course-team member is stuck and needs something from the
@@ -2234,10 +2261,7 @@ function sendQueryRaisedSlack_(issue, appUrl) {
       : ('Reply in the tracker so ' + (isCourse ? 'the course team' : 'the developer') + ' can carry on.'),
     'Open this issue: ' + issueLink_(issue, appUrl)
   ].join('\n');
-  UrlFetchApp.fetch(slackWebhook_(), {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    payload: JSON.stringify({ text: text })
-  });
+  slackPost_('query_raised', text);
 }
 
 // An admin answers a developer's/course team's question. Logs the reply in
@@ -2299,10 +2323,7 @@ function sendQueryAnsweredSlack_(issue, question, reply, asker, appUrl) {
     '',
     'Open this issue: ' + issueLink_(issue, appUrl)
   ].join('\n');
-  UrlFetchApp.fetch(slackWebhook_(), {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    payload: JSON.stringify({ text: text })
-  });
+  slackPost_('query_answered', text);
 }
 
 // The instructor gave the student a workaround and marked it Resolved-TBC, but
@@ -2335,10 +2356,7 @@ function sendRecheckSlack_(rec, appUrl) {
       "One-off - leave it as Resolved - TBC. Everyone - reopen it so it gets a proper fix.",
     'Open this issue: ' + issueLink_(rec, appUrl)
   ].join('\n');
-  UrlFetchApp.fetch(slackWebhook_(), {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    payload: JSON.stringify({ text: text })
-  });
+  slackPost_('recheck', text);
 }
 
 // ---- Shared workaround watch ----------------------------------------------
@@ -2444,10 +2462,7 @@ function sendSharedWorkaroundSlack_(kind, matches, appUrl) {
   if (matches.length > 6) lines.push('• plus ' + (matches.length - 6) + ' more');
   lines.push('');
   lines.push('Worth one of us reopening the clearest one and sending it to the developers, rather than waiting for the next report.');
-  UrlFetchApp.fetch(slackWebhook_(), {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    payload: JSON.stringify({ text: lines.join('\n') })
-  });
+  slackPost_('shared_workaround', lines.join('\n'));
 }
 
 // Kept only so any leftover daily trigger from the first Round 13 deploy
@@ -2490,12 +2505,7 @@ function chaseShipping() {
       ' - ' + String(i.summary || '').slice(0, 80) + (i.student_name ? ' (' + i.student_name + ')' : '') +
       '\n  ' + issueLink_(i, appUrl));
   });
-  try {
-    UrlFetchApp.fetch(slackWebhook_(), {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      payload: JSON.stringify({ text: lines.join('\n') })
-    });
-  } catch (e) {}
+  slackPost_('shipping_chase', lines.join('\n'));
   Logger.log('chaseShipping: nudged ' + due.length);
 }
 
@@ -2541,13 +2551,7 @@ function monthlyChecklistReview() {
         .concat(sugg.map(function (s) { return '• *' + s.label + '* - ' + s.why; }))
         .concat(['', 'If one earns its place, tell Claude to add it to the checklist.']).join('\n')
     : ':clipboard: *Monthly checklist review* - ' + recent.length + ' tech issues looked at, the current checklist already covers what came up. Nothing to add.';
-  if (!slackOn_('monthly_checklist')) return;
-  try {
-    UrlFetchApp.fetch(slackWebhook_(), {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      payload: JSON.stringify({ text: text })
-    });
-  } catch (e) {}
+  slackPost_('monthly_checklist', text);
 }
 
 // Rotate the Slack webhook without opening Project Settings: the URL travels
@@ -3297,12 +3301,7 @@ function scanSlack_(newList, updList, waiting) {
     updList.slice(0, 6).forEach(function (x) { var r = row(x); if (r) lines.push(r); });
   }
   if (waiting) lines.push(waiting + ' left for a human eye in the Actions tab.');
-  try {
-    UrlFetchApp.fetch(slackWebhook_(), {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      payload: JSON.stringify({ text: lines.join('\n') })
-    });
-  } catch (e) {}
+  slackPost_('scan_summary', lines.join('\n'));
 }
 // catOf for a sheet record (the frontend has its own).
 function catOf_(issue) {
@@ -3512,12 +3511,7 @@ function weeklyDigest() {
   }
   lines.push('');
   lines.push('Open the tracker: ' + (appUrl || '(app url not set)'));
-  try {
-    UrlFetchApp.fetch(slackWebhook_(), {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      payload: JSON.stringify({ text: lines.join('\n') })
-    });
-  } catch (e) {}
+  slackPost_('weekly_digest', lines.join('\n'));
 }
 
 // One tap of feedback on each AI extraction ("Spot on" / "Needed fixing"),
@@ -4608,10 +4602,7 @@ function sendFeedbackSlack_(fb, appUrl) {
   if (ctx.view) lines.push('*Where:* ' + ctx.view + (ctx.build ? ' · build ' + ctx.build : ''));
   if (ctx.errors && ctx.errors.length) lines.push('*Last error:* ' + String(ctx.errors[ctx.errors.length - 1].message || '').slice(0, 200));
   if (appUrl) lines.push('Open the Feedback tab: ' + appUrl);
-  UrlFetchApp.fetch(slackWebhook_(), {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    payload: JSON.stringify({ text: lines.join('\n') })
-  });
+  slackPost_('feedback', lines.join('\n'));
 }
 
 function getFeedback_() {
@@ -4871,12 +4862,7 @@ function sendSlack_(issue, appUrl) {
     'View in Bugs: ' + issueLink_(issue, appUrl)
   ].join('\n');
 
-  UrlFetchApp.fetch(slackWebhook_(), {
-    method: 'post',
-    contentType: 'application/json',
-    muteHttpExceptions: true,
-    payload: JSON.stringify({ text: text })
-  });
+  slackPost_('high_priority', text);
 
   return { ok: true };
 }
@@ -4893,7 +4879,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r70 · 2026-08-19';
+var CODE_STAMP = 'r71 · 2026-08-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6567,10 +6553,19 @@ function backendInfo_() {
     version: p.getProperty('BACKEND_VERSION') || '',
     deployed_at: p.getProperty('BACKEND_DEPLOYED_AT') || '',
     note: p.getProperty('BACKEND_NOTE') || '',
-    // What is allowed to reach Slack, so it can be checked without opening the
-    // code. Muting something and being unable to confirm it is how a channel
-    // quietly starts up again.
-    slack: SLACK_NOTICES
+    // What is allowed to reach Slack and where it goes, so it can be checked
+    // without opening the code. Muting something and being unable to confirm it
+    // is how a channel quietly starts up again. Reports whether each
+    // destination property is SET, never the webhook itself.
+    slack: (function () {
+      var out = {};
+      Object.keys(SLACK_NOTICES).forEach(function (k) {
+        var n = SLACK_NOTICES[k];
+        out[k] = { on: n.on, to: n.to || '(current channel)',
+                   ready: !n.to || !!p.getProperty(n.to) };
+      });
+      return out;
+    })()
   };
 }
 
