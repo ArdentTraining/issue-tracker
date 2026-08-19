@@ -3271,8 +3271,9 @@ function scanChatwoot(opts) {
 // overlap between presses is free. When it walks off the end of the history it
 // says so and starts again from the top next time.
 function runChatBackSweep_(data) {
-  var lock = scanLock_();
-  if (!lock) return { ok: false, error: 'A scan is already running. Give it a minute and try again.' };
+  var got = scanLock_();
+  if (!got.lock) return { ok: false, error: got.error };
+  var lock = got.lock;
   try {
   var props = PropertiesService.getScriptProperties();
   var page = Number(props.getProperty('CHATWOOT_BACKSWEEP_PAGE') || 1);
@@ -3301,9 +3302,14 @@ function runChatBackSweep_(data) {
 // either has written its rows, so the same conversations get read and queued
 // twice - paid for twice, too. Returns null when something else holds it.
 function scanLock_() {
-  var lock = LockService.getScriptLock();
-  try { if (!lock.tryLock(1000)) return null; } catch (e) { return null; }
-  return lock;
+  var lock;
+  try { lock = LockService.getScriptLock(); }
+  catch (e) { return { error: 'Could not reach the lock service: ' + e }; }
+  var got;
+  try { got = lock.tryLock(20000); }
+  catch (e) { return { error: 'Lock request failed: ' + e }; }
+  if (!got) return { error: 'A scan is already running. Give it a minute and try again.' };
+  return { lock: lock };
 }
 // How far back the sweep has walked, so the button can say so before it is
 // pressed rather than after.
@@ -3316,8 +3322,9 @@ function chatBackSweepState_() {
 // for 5am. Clears the "start clean" pointer back a few hours so there is
 // something to look at.
 function runChatScan_(data) {
-  var lock = scanLock_();
-  if (!lock) return { ok: false, error: 'A scan is already running. Give it a minute and try again.' };
+  var got = scanLock_();
+  if (!got.lock) return { ok: false, error: got.error };
+  var lock = got.lock;
   try {
   var props = PropertiesService.getScriptProperties();
   if (data && data.since_hours) {
@@ -4948,7 +4955,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r73 · 2026-08-19';
+var CODE_STAMP = 'r73.1 · 2026-08-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
