@@ -3271,6 +3271,9 @@ function scanChatwoot(opts) {
 // overlap between presses is free. When it walks off the end of the history it
 // says so and starts again from the top next time.
 function runChatBackSweep_(data) {
+  var lock = scanLock_();
+  if (!lock) return { ok: false, error: 'A scan is already running. Give it a minute and try again.' };
+  try {
   var props = PropertiesService.getScriptProperties();
   var page = Number(props.getProperty('CHATWOOT_BACKSWEEP_PAGE') || 1);
   if (data && data.restart) page = 1;
@@ -3287,9 +3290,20 @@ function runChatBackSweep_(data) {
     read: stats.prepared || 0,
     flagged: stats.flagged || 0,
     confirmed: stats.confirmed || 0,
-    queued: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }).length,
+    queued: chatScanList_().scans.length,
     stats: stats
   };
+  } finally { try { lock.releaseLock(); } catch (e) {} }
+}
+
+// Only one scan at a time. Both manual buttons and the nightly trigger run the
+// same code, and two overlapping runs each read the "already seen" list before
+// either has written its rows, so the same conversations get read and queued
+// twice - paid for twice, too. Returns null when something else holds it.
+function scanLock_() {
+  var lock = LockService.getScriptLock();
+  try { if (!lock.tryLock(1000)) return null; } catch (e) { return null; }
+  return lock;
 }
 // How far back the sweep has walked, so the button can say so before it is
 // pressed rather than after.
@@ -3302,6 +3316,9 @@ function chatBackSweepState_() {
 // for 5am. Clears the "start clean" pointer back a few hours so there is
 // something to look at.
 function runChatScan_(data) {
+  var lock = scanLock_();
+  if (!lock) return { ok: false, error: 'A scan is already running. Give it a minute and try again.' };
+  try {
   var props = PropertiesService.getScriptProperties();
   if (data && data.since_hours) {
     props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now() - Number(data.since_hours) * 3600 * 1000));
@@ -3309,7 +3326,8 @@ function runChatScan_(data) {
     props.setProperty('CHATWOOT_LAST_SCAN', String(Date.now() - 12 * 3600 * 1000));
   }
   scanChatwoot();
-  return { ok: true, queued: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }).length, stats: SCAN_STATS };
+  return { ok: true, queued: chatScanList_().scans.length, stats: SCAN_STATS };
+  } finally { try { lock.releaseLock(); } catch (e) {} }
 }
 
 // One Slack message covering both halves of the scan, with a direct link per
@@ -3345,8 +3363,20 @@ function catOf_(issue) {
 }
 
 // The admin queue: list what is waiting, and record the verdict.
+// One row per conversation. Two runs that overlap both build their "already
+// seen" list before either writes, so the same conversation can be queued twice
+// (nine conversations arrived as seventeen rows on 19 Aug). The lock below stops
+// that happening again, but the queue must read cleanly whatever is in the
+// sheet, including the rows already written. Newest wins.
 function chatScanList_() {
-  return { ok: true, scans: scanRows_().filter(function (r) { return String(r.status) === 'suggested'; }) };
+  var suggested = scanRows_().filter(function (r) { return String(r.status) === 'suggested'; });
+  var best = {};
+  suggested.forEach(function (r) {
+    var k = String(r.conversation_id);
+    var prev = best[k];
+    if (!prev || String(r.scanned_at || '') > String(prev.scanned_at || '')) best[k] = r;
+  });
+  return { ok: true, scans: Object.keys(best).map(function (k) { return best[k]; }) };
 }
 function chatScanReview_(data) {
   var id = String(data.conversation_id || '');
@@ -3355,15 +3385,19 @@ function chatScanReview_(data) {
   var values = sh.getDataRange().getValues();
   var head = values[0];
   var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  // Every row for this conversation, not just the first: a duplicate left
+  // behind would come straight back into the queue as if nobody had looked.
+  var hit = 0;
   for (var r = 1; r < values.length; r++) {
     if (String(values[r][idx.conversation_id]) !== id) continue;
+    if (String(values[r][idx.status]) !== 'suggested') continue;
     sh.getRange(r + 1, idx.status + 1).setValue(data.status === 'logged' ? 'logged' : 'dismissed');
     sh.getRange(r + 1, idx.reviewed_by + 1).setValue((data._user && data._user.name) || '');
     sh.getRange(r + 1, idx.reviewed_at + 1).setValue(new Date().toISOString());
     if (data.issue_id) sh.getRange(r + 1, idx.issue_id + 1).setValue(data.issue_id);
-    return { ok: true };
+    hit++;
   }
-  return { ok: false, error: 'not found' };
+  return hit ? { ok: true, rows: hit } : { ok: false, error: 'not found' };
 }
 
 // ---- self-deploy ----------------------------------------------------------
@@ -4914,7 +4948,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r72 · 2026-08-19';
+var CODE_STAMP = 'r73 · 2026-08-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
