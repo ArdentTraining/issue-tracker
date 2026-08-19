@@ -421,6 +421,7 @@ async function loadIssueCounts(){
     ISSUE_COUNTS = (j && j.ok && j.counts) ? j.counts : false;
   }catch(e){ ISSUE_COUNTS = false; }
   DIRTY.reported = true;
+  renderSummaries();
   renderSection('reported');
 }
 
