@@ -1844,7 +1844,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r72 · 2026-08-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r72.1 · 2026-08-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3383,14 +3383,20 @@ function openInChatwoot(email, contactId) {
   // ended up exactly as it started. The tab now stays open and says why, and
   // the reason is left on the page as well.
   var settled = false;
+  var searchUrl = "https://app.chatwoot.com/app/accounts/100142/contacts?search=" + encodeURIComponent(email);
   function fail(msg) {
     if (settled) return;
     settled = true;
+    // Verified live: this fails with a Chatwoot 422 "the request took too long"
+    // often enough to be the whole of FB-0245. Nobody can act on that message,
+    // so send them somewhere useful rather than stopping: the tab we already
+    // opened goes to the Chatwoot contact search for this address.
     if (win && !win.closed) {
-      try { win.document.body.innerHTML = '<div style="padding:40px;font-family:sans-serif;color:#E8EDF2;">' +
-        esc(msg) + '<br><br><span style="opacity:.7">You can close this tab.</span></div>'; } catch (e) {}
+      try { win.location = searchUrl; } catch (e) {}
+      showOpenLink("", msg + " Opened a Chatwoot search for " + email + " instead.");
+    } else {
+      showOpenLink(searchUrl, msg + " Search Chatwoot for them here:");
     }
-    showOpenLink("", msg);
     toast(msg);
   }
   // A lookup that never comes back used to leave the tab reading "Looking up…"
