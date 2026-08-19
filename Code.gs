@@ -30,6 +30,30 @@ var DRIVE_FOLDER_ID = '1E9LB6phKF3VmJR-VsbTzeW7jorqZdrvd';
 // is committed to the public GitHub repo now (GitHub's push protection caught
 // the old hardcoded URL on the way in), and the old webhook had leaked into
 // planning docs anyway, so rotate it in Slack and keep the property current.
+// ---- What actually goes to Slack -------------------------------------------
+// Edd, 18 August 2026: "Only high priority new issues (or old issues becoming
+// high priority). So it is just a warning of a new major issue." Eleven senders
+// were posting into the one channel, and the volume was burying the single
+// message that needs somebody to move. Nothing is lost by muting them: every
+// one of these notices still exists in the tracker, on the Actions tab or in
+// its own queue. This only decides what gets PUSHED at people.
+//
+// Turn one back on by flipping it to true. Nothing else needs changing.
+var SLACK_NOTICES = {
+  high_priority:     true,   // new high-priority issue, or one escalating to high
+  feedback:          false,  // someone pressed the Feedback button
+  weekly_digest:     false,  // Mondays 8am
+  scan_summary:      false,  // what the 5am chat scan found
+  shipping_chase:    false,  // a parcel due a chase
+  monthly_checklist: false,  // 1st of the month, suggested checklist steps
+  notify_student:    false,  // fix done, a student needs telling
+  query_raised:      false,  // dev/course/admin asking a question
+  query_answered:    false,  // the reply coming back
+  recheck:           false,  // a workaround nobody could verify
+  shared_workaround: false   // 3+ issues in a week closed the same way
+};
+function slackOn_(kind) { return SLACK_NOTICES[kind] === true; }
+
 function slackWebhook_() {
   return PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_URL') || '';
 }
@@ -1468,6 +1492,10 @@ function addReportToIssue_(id, data, report) {
   var found = findRow_(id);
   if (!found) return { ok: false, error: 'matched issue not found: ' + id };
   var rec = found.record;
+  // What the priority was before this report touched it. Slack is for an issue
+  // BECOMING high (Edd, 18 Aug 2026), so an issue already sitting at high must
+  // not ping again every time another report lands on it.
+  var priorityBefore = String(rec.priority || '').toLowerCase();
 
   var reports = [];
   try { reports = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reports = []; }
@@ -1537,8 +1565,9 @@ function addReportToIssue_(id, data, report) {
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
 
   // If the bump just pushed it to high, let Slack know once, but never ping for
-  // something that has landed resolved or Resolved - TBC.
-  if (String(rec.priority).toLowerCase() === 'high' &&
+  // something that has landed resolved or Resolved - TBC, and never for one that
+  // was already high before this report arrived.
+  if (String(rec.priority).toLowerCase() === 'high' && priorityBefore !== 'high' &&
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
@@ -1698,6 +1727,9 @@ function updateIssue_(data) {
 
   var record = found.record;
   var wasResolved = String(record.status || '').toLowerCase() === 'resolved';
+  // Slack fires on the CHANGE to high, not on every save of something already
+  // there (Edd, 18 Aug 2026). Read it before the edit is applied.
+  var priorityBefore = String(record.priority || '').toLowerCase();
 
   // Without the manage permission (dev / course team), only the priority and
   // the estimated fix size may be tweaked - the two edits their drawer offers
@@ -2007,7 +2039,7 @@ function addUpdate_(data) {
   rec.updated_at = new Date().toISOString();
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
 
-  if (String(rec.priority).toLowerCase() === 'high' &&
+  if (String(rec.priority).toLowerCase() === 'high' && priorityBefore !== 'high' &&
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
@@ -2120,6 +2152,7 @@ function markDevFixed_(data) {
 }
 
 function sendNotifyStudentSlack_(issue, appUrl) {
+  if (!slackOn_('notify_student')) return;
   var isCourse = String(issue.category).toLowerCase() === 'course_error';
   var student = (issue.student_name || '') + (issue.student_contact ? ' (' + issue.student_contact + ')' : '');
   var text = [
@@ -2186,6 +2219,7 @@ function issueLink_(issue, appUrl) {
 }
 
 function sendQueryRaisedSlack_(issue, appUrl) {
+  if (!slackOn_('query_raised')) return;
   var isCourse = String(issue.category).toLowerCase() === 'course_error';
   var toInstructor = issue.dev_query_target === 'instructor';
   var text = [
@@ -2255,6 +2289,7 @@ function answerQuery_(data) {
 }
 
 function sendQueryAnsweredSlack_(issue, question, reply, asker, appUrl) {
+  if (!slackOn_('query_answered')) return;
   var text = [
     ':speech_balloon: *Question answered*' + (asker ? ' - ' + asker + ', this one\'s for you' : ''),
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
@@ -2289,6 +2324,7 @@ function requestRecheck_(data) {
 }
 
 function sendRecheckSlack_(rec, appUrl) {
+  if (!slackOn_('recheck')) return;
   var text = [
     ':alarm_clock: *Workaround needs a double-check*',
     '*Lesson:* ' + (rec.lesson || '-') + ' (' + (rec.lesson_code || '-') + ')',
@@ -2394,6 +2430,7 @@ function checkSharedWorkaround_(rec, appUrl) {
 }
 
 function sendSharedWorkaroundSlack_(kind, matches, appUrl) {
+  if (!slackOn_('shared_workaround')) return;
   var lines = [
     ':mag: *' + matches.length + ' issues this week all sorted by ' + kind + '*',
     'Each one closed as Resolved - TBC on its own, so nothing looks wrong until you put them side by side. That many students needing the same workaround usually means the underlying fault is still there for everybody else.',
@@ -2443,6 +2480,9 @@ function chaseShipping() {
     sheet.getRange(r + 1, idx.chase_at + 1).setValue('');
   }
   if (!due.length) return;
+  // The chase dates above have been cleared either way: this job's bookkeeping
+  // is the point, the Slack nudge was only ever the reminder on top of it.
+  if (!slackOn_('shipping_chase')) return;
   var appUrl = getAppUrl_();
   var lines = [':package: *' + due.length + ' shipping issue' + (due.length === 1 ? '' : 's') + ' due a chase*'];
   due.slice(0, 8).forEach(function (i) {
@@ -2501,6 +2541,7 @@ function monthlyChecklistReview() {
         .concat(sugg.map(function (s) { return '• *' + s.label + '* - ' + s.why; }))
         .concat(['', 'If one earns its place, tell Claude to add it to the checklist.']).join('\n')
     : ':clipboard: *Monthly checklist review* - ' + recent.length + ' tech issues looked at, the current checklist already covers what came up. Nothing to add.';
+  if (!slackOn_('monthly_checklist')) return;
   try {
     UrlFetchApp.fetch(slackWebhook_(), {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
@@ -3236,6 +3277,7 @@ function runChatScan_(data) {
 // find - "the ping said it exists but I can't find it" (Edd, 11 Aug) ends here.
 // Accepts arrays of {id, summary}; plain numbers still work as counts.
 function scanSlack_(newList, updList, waiting) {
+  if (!slackOn_('scan_summary')) return;
   if (typeof newList === 'number') newList = new Array(newList);
   if (typeof updList === 'number') updList = new Array(updList);
   newList = newList || []; updList = updList || [];
@@ -3427,6 +3469,7 @@ function ensureTriggers_() {
 // things stand without opening the app. Runs on a weekly trigger (8am, after
 // the 7am backup).
 function weeklyDigest() {
+  if (!slackOn_('weekly_digest')) return;
   var issues = getIssues_().issues || [];
   var openStates = { open: 1, in_progress: 1, with_dev: 1, dev_fixed: 1 };
   var day = 24 * 3600 * 1000, now = Date.now();
@@ -4550,6 +4593,7 @@ function classifyFeedback_(message) {
 }
 
 function sendFeedbackSlack_(fb, appUrl) {
+  if (!slackOn_('feedback')) return;
   if (!slackWebhook_()) return;
   var blocking = fb.urgency === 'blocking';
   var kindWord = fb.kind === 'idea' ? 'Idea for the tracker' : fb.kind === 'question' ? 'Question about the tracker' : 'Bug in the tracker';
@@ -4809,6 +4853,7 @@ function slackSummary_(issue) {
 }
 
 function sendSlack_(issue, appUrl) {
+  if (!slackOn_('high_priority')) return;
   var c = String(issue.category).toLowerCase();
   var area = (c === 'tech_issue' ? 'Tech issue' : 'Course error') +
     (String(issue.audience || 'student').toLowerCase() === 'internal' ? ' · internal' : '');
@@ -4848,7 +4893,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r69 · 2026-08-18';
+var CODE_STAMP = 'r70 · 2026-08-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6521,7 +6566,11 @@ function backendInfo_() {
     stamp: CODE_STAMP,
     version: p.getProperty('BACKEND_VERSION') || '',
     deployed_at: p.getProperty('BACKEND_DEPLOYED_AT') || '',
-    note: p.getProperty('BACKEND_NOTE') || ''
+    note: p.getProperty('BACKEND_NOTE') || '',
+    // What is allowed to reach Slack, so it can be checked without opening the
+    // code. Muting something and being unable to confirm it is how a channel
+    // quietly starts up again.
+    slack: SLACK_NOTICES
   };
 }
 
