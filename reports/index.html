@@ -284,6 +284,11 @@
   <div id="visitView">
     <div class="cards" id="cards"></div>
 
+    <!-- Live right now. Sits above the folds because it is a glance, not
+         something to dig through. Hidden entirely until the Edge Function
+         starts returning `live`, so the page is never worse than before. -->
+    <div id="liveStrip" class="note" style="display:none"></div>
+
     <!-- ROUND 67: everything below folds. The cards and the controls above stay
          put, because they are the glance; these are the digging. -->
     <details class="acc" id="sec_howto" data-sec="howto">
@@ -313,6 +318,30 @@
       <summary><span class="acc-h">Where visits stop</span><span class="acc-sum" id="sum_dropoff">…</span></summary>
       <p class="hint">Share of visits reaching each slide. A cliff between two bars is where the lesson loses people. Quiz packages have no slides, so they do not appear here.</p>
       <div id="dropoff" class="loading">Loading…</div>
+    </details>
+
+    <details class="acc" id="sec_firstslide" data-sec="firstslide">
+      <summary><span class="acc-h">The first slide</span><span class="acc-sum" id="sum_firstslide">…</span></summary>
+      <p class="hint">Across every instrumented lesson, the step from the first slide to the second loses far more visits than every later step put together. Once a visit reaches slide two it nearly always runs to the end, so this one step is where the attention goes. Counted on engaged visits only, so an eleven-second glance is not held against the lesson.</p>
+      <div id="firstslide" class="loading">Loading…</div>
+    </details>
+
+    <details class="acc" id="sec_reported" data-sec="reported">
+      <summary><span class="acc-h">Reported problems against traffic</span><span class="acc-sum" id="sum_reported">…</span></summary>
+      <p class="hint">Issue reports from the tracker set against visits, so a lesson that is genuinely faulty separates from one that is simply busy. A lesson with reports and no telemetry is listed too: that is a lesson we are being told about and cannot see.</p>
+      <div id="reported" class="loading">Loading…</div>
+    </details>
+
+    <details class="acc" id="sec_coverage" data-sec="coverage">
+      <summary><span class="acc-h">What we cannot see</span><span class="acc-sum" id="sum_coverage">…</span></summary>
+      <p class="hint">Which courses report at all, and how much of each one. Every other number on this page is only as good as this: a course with no telemetry is not a course with no problems.</p>
+      <div id="coverage" class="loading">Loading…</div>
+    </details>
+
+    <details class="acc" id="sec_confusion" data-sec="confusion">
+      <summary><span class="acc-h">Long and interrupted</span><span class="acc-sum" id="sum_confusion">…</span></summary>
+      <p class="hint">Lessons where visits run long <i>and</i> people keep switching away. Neither on its own says much: a long lesson should take a while, and one tab switch is nothing. Together they suggest people are going off to look something up, which is worth a read of the lesson. A soft signal, not a verdict.</p>
+      <div id="confusion" class="loading">Loading…</div>
     </details>
 
     <details class="acc" id="sec_health" data-sec="health">
@@ -370,6 +399,30 @@ let DATA   = { stats: [], dropoff: [], health: [], identity: null };
 let GRAIN  = 'visit';
 let TICKET = null, TICKET_EXP = 0, VIEWER = null;
 let POLLING = null;
+/* Issue counts by lesson code, read from the tracker rather than Supabase:
+   the two systems keep their data in different places and this page is
+   same-origin with the tracker, so it can just ask. null = not back yet,
+   false = the call failed and the panel says so instead of guessing. */
+let ISSUE_COUNTS = null;
+
+/* The tracker's own count of issues per lesson code. Read-only, and it rides
+   on the same session this page already holds, so there is no second login.
+   A failure is not fatal: the panel says it could not read the log rather
+   than showing a table built on nothing. */
+async function loadIssueCounts(){
+  const token = localStorage.getItem(SESSION_KEY);
+  if(!token){ ISSUE_COUNTS = false; DIRTY.reported = true; renderSection('reported'); return; }
+  try{
+    const r = await fetch(APPS_SCRIPT, {
+      method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'lessonIssueCounts', token: token })
+    });
+    const j = await r.json();
+    ISSUE_COUNTS = (j && j.ok && j.counts) ? j.counts : false;
+  }catch(e){ ISSUE_COUNTS = false; }
+  DIRTY.reported = true;
+  renderSection('reported');
+}
 
 /* ------------------------------------------------------------------- auth */
 
@@ -523,7 +576,8 @@ async function loadAll(){
   try{
     const j = await fetchData();
     showApp();
-    DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity };
+    DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null };
+    renderLive();
     document.getElementById('lockReason').textContent = j.identity.reason;
     document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
 
@@ -534,6 +588,7 @@ async function loadAll(){
     }
     document.getElementById('stamp').textContent='updated '+new Date().toLocaleTimeString('en-GB');
     render();
+    loadIssueCounts();
   }catch(e){
     if(e instanceof AuthProblem){ showGate(e.kind, e.detail); return; }
     /* The error panel lives inside #app, so on a first-load failure the shell
@@ -560,8 +615,8 @@ async function loadAll(){
 
    The numbers and the tables themselves are exactly what they were. */
 const OPEN_KEY = 'ardr_open_v1';
-const SECTIONS = ['howto','lessons','engagement','dropoff','health'];
-const DIRTY    = { lessons:true, engagement:true, dropoff:true, health:true };
+const SECTIONS = ['howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','health'];
+const DIRTY    = { lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, health:true };
 
 function readOpen(){
   try{ return JSON.parse(localStorage.getItem(OPEN_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -583,7 +638,9 @@ function initFolds(){
 }
 function isOpen(k){ const el = document.getElementById('sec_' + k); return !!(el && el.open); }
 
-const RENDERERS = { lessons: renderLessons, engagement: renderEngagement,
+const RENDERERS = { firstslide: renderFirstSlide, reported: renderReported,
+                    coverage: renderCoverage, confusion: renderConfusion,
+                    lessons: renderLessons, engagement: renderEngagement,
                     dropoff: renderDropoff, health: renderHealth };
 function renderSection(k){
   if(!RENDERERS[k] || !DIRTY[k] || !isOpen(k)) return;
@@ -640,6 +697,45 @@ function renderCards(){
    whether or not the section is open. */
 function renderSummaries(){
   const stats = VIEW.stats, put = (id, t) => { const el = document.getElementById(id); if(el) el.textContent = t; };
+
+  /* The four sections added 19 Aug. Same rule as the rest: the fold says what
+     is inside it, so nobody has to open all nine to find the one that matters. */
+  (function(){
+    let n = 0, lost = 0;
+    Object.keys(VIEW.drops).forEach(id => {
+      const d = VIEW.drops[id];
+      if (d.length < 2 || (Number(d[0].total_sessions) || 0) < 15) return;
+      const reached = Number(d[1].reached_pct);
+      if (!isFinite(reached)) return;
+      n++; lost += (100 - reached);
+    });
+    put('sum_firstslide', n ? (n + ' lesson' + (n===1?'':'s') + ', ' + (lost/n).toFixed(0) + '% lost before slide 2 on average')
+                            : 'not enough visits yet');
+  })();
+  (function(){
+    if (ISSUE_COUNTS === null) { put('sum_reported', 'reading the issue log…'); return; }
+    if (ISSUE_COUNTS === false) { put('sum_reported', 'issue log unavailable'); return; }
+    const ids = new Set(stats.map(s => s.lesson_id));
+    const codes = Object.keys(ISSUE_COUNTS);
+    const blind = codes.filter(c => !ids.has(c)).length;
+    put('sum_reported', codes.length + ' lesson' + (codes.length===1?'':'s') + ' with reports · ' +
+        blind + ' of them with no telemetry');
+  })();
+  (function(){
+    const courses = new Set(DATA.stats.map(s => s.course_code));
+    const missing = Object.keys(COURSE_NAMES).filter(c => c !== 'RES' && !courses.has(c));
+    put('sum_coverage', courses.size + ' course' + (courses.size===1?'':'s') + ' reporting' +
+        (missing.length ? ' · nothing from ' + missing.join(', ') : ''));
+  })();
+  (function(){
+    const rows = stats.filter(s => (Number(s.sessions)||0) >= 20 && Number(s.median_active_seconds) > 0);
+    if (rows.length < 3) { put('sum_confusion', 'not enough visits yet'); return; }
+    const medOf = a => { const b = a.slice().sort((x,y)=>x-y); return b[Math.floor(b.length/2)]; };
+    const mM = medOf(rows.map(r => Number(r.median_active_seconds)/60));
+    const mS = medOf(rows.map(r => Number(r.avg_tab_switches)||0));
+    const flagged = rows.filter(r => (Number(r.median_active_seconds)/60) > mM && (Number(r.avg_tab_switches)||0) > mS).length;
+    put('sum_confusion', flagged + ' lesson' + (flagged===1?'':'s') + ' run long and interrupted');
+  })();
 
   const withTime = stats.filter(s => s.median_active_seconds != null);
   const typical  = withTime.length ? withTime.map(s=>Number(s.median_active_seconds)).sort((a,b)=>a-b)[Math.floor(withTime.length/2)] : null;
@@ -727,6 +823,174 @@ function renderDropoff(){
       '<div class="droplab"><span>Slide 1</span><span>Slide '+rows.length+'</span></div></div>';
   }).filter(Boolean);
   document.getElementById('dropoff').innerHTML=blocks.length?blocks.join(''):'<p class="loading">No slide data yet.</p>';
+}
+
+/* ---- The first slide ------------------------------------------------------
+   Measured 19 Aug 2026 across 37 lessons carrying real traffic: the step from
+   slide one to slide two loses 25.5 points on average, every later step loses
+   1.8. So this is not thirty-seven content problems, it is one step. Ranked
+   here so the worst offenders are obvious and the rest can be left alone. */
+function renderFirstSlide(){
+  const rows = [];
+  Object.keys(VIEW.drops).forEach(id => {
+    const d = VIEW.drops[id];
+    if (d.length < 2) return;                       // no second slide to reach
+    const base = Number(d[0].total_sessions) || 0;
+    if (base < 15) return;                          // too few visits to read
+    const reached = Number(d[1].reached_pct);
+    if (!isFinite(reached)) return;
+    const st = VIEW.stats.filter(x => x.lesson_id === id)[0] || {};
+    rows.push({ id, title: st.lesson_title || '', base, reached, lost: 100 - reached });
+  });
+  rows.sort((a,b) => b.lost - a.lost);
+  const el = document.getElementById('firstslide');
+  if (!rows.length) { el.innerHTML = '<p class="hint">No lesson has enough visits yet to read this.</p>'; return; }
+  const avg = rows.reduce((a,r) => a + r.lost, 0) / rows.length;
+  el.innerHTML =
+    '<div class="note">Across ' + rows.length + ' lessons, an average of <b>' + avg.toFixed(1) +
+    '%</b> of engaged visits never reach the second slide. Lessons with fewer than 15 visits are left out.</div>' +
+    '<table><thead><tr><th>Lesson</th><th>Visits</th><th>Reach slide 2</th><th>Lost at the first step</th></tr></thead><tbody>' +
+    rows.map(r => {
+      const cls = r.lost >= 40 ? 'warn' : (r.lost >= 25 ? 'idle' : 'ok');
+      return '<tr><td class="lesson">' + r.id + '<small>' +
+        esc((r.title || '').replace(/^[A-Z]{2,4}\.\d{2}\.\d{2}\s*-\s*/, '')) + '</small></td>' +
+        '<td>' + r.base + '</td><td>' + r.reached.toFixed(1) + '%</td>' +
+        '<td><span class="pill ' + cls + '">' + r.lost.toFixed(1) + '%</span></td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+/* ---- Reported problems against traffic ------------------------------------
+   The join nobody had: tracker issue counts against telemetry visits. On
+   19 Aug only two of the twelve most-reported Day Skipper lessons had any
+   telemetry at all, which is why the "no telemetry" rows are listed rather
+   than dropped - a lesson we are being told about and cannot see is the most
+   interesting row on the page, not a gap to hide. */
+function renderReported(){
+  const el = document.getElementById('reported');
+  if (ISSUE_COUNTS === null) { el.innerHTML = '<p class="hint">Reading the issue log…</p>'; return; }
+  if (ISSUE_COUNTS === false) { el.innerHTML = '<p class="hint">Could not read the issue log from the tracker, so this one is blank rather than wrong.</p>'; return; }
+  const course = document.getElementById('courseFilter').value;
+  const byId = {};
+  VIEW.stats.forEach(st => { byId[st.lesson_id] = Number(st.sessions) || 0; });
+  const rows = Object.keys(ISSUE_COUNTS)
+    .filter(code => !course || code.indexOf(course + '.') === 0)
+    .map(code => {
+      const visits = byId[code];
+      const n = ISSUE_COUNTS[code];
+      return { code, n, visits: (visits === undefined ? null : visits),
+               rate: (visits ? (n * 100 / visits) : null) };
+    })
+    .sort((a,b) => {
+      if (a.rate === null && b.rate === null) return b.n - a.n;
+      if (a.rate === null) return -1;               // unseen lessons first
+      if (b.rate === null) return 1;
+      return b.rate - a.rate;
+    })
+    .slice(0, 25);
+  if (!rows.length) { el.innerHTML = '<p class="hint">No issues logged against a lesson code in this course.</p>'; return; }
+  const blind = rows.filter(r => r.visits === null).length;
+  el.innerHTML =
+    (blind ? '<div class="note"><b>' + blind + '</b> of these lessons have reports but no telemetry, so there is nothing to compare them against. They are listed first.</div>' : '') +
+    '<table><thead><tr><th>Lesson</th><th>Reports</th><th>Visits</th><th>Reports per 100 visits</th></tr></thead><tbody>' +
+    rows.map(r => {
+      if (r.visits === null) {
+        return '<tr><td class="lesson">' + r.code + '</td><td>' + r.n +
+          '</td><td style="color:var(--muted)">—</td><td><span class="pill idle">no telemetry</span></td></tr>';
+      }
+      const cls = r.rate >= 10 ? 'warn' : (r.rate >= 3 ? 'idle' : 'ok');
+      return '<tr><td class="lesson">' + r.code + '</td><td>' + r.n + '</td><td>' + r.visits +
+        '</td><td><span class="pill ' + cls + '">' + r.rate.toFixed(1) + '</span></td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+/* ---- What we cannot see ---------------------------------------------------
+   On 19 Aug: 58 instrumented lessons, 57 of them Day Skipper and one RES.
+   Nothing at all from Essential Navigation, Yachtmaster or Fast Track. Every
+   other number on this page carries that caveat, so it gets said out loud. */
+const COURSE_NAMES = { EN:'Essential Navigation', DS:'Day Skipper', YM:'Yachtmaster', FT:'Fast Track', RES:'Other' };
+function renderCoverage(){
+  const seen = {};
+  DATA.stats.forEach(st => {
+    const c = st.course_code || '?';
+    seen[c] = seen[c] || { lessons:0, visits:0 };
+    seen[c].lessons++; seen[c].visits += Number(st.sessions) || 0;
+  });
+  const noSlides = {};
+  DATA.health.forEach(h => {
+    if (h.status !== 'no slide events') return;
+    const c = String(h.lesson_id).split('.')[0];
+    noSlides[c] = (noSlides[c] || 0) + 1;
+  });
+  const all = Object.keys(COURSE_NAMES);
+  Object.keys(seen).forEach(c => { if (all.indexOf(c) < 0) all.push(c); });
+  const el = document.getElementById('coverage');
+  el.innerHTML =
+    '<table><thead><tr><th>Course</th><th>Lessons reporting</th><th>Visits</th><th>Of those, no slide data</th></tr></thead><tbody>' +
+    all.map(c => {
+      const s = seen[c];
+      if (!s) return '<tr><td class="lesson">' + (COURSE_NAMES[c] || c) + '<small>' + c + '</small></td>' +
+        '<td colspan="3"><span class="pill warn">not reporting at all</span></td></tr>';
+      const ns = noSlides[c] || 0;
+      return '<tr><td class="lesson">' + (COURSE_NAMES[c] || c) + '<small>' + c + '</small></td>' +
+        '<td>' + s.lessons + '</td><td>' + s.visits + '</td>' +
+        '<td>' + (ns ? '<span class="pill quiz">' + ns + '</span>' : '<span class="pill ok">0</span>') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+/* ---- Long and interrupted -------------------------------------------------
+   Time and tab switches together. Either alone says nothing: a long lesson
+   should take a while, and one switch away is normal. Both high is the shape
+   of somebody going off to look something up. Soft signal, and labelled as
+   one, so nobody rewrites a lesson off the back of a table. */
+function renderConfusion(){
+  const rows = VIEW.stats
+    .filter(s => (Number(s.sessions) || 0) >= 20 && Number(s.median_active_seconds) > 0)
+    .map(s => ({
+      id: s.lesson_id, title: s.lesson_title || '',
+      visits: Number(s.sessions) || 0,
+      mins: Number(s.median_active_seconds) / 60,
+      sw: Number(s.avg_tab_switches) || 0
+    }));
+  const el = document.getElementById('confusion');
+  if (rows.length < 3) { el.innerHTML = '<p class="hint">Not enough lessons with 20+ visits yet to compare.</p>'; return; }
+  const medOf = arr => { const a = arr.slice().sort((x,y) => x - y); return a[Math.floor(a.length/2)]; };
+  const mMins = medOf(rows.map(r => r.mins)), mSw = medOf(rows.map(r => r.sw));
+  rows.forEach(r => { r.flag = (r.mins > mMins && r.sw > mSw); });
+  rows.sort((a,b) => (b.sw * b.mins) - (a.sw * a.mins));
+  const flagged = rows.filter(r => r.flag).length;
+  el.innerHTML =
+    '<div class="note">Typical lesson here runs <b>' + mMins.toFixed(1) + ' min</b> with <b>' + mSw.toFixed(1) +
+    '</b> switches away. <b>' + flagged + '</b> lesson' + (flagged === 1 ? ' is' : 's are') +
+    ' above both, which is the pattern worth reading.</div>' +
+    '<table><thead><tr><th>Lesson</th><th>Visits</th><th>Median active</th><th>Switches away</th></tr></thead><tbody>' +
+    rows.slice(0, 15).map(r =>
+      '<tr><td class="lesson">' + r.id + '<small>' +
+      esc((r.title || '').replace(/^[A-Z]{2,4}\.\d{2}\.\d{2}\s*-\s*/, '')) + '</small></td>' +
+      '<td>' + r.visits + '</td><td>' + r.mins.toFixed(1) + ' min</td>' +
+      '<td>' + (r.flag ? '<span class="pill idle">' + r.sw.toFixed(1) + '</span>' : r.sw.toFixed(1)) + '</td></tr>'
+    ).join('') + '</tbody></table>';
+}
+
+/* ---- Live right now -------------------------------------------------------
+   A visit counts as live if it sent anything in the last five minutes.
+   Heartbeats land every 30 seconds while the tab is visible and focused, so
+   five minutes survives a slow one and still drops a closed tab quickly.
+   The whole strip stays hidden until the Edge Function returns `live`, which
+   needs a hand deploy - so this ships harmlessly ahead of that and lights up
+   on its own once the function catches up. */
+function renderLive(){
+  const el = document.getElementById('liveStrip');
+  if (!el) return;
+  const rows = DATA.live;
+  if (!rows) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  const total = rows.reduce((a, r) => a + (Number(r.live_visits) || 0), 0);
+  if (!total) { el.innerHTML = '<b>Nobody in a lesson right now.</b> Counted over the last five minutes.'; return; }
+  const top = rows.slice().sort((a,b) => (Number(b.live_visits)||0) - (Number(a.live_visits)||0)).slice(0, 6);
+  el.innerHTML = '<b>' + total + ' visit' + (total === 1 ? '' : 's') + ' in a lesson right now</b>, across ' +
+    rows.length + ' lesson' + (rows.length === 1 ? '' : 's') + '. ' +
+    top.map(r => esc(r.lesson_id) + ' (' + r.live_visits + ')').join(' · ') +
+    (rows.length > top.length ? ' …' : '');
 }
 
 function renderHealth(){

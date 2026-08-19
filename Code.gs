@@ -413,6 +413,7 @@ function doPost(e) {
     if (action === 'chatScanList') return jsonOut(chatScanList_());
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
+    if (action === 'lessonIssueCounts') return jsonOut(lessonIssueCounts_());
     if (action === 'runChatBackSweep') return jsonOut(runChatBackSweep_(body));
     if (action === 'chatBackSweepState') return jsonOut(chatBackSweepState_());
     if (action === 'saveChecklist') return jsonOut(saveChecklist_(body));
@@ -564,6 +565,10 @@ function reqPerm_(action) {
     // manual scan stays with the admins.
     case 'chatScanList': case 'chatScanReview': return 'log';
     case 'runChatScan': case 'runChatBackSweep': case 'chatBackSweepState': return 'users';
+    // Read by the Reports page (19 Aug 2026) to set issue counts against
+    // lesson traffic. Same permission as Reports itself, and it returns counts
+    // only - no summaries, no students, nothing about any one report.
+    case 'lessonIssueCounts': return 'analytics';
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
     // The queue tools (Edd, FB-0165): reviewing and bulk-assigning are for
     // anyone who works a fix queue. Fetching a Chatwoot update sits with the
@@ -1169,7 +1174,7 @@ function invalidateIssueCache_() {
 var READ_ONLY_ACTIONS = {
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1, getAssignees: 1,
-  getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1, chatBackSweepState: 1,
+  getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1, chatBackSweepState: 1, lessonIssueCounts: 1,
   listVoiceGuides: 1, listContentSuggestions: 1, getManifest: 1, extract: 1, askIssues: 1,
   suggestFix: 1, troubleshoot: 1, matchUpdate: 1, draftStudentMessage: 1, listLiveCases: 1,
   // Reads open issues and answers a question; writes nothing, so the cached
@@ -3349,6 +3354,24 @@ function scanLock_() {
 }
 // How far back the sweep has walked, so the button can say so before it is
 // pressed rather than after.
+// How many issues we hold against each lesson code. Built for the Reports
+// page: visits alone cannot tell a faulty lesson from a busy one, and the two
+// halves of that comparison live in different systems. Counts only, so this
+// carries nothing about any individual report or student.
+// Open issues are counted separately because a lesson with twenty reports that
+// are all resolved is a lesson that WAS bad, which is a different story.
+function lessonIssueCounts_() {
+  var counts = {}, open = {};
+  getIssues_().issues.forEach(function (i) {
+    var code = String(i.lesson_code || '').trim().toUpperCase();
+    if (!/^[A-Z]{2,4}\.\d{2}\.\d{2}$/.test(code)) return;
+    counts[code] = (counts[code] || 0) + 1;
+    var st = String(i.status || 'open').toLowerCase();
+    if (st !== 'resolved' && st !== 'resolved_tbc' && st !== 'past') open[code] = (open[code] || 0) + 1;
+  });
+  return { ok: true, counts: counts, open: open };
+}
+
 function chatBackSweepState_() {
   var props = PropertiesService.getScriptProperties();
   return { ok: true, next_page: Number(props.getProperty('CHATWOOT_BACKSWEEP_PAGE') || 1), pages: BACKSWEEP_PAGES };
@@ -4991,7 +5014,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r74 · 2026-08-19';
+var CODE_STAMP = 'r75 · 2026-08-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
