@@ -253,7 +253,15 @@ var HEADERS = [
   // way back to it by email every time we needed it - and that search fell back
   // to the first arbitrary result when nothing matched. This is the one stable
   // student identifier we can actually get hold of, so we keep it.
-  'chatwoot_contact_id' // AX
+  'chatwoot_contact_id', // AX
+  // FB-0249/0250 (Charlie): "in the tech issue for dev, there is a lot of info
+  // there which is great, but this needs to be summarised with a clear ask /
+  // action for the developer. they can then look through the report for further
+  // info if needed." Written by whoever hands the issue over; the pane falls
+  // back to one assembled from the fields when it is blank, so a hand-off never
+  // arrives with nothing at the top.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'dev_ask'            // AY one or two plain sentences: what we need doing
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -852,7 +860,10 @@ function updateUser_(body) {
 function saveDevNotes_(body) {
   var found = findRow_(body.issue_id);
   if (!found) return { ok: false, error: 'No issue found with id ' + body.issue_id };
-  found.record.dev_notes = body.dev_notes || '';
+  // Only touch what was actually sent: the dev pane saves notes and the ask
+  // from two different boxes, and one must not blank the other.
+  if (body.hasOwnProperty('dev_notes')) found.record.dev_notes = body.dev_notes || '';
+  if (body.hasOwnProperty('dev_ask')) found.record.dev_ask = body.dev_ask || '';
   found.record.updated_at = new Date().toISOString();
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(found.record)]);
   return { ok: true };
@@ -2712,12 +2723,31 @@ function chatwootImport_(data) {
   };
 }
 // Recent conversations for the in-app picker.
+// FB-0246/0247. Edd: "These MA/Exam Results emails are never bugs/issues which
+// need to be here." They are the automated mock-exam result mails from
+// quizresults.eu landing in the support inbox: a full transcript of a student's
+// exam answers, never a fault report. They were filling the Chats tab, and the
+// overnight scan was paying to read them. Filtered at source so the tab, the
+// Browse recent picker, and the scan all agree.
+// A conversation can still be opened by pasting its link or number, so nothing
+// is unreachable, it is only out of the way.
+function isAutomatedNotice_(name, email) {
+  var e = String(email || '').trim().toLowerCase();
+  var n = String(name || '').trim().toLowerCase();
+  if (/@quizresults\.eu$/.test(e)) return true;
+  if (n === 'ma/exam results') return true;
+  return false;
+}
 function chatwootList_(data) {
   var out;
   try {
     out = chatwootCall_('/conversations?status=' + encodeURIComponent(data.status || 'open') + '&page=1');
   } catch (e) { return { ok: false, error: String(e.message || e) }; }
   var payload = (out && out.data && out.data.payload) || (out && out.payload) || [];
+  payload = payload.filter(function (c) {
+    var sender = (c.meta && c.meta.sender) || {};
+    return !isAutomatedNotice_(sender.name, sender.email);
+  });
   var rows = payload.slice(0, 40).map(function (c) {
     var sender = (c.meta && c.meta.sender) || {};
     return {
@@ -2970,6 +3000,11 @@ function scanChatwoot(opts) {
   // exchange, is not a report worth an AI call.
   var candidates = list.filter(function (c) {
     if (seen[String(c.id)]) return false;
+    // Automated exam-result mail is never a fault report (FB-0246), and every
+    // one of them is a long transcript, so reading them was the most expensive
+    // way possible to conclude nothing.
+    var sndr = (c.meta && c.meta.sender) || {};
+    if (isAutomatedNotice_(sndr.name, sndr.email)) return false;
     // The date test is the nightly run's "has this moved since I last looked".
     // On a back sweep every conversation is older than the pointer by
     // definition, so applying it would throw the whole slice away.
@@ -4879,7 +4914,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r71.1 · 2026-08-19';
+var CODE_STAMP = 'r72 · 2026-08-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

@@ -1350,8 +1350,14 @@
 <!-- ===================== DEVELOPER VIEW ===================== -->
 <div id="devView" class="wrap hidden">
   <div class="summary-row">
-    <div class="stat" style="cursor:pointer;" onclick="setDevFilter('todo')"><div class="n" id="devStatQueue">–</div><div class="l">In the dev queue</div></div>
-    <div class="stat" style="cursor:pointer;" onclick="setDevFilter('fixed')"><div class="n" id="devStatFixed">–</div><div class="l">Fixed, awaiting admin</div></div>
+    <!-- FB-0248 (Charlie): Queued / In Progress / Completed, the three stages
+         the work actually moves through. Queued and In progress are both
+         with_dev, split on whether anyone has picked it up, which is the
+         distinction that was missing: ten "in the dev queue" said nothing
+         about how many were being worked on. -->
+    <div class="stat" style="cursor:pointer;" onclick="setDevFilter('todo')"><div class="n" id="devStatQueue">–</div><div class="l">Queued</div></div>
+    <div class="stat" style="cursor:pointer;" onclick="setDevFilter('todo')"><div class="n" id="devStatProg">–</div><div class="l">In progress</div></div>
+    <div class="stat" style="cursor:pointer;" onclick="setDevFilter('fixed')"><div class="n" id="devStatFixed">–</div><div class="l">Completed</div></div>
     <div class="stat"><div class="n" id="devStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
   <div class="area-toggle">
@@ -1838,7 +1844,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r71.1 · 2026-08-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r72 · 2026-08-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3370,17 +3376,41 @@ function openInChatwoot(email, contactId) {
       String(email).replace(/[<>&]/g, "") + '…</body>'); } catch (e) {}
   }
   toast("Looking up the contact…");
+  // FB-0245. Edd: "pressing the chatwoot button sometimes spends ages loading
+  // and then nothing happens." Two things made it look like nothing: the reason
+  // only ever arrived as a toast, which is gone before it is read (the FB-0191
+  // rule), and a failed lookup CLOSED the tab it had just opened, so the screen
+  // ended up exactly as it started. The tab now stays open and says why, and
+  // the reason is left on the page as well.
+  var settled = false;
+  function fail(msg) {
+    if (settled) return;
+    settled = true;
+    if (win && !win.closed) {
+      try { win.document.body.innerHTML = '<div style="padding:40px;font-family:sans-serif;color:#E8EDF2;">' +
+        esc(msg) + '<br><br><span style="opacity:.7">You can close this tab.</span></div>'; } catch (e) {}
+    }
+    showOpenLink("", msg);
+    toast(msg);
+  }
+  // A lookup that never comes back used to leave the tab reading "Looking up…"
+  // for good. 20 seconds is well past a normal 3-4 second search.
+  var timer = setTimeout(function () {
+    fail("Chatwoot did not answer in time. Try again, or search for " + email + " in Chatwoot directly.");
+  }, 20000);
   apiPost({ action: "chatwootContactUrl", email: email, contact_id: contactId || "" }).then(function (res) {
+    clearTimeout(timer);
+    if (settled) return;
     if (res && res.ok && res.url) {
+      settled = true;
       if (win && !win.closed) win.location = res.url;
       else showOpenLink(res.url, "The popup was blocked - open the Chatwoot contact here:");
     } else {
-      if (win && !win.closed) win.close();
-      toast((res && res.error) || "No Chatwoot contact found.");
+      fail((res && res.error) || "No Chatwoot contact found for " + email + ".");
     }
   }).catch(function (e) {
-    if (win && !win.closed) win.close();
-    toast("Chatwoot lookup failed: " + (e && e.message || "network error"));
+    clearTimeout(timer);
+    fail("Chatwoot lookup failed: " + (e && e.message || "network error"));
   });
 }
 // Visible fallback when a popup can't be opened for us: a link the person
@@ -3393,8 +3423,10 @@ function showOpenLink(url, label) {
     el.style.cssText = "position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:12px 18px;z-index:400;box-shadow:0 8px 24px rgba(0,0,0,0.35);";
     document.body.appendChild(el);
   }
+  // Called with no url by the FB-0245 failure path: then it is just somewhere
+  // the reason can sit until it is read, rather than a link.
   el.innerHTML = '<span class="small">' + esc(label || "Open:") + '</span> ' +
-    '<a href="' + esc(url) + '" target="_blank" rel="noopener" onclick="this.parentNode.style.display=\'none\'">Open in Chatwoot</a> ' +
+    (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener" onclick="this.parentNode.style.display=\'none\'">Open in Chatwoot</a> ' : '') +
     '<button class="ghost small" style="margin-left:10px;padding:2px 8px;" onclick="this.parentNode.style.display=\'none\'">Dismiss</button>';
   el.style.display = "block";
 }
@@ -4122,7 +4154,7 @@ function showBatchDrafts() {
       return '<div style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--bg);">' +
         '<div class="small" style="margin-bottom:6px;"><strong>' + esc(d.name) + '</strong>' +
           (d.contact ? ' <span class="muted">' + esc(d.contact) + '</span>' : '') +
-          (d.contact && String(d.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;" onclick="openInChatwoot(\'' + esc(d.contact) + '\')">Chatwoot</button>' : '') +
+          (d.contact && String(d.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;" onclick="openInChatwoot(\'' + esc(d.contact) + '\', \'' + esc(d.cwId || "") + '\')">Chatwoot</button>' : '') +
         '</div>' +
         (d.failed
           ? '<div class="small" style="color:var(--high);">This one failed to draft - use the single Draft button on the issue for ' + esc(d.name) + '.</div>'
@@ -7607,17 +7639,22 @@ function openDetail(issue) {
   var otherOpen = sameLesson.filter(function (i) { return i.issue_id !== issue.issue_id && isOpen(i); });
 
   var students = {};
-  function addStudent(name, contact) {
+  // FB-0245: carry the Chatwoot contact id where the row has one. With an id
+  // the jump is a straight link; without one every press is a contact SEARCH
+  // against Chatwoot, which is where "spends ages loading" came from.
+  function addStudent(name, contact, cwId) {
     if (!name && !contact) return;
     var key = (name || "") + "|" + (contact || "");
-    students[key] = { name: name || "(no name)", contact: contact || "" };
+    var prev = students[key];
+    students[key] = { name: name || "(no name)", contact: contact || "",
+                      cwId: cwId || (prev && prev.cwId) || "" };
   }
   // Every report rolled into this issue (same bug, different students).
-  parseReports(issue).forEach(function (rep) { addStudent(rep.student_name, rep.student_contact); });
+  parseReports(issue).forEach(function (rep) { addStudent(rep.student_name, rep.student_contact, rep.chatwoot_contact_id); });
   // The issue's own fields, for older rows that predate the reports list.
-  addStudent(issue.student_name, issue.student_contact);
+  addStudent(issue.student_name, issue.student_contact, issue.chatwoot_contact_id);
   // Anyone logged separately on the same lesson code.
-  sameLesson.forEach(function (i) { addStudent(i.student_name, i.student_contact); });
+  sameLesson.forEach(function (i) { addStudent(i.student_name, i.student_contact, i.chatwoot_contact_id); });
   var studentArr = Object.keys(students).map(function (k) { return students[k]; });
   var images = parseImageUrls(issue.image_urls);
 
@@ -7654,7 +7691,7 @@ function openDetail(issue) {
   if (studentArr.length) {
     html += '<div class="students">' + studentArr.map(function (s) {
       return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") +
-        (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\')">Chatwoot</button>' : '') +
+        (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\', \'' + esc(s.cwId || "") + '\')">Chatwoot</button>' : '') +
         '</span></div>';
     }).join("") + '</div>' +
     '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>' +
@@ -8503,8 +8540,18 @@ function renderDev() {
   // Internal work is tech_issue now, so one category covers both halves of
   // the dev queue (student-facing bugs and our own systems).
   var all = devQueue(["tech_issue"]);
-  $("devStatQueue").textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "with_dev"; }).length;
-  $("devStatFixed").textContent = all.filter(function (i) { return (i.status || "").toLowerCase() === "dev_fixed"; }).length;
+  // Waiting on the developers, split on whether somebody has taken it. Anything
+  // still with_dev and unassigned is queued; assigned means it is being worked.
+  var withDev = all.filter(function (i) { return (i.status || "").toLowerCase() === "with_dev"; });
+  $("devStatQueue").textContent = withDev.filter(function (i) { return !String(i.assignee || "").trim(); }).length;
+  $("devStatProg").textContent = withDev.filter(function (i) { return !!String(i.assignee || "").trim(); }).length;
+  // Completed means the developer's part is done: fixed and handed back, plus
+  // the ones an admin has since confirmed and resolved. Counting only
+  // dev_fixed made the finished column collapse every time an admin tidied up.
+  $("devStatFixed").textContent = all.filter(function (i) {
+    var st = (i.status || "").toLowerCase();
+    return st === "dev_fixed" || ((st === "resolved" || st === "resolved_tbc") && i.dev_fixed_at);
+  }).length;
 
   var durations = all.filter(function (i) { return i.dev_passed_at && i.dev_fixed_at; })
     .map(function (i) { return new Date(i.dev_fixed_at) - new Date(i.dev_passed_at); })
@@ -9165,6 +9212,65 @@ function sendDevQuery(id) {
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 
+// FB-0249/0250. Whoever hands an issue over can write the ask in their own
+// words. Until they do, one is assembled from the fields the row already
+// carries, so a developer never opens a hand-off with nothing at the top.
+// Assembled, not AI-written: this costs nothing and is right every time,
+// where a generated summary would cost a call per hand-off and could be wrong
+// about the one thing the developer most needs to trust.
+function devAskFallback(issue) {
+  var bits = [];
+  var what = String(issue.summary || cardTitle(issue) || "").trim();
+  if (what) bits.push(what.replace(/\s+$/, "").replace(/\.?$/, "."));
+  var where = [];
+  if (issue.lesson_code) where.push(issue.lesson_code);
+  if (issue.section) where.push(String(issue.section).replace(/_/g, " "));
+  if (issue.device_info) where.push("reported on " + issue.device_info);
+  if (where.length) bits.push("Where: " + where.join(" · ") + ".");
+  var n = reportCount(issue);
+  if (n > 1) bits.push(n + " students have reported it, so it is not a one-off.");
+  // What has already been ruled out is the part that saves a developer the
+  // most time, and it is sitting in the checklist nobody scrolls down to.
+  var tried = [];
+  try {
+    var cl = issue.checklist_json ? JSON.parse(issue.checklist_json) : null;
+    if (cl) Object.keys(cl).forEach(function (k) {
+      if (cl[k] && cl[k].done) tried.push(String(cl[k].label || k));
+    });
+  } catch (e) {}
+  if (tried.length) bits.push("Already ruled out: " + tried.slice(0, 5).join(", ") + ".");
+  return bits.join(" ");
+}
+function devAskBlock(issue) {
+  var written = String(issue.dev_ask || "").trim();
+  var text = written || devAskFallback(issue);
+  var canEdit = !!(state.perms && (state.perms.dev || state.perms.course || state.perms.manage || state.perms.users));
+  return '<h3>What we need' + (written ? '' : ' <span class="small muted" style="font-weight:normal;">(from the report - write it properly below)</span>') + '</h3>' +
+    '<div class="card" style="background:var(--bg);margin-bottom:4px;font-size:13.5px;">' +
+      (text ? esc(text) : '<span class="muted">Nothing written yet.</span>') + '</div>' +
+    (canEdit
+      ? '<div class="field" style="margin-bottom:12px;">' +
+          '<textarea id="d_dev_ask" rows="2" placeholder="One or two sentences: what do we actually need doing?">' + esc(written) + '</textarea>' +
+          '<button class="ghost small" style="margin-top:6px;padding:5px 12px;" onclick="saveDevAsk(\'' + esc(issue.issue_id) + '\')">Save the ask</button>' +
+          '<span class="small muted" id="devAskNote" style="margin-left:10px;"></span>' +
+        '</div>'
+      : '<div style="margin-bottom:12px;"></div>');
+}
+function saveDevAsk(id) {
+  var box = $("d_dev_ask");
+  if (!box) return;
+  var note = $("devAskNote");
+  if (note) note.textContent = "Saving…";
+  apiPost({ action: "saveDevNotes", issue_id: id, dev_ask: box.value }).then(function (res) {
+    if (!res || !res.ok) { if (note) note.textContent = "Failed: " + ((res && res.error) || "unknown"); return; }
+    var iss = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+    if (iss) iss.dev_ask = box.value;
+    if (note) note.textContent = "Saved.";
+    openDevDetail(id);
+  }).catch(function (e) {
+    if (note) note.textContent = "Error. See console."; console.error(e);
+  });
+}
 function openDevDetail(id) {
   (function () {
     var pre = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
@@ -9212,6 +9318,12 @@ function openDevDetail(id) {
       kv("Lesson", dispLesson(issue)) +
     '</div>';
 
+  // FB-0249/0250 (Charlie). The pane carried everything and led with nothing:
+  // a developer opening it met a wall of fields and had to read the whole
+  // report to work out what was being asked. The ask goes first now, and the
+  // detail stays exactly where it was underneath.
+  html += devAskBlock(issue);
+
   // Who's on it. Assign to a person with this queue's access.
   html += '<h3>Assigned to</h3>' +
     '<div class="field"><select id="assignSelect" onchange="assignFromDetail(\'' + esc(issue.issue_id) + '\')">' +
@@ -9249,7 +9361,7 @@ function openDevDetail(id) {
     html += '<h3>Affected students' + (catOf(issue) === "tech_issue" ? ' (test accounts)' : '') + '</h3>' +
       '<div class="students">' + devStudentArr.map(function (s) {
         return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") +
-        (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\')">Chatwoot</button>' : '') +
+        (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\', \'' + esc(s.cwId || "") + '\')">Chatwoot</button>' : '') +
         '</span></div>';
       }).join("") + '</div>' +
       '<button class="ghost small" style="margin-top:8px;padding:5px 12px;" onclick="copyContacts()">Copy all contacts</button>';
