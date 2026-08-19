@@ -873,35 +873,45 @@ function renderReported(){
   const course = document.getElementById('courseFilter').value;
   const byId = {};
   VIEW.stats.forEach(st => { byId[st.lesson_id] = Number(st.sessions) || 0; });
-  const rows = Object.keys(ISSUE_COUNTS)
-    .filter(code => !course || code.indexOf(course + '.') === 0)
-    .map(code => {
-      const visits = byId[code];
-      const n = ISSUE_COUNTS[code];
-      return { code, n, visits: (visits === undefined ? null : visits),
-               rate: (visits ? (n * 100 / visits) : null) };
-    })
-    .sort((a,b) => {
-      if (a.rate === null && b.rate === null) return b.n - a.n;
-      if (a.rate === null) return -1;               // unseen lessons first
-      if (b.rate === null) return 1;
-      return b.rate - a.rate;
-    })
-    .slice(0, 25);
-  if (!rows.length) { el.innerHTML = '<p class="hint">No issues logged against a lesson code in this course.</p>'; return; }
-  const blind = rows.filter(r => r.visits === null).length;
-  el.innerHTML =
-    (blind ? '<div class="note"><b>' + blind + '</b> of these lessons have reports but no telemetry, so there is nothing to compare them against. They are listed first.</div>' : '') +
-    '<table><thead><tr><th>Lesson</th><th>Reports</th><th>Visits</th><th>Reports per 100 visits</th></tr></thead><tbody>' +
-    rows.map(r => {
-      if (r.visits === null) {
-        return '<tr><td class="lesson">' + r.code + '</td><td>' + r.n +
-          '</td><td style="color:var(--muted)">—</td><td><span class="pill idle">no telemetry</span></td></tr>';
-      }
-      const cls = r.rate >= 10 ? 'warn' : (r.rate >= 3 ? 'idle' : 'ok');
-      return '<tr><td class="lesson">' + r.code + '</td><td>' + r.n + '</td><td>' + r.visits +
-        '</td><td><span class="pill ' + cls + '">' + r.rate.toFixed(1) + '</span></td></tr>';
-    }).join('') + '</tbody></table>';
+  const all = Object.keys(ISSUE_COUNTS).filter(code => !course || code.indexOf(course + '.') === 0);
+
+  /* Two tables, not one ranked list. The lessons with no telemetry outnumber
+     the rest roughly nine to one, so a single list sorted with them first
+     buried the actual comparison completely - which was the whole point of
+     the panel. */
+  const seen = all.filter(c => byId[c] !== undefined)
+    .map(c => ({ code:c, n:ISSUE_COUNTS[c], visits:byId[c], rate: ISSUE_COUNTS[c] * 100 / byId[c] }))
+    .sort((a,b) => b.rate - a.rate);
+  const blind = all.filter(c => byId[c] === undefined)
+    .map(c => ({ code:c, n:ISSUE_COUNTS[c] }))
+    .sort((a,b) => b.n - a.n);
+
+  if (!all.length) { el.innerHTML = '<p class="hint">No issues logged against a lesson code in this course.</p>'; return; }
+
+  let html = '';
+  if (seen.length) {
+    html += '<table><thead><tr><th>Lesson</th><th>Reports</th><th>Visits</th><th>Reports per 100 visits</th></tr></thead><tbody>' +
+      seen.slice(0, 15).map(r => {
+        const cls = r.rate >= 10 ? 'warn' : (r.rate >= 3 ? 'idle' : 'ok');
+        return '<tr><td class="lesson">' + r.code + '</td><td>' + r.n + '</td><td>' + r.visits +
+          '</td><td><span class="pill ' + cls + '">' + r.rate.toFixed(1) + '</span></td></tr>';
+      }).join('') + '</tbody></table>';
+  } else {
+    html += '<p class="hint">Not one lesson with a report against it is currently reporting telemetry.</p>';
+  }
+
+  if (blind.length) {
+    const shown = blind.slice(0, 15);
+    const worst = blind.reduce((a,r) => a + r.n, 0);
+    html += '<div class="note" style="margin-top:14px;"><b>' + blind.length + ' lesson' + (blind.length===1?'':'s') +
+      ' carrying ' + worst + ' report' + (worst===1?'':'s') + ' have no telemetry at all.</b> ' +
+      'These are lessons students are telling us about and the dashboard cannot see. Worst first.</div>' +
+      '<table><thead><tr><th>Lesson</th><th>Reports</th><th>Visits</th></tr></thead><tbody>' +
+      shown.map(r => '<tr><td class="lesson">' + r.code + '</td><td>' + r.n +
+        '</td><td><span class="pill idle">no telemetry</span></td></tr>').join('') +
+      '</tbody></table>';
+  }
+  el.innerHTML = html;
 }
 
 /* ---- What we cannot see ---------------------------------------------------
