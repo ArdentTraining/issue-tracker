@@ -825,9 +825,9 @@
     <span class="ri-word">Chats</span>
     <span class="rail-badge quiet" id="railBadgeChats"></span>
   </button>
-  <button type="button" class="rail-item" id="railIssues" onclick="railGo('issues')" title="Issues">
+  <button type="button" class="rail-item" id="railIssues" onclick="railGo('issues')" title="Actions">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.6 2.4 17a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
-    <span class="ri-word">Issues</span>
+    <span class="ri-word">Actions</span>
     <span class="rail-badge" id="railBadgeIssues"></span>
   </button>
   <div class="rail-div" id="railDiv"></div>
@@ -1877,7 +1877,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r86 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r87 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8119,7 +8119,8 @@ function openDetail(issue) {
   // only there to be looked up. Reports, the steps we suggested and the
   // screenshots all live inside Details now, so the summary line says so -
   // buried reference material nobody can find is worse than a long pane.
-  html += ckBlock + devHtml +
+  var devFirst = !!issue.dev_query_at;
+  html += (devFirst ? devHtml + ckBlock : ckBlock + devHtml) +
     '<details class="acc"><summary>Details, reports and screenshots</summary>' +
       detailsKv + refHtml +
     '</details>';
@@ -9437,7 +9438,12 @@ function devAskFallback(issue) {
 function devAskBlock(issue) {
   var written = String(issue.dev_ask || "").trim();
   var text = written || devAskFallback(issue);
-  var canEdit = !!(state.perms && (state.perms.dev || state.perms.course || state.perms.manage || state.perms.users));
+  // FB-0264 (Edd): "the one or two sentences 'what do we actually need doing?'
+  // should be somewhere else, not here. Maybe it can be something the
+  // developers can request from the admins." Writing the ask is an admin's job:
+  // it is the decision about what the work IS. A developer reads it, and if it
+  // is missing or unclear, asks for one.
+  var canEdit = !!(state.perms && state.perms.users);
   return '<h3>What we need' + (written ? '' : ' <span class="small muted" style="font-weight:normal;">(from the report - write it properly below)</span>') + '</h3>' +
     '<div class="card" style="background:var(--bg);margin-bottom:4px;font-size:13.5px;">' +
       (text ? esc(text) : '<span class="muted">Nothing written yet.</span>') + '</div>' +
@@ -9447,7 +9453,43 @@ function devAskBlock(issue) {
           '<button class="ghost small" style="margin-top:6px;padding:5px 12px;" onclick="saveDevAsk(\'' + esc(issue.issue_id) + '\')">Save the ask</button>' +
           '<span class="small muted" id="devAskNote" style="margin-left:10px;"></span>' +
         '</div>'
-      : '<div style="margin-bottom:12px;"></div>');
+      : '<div style="margin-bottom:12px;">' +
+          '<button class="ghost small" style="padding:4px 10px;" onclick="devRequest(\'' + esc(issue.issue_id) + '\', \'ask\')">' +
+          (written ? 'Ask for this to be clearer' : 'Ask an admin to write this') + '</button></div>');
+}
+// FB-0264/FB-0265. A developer cannot change the ask or the priority, so both
+// buttons put the request where an admin will see it. That is exactly what the
+// question flow already does - it flags the issue, pings the bosses on Slack,
+// and now keeps the thread on the record - so this writes the wording and hands
+// it to the same machinery rather than inventing a second inbox.
+// FB-0266. A starting point, not a verdict: it reads the report and says small,
+// medium or large with one line of reasoning, and the developer changes it if
+// they disagree. Nothing saves until they pick.
+function devEstimateSize(id) {
+  var note = $("devSizeNote");
+  if (note) note.textContent = "reading it…";
+  apiPost({ action: "estimateFixSize", issue_id: id }).then(function (res) {
+    if (!res || !res.ok) { if (note) note.textContent = "Could not size it: " + ((res && res.error) || "unknown"); return; }
+    var sel = $("devSizeSel");
+    if (sel && res.size) sel.value = res.size;
+    if (note) note.textContent = "Suggested " + (res.size || "?") + (res.why ? " - " + res.why : "") + ". Change it if you disagree, then it saves.";
+    if (sel && res.size) devSetSize(id);
+  }).catch(function (e) { if (note) note.textContent = "Error. See console."; console.error(e); });
+}
+function devRequest(id, kind) {
+  var msg = kind === "priority"
+    ? "Could we look at the priority on this one? "
+    : "Could someone write the 'what we need' line on this one? ";
+  var sel = $("devQueryTarget"), box = $("devQueryText");
+  if (sel) sel.value = "admins";
+  if (box) {
+    box.value = msg;
+    box.scrollIntoView({ block: "center" });
+    box.focus();
+    // Cursor at the end, so they carry straight on with why.
+    try { box.setSelectionRange(box.value.length, box.value.length); } catch (e) {}
+  }
+  toast("Add a line on why, then press Send question.");
 }
 function saveDevAsk(id) {
   var box = $("d_dev_ask");
@@ -9522,13 +9564,26 @@ function openDevDetail(id) {
     '<div class="field"><select id="assignSelect" onchange="assignFromDetail(\'' + esc(issue.issue_id) + '\')">' +
       assignOptionsHtml(issue) + '</select></div>';
 
-  // The team can retune the priority if the report got it wrong (Edd, 21 Jul).
+  // FB-0265 (Edd): "the developer should not be the one to change the priority.
+  // Leave that to admins only... Maybe there could be an option for them to
+  // request a change in priority?" Priority is now worked out from severity and
+  // the number of reports (FB-0261), so typing over it here would quietly
+  // undo the arithmetic anyway. A developer sees it and can ask.
   var curPri = (issue.priority || "medium").toLowerCase();
-  html += '<h3>Priority</h3>' +
-    '<div class="field"><select id="devPrioritySel" onchange="devSetPriority(\'' + esc(issue.issue_id) + '\')">' +
+  var adminHere = !!(state.perms && state.perms.users);
+  html += '<h3>Priority</h3>';
+  if (adminHere) {
+    html += '<div class="field"><select id="devPrioritySel" onchange="devSetPriority(\'' + esc(issue.issue_id) + '\')">' +
       ["high", "medium", "low"].map(function (p) {
         return '<option value="' + p + '"' + (p === curPri ? " selected" : "") + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
       }).join("") + '</select></div>';
+  } else {
+    html += '<div class="field" style="margin-bottom:6px;">' +
+      priBadge(issue.priority) + ' <span class="small muted">' +
+      esc(SEVERITY_LABEL[severityOf(issue)] || "") + ', ' + reportCount(issue) +
+      (reportCount(issue) === 1 ? ' report' : ' reports') + ' &middot; score ' + issueScore(issue) + '</span></div>' +
+      '<button class="ghost small" style="padding:4px 10px;margin-bottom:10px;" onclick="devRequest(\'' + esc(issue.issue_id) + '\', \'priority\')">Ask for a different priority</button>';
+  }
 
   // How big a job does the fix look? (Edd, FB-0164.) Rough is fine - it's for
   // sorting and filtering the queue, not for holding anyone to an estimate.
@@ -9538,7 +9593,14 @@ function openDevDetail(id) {
       '<option value=""' + (curSize ? "" : " selected") + '>Not sized yet</option>' +
       ["small", "medium", "large"].map(function (z) {
         return '<option value="' + z + '"' + (z === curSize ? " selected" : "") + '>' + z.charAt(0).toUpperCase() + z.slice(1) + '</option>';
-      }).join("") + '</select></div>';
+      }).join("") + '</select>' +
+      // FB-0266 (Edd): "can AI estimate the size as a starting point? Then the
+      // devs can edit it?" On a button rather than automatic, so it costs
+      // nothing unless somebody wants a starting point, and it never overwrites
+      // a size a developer has already chosen without being asked.
+      '<div style="margin-top:6px;"><button class="ghost small" style="padding:4px 10px;" onclick="devEstimateSize(\'' + esc(issue.issue_id) + '\')">Suggest a size</button>' +
+      '<span class="small muted" id="devSizeNote" style="margin-left:10px;"></span></div>' +
+    '</div>';
 
   // Student details, so developers can reproduce account-specific problems and
   // test against the affected account.
@@ -9572,10 +9634,18 @@ function openDevDetail(id) {
     (issue.summary ? '' : 'color:var(--muted);') + '">' +
     (issue.summary ? esc(issue.summary) : 'No summary was written for this one. The report itself is below.') + '</div>';
 
-  if (issue.raw_text) {
-    html += '<h3>Report</h3><div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' +
-      esc(issue.raw_text) + clipNote(issue) + '</div>';
-  }
+  // FB-0267/0268 (Edd): "Report should probably be titled Transcript and be
+  // collapsable... report/transcript should also be at the bottom." It is the
+  // raw material, not the brief: a developer wants it when the summary and the
+  // ask have not answered something, and not before. Held here and appended
+  // last, below everything a developer actually acts on.
+  var transcriptHtml = issue.raw_text
+    ? '<details class="acc" style="margin-top:12px;"><summary><span class="acc-h">Transcript</span>' +
+        '<span class="acc-sum">the report as it came in</span></summary>' +
+        '<div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' +
+        esc(issue.raw_text) + clipNote(issue) + '</div></details>'
+    : "";
+
   if (images.length) {
     html += '<h3>Screenshots</h3><div class="thumbs">' + images.map(function (u) {
       return '<a class="thumb" href="' + esc(driveOpen(u)) + '" target="_blank"><img src="' + esc(driveImg(u, 600)) + '" /></a>';
@@ -9647,6 +9717,8 @@ function openDevDetail(id) {
       '<button class="primary" id="markFixedBtn" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
       '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
   }
+
+  html += transcriptHtml;
 
   $("drawer").innerHTML = html;
   presentDetail("dev");

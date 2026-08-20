@@ -431,6 +431,7 @@ function doPost(e) {
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
     if (action === 'lessonIssueCounts') return jsonOut(lessonIssueCounts_());
+    if (action === 'estimateFixSize') return jsonOut(estimateFixSize_(body));
     if (action === 'runChatBackSweep') return jsonOut(runChatBackSweep_(body));
     if (action === 'chatBackSweepState') return jsonOut(chatBackSweepState_());
     if (action === 'saveChecklist') return jsonOut(saveChecklist_(body));
@@ -569,7 +570,7 @@ function reqPerm_(action) {
     // Handing work to the developers is an admin call (or automatic on
     // submission); instructors log and manage, they don't route.
     case 'passToDev': return 'users';
-    case 'markDevFixed': case 'saveDevNotes': return 'devcourse';
+    case 'markDevFixed': case 'saveDevNotes': case 'estimateFixSize': return 'devcourse';
     // Anyone who works issues can raise a question (dev/course asking up, or an
     // admin asking the logging instructor for more info). Answering is gated
     // inside answerQuery_ itself: admin-targeted questions need the users perm,
@@ -3549,6 +3550,33 @@ function lessonIssueCounts_() {
   return { ok: true, counts: counts, open: open };
 }
 
+// FB-0266 (Edd): "can AI estimate the size as a starting point? Then the devs
+// can edit it?" A starting point, not a verdict. Small output, cheap model, and
+// only ever run when a developer presses the button, so an untouched queue
+// costs nothing.
+function estimateFixSize_(data) {
+  var found = findRow_(data && data.issue_id);
+  if (!found) return { ok: false, error: 'No issue found with id ' + (data && data.issue_id) };
+  var i = found.record;
+  var prompt = 'You are sizing a bug fix for an online sailing course platform (a web app, a mobile app, and course content). ' +
+    'Answer with how big the FIX is likely to be for a developer, not how urgent it is and not how annoying it is.\n\n' +
+    '- "small": a wording change, a wrong link, a single value, a css or layout tweak, one obviously wrong line.\n' +
+    '- "medium": a normal bug in one feature - a button that does not fire, a state that does not save, one broken flow.\n' +
+    '- "large": anything touching how data is stored, several features at once, a third-party integration, or a fault nobody has managed to reproduce yet.\n\n' +
+    'If the report does not say enough to tell, choose "medium" and say so in the reason.\n\n' +
+    'ISSUE:\n' + JSON.stringify({
+      summary: i.summary || '', category: i.category || '', section: i.section || '',
+      device: i.device_info || '', ask: i.dev_ask || '',
+      report: String(i.raw_text || '').slice(0, 3000)
+    }) + '\n\n' +
+    'Return ONLY JSON: {"size":"small|medium|large","why":"<one short sentence>"}. No prose, no fences.';
+  var out = anthropicJson_(FINDER_MODEL, prompt, 200);
+  if (!out || !out.size) return { ok: false, error: 'could not read a size back' };
+  var size = String(out.size).toLowerCase();
+  if (['small', 'medium', 'large'].indexOf(size) < 0) size = 'medium';
+  return { ok: true, size: size, why: String(out.why || '').slice(0, 160) };
+}
+
 function chatBackSweepState_() {
   var props = PropertiesService.getScriptProperties();
   return { ok: true, next_page: Number(props.getProperty('CHATWOOT_BACKSWEEP_PAGE') || 1), pages: BACKSWEEP_PAGES };
@@ -5194,7 +5222,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r86 · 2026-08-20';
+var CODE_STAMP = 'r87 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
