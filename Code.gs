@@ -261,7 +261,13 @@ var HEADERS = [
   // back to one assembled from the fields when it is blank, so a hand-off never
   // arrives with nothing at the top.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'dev_ask'            // AY one or two plain sentences: what we need doing
+  'dev_ask',           // AY one or two plain sentences: what we need doing
+  // FB-0261 (Edd, 20 Aug 2026). Severity is what the fault DOES to one person;
+  // priority is what we should look at first. They were the same field, which
+  // is why a typo reported by twenty people could never outrank a one-off, and
+  // why "high priority" meant a feeling rather than a test.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'severity'           // AZ severe | moderate | low
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -1440,9 +1446,26 @@ function addIssue_(data) {
     lesson_code: data.lesson_code || '',
     issue_type: data.issue_type || '',
     summary: data.summary || '',
+    severity: (function () {
+      var sv = String(data.severity || '').toLowerCase();
+      if (sv === 'severe' || sv === 'moderate' || sv === 'low') return sv;
+      // Nothing sent one: read it out of the priority, so a form or a caller
+      // that predates FB-0261 still lands somewhere sensible.
+      var p = String(data.priority || '').toLowerCase();
+      return p === 'high' ? 'severe' : (p === 'medium' ? 'moderate' : 'low');
+    })(),
     priority: (function () {
       var p = String(data.priority || '').toLowerCase();
-      if (data.request_kind !== 'improvement' && String(category).toLowerCase() !== 'friction') return p;
+      if (data.request_kind !== 'improvement' && String(category).toLowerCase() !== 'friction') {
+        // FB-0261: priority is worked out from severity and how many people
+        // have hit it, not typed in. A brand new issue has one report, so this
+        // is severity on its own until a second person turns up.
+        var sv0 = String(data.severity || '').toLowerCase();
+        if (sv0 === 'severe' || sv0 === 'moderate' || sv0 === 'low') {
+          return priorityFromScore_({ severity: sv0, report_count: 1 });
+        }
+        return p;
+      }
       // FB-0253 (Edd): "If something is more of a feature request then a real
       // bug, we probably want it logged as low priority." An improvement is
       // backlog by definition - nothing is broken, so nobody is blocked. The
@@ -1591,7 +1614,16 @@ function addReportToIssue_(id, data, report) {
 
   // Each extra report nudges the priority up a level, never below what this
   // report was logged as.
-  rec.priority = bumpPriority_(rec.priority, data.priority);
+  // FB-0261. This used to nudge the priority up one level per report, so three
+  // reports of a typo became high and a hundred reports of one could go no
+  // further. It is computed from the score now: the worst severity anyone has
+  // reported, against how many people have reported it.
+  var svIn = String(data.severity || '').toLowerCase();
+  var order = { low: 1, moderate: 2, severe: 3 };
+  var svNow = severityOf_(rec);
+  if (order[svIn] && order[svIn] > (order[svNow] || 0)) svNow = svIn;
+  rec.severity = svNow;
+  rec.priority = priorityFromScore_({ severity: svNow, report_count: rec.report_count });
 
   // TBC handling on a repeat report:
   //  - if the instructor has applied the suggested fix, mark it Resolved - TBC
@@ -1658,6 +1690,49 @@ function addReportToIssue_(id, data, report) {
 
 // Raise priority one level toward high, but never below the incoming report's
 // own priority.
+// ---- severity, reports, and the score they make -----------------------------
+// Edd's model (FB-0261): severity is how badly it hits ONE person, the report
+// count is how many people it hit, and priority is what falls out of the two.
+//
+// The weights are spread wide and the report count is square-rooted, which is
+// what stops five people with a typo outranking one person locked out of their
+// course while still letting a hundred of them get there:
+//
+//   1 severe                 10.0   high
+//   3 moderate                5.2   high
+//   2 moderate                4.2   medium
+//   1 moderate                3.0   low
+//   5 low (a typo)            2.2   low
+//   25 low                    5.0   high
+//   100 low                  10.0   level with one severe
+//
+// Diminishing returns are the whole point: the tenth person telling us about a
+// typo is worth less than the second, but volume still gets there in the end.
+var SEVERITY_WEIGHT = { severe: 10, moderate: 3, low: 1 };
+var SCORE_HIGH = 5, SCORE_MEDIUM = 3.5;
+
+// Older rows have no severity, and there are 960 of them. Rather than a
+// backfill that would rewrite history, read it back out of the priority they
+// were given at the time.
+function severityOf_(rec) {
+  var sv = String((rec && rec.severity) || '').toLowerCase();
+  if (sv === 'severe' || sv === 'moderate' || sv === 'low') return sv;
+  var p = String((rec && rec.priority) || '').toLowerCase();
+  return p === 'high' ? 'severe' : (p === 'medium' ? 'moderate' : 'low');
+}
+function issueScore_(rec) {
+  var w = SEVERITY_WEIGHT[severityOf_(rec)] || 1;
+  var n = Math.max(1, Number((rec && rec.report_count) || 1));
+  return Math.round(w * Math.sqrt(n) * 10) / 10;
+}
+// Severe is ALWAYS high, however few people have hit it: one person unable to
+// get into a course they paid for does not become less urgent for being alone.
+function priorityFromScore_(rec) {
+  if (severityOf_(rec) === 'severe') return 'high';
+  var sc = issueScore_(rec);
+  return sc >= SCORE_HIGH ? 'high' : (sc >= SCORE_MEDIUM ? 'medium' : 'low');
+}
+
 function bumpPriority_(current, incoming) {
   var order = ['low', 'medium', 'high'];
   var ci = order.indexOf(String(current || 'low').toLowerCase()); if (ci < 0) ci = 0;
@@ -4915,6 +4990,7 @@ function extractionStaticPrompt_() {
     '- lesson: the FULL slide/question code exactly as written when one appears in the text (e.g. "EN.06.03.09" or "DS.10.19.09.2.M", one long string, not broken down), otherwise the lesson title if known, or null',
     '- lesson_code: lesson code string (e.g. DS.09.04) or null',
     '- issue_type: one of ["bug", "content_error", "student_confusion", "access_problem", "other"]. For a SHIPPING category report use one of ["not_arrived", "damaged", "wrong_item", "not_dispatched", "customs", "returned", "wrong_address", "other"] instead.',
+      '- severity: how badly this hits ONE person, ignoring how many people have hit it. "severe" = it stops them continuing the course or buying one: they cannot log in, cannot open a lesson, cannot sit an exam, cannot pay, or an error would make them fail an assessment. "moderate" = it gets in the way but they can carry on, with a workaround or by skipping past it. "low" = an annoyance, a cosmetic fault, or a typo that misleads nobody. Judge the FAULT, not how upset the message sounds.',
       '- category: use "friction" when NOTHING is broken but the design cost the student money or time - they paid without spotting a discount code box, missed a deadline because a date was buried, bought the wrong thing because two options read the same. A friction report has a working system and an avoidable loss. If something actually failed, it is not friction.',
       '- request_kind: "improvement" if the report is asking for a NEW feature, an enhancement, or an "it would be nice if" change rather than reporting something broken or wrong (this applies to both course content and the platform, for example "could we add a glossary" or "the player should remember playback speed"); otherwise "fix" for a bug, an error, or something not working or incorrect as it stands. When in doubt, choose "fix". Most reports are "fix".',
     '- media_kind: for a course_error only, which part of the lesson it concerns: "video" if it is about a video or animation, "text" if it is about written text, a diagram, or quiz wording, otherwise "other". Return null for tech_issue.',
@@ -5101,7 +5177,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r82 · 2026-08-20';
+var CODE_STAMP = 'r83 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

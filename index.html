@@ -993,6 +993,16 @@
 
       <div class="field"><label>Summary</label><textarea id="f_summary" rows="2"></textarea></div>
       <div class="field">
+        <label>Severity<span class="helphost" data-help="How badly this hits ONE person, ignoring how many people have hit it. Severe means they cannot continue the course or buy one. Priority is worked out from this and the number of reports, so you do not set it yourself."></span></label>
+        <select id="f_severity">
+          <option value="">Not set yet</option>
+          <option value="severe">Severe - they cannot continue the course, sit the exam, or pay</option>
+          <option value="moderate">Moderate - it gets in the way, but they can carry on</option>
+          <option value="low">Low - an annoyance, cosmetic, or a typo that misleads nobody</option>
+        </select>
+      </div>
+
+      <div class="field">
         <label>Priority</label>
         <!-- Starts on "not set" so a failed extraction can't leave an issue
              sitting on High by accident. High routes straight to the devs and
@@ -1378,6 +1388,7 @@
     <button type="button" class="ghost" onclick="ctlOpen('Filter the developer queue','devFilters')">Filter<span class="ctl-count hidden" id="devFilterCount"></span></button>
     <select id="devSortSel" onchange="setDevSel('devSort', this.value)">
       <option value="priority">Sort: priority</option>
+      <option value="score">Sort: score (severity x reports)</option>
       <option value="longest">Sort: longest open</option>
       <option value="newest">Sort: newest</option>
       <option value="reports">Sort: most reported</option>
@@ -1408,6 +1419,7 @@
     <button type="button" class="ghost" onclick="ctlOpen('Filter course fixes','courseFilters')">Filter<span class="ctl-count hidden" id="courseFilterCount"></span></button>
     <select id="courseSortSel" onchange="setCourseSel('courseSort', this.value)">
       <option value="priority">Sort: priority</option>
+      <option value="score">Sort: score (severity x reports)</option>
       <option value="longest">Sort: longest open</option>
       <option value="newest">Sort: newest</option>
       <option value="reports">Sort: most reported</option>
@@ -1864,7 +1876,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r81 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r83 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2567,6 +2579,25 @@ function isMine(i) {
   return false;
 }
 // WHAT is broken, always one of two. Legacy "internal" rows were technical.
+// FB-0261, and it mirrors the same three functions in Code.gs. Severity is how
+// badly the fault hits ONE person; the report count is how many it hit; the
+// score is what falls out. The square root is what stops five people with a
+// typo outranking one person locked out, while still letting a hundred of them
+// get there. See the table in Code.gs.
+var SEVERITY_WEIGHT = { severe: 10, moderate: 3, low: 1 };
+var SEVERITY_LABEL = { severe: "Severe", moderate: "Moderate", low: "Low" };
+function severityOf(i) {
+  var sv = String((i && i.severity) || "").toLowerCase();
+  if (sv === "severe" || sv === "moderate" || sv === "low") return sv;
+  // 960 rows predate the field; read it back out of the priority they got.
+  var p = String((i && i.priority) || "").toLowerCase();
+  return p === "high" ? "severe" : (p === "medium" ? "moderate" : "low");
+}
+function issueScore(i) {
+  var w = SEVERITY_WEIGHT[severityOf(i)] || 1;
+  var n = Math.max(1, Number(reportCount(i) || 1));
+  return Math.round(w * Math.sqrt(n) * 10) / 10;
+}
 function catOf(i) {
   var c = (i.category || "course_error").toLowerCase();
   if (c === "course_error") return "course_error";
@@ -5126,6 +5157,8 @@ function runExtract() {
       // high-priority issue that routes to the devs and pings Slack.
       state.extractError = true;
       $("f_priority").value = "";
+  $("f_severity").value = "";
+      $("f_severity").value = "";
       $("extractStatus").innerHTML = esc("Extraction failed: " + ((res && res.error) || "unknown")) +
         ' <button class="ghost small" style="padding:3px 10px;margin-left:6px;" onclick="runExtract()">Retry</button>' +
         '<div class="small muted" style="margin-top:4px;">Fill in the summary and priority by hand if you would rather not wait, they are the two we need before saving.</div>';
@@ -5164,6 +5197,7 @@ function runExtract() {
     if (f.issue_type) setField("f_issue_type", f.issue_type);
     setField("f_summary", f.summary);
     if (f.priority) setField("f_priority", String(f.priority).toLowerCase());
+    if (f.severity) setField("f_severity", String(f.severity).toLowerCase());
     setField("f_priority_reason", f.priority_reason);
     setField("f_media_kind", f.media_kind || "");
     // The words a student uses tell us where they were. Someone who "logged in
@@ -6007,7 +6041,7 @@ function syncSubIssues() {
 // submit and appended to the raw text of every issue in the split, so two
 // different problems ended up carrying the same ending. It rides with the tab
 // now, like the summary and the priority.
-var SUB_FIELD_IDS = ["f_category", "f_summary", "f_priority", "f_priority_reason", "f_issue_type",
+var SUB_FIELD_IDS = ["f_category", "f_summary", "f_priority", "f_severity", "f_priority_reason", "f_issue_type",
                      "f_section", "f_course", "f_module", "f_lesson", "f_lesson_code",
                      "f_media_kind", "f_impact", "f_outcome"];
 
@@ -6021,6 +6055,7 @@ function subEditFromEntry(sub, isPrimary) {
   var from = {
     f_category: (sub.category === "course_error" || sub.category === "tech_issue" || sub.category === "shipping") ? sub.category : null,
     f_summary: sub.summary, f_priority: sub.priority ? String(sub.priority).toLowerCase() : null,
+    f_severity: sub.severity ? String(sub.severity).toLowerCase() : null,
     f_priority_reason: sub.priority_reason, f_issue_type: sub.issue_type,
     f_section: sub.section, f_course: sub.course, f_module: sub.module,
     f_lesson: sub.lesson, f_lesson_code: sub.lesson_code,
@@ -6480,6 +6515,7 @@ function collectForm() {
     issue_type: getField("f_issue_type"),
     summary: getField("f_summary"),
     priority: getField("f_priority"),
+    severity: getField("f_severity"),
     priority_reason: getField("f_priority_reason"),
     section: getField("f_section"),
     media_kind: state.category === "course_error" ? getField("f_media_kind") : "",
@@ -6804,6 +6840,7 @@ function submitIssue() {
         if (e.vals.f_category) d.category = e.vals.f_category;
         d.summary = e.vals.f_summary || d.summary;
         d.priority = String(e.vals.f_priority || "").toLowerCase() || d.priority;
+        d.severity = String(e.vals.f_severity || "").toLowerCase() || d.severity;
         d.priority_reason = e.vals.f_priority_reason || "";
         d.issue_type = e.vals.f_issue_type || d.issue_type;
         d.section = e.vals.f_section || "";
@@ -8709,6 +8746,13 @@ function renderDev() {
   list.sort(function (a, b) {
     if (state.devSort === "longest") return startOf(a) - startOf(b);   // oldest first
     if (state.devSort === "newest") return startOf(b) - startOf(a);
+    // FB-0261: one number covering both halves, so a fault twenty people have
+    // hit sorts above a one-off of the same severity.
+    if (state.devSort === "score") {
+      var sa = issueScore(a), sb = issueScore(b);
+      if (sa !== sb) return sb - sa;
+      return startOf(a) - startOf(b);
+    }
     if (state.devSort === "reports") {
       var ra = reportCount(a), rb = reportCount(b);
       if (ra !== rb) return rb - ra;
