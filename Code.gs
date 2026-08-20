@@ -960,6 +960,14 @@ function findShippingByTracking_(track) {
 function targetSheetName_(category) {
   var c = String(category).toLowerCase();
   if (c === 'shipping') return SHIPPING_SHEET;
+  // FB-0254 (Edd, 20 Aug 2026): friction. Nothing is broken, but the design
+  // cost somebody money or time - Ann paid for the Fast Track without using her
+  // delivery code because the code box was not prominent enough, which cost a
+  // support round trip and nearly a refund. That is a real finding and it is
+  // not a fault, so it must not sit in a developer's fix queue. It rides in the
+  // Tech Issues sheet kept apart by its category, exactly as internal work does,
+  // so there is no fourth tab and no sheet migration.
+  if (c === 'friction') return TECH_SHEET;
   // Internal work lives in the Tech Issues sheet, kept apart by its
   // audience value, so we don't need a fourth tab or a sheet migration.
   return (c === 'tech_issue' || c === 'internal') ? TECH_SHEET : COURSE_SHEET;
@@ -1434,7 +1442,7 @@ function addIssue_(data) {
     summary: data.summary || '',
     priority: (function () {
       var p = String(data.priority || '').toLowerCase();
-      if (data.request_kind !== 'improvement') return p;
+      if (data.request_kind !== 'improvement' && String(category).toLowerCase() !== 'friction') return p;
       // FB-0253 (Edd): "If something is more of a feature request then a real
       // bug, we probably want it logged as low priority." An improvement is
       // backlog by definition - nothing is broken, so nobody is blocked. The
@@ -1507,7 +1515,7 @@ function addIssue_(data) {
   // would otherwise land on a developer who can't fix a login habit. Course
   // errors still route: there is no student troubleshooting for a wrong diagram.
   var scanLogged = String(data.instructor_name || '') === 'Overnight scan';
-  if (!data.tbc && !data.resolved && !data.parked && issue.request_kind !== 'improvement' && category !== 'shipping') {
+  if (!data.tbc && !data.resolved && !data.parked && issue.request_kind !== 'improvement' && category !== 'shipping' && category !== 'friction') {
     if (category === 'course_error') {
       issue.dev_passed_at = new Date().toISOString();
       issue.status = 'with_dev';
@@ -3460,6 +3468,7 @@ function scanSlack_(newList, updList, waiting) {
 // catOf for a sheet record (the frontend has its own).
 function catOf_(issue) {
   var c = String((issue && issue.category) || '').toLowerCase();
+  if (c === 'friction') return 'friction';
   return c === 'course_error' ? 'course_error' : (c === 'shipping' ? 'shipping' : 'tech_issue');
 }
 
@@ -4864,7 +4873,8 @@ function extractionStaticPrompt_() {
     '- lesson: the FULL slide/question code exactly as written when one appears in the text (e.g. "EN.06.03.09" or "DS.10.19.09.2.M", one long string, not broken down), otherwise the lesson title if known, or null',
     '- lesson_code: lesson code string (e.g. DS.09.04) or null',
     '- issue_type: one of ["bug", "content_error", "student_confusion", "access_problem", "other"]. For a SHIPPING category report use one of ["not_arrived", "damaged", "wrong_item", "not_dispatched", "customs", "returned", "wrong_address", "other"] instead.',
-    '- request_kind: "improvement" if the report is asking for a NEW feature, an enhancement, or an "it would be nice if" change rather than reporting something broken or wrong (this applies to both course content and the platform, for example "could we add a glossary" or "the player should remember playback speed"); otherwise "fix" for a bug, an error, or something not working or incorrect as it stands. When in doubt, choose "fix". Most reports are "fix".',
+      '- category: use "friction" when NOTHING is broken but the design cost the student money or time - they paid without spotting a discount code box, missed a deadline because a date was buried, bought the wrong thing because two options read the same. A friction report has a working system and an avoidable loss. If something actually failed, it is not friction.',
+      '- request_kind: "improvement" if the report is asking for a NEW feature, an enhancement, or an "it would be nice if" change rather than reporting something broken or wrong (this applies to both course content and the platform, for example "could we add a glossary" or "the player should remember playback speed"); otherwise "fix" for a bug, an error, or something not working or incorrect as it stands. When in doubt, choose "fix". Most reports are "fix".',
     '- media_kind: for a course_error only, which part of the lesson it concerns: "video" if it is about a video or animation, "text" if it is about written text, a diagram, or quiz wording, otherwise "other". Return null for tech_issue.',
     '- impact: for an improvement only, a rough impact rating of "low", "medium", or "high" based on how much it would benefit students. Return null for a fix.',
     '- summary: one or two plain-English sentences summarising the issue. Keep the specific detail someone would need to reproduce it: which page or view, and HOW it is reached when that matters (e.g. "opened via the three-dots menu on the Students page" rather than just "the student profile page"). If the report describes two different symptoms, name both rather than blending them into one vague sentence.',
@@ -5049,7 +5059,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r80 · 2026-08-20';
+var CODE_STAMP = 'r81 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

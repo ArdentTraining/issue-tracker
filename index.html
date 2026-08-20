@@ -225,6 +225,7 @@
   .cat-course_error { color: var(--course); border-color: var(--course); }
   .cat-tech_issue { color: var(--tech); border-color: var(--tech); }
   .cat-internal { color: var(--accent); border-color: var(--accent); }
+  .cat-friction { color: var(--medium); border-color: var(--medium); }
   /* fix vs improvement (feature request) */
   .kind { border: 1px solid var(--line); }
   .kind-fix { color: var(--muted); }
@@ -986,6 +987,7 @@
           <option value="course_error">Course error - wrong or confusing lesson content</option>
           <option value="tech_issue">Tech issue - login, access, progress, formatting, or anything not about lesson content</option>
           <option value="shipping">Shipping - a pack, chart or almanac that hasn't arrived, or arrived wrong</option>
+          <option value="friction">Friction - nothing broken, but the design cost someone money or time</option>
         </select>
       </div>
 
@@ -1833,7 +1835,7 @@ var APP_URL = window.location.href; // used in the Slack link; updated once host
 
 var PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 // WHAT is broken. Who it affects is the separate `audience` field below.
-var CATEGORY_LABEL = { course_error: "Course error", tech_issue: "Tech issue", internal: "Tech issue", shipping: "Shipping" };
+var CATEGORY_LABEL = { course_error: "Course error", tech_issue: "Tech issue", internal: "Tech issue", shipping: "Shipping", friction: "Friction" };
 function audienceOf(i) {
   // Old rows carried "internal" as a category; treat that as the audience.
   if (String((i && i.category) || "").toLowerCase() === "internal") return "internal";
@@ -1862,7 +1864,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r80.1 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r81 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2569,6 +2571,7 @@ function catOf(i) {
   var c = (i.category || "course_error").toLowerCase();
   if (c === "course_error") return "course_error";
   if (c === "shipping") return "shipping";
+  if (c === "friction") return "friction";
   return "tech_issue";
 }
 // ---- shipping helpers -----------------------------------------------------
