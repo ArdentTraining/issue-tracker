@@ -1862,7 +1862,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r80 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r80.1 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9974,12 +9974,13 @@ function drawChatScan(box, targetId, rows) {
       if (state.perms && state.perms.users) refreshBackSweepNote();
       return;
     }
-    // Same again for an instructor when the only thing waiting is a suggestion
-    // they are no longer shown: the block would otherwise draw an empty
-    // "Updates on open issues" heading over nothing (FB-0255).
-    if (inActions && !(state.perms && state.perms.users) && !ups.length) { box.innerHTML = ""; return; }
     var news = rows.filter(function (r) { return String(r.kind || "new") !== "update"; });
     var ups = rows.filter(function (r) { return String(r.kind || "") === "update"; });
+    // Same again for an instructor when the only thing waiting is a suggestion
+    // they are no longer shown: the block would otherwise draw an empty
+    // "Updates on open issues" heading over nothing (FB-0255). Must sit AFTER
+    // ups is assigned.
+    if (inActions && !(state.perms && state.perms.users) && !ups.length) { box.innerHTML = ""; return; }
     var VERDICT = {
       fixed: { label: "Sounds fixed", colour: "var(--low)" },
       still_broken: { label: "Still broken", colour: "var(--high)" },
