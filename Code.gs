@@ -553,10 +553,10 @@ function hasPerm_(user, req) {
   // rather than open. If a new action 403s, the fix is a case in reqPerm_.
   if (req === 'none') return false;
   var p = permsOf_(user);
-  if (req === 'devcourse') return !!(p.dev || p.course);
+  if (req === 'devcourse') return !!(p.dev || p.course || p.users);
   // 'work' = anyone who actually works issues, so they can tick the checklist
   // wherever it shows (Track or the Developers / Course queues).
-  if (req === 'work') return !!(p.log || p.manage || p.dev || p.course);
+  if (req === 'work') return !!(p.log || p.manage || p.dev || p.course || p.users);
   return !!p[req];
 }
 function reqPerm_(action) {
@@ -5222,7 +5222,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r87 · 2026-08-20';
+var CODE_STAMP = 'r88 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

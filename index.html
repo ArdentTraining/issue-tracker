@@ -1471,9 +1471,12 @@
         <label class="small"><input type="checkbox" id="inv_log"> Log</label>
         <label class="small"><input type="checkbox" id="inv_manage"> Admin</label>
         <label class="small"><input type="checkbox" id="inv_analytics"> Analytics</label>
-        <label class="small"><input type="checkbox" id="inv_dev"> Developers</label>
-        <label class="small"><input type="checkbox" id="inv_course"> Course fixes</label>
         <label class="small"><input type="checkbox" id="inv_users"> Manage users</label>
+      </div>
+      <label style="margin-top:8px;">Fixes they can be given<span class="helphost" data-help="This is who can be picked in Assigned to, not who can see the page. Anyone with Manage users sees both queues anyway, so leave these unticked for an admin who does not actually take fixes."></span></label>
+      <div class="permrow">
+        <label class="small"><input type="checkbox" id="inv_dev"> Developer (tech fixes)</label>
+        <label class="small"><input type="checkbox" id="inv_course"> Course fixes</label>
       </div>
     </div>
     <button class="primary" onclick="doInvite()">Send invite</button>
@@ -1877,7 +1880,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r87 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r88 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2938,11 +2941,15 @@ function applyPerms(user) {
   // were, one line each, so nothing can drift apart.
   applyShell();
   var railGate = [["railNew", p.log], ["railChats", p.log], ["railIssues", p.log || p.manage],
-                  ["railDev", p.dev], ["railCourse", p.course], ["railReports", p.analytics], ["railStats", p.analytics],
+                  ["railDev", p.dev || p.users], ["railCourse", p.course || p.users],
+                  ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
   // The divider only earns its place if there is something on both sides.
   if ($("railDiv")) $("railDiv").style.display = (p.dev || p.course || p.analytics || p.users) ? "" : "none";
+  // FB-0263: an admin sees the fix queues without being a name in them. The
+  // "developer" and "course" permissions now mean "can be assigned work here",
+  // and nothing else; visibility rides on being an admin.
 
   // Everybody gets to say whether a student is behind this report (Edd,
   // FB-0206). It used to be an admins-only "internal task" switch, which left
