@@ -1877,7 +1877,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r84 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r84.1 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8779,15 +8779,15 @@ function renderDev() {
 
       // The sub-line: priority first (it drives the default sort), then just
       // enough to place the issue without reopening it.
+      // FB-0259: the badge carries the priority now and the report count sits
+      // next to it, so neither belongs in the sub-line as well. Repeating them
+      // gave rows reading "High · 6 reports · High priority · ... · x6 reports".
       var sub = [];
-      var pri = String(i.priority || "").toLowerCase();
-      if (pri) sub.push(pri.charAt(0).toUpperCase() + pri.slice(1) + " priority");
       sub.push(shortId(i));
       if (i.section) sub.push(SECTION_LABEL[i.section] || i.section);
       if (kindOf(i) === "improvement") sub.push("improvement");
       if (i.fix_size) sub.push(String(i.fix_size).toLowerCase() + " fix");
       if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
-      if (reportCount(i) > 1) sub.push("×" + reportCount(i) + " reports");
       var days = Math.floor((Date.now() - new Date(i.dev_passed_at || i.submitted_at)) / 864e5);
       if (days >= 1) sub.push(days + (days === 1 ? " day" : " days") + (fixed ? "" : " open"));
       if (i.dev_query_at) sub.push("question open");
@@ -8804,14 +8804,15 @@ function renderDev() {
       var colour = fixed ? "var(--low)"
         : (String(i.priority || "").toLowerCase() === "high" ? "var(--high)"
           : String(i.priority || "").toLowerCase() === "medium" ? "var(--medium)" : "var(--low)");
-      if (!fixed && reports > 1) sub.unshift(reports + " reports");
+
       var act = fixed ? "Waiting on admin check" : "Fix it, then say so";
       var btn = fixed
         ? '<button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetail(\'' + id + '\')">Open notes</button>'
         : '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'devMarkFixed(\'' + id + '\')">Mark fixed</button>';
 
       return '<div class="act-row" data-id="' + id + '" onclick="openDevDetail(\'' + id + '\')">' +
-          '<span class="act-word" style="background:' + colour + ';color:#02121f;">' + esc(word) + '</span>' +
+          '<span class="act-word" style="background:' + colour + ';color:#02121f;">' + esc(word) +
+            (reports > 1 ? ' &middot; ' + reports : '') + '</span>' +
           '<div><div class="act-title">' + esc(cardTitle(i)) + '</div>' +
             (sub.length ? '<div class="act-sub">' + esc(sub.join(" · ")) + '</div>' : '') + '</div>' +
           '<div><span class="act-do">' + esc(act) + '</span>' + btn + '</div>' +
