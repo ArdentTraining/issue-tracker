@@ -882,6 +882,10 @@ function archivePrelaunch_(body) {
   var stamped = 0, total = 0;
   var now = new Date().toISOString();
   ISSUE_SHEETS.forEach(function (name) {
+    // Course fixes stay out of the stamp (Edd, 20 Aug 2026): "I am the one who
+    // handles them anyway." That queue is his working list, not backlog noise
+    // for the new team, so drawing the line must not empty it.
+    if (name === COURSE_SHEET) return;
     var sh = sheetByName_(name);
     if (!sh) return;
     var values = sh.getDataRange().getValues();
@@ -5331,7 +5335,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r92 · 2026-08-20';
+var CODE_STAMP = 'r92.1 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

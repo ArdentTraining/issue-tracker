@@ -1899,7 +1899,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r92 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r92.1 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -10617,9 +10617,11 @@ function resetUserLink(email) {
 // stamped and disappears for non-admins. Nothing is closed and nothing is
 // lost: the dedupe still matches stamped issues, and a match brings one back.
 function archivePrelaunch() {
-  var openCount = (state.issues || []).filter(function (i) { return isOpen(i); }).length;
-  if (!confirm('Draw the launch line?\n\nEvery issue currently in the tracker (' + (state.issues || []).length +
-    ' of them, ' + openCount + ' open) will be stamped pre-launch and hidden from instructors and developers. ' +
+  var stampable = (state.issues || []).filter(function (i) { return catOf(i) !== "course_error"; });
+  var openStampable = stampable.filter(function (i) { return isOpen(i); }).length;
+  if (!confirm('Draw the launch line?\n\nEvery tech and shipping issue currently in the tracker (' + stampable.length +
+    ' of them, ' + openStampable + ' open) will be stamped pre-launch and hidden from instructors and developers. ' +
+    'Course fixes are left alone - that queue stays as it is. ' +
     'Admins still see everything. An issue comes back automatically if a new report matches it, or one at a time with Resurface.\n\nThis is meant to be pressed once, on rollout day.')) return;
   busyShow("Stamping the backlog…");
   apiPost({ action: "archivePrelaunch" }).then(function (res) {
