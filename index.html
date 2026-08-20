@@ -1862,7 +1862,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r77 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r78 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5803,8 +5803,20 @@ function afterExtractReady() {
   // try. A "tbc" is different: that is a workaround, so the fault is still
   // there and the pre-dev checklist still needs filling in. Run it quietly for
   // those, without the popup, since the student has already gone.
-  var chatResolved = state.resolution && state.resolution.status === "resolved";
-  var workedAround = state.resolution && state.resolution.status === "tbc";
+  // Edd, 20 Aug 2026: Anna's conversation split into two, BOTH already sorted,
+  // and she still got a list of things to try - including retrying the payment
+  // she had already made on her phone. The gate below only ever read
+  // state.resolution, which showResolutionSuggestion sets for a SINGLE issue,
+  // so a split bypassed it completely. Read the sub-issues too: if every one of
+  // them is sorted there is nothing to try, whatever shape the extraction came
+  // back in. Mixed means some work is left, so the steps still belong.
+  var subs = (state.splitMode && Array.isArray(state.subIssues)) ? state.subIssues : null;
+  var subStatuses = subs ? subs.map(function (x) { return String(x.resolution_status || ""); }) : [];
+  var allSubsSorted = subStatuses.length > 0 && subStatuses.every(function (st) { return st === "resolved" || st === "tbc"; });
+  var allSubsFullyResolved = allSubsSorted && subStatuses.every(function (st) { return st === "resolved"; });
+
+  var chatResolved = (state.resolution && state.resolution.status === "resolved") || allSubsFullyResolved;
+  var workedAround = (state.resolution && state.resolution.status === "tbc") || (allSubsSorted && !allSubsFullyResolved);
   if (state.requestKind !== "improvement" && !chatResolved) {
     if (!workedAround) requestSuggestion();
     requestTroubleshoot(workedAround);
@@ -5897,9 +5909,9 @@ function skipSlideRef() {
 //   drop  - not worth tracking at all (the parcel that has since turned up)
 // The main issue is the FIRST one marked split; folded summaries land on it.
 var SUB_DISP = [
-  { id: "split", label: "Separate" },
-  { id: "fold",  label: "Fold in" },
-  { id: "drop",  label: "Drop" }
+  { id: "split", label: "Separate", tip: "Opens its own issue, with its own category, lesson, priority and resolution." },
+  { id: "fold",  label: "Fold in",  tip: "Opens no issue, but writes this line onto the first one so it is still on the record." },
+  { id: "drop",  label: "Drop",     tip: "Logs nothing at all. For something that needs no follow-up, like a parcel that has since turned up." }
 ];
 function showSplitSuggestion(subIssues) {
   hideSplitSuggestion();
@@ -5914,7 +5926,7 @@ function showSplitSuggestion(subIssues) {
   $("splitPanel").innerHTML =
     '<div class="h">This looks like ' + subIssues.length + ' separate issues</div>' +
     '<div class="small" style="margin-bottom:8px;">Each would be fixed independently, so logging them apart keeps the trails clean. The same pasted text, screenshots and student details go on every one, and each keeps its own category, lesson, priority, and resolution. You get to check and edit every one before anything is saved.</div>' +
-    '<div class="small muted" style="margin-bottom:8px;"><b>Separate</b> opens its own issue. <b>Fold in</b> opens no issue but writes this line onto the first one, so it is still on the record. <b>Drop</b> logs nothing at all, for something that needs no follow-up, like a parcel that has since turned up.</div>' +
+
     subIssues.map(function (sub, i) { return splitRowHtml(sub, i); }).join("") +
     '<label style="display:block;margin-top:10px;font-size:13px;color:var(--text);">' +
       '<input type="checkbox" id="splitTick" checked style="width:auto;margin-right:6px;vertical-align:-1px;" onchange="onSplitToggle(this.checked);">' +
@@ -5937,6 +5949,7 @@ function splitRowHtml(sub, i) {
     '<div class="subdisp" style="margin-top:6px;margin-left:0;">' +
       SUB_DISP.map(function (d) {
         return '<button type="button" class="' + (cur === d.id ? "active" : "") + '" ' +
+          'title="' + esc(d.tip) + '" ' +
           'onclick="onSubDisp(' + i + ',\'' + d.id + '\')">' + d.label + '</button>';
       }).join("") +
     '</div></div>';
