@@ -1862,7 +1862,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r76 · 2026-08-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r76.1 · 2026-08-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3779,6 +3779,17 @@ function renderLiveDetail() {
       'opened by ' + esc(c.opened_by || "—") +
       (c.last_touched_by && c.last_touched_by !== c.opened_by ? ' · last touched by ' + esc(c.last_touched_by) : '') +
       (b.link ? ' · <a href="' + esc(b.link) + '" target="_blank" style="color:var(--accent);">open in Chatwoot</a>' : '') +
+      // Edd, 19 Aug 2026: three buttons on the row, not five. These two are
+      // housekeeping rather than decisions - one re-reads, one walks away - so
+      // they sit up here with the other small print instead of competing with
+      // the three things you actually came to do.
+      ' · <a href="#" onclick="event.preventDefault();liveRefreshBrief();" style="color:var(--accent);"' +
+        ' title="Re-reads the whole conversation and rewrites the summary below. This one costs an AI call, which is why it is not the Refresh at the top.">refresh the brief</a>' +
+      ' · <a href="#" onclick="event.preventDefault();liveCloseCase();" style="color:var(--muted);"' +
+        ' title="' + (c.issue_id
+          ? 'Closes this case. The issue stays open in Track, and the private note goes onto the Chatwoot conversation.'
+          : 'Closes this case without filing anything. For a conversation that fizzled out or was sorted on the spot.') +
+        '">' + (c.issue_id ? 'close case' : 'close without filing') + '</a>' +
     '</div>';
 
   if (c.issue_id) {
@@ -3846,11 +3857,7 @@ function renderLiveDetail() {
     // for rounds; a conversation sorted in the chat had no equivalent here, so
     // it went in as a fresh open high and joined a fix queue for work that was
     // already done. Same two outcomes, same words.
-    '<button class="ghost" onclick="liveRefreshBrief()" title="Re-reads the whole conversation and rewrites the summary above. This one costs an AI call, which is why it is separate from the Refresh at the top.">Refresh the brief</button>' +
-    '<button class="ghost" style="color:var(--high);" onclick="liveCloseCase()" title="' +
-      (c.issue_id ? 'Closes this case. The issue stays open in Track, and the private note goes onto the Chatwoot conversation.'
-                  : 'Closes this case without filing anything. For a conversation that fizzled out or was sorted on the spot.') +
-      '">' + (c.issue_id ? 'Close case' : 'Close without filing') + '</button>' +
+
   '</div>';
 
   if (b.images && b.images.length) {
