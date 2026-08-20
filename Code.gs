@@ -1610,7 +1610,7 @@ function addReportToIssue_(id, data, report) {
   }
   reports.push(report);
   rec.reports_json = JSON.stringify(reports);
-  rec.report_count = reports.length;
+  rec.report_count = realReportCount_(reports);
 
   // Each extra report nudges the priority up a level, never below what this
   // report was logged as.
@@ -1731,6 +1731,23 @@ function priorityFromScore_(rec) {
   if (severityOf_(rec) === 'severe') return 'high';
   var sc = issueScore_(rec);
   return sc >= SCORE_HIGH ? 'high' : (sc >= SCORE_MEDIUM ? 'medium' : 'low');
+}
+
+// How many people have actually REPORTED this, which is not the same as how
+// many entries the trail holds. Questions, answers and updates all live in
+// reports_json so the history reads in order, and they were all being counted:
+// asking the admins a question pushed the report count up by one, and after
+// FB-0261 that would have quietly raised the priority too. A question is not a
+// person hitting the fault.
+function realReportCount_(reps) {
+  if (!reps || !reps.length) return 0;
+  var n = 0;
+  for (var i = 0; i < reps.length; i++) {
+    var k = String(reps[i].kind || 'report').toLowerCase();
+    if (k === 'question' || k === 'answer' || k === 'update') continue;
+    n++;
+  }
+  return n || 1;   // an old row with only untyped entries still counts as one
 }
 
 function bumpPriority_(current, incoming) {
@@ -2393,7 +2410,7 @@ function flagQuery_(data) {
   try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
   reps.push({ kind: 'question', instructor_name: who, summary: forWhom, raw_text: question, date: now });
   rec.reports_json = JSON.stringify(reps);
-  rec.report_count = reps.length;
+  rec.report_count = realReportCount_(reps);
 
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
   try { sendQueryRaisedSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
@@ -2415,7 +2432,7 @@ function sendQueryRaisedSlack_(issue, appUrl) {
   var toInstructor = issue.dev_query_target === 'instructor';
   var text = [
     ':grey_question: *' + (issue.dev_query_by || 'Someone') + ' has a question for ' +
-      (toInstructor ? (issue.instructor_name || 'the instructor') : 'the admins') + '*',
+      (toInstructor ? (issue.instructor_name || 'the instructor') : 'the bosses') + '*',
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
     '*Summary:* ' + slackSummary_(issue),
     '*Question:* ' + (issue.dev_query || '-'),
@@ -2462,7 +2479,7 @@ function answerQuery_(data) {
   try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
   reps.push({ kind: 'answer', instructor_name: who, summary: 'Reply to question', raw_text: reply, date: now });
   rec.reports_json = JSON.stringify(reps);
-  rec.report_count = reps.length;
+  rec.report_count = realReportCount_(reps);
 
   var asker = rec.dev_query_by || '';
   rec.dev_query = '';
@@ -5177,7 +5194,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r85 · 2026-08-20';
+var CODE_STAMP = 'r86 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

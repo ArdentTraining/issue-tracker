@@ -1877,7 +1877,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r85 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r86 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9392,8 +9392,16 @@ function sendDevQuery(id) {
   var target = $("devQueryTarget") ? $("devQueryTarget").value : "admins";
   apiPost({ action: "flagQuery", issue_id: id, question: q, target: target, app_url: APP_URL }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast(target === "instructor" ? "Sent to the instructor." : "Sent to the bosses.");
-    closeDetail(); loadIssues();
+    toast(target === "instructor" ? "Sent to the instructor." : "Sent to Charlie, Charly and Edd.");
+    // FB-0272 (Edd): "after asking a question, don't automatically close this
+    // issue". A developer asking something is still working on it, and having
+    // the pane shut underneath them meant finding their place again. The box is
+    // cleared and the pane redrawn where it stands, so the new question appears
+    // in the thread below it.
+    if ($("devQueryText")) $("devQueryText").value = "";
+    loadIssues().then(function () {
+      if (state.detailId === id && state.detailKind === "dev") openDevDetail(id);
+    });
   }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 
@@ -9584,14 +9592,36 @@ function openDevDetail(id) {
   // whatever's blocking progress. Sent either up to the bosses or back to the
   // instructor who logged it. Pings Slack and shows a badge everywhere this
   // issue is listed until someone replies.
+  // FB-0275 (Edd): "If questions are asked, the questions and answers should be
+  // saved/stored here to make a bit of an internal chat transcript saved on
+  // this issue." They were already being written into the trail, but nothing
+  // put them together, so a developer could not see what had already been asked
+  // and answered without reading the whole report.
+  var qa = parseReports(issue).filter(function (r) {
+    var k = String(r.kind || "").toLowerCase();
+    return k === "question" || k === "answer";
+  });
+  if (qa.length) {
+    html += '<h3>Questions and answers</h3>' +
+      '<div class="card" style="background:var(--bg);margin-bottom:10px;">' +
+      qa.map(function (r) {
+        var isQ = String(r.kind).toLowerCase() === "question";
+        return '<div style="margin-bottom:8px;padding-left:10px;border-left:2px solid ' +
+          (isQ ? 'var(--medium)' : 'var(--low)') + ';">' +
+          '<div class="small muted">' + (isQ ? 'Q' : 'A') + ' &middot; ' +
+            esc(r.instructor_name || "someone") + ' &middot; ' + fmtDate(r.date) + '</div>' +
+          '<div style="font-size:13px;white-space:pre-wrap;">' + esc(r.raw_text || "") + '</div>' +
+        '</div>';
+      }).join("") + '</div>';
+  }
   html += '<h3>Question about this fix?</h3>';
   if (issue.dev_query_at) {
     html += '<div class="small muted" style="margin-bottom:6px;">Waiting on a reply from ' +
-      (issue.dev_query_target === 'instructor' ? esc(issue.instructor_name || 'the instructor') : 'the bosses') +
+      (issue.dev_query_target === 'instructor' ? esc(issue.instructor_name || 'the instructor') : 'Charlie, Charly or Edd') +
       ', sent ' + fmtDate(issue.dev_query_at) + '.</div>';
   }
   html += '<div class="field"><select id="devQueryTarget">' +
-      '<option value="admins">Ask the bosses</option>' +
+      '<option value="admins">Ask Charlie, Charly or Edd</option>' +
       '<option value="instructor">Ask the instructor who submitted this' + (issue.instructor_name ? ' (' + esc(issue.instructor_name) + ')' : '') + '</option>' +
     '</select></div>' +
     '<div class="field"><textarea id="devQueryText" rows="2" placeholder="Ask something about this issue..."></textarea></div>' +
