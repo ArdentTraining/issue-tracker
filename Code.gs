@@ -430,6 +430,7 @@ function doPost(e) {
     if (action === 'chatScanList') return jsonOut(chatScanList_());
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
+    if (action === 'deleteUser') return jsonOut(deleteUser_(body));
     if (action === 'lessonIssueCounts') return jsonOut(lessonIssueCounts_());
     if (action === 'estimateFixSize') return jsonOut(estimateFixSize_(body));
     if (action === 'runChatBackSweep') return jsonOut(runChatBackSweep_(body));
@@ -603,7 +604,7 @@ function reqPerm_(action) {
     case 'flagKnownFix': return 'log';
     // Confusion -> content-tweak suggestions sit with anyone who works a queue.
     case 'listContentSuggestions': case 'resolveContentSuggestion': case 'runConfusionReview': return 'work';
-    case 'inviteUser': case 'updateUser': case 'adminResetLink': case 'listUsers':
+    case 'inviteUser': case 'updateUser': case 'deleteUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion': case 'suggestPlaybook':
     case 'listKnownFixFlags': case 'resolveKnownFixFlag':
     case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
@@ -851,6 +852,60 @@ function listUsers_() {
     out.push({ email: u.email, name: u.name, status: u.status, perms: permsOf_(u) });
   }
   return { ok: true, users: out };
+}
+
+// FB-0278 (Edd): "can we have a delete option too?" Disable was the only exit,
+// which is right for someone who has left and whose name is on work, but wrong
+// for a typo in an invite or a test account nobody ever used.
+//
+// Two guards, because this is the one screen that can lock everybody out:
+//   - never the last active admin;
+//   - never someone whose name is already ON work. Their name appears against
+//     issues they logged, fixes they were assigned and resolutions they wrote,
+//     and deleting the row would leave those pointing at nobody. Disable is the
+//     right answer there, and the error says so rather than just refusing.
+function deleteUser_(body) {
+  var email = String((body && body.email) || '').trim().toLowerCase();
+  if (!email) return { ok: false, error: 'Which user?' };
+  var f = findUserByEmail_(email);
+  if (!f) return { ok: false, error: 'No such user.' };
+  var name = String(f.user.name || '').trim();
+
+  var sheet = usersSheet_();
+  var values = sheet.getDataRange().getValues();
+  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  var admins = 0;
+  for (var r = 1; r < values.length; r++) {
+    var u = rowToUser_(values[r], idx);
+    if (String(u.status).toLowerCase() !== 'active') continue;
+    if (permsOf_(u).users) admins++;
+  }
+  if (permsOf_(f.user).users && admins <= 1) {
+    return { ok: false, error: 'That is the last account that can manage users. Give somebody else that permission first.' };
+  }
+
+  var seen = 0;
+  ISSUE_SHEETS.forEach(function (sn) {
+    if (seen) return;
+    var sh = sheetByName_(sn);
+    if (!sh) return;
+    var v = sh.getDataRange().getValues();
+    if (v.length < 2) return;
+    var ix = {}; v[0].forEach(function (h, i) { ix[h] = i; });
+    for (var i = 1; i < v.length; i++) {
+      if (!v[i][ix['issue_id']]) continue;
+      var hits = [v[i][ix['instructor_name']], v[i][ix['assignee']], v[i][ix['resolved_by']], v[i][ix['dev_query_by']]];
+      for (var h = 0; h < hits.length; h++) {
+        if (name && String(hits[h] || '').trim() === name) { seen++; return; }
+      }
+    }
+  });
+  if (seen) {
+    return { ok: false, error: name + ' has their name on logged work, so deleting the account would leave those entries pointing at nobody. Disable them instead - it does the same job and keeps the record honest.' };
+  }
+
+  sheet.deleteRow(f.rowNum);
+  return { ok: true, deleted: true };
 }
 
 function updateUser_(body) {
@@ -5222,7 +5277,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r89 · 2026-08-20';
+var CODE_STAMP = 'r90 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

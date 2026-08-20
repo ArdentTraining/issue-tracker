@@ -1691,6 +1691,25 @@
   </div>
 </div>
 
+<!-- FB-0276: the cause and the fix, required, before anything is marked fixed.
+     This note is what the log is worth reading for later, and as an optional
+     box further up the pane most fixes went out without one. -->
+<div class="modal-bg" id="fixNoteModal">
+  <div class="modal" style="max-width:560px;">
+    <h3>What was it, and what did you change?</h3>
+    <p class="small muted" style="margin-top:0;">Both are needed. This is what the next person reads when it happens again, and what an admin checks before telling the student.</p>
+    <label class="small" for="fixNoteCause" style="display:block;margin-bottom:4px;">What was causing it?</label>
+    <textarea id="fixNoteCause" rows="3" style="width:100%;font-size:13px;" placeholder="e.g. the lesson player cached the old slide list, so anyone who had opened the lesson before the re-upload kept getting the old images"></textarea>
+    <label class="small" for="fixNoteFix" style="display:block;margin:10px 0 4px;">What did you change to fix it?</label>
+    <textarea id="fixNoteFix" rows="3" style="width:100%;font-size:13px;" placeholder="e.g. added a version stamp to the slide manifest so the player refetches when it changes"></textarea>
+    <div class="small" id="fixNoteMsg" style="color:var(--high);margin-top:6px;min-height:16px;"></div>
+    <div class="btns" style="margin-top:10px;">
+      <button class="primary" id="fixNoteGo">Mark it fixed</button>
+      <button class="ghost" onclick="document.getElementById('fixNoteModal').classList.remove('show');">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- FB-0231: a known fix that was offered where it did not apply. Goes to Edd
      as a correction to approve; it never rewrites the corpus entry on its own. -->
 <div class="modal-bg" id="kfFlagModal">
@@ -1880,7 +1899,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r89 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r90 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9731,8 +9750,38 @@ function openDevDetail(id) {
   if (refold) drawerFoldRestore(refold);
 }
 
+// FB-0276 (Edd): "when a developer presses 'mark fixed' can we have a popup box
+// for them to fill out with a *required mark asking them to describe the cause
+// and the fix implemented". This is the note the whole log is worth reading for
+// six months later, and it was an optional textarea further up the pane that
+// most fixes went out without. It is now the thing standing between the press
+// and the save.
 function devMarkFixed(id) {
-  var notes = $("dev_notes") ? $("dev_notes").value : "";
+  var pre = $("dev_notes") ? $("dev_notes").value : "";
+  $("fixNoteCause").value = "";
+  $("fixNoteFix").value = pre || "";
+  $("fixNoteMsg").textContent = "";
+  $("fixNoteGo").onclick = function () { devMarkFixedConfirmed(id); };
+  $("fixNoteModal").classList.add("show");
+  setTimeout(function () { $("fixNoteCause").focus(); }, 30);
+}
+function devMarkFixedConfirmed(id) {
+  var cause = String($("fixNoteCause").value || "").trim();
+  var fix = String($("fixNoteFix").value || "").trim();
+  // Both, and not one word each. A note reading "bug" helps nobody.
+  if (cause.length < 10 || fix.length < 10) {
+    $("fixNoteMsg").textContent = cause.length < 10
+      ? "Say what was actually causing it - a few words is not enough to be useful later."
+      : "Say what you changed to fix it.";
+    (cause.length < 10 ? $("fixNoteCause") : $("fixNoteFix")).focus();
+    return;
+  }
+  var notes = "Cause: " + cause + "\n\nFix: " + fix;
+  if ($("dev_notes")) $("dev_notes").value = notes;
+  $("fixNoteModal").classList.remove("show");
+  devMarkFixedSend(id, notes);
+}
+function devMarkFixedSend(id, notes) {
   var notify = !!($("notifyStudentTick") && $("notifyStudentTick").checked);
   // The round-trip takes a few seconds, so say so immediately instead of
   // leaving a dead-looking button (Edd, 21 Jul).
@@ -10505,6 +10554,7 @@ function userRowHtml(u) {
       (String(u.status).toLowerCase() === "disabled"
         ? '<button class="ghost small" onclick="setUserDisabled(\'' + esc(u.email) + '\', false)">Enable</button>'
         : '<button class="ghost small" onclick="setUserDisabled(\'' + esc(u.email) + '\', true)">Disable</button>') +
+        ' <button class="ghost small" style="color:var(--high);" title="Only for an account with no logged work against it - a mistyped invite, or a test account. Anyone whose name is on real work should be disabled instead." onclick="deleteUser(\'' + esc(u.email) + '\', \'' + esc(u.name || u.email) + '\')">Delete</button>' +
     '</div>' +
   '</div>';
 }
@@ -10537,6 +10587,17 @@ function resetUserLink(email) {
     toast("Reset link generated and emailed.");
     if (res.link) showInviteLink(res.link);
   }).catch(function (e) { toast("Error."); console.error(e); });
+}
+// FB-0278. Disable is still the right answer for anyone who has done work here;
+// this is for the mistyped invite and the test account. The backend refuses the
+// rest and says why, so the guard is not just a confirm box.
+function deleteUser(email, name) {
+  if (!confirm('Delete ' + name + ' completely?\n\nThis removes the account rather than disabling it, and cannot be undone. If they have logged, fixed or been assigned anything, use Disable instead so the record still makes sense.')) return;
+  apiPost({ action: "deleteUser", email: email }).then(function (res) {
+    if (!res || !res.ok) { toast((res && res.error) || "Could not delete that account.", 9000); return; }
+    toast(name + " deleted.");
+    loadUsers();
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
 }
 function setUserDisabled(email, dis) {
   var payload = { action: "updateUser", email: email };
