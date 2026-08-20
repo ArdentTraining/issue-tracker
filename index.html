@@ -1862,7 +1862,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r76.1 · 2026-08-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r77 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4078,8 +4078,21 @@ function liveCheckpoint(decision) {
     else if (res.parked) toast(res.updated ? "Issue parked, with your reason saved." : "Filed and parked. It wakes up if anyone else reports it.");
     else if (res.updated) toast("Checkpoint added to the issue.");
     else toast("Issue filed" + (String(res.priority || "").toLowerCase() === "high" ? " - high priority, so the team has been pinged." : "."));
-    loadLiveCasesThenRender();
-    loadIssues();
+    // FB-0251. Edd: "once we press log issue, this should be removed from the
+    // chat page." Both outcomes mean the same thing about the CHAT - resolved
+    // is finished, and still-open means the fault is live but the conversation
+    // with the student is done - so the case closes itself either way. A merge
+    // is the exception: that one deliberately stays put, because it joined
+    // somebody else's live case rather than finishing this one.
+    if (res.merged) { loadLiveCasesThenRender(); loadIssues(); return; }
+    var conv = c.conversation_id;
+    apiPost({ action: "caseClose", conversation_id: conv, app_url: APP_URL })
+      .catch(function () {})
+      .then(function () {
+        if (String(state.liveSelected) === String(conv)) { state.liveSelected = null; hideLiveDetail(); }
+        loadLiveCasesThenRender();
+        loadIssues();
+      });
   }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
 }
 
@@ -4092,16 +4105,23 @@ function liveCheckpoint(decision) {
 function liveLogIssue() {
   var c = liveCaseById(state.liveSelected);
   if (!c) return;
-  var b = c.brief || {};
-  setLiveOutcome("resolved");
-  var pre = String(b.fix || b.next || "");
   $("liveOutcomeTitle").textContent = c.issue_id ? "Update the issue from this conversation" : "Log this issue";
-  $("liveOutcomeNote").value = pre;
-  $("liveOutcomePrefill").textContent = pre
-    ? "Pre-filled from the brief. Change it to what you actually told them."
-    : "";
+  $("liveOutcomeNote").value = "";
+  state._liveOutcomePre = "";
+  setLiveOutcome("resolved");
   $("liveOutcomeModal").classList.add("show");
   setTimeout(function () { $("liveOutcomeNote").focus(); }, 30);
+}
+/* Edd, 20 Aug 2026: the box was pre-filled from the brief's known fix OR its
+   next step, whichever it had. Under "what actually sorted it?" the next step
+   is the one thing it cannot be - it is by definition the work still to do, so
+   the box was arguing with its own label. Each outcome now takes only the half
+   of the brief that belongs to it, and takes nothing rather than the wrong
+   thing. */
+function liveOutcomePrefillFor(kind) {
+  var c = liveCaseById(state.liveSelected);
+  var b = (c && c.brief) || {};
+  return kind === "open" ? String(b.next || "") : String(b.fix || "");
 }
 /* Which of the two the instructor has picked. Parked is deliberately not here:
    it is decided from the conversation when the record is filed, not chosen. */
@@ -4122,6 +4142,17 @@ function setLiveOutcome(kind) {
     ? "Filed with the answer saved against it, out of the fix queues, and nobody is pinged, because there is nothing left to do. If the conversation shows it was only sorted for this one student rather than actually fixed, it is parked instead, so a later report can still be linked to it."
     : "Filed and left open. It routes like any other issue, and the student may need telling once it is fixed.";
   $("liveOutcomeGo").textContent = resolved ? "Log it as resolved" : "Log it as still open";
+  // Only swap the text if it is still ours. Anything typed stays put.
+  var box = $("liveOutcomeNote");
+  if (box && String(box.value || "") === String(state._liveOutcomePre || "")) {
+    var pre = liveOutcomePrefillFor(state._liveOutcomeKind);
+    box.value = pre;
+    state._liveOutcomePre = pre;
+    $("liveOutcomePrefill").textContent = pre
+      ? (resolved ? "Pre-filled from the brief. Change it to what you actually told them."
+                  : "Pre-filled from the brief's next step. Change it to where this has really got to.")
+      : "";
+  }
 }
 function closeLiveOutcome() { $("liveOutcomeModal").classList.remove("show"); }
 function liveOutcomeSubmit() {
