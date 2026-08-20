@@ -1880,7 +1880,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r88 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r89 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9647,8 +9647,7 @@ function openDevDetail(id) {
   // ask have not answered something, and not before. Held here and appended
   // last, below everything a developer actually acts on.
   var transcriptHtml = issue.raw_text
-    ? '<details class="acc" style="margin-top:12px;"><summary><span class="acc-h">Transcript</span>' +
-        '<span class="acc-sum">the report as it came in</span></summary>' +
+    ? '<details class="acc" style="margin-top:12px;"><summary><span class="acc-h">Transcript</span></summary>' +
         '<div class="card" style="background:var(--bg);white-space:pre-wrap;font-size:13px;">' +
         esc(issue.raw_text) + clipNote(issue) + '</div></details>'
     : "";

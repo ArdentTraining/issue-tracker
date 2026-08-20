@@ -5222,7 +5222,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r88 · 2026-08-20';
+var CODE_STAMP = 'r89 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6114,29 +6114,34 @@ function listLiveCases_(data) {
     var pre = data && data._issues;
     (pre || getIssues_().issues || []).forEach(function (i) { issueById[i.issue_id] = i; });
   }
-  var peeks = 0;
   rows.forEach(function (r) {
     r._brief = caseBriefJson_(r);
     if (!r.issue_id) return;
     var iss = issueById[r.issue_id];
     if (!iss) return;
     r.issue_status = String(iss.status || 'open').toLowerCase();
-    var sorted = r.issue_status === 'resolved' || r.issue_status === 'resolved_tbc' || isTrueLike_(iss.student_sorted);
-    if (!sorted || peeks >= 8) return;
-    peeks++;
-    var cwStatus = '';
-    try {
-      var conv = chatwootCall_('/conversations/' + r.conversation_id);
-      cwStatus = String((conv && conv.status) || (conv && conv.payload && conv.payload.status) || '');
-    } catch (e) { cwStatus = ''; }
-    if (cwStatus === 'resolved') {
-      r.status = 'closed';
-      var b = r._brief; b.auto_closed = new Date().toISOString();
-      r.brief_json = JSON.stringify(b);
-      liveCaseSave_(r);
-    } else if (cwStatus) {
-      r.chat_still_open = true;
-    }
+    // FB-0279, and Edd has now said this three times. Two things were wrong.
+    //
+    // 1. PARKED was not counted as finished. It is the common outcome now:
+    //    Round 76 made a filing that was sorted for one student but never
+    //    confirmed fixed park itself, so most cases end this way. The case list
+    //    was still only looking for resolved and resolved_tbc, so Jane's and
+    //    Anatoliy's sat there for a whole day with their issues parked.
+    //
+    // 2. It also required the CHATWOOT conversation to be resolved before it
+    //    would close the case. A student's conversation stays open for days
+    //    after we have finished with it, so that gate meant "logged" was never
+    //    enough on its own. Edd's rule (FB-0251) is that filing the issue ends
+    //    the case here, so the issue's state decides it and Chatwoot does not
+    //    get a vote. That also drops up to eight Chatwoot calls per list load.
+    var done = r.issue_status === 'resolved' || r.issue_status === 'resolved_tbc' ||
+               r.issue_status === 'parked' || r.issue_status === 'past' ||
+               isTrueLike_(iss.student_sorted);
+    if (!done) return;
+    r.status = 'closed';
+    var b = r._brief; b.auto_closed = new Date().toISOString();
+    r.brief_json = JSON.stringify(b);
+    liveCaseSave_(r);
   });
   var open = rows.filter(function (r) { return String(r.status) === 'open'; });
   open.sort(function (a, b) { return new Date(b.last_activity || 0) - new Date(a.last_activity || 0); });
