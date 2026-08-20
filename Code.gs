@@ -1731,10 +1731,46 @@ function aiMatchIssue_(data, category) {
     candidates.push({
       id: row[idx['issue_id']],
       summary: row[idx['summary']],
-      lesson_code: row[idx['lesson_code']]
+      lesson_code: row[idx['lesson_code']],
+      _hay: String((row[idx['summary']] || '') + ' ' + (row[idx['section']] || '') + ' ' +
+                   (row[idx['lesson_code']] || '') + ' ' + (row[idx['raw_text']] || '')).toLowerCase()
     });
   }
   if (!candidates.length) return null;
+
+  // SHORTLIST BEFORE ASKING (20 Aug 2026). Every open issue used to go into one
+  // prompt - around 200 of them - alongside an instruction that said "be
+  // conservative" and "if in doubt, do not match" three times over. Faced with
+  // that, the safe answer is always null, and the numbers show it: 950 of 960
+  // issues carry exactly ONE report, so the same fault reported six times
+  // became six issues rather than one issue reported six times. That is why
+  // report counts could never drive priority.
+  //
+  // Cheap word overlap picks the plausible ones first, exactly as the known-fix
+  // shortlist does, and only those go to the model. A short list is a question
+  // it can actually answer.
+  var newWords = {};
+  String((data.summary || '') + ' ' + (data.raw_text || '')).toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
+      if (w.length > 3 && !FIX_STOPWORDS[w]) newWords[w] = true;
+    });
+  var wordKeys = Object.keys(newWords);
+  if (wordKeys.length) {
+    var scored = candidates.map(function (c) {
+      var n = 0;
+      for (var k = 0; k < wordKeys.length; k++) if (c._hay.indexOf(wordKeys[k]) > -1) n++;
+      return { c: c, score: n };
+    }).filter(function (x) { return x.score >= 2; })
+      .sort(function (a, b) { return b.score - a.score; })
+      .slice(0, 12);
+    // Nothing shares even two words with it: there is nothing to merge into,
+    // and no AI call is needed to say so.
+    if (!scored.length) return null;
+    candidates = scored.map(function (x) { return x.c; });
+  } else {
+    candidates = candidates.slice(0, 12);
+  }
+  candidates.forEach(function (c) { delete c._hay; });
 
   var instruction = isCourse
     ? 'These are content errors in an online sailing course, and they are all on the SAME slide. ' +
@@ -1744,10 +1780,16 @@ function aiMatchIssue_(data, category) {
       'Only match when it is clearly the same specific error. If in doubt, do not match.'
     : 'These are technical support issues for an online sailing course platform. ' +
       'Decide whether the NEW report describes the SAME underlying bug as one of the EXISTING open issues ' +
-      '(the same broken button, page, video, quiz, login, or behaviour), even if it is a different student or worded differently. ' +
-      'To count as the same it must be BOTH the same part of the platform (the same page, feature, or flow) AND the same symptom. ' +
-      'A different page or a different feature is NEVER the same issue, even if the symptoms sound similar. ' +
-      'Be conservative: only match when it is clearly the same problem. If in doubt, do not match.';
+      '(the same broken button, page, video, quiz, login, or behaviour), even if it is a different student, on a different device, or worded differently. ' +
+      'The test is BOTH the same part of the platform (the same page, feature, or flow) AND the same symptom. ' +
+      'A different page or a different feature is not the same issue, even if the symptoms sound similar. ' +
+      // The old wording said "be conservative" and "if in doubt do not match"
+      // on top of the test above, and against a long list that produced a null
+      // almost every time. The test is the safeguard; repeating the refusal
+      // three times just meant nothing ever merged, and a fault hitting six
+      // students looked like six unrelated one-offs.
+      'Different wording, a different student, or a different device are NOT reasons to keep them apart: several people hitting one fault is exactly what this is for. ' +
+      'Match when the same thing is broken in the same place. Say null when it is genuinely a different problem.';
 
   var prompt = instruction + '\n\n' +
     'NEW report:\n' + JSON.stringify({ summary: data.summary || '', raw_text: data.raw_text || '', lesson_code: data.lesson_code || '', device: data.device_info || '' }) + '\n\n' +
@@ -5059,7 +5101,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r81 · 2026-08-20';
+var CODE_STAMP = 'r82 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
