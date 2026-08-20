@@ -2053,15 +2053,17 @@ function updateIssue_(data) {
   var record = found.record;
   var wasResolved = String(record.status || '').toLowerCase() === 'resolved';
 
-  // Without the manage permission (dev / course team), only the priority and
-  // the estimated fix size may be tweaked - the two edits their drawer offers
-  // (Edd, 21 Jul; size added FB-0164).
+  // Without the manage permission, only the fix size may be tweaked. Priority
+  // came OFF this list on 20 Aug 2026: FB-0265 made it admin-only and r87 took
+  // the dropdown out of the developer's pane, but the API still accepted it, so
+  // the rule was one crafted POST away from meaningless. Severity is admin-only
+  // for the same reason - since FB-0261 it IS the priority, one step removed.
   if (data._user && !hasPerm_(data._user, 'manage')) {
-    var allowedKeys = { priority: 1, priority_reason: 1, fix_size: 1 };
+    var allowedKeys = { fix_size: 1 };
     var blocked = HEADERS.filter(function (k) {
       return data.hasOwnProperty(k) && !allowedKeys[k] && k !== 'issue_id';
     });
-    if (blocked.length) return { ok: false, error: 'Only priority and fix size can be edited from this queue.' };
+    if (blocked.length) return { ok: false, error: 'Only the fix size can be edited from this queue. Ask an admin for a priority change.' };
   }
 
   // Moving something INTO the dev queue by hand (including a kanban drag) is
@@ -5335,7 +5337,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r92.1 · 2026-08-20';
+var CODE_STAMP = 'r93 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
