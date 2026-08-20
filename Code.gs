@@ -267,7 +267,14 @@ var HEADERS = [
   // is why a typo reported by twenty people could never outrank a one-off, and
   // why "high priority" meant a feeling rather than a test.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'severity'           // AZ severe | moderate | low
+  'severity',          // AZ severe | moderate | low
+  // The launch line (Edd, 20 Aug 2026). Everything that existed before the
+  // real rollout gets stamped, and non-admins never see a stamped issue, so
+  // the team starts from a clean page instead of 900 rows of history. A stamped
+  // issue is NOT closed: it keeps its real status, the dedupe still matches
+  // against it, and it comes back the moment a new report merges into it or an
+  // admin presses Resurface. APPENDED, never inserted.
+  'prelaunch'          // BA 'true' = hidden from non-admins until resurfaced
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -431,6 +438,8 @@ function doPost(e) {
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
     if (action === 'deleteUser') return jsonOut(deleteUser_(body));
+    if (action === 'archivePrelaunch') return jsonOut(archivePrelaunch_(body));
+    if (action === 'resurfaceIssue') return jsonOut(resurfaceIssue_(body));
     if (action === 'lessonIssueCounts') return jsonOut(lessonIssueCounts_());
     if (action === 'estimateFixSize') return jsonOut(estimateFixSize_(body));
     if (action === 'runChatBackSweep') return jsonOut(runChatBackSweep_(body));
@@ -604,6 +613,7 @@ function reqPerm_(action) {
     case 'flagKnownFix': return 'log';
     // Confusion -> content-tweak suggestions sit with anyone who works a queue.
     case 'listContentSuggestions': case 'resolveContentSuggestion': case 'runConfusionReview': return 'work';
+    case 'archivePrelaunch': case 'resurfaceIssue':
     case 'inviteUser': case 'updateUser': case 'deleteUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion': case 'suggestPlaybook':
     case 'listKnownFixFlags': case 'resolveKnownFixFlag':
@@ -864,6 +874,43 @@ function listUsers_() {
 //     issues they logged, fixes they were assigned and resolutions they wrote,
 //     and deleting the row would leave those pointing at nobody. Disable is the
 //     right answer there, and the error says so rather than just refusing.
+// The launch line. Pressed ONCE by an admin on rollout day, never automatic:
+// stamps every issue that exists at that moment. Deliberately does not care
+// about status - a resolved pre-launch issue in Track is as much old noise to a
+// new instructor as an open one.
+function archivePrelaunch_(body) {
+  var stamped = 0, total = 0;
+  var now = new Date().toISOString();
+  ISSUE_SHEETS.forEach(function (name) {
+    var sh = sheetByName_(name);
+    if (!sh) return;
+    var values = sh.getDataRange().getValues();
+    if (values.length < 2) return;
+    var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
+    if (idx['prelaunch'] == null) return;   // runSetup has not appended it yet
+    var col = idx['prelaunch'] + 1;
+    var out = [];
+    for (var r = 1; r < values.length; r++) {
+      var has = !!values[r][idx['issue_id']];
+      if (has) { total++; if (!isTrueLike_(values[r][idx['prelaunch']])) stamped++; }
+      out.push([has ? 'true' : (values[r][idx['prelaunch']] || '')]);
+    }
+    if (out.length) sh.getRange(2, col, out.length, 1).setValues(out);
+  });
+  return { ok: true, stamped: stamped, total: total, at: now };
+}
+
+// One issue back on the board, by hand. The automatic route is a matching
+// report arriving (addReportToIssue_ clears the stamp itself).
+function resurfaceIssue_(body) {
+  var found = findRow_(body && body.issue_id);
+  if (!found) return { ok: false, error: 'No issue found with id ' + (body && body.issue_id) };
+  found.record.prelaunch = '';
+  found.record.updated_at = new Date().toISOString();
+  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(found.record)]);
+  return { ok: true };
+}
+
 function deleteUser_(body) {
   var email = String((body && body.email) || '').trim().toLowerCase();
   if (!email) return { ok: false, error: 'Which user?' };
@@ -1652,6 +1699,13 @@ function addReportToIssue_(id, data, report) {
   // BECOMING high (Edd, 18 Aug 2026), so an issue already sitting at high must
   // not ping again every time another report lands on it.
   var priorityBefore = String(rec.priority || '').toLowerCase();
+  // A matching report is exactly the signal that pre-launch history is live
+  // again (Edd, 20 Aug 2026): the stamp comes off and the issue is back on
+  // everyone's board, with the trail saying why.
+  if (isTrueLike_(rec.prelaunch)) {
+    rec.prelaunch = '';
+    rec.raw_text = (rec.raw_text || '') + '\n\n--- resurfaced from the pre-launch archive: reported again ---';
+  }
 
   var reports = [];
   try { reports = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reports = []; }
@@ -5277,7 +5331,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r90.1 · 2026-08-20';
+var CODE_STAMP = 'r92 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

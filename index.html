@@ -1899,7 +1899,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r91 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r92 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2389,6 +2389,11 @@ function statusBadge(s, issue) {
 function typeBadge(t) {
   if (!t) return "";
   return '<span class="badge type-badge">' + esc(t) + "</span>";
+}
+function prelaunchBadge(i) {
+  return String(i && i.prelaunch) === "true"
+    ? '<span class="badge" style="border-color:var(--muted);color:var(--muted);" title="Stamped at launch. Instructors and developers cannot see this issue until a matching report arrives or it is resurfaced.">pre-launch</span>'
+    : "";
 }
 function catBadge(c) {
   c = (c || "course_error").toLowerCase();
@@ -3058,6 +3063,14 @@ function applyBootstrap(res) {
   // can be answered with a number next time.
   if (!state._firstRenderMs) state._firstRenderMs = Math.round(performance.now());
   state.issues = res.issues || [];
+  // The launch line (Edd, 20 Aug 2026). Anything stamped pre-launch never
+  // reaches a non-admin's state at all, so every view, count and badge agrees
+  // without each one needing its own filter. Admins keep the lot, with a badge.
+  // An issue comes back automatically when a matching report merges into it
+  // (the backend clears the stamp), or when an admin presses Resurface.
+  if (!(state.perms && state.perms.users)) {
+    state.issues = state.issues.filter(function (i) { return String(i.prelaunch) !== "true"; });
+  }
   state._issuesLoaded = true;
   if (res.assignees) state.assignees = res.assignees;
   if (res.instructors) state.instructors = res.instructors;
@@ -7863,7 +7876,7 @@ function openDetail(issue) {
       // badge is the current value of a control rather than a repeat of the
       // card. The rest of the filing reads as a line underneath - same facts,
       // nothing shouting.
-      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) +
+      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) + " " + prelaunchBadge(issue) +
       (reportCount(issue) > 1 ? ' <span class="badge type-badge">×' + reportCount(issue) + ' reports</span>' : '') +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
     detailFilingLine(issue);
@@ -8151,6 +8164,13 @@ function openDetail(issue) {
       detailsKv + refHtml +
     '</details>';
 
+  if (String(issue.prelaunch) === "true") {
+    sideCol += '<div class="batch" style="margin-top:10px;">' +
+      '<strong>In the pre-launch archive.</strong> ' +
+      '<span class="small muted">Instructors and developers cannot see it. A matching new report brings it back automatically.</span>' +
+      '<div style="margin-top:6px;"><button class="ghost small" style="padding:4px 12px;" onclick="resurfaceIssue(\'' + esc(issue.issue_id) + '\')">Resurface it now</button></div>' +
+    '</div>';
+  }
   sideCol += '<div class="row" style="margin-top:10px;">' +
     '<button class="primary savebar-btn" onclick="saveDetail()">Save changes</button>' +
     '<button class="ghost" title="Open this report back in the log form, where the text, the course and lesson, the category and the screenshots can be corrected. Saving there updates this issue, it does not make a new one." onclick="editInForm(\'' + esc(issue.issue_id) + '\')">Edit the report</button>' +
@@ -9562,7 +9582,7 @@ function openDevDetail(id) {
     '<div style="margin-bottom:12px;">' +
       '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
       // r65: two badges, then the filing as a line. Same rule as the main pane.
-      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) +
+      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) + " " + prelaunchBadge(issue) +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
     detailFilingLine(issue) +
     '<div class="kv">' +
@@ -10191,6 +10211,8 @@ function renderChatScan(targetId) {
 // whether or not the queue has anything in it.
 function adminScanControls() {
   return '<div class="row" style="margin-bottom:6px;gap:8px;flex-wrap:wrap;justify-content:flex-start;">' +
+    '<button class="ghost small" style="padding:5px 12px;flex:0 0 auto;" onclick="archivePrelaunch()" ' +
+      'title="Rollout day only: stamps every existing issue pre-launch and hides them from instructors and developers. A matching new report, or Resurface on the issue, brings one back.">Draw the launch line</button>' +
     '<button class="ghost small" id="scanNowBtn" style="padding:5px 12px;flex:0 0 auto;" onclick="runChatScanNow()" ' +
       'title="Reads the last 24 hours of Chatwoot for problems nobody has logged. The same job the automatic 5am run does, for when something has come in this morning.">Scan now</button>' +
     '<button class="ghost small" id="backSweepBtn" style="padding:5px 12px;flex:0 0 auto;" onclick="runChatBackSweep()" ' +
@@ -10591,6 +10613,31 @@ function resetUserLink(email) {
 // FB-0278. Disable is still the right answer for anyone who has done work here;
 // this is for the mistyped invite and the test account. The backend refuses the
 // rest and says why, so the guard is not just a confirm box.
+// The launch line. Pressed once on rollout day; everything existing gets
+// stamped and disappears for non-admins. Nothing is closed and nothing is
+// lost: the dedupe still matches stamped issues, and a match brings one back.
+function archivePrelaunch() {
+  var openCount = (state.issues || []).filter(function (i) { return isOpen(i); }).length;
+  if (!confirm('Draw the launch line?\n\nEvery issue currently in the tracker (' + (state.issues || []).length +
+    ' of them, ' + openCount + ' open) will be stamped pre-launch and hidden from instructors and developers. ' +
+    'Admins still see everything. An issue comes back automatically if a new report matches it, or one at a time with Resurface.\n\nThis is meant to be pressed once, on rollout day.')) return;
+  busyShow("Stamping the backlog…");
+  apiPost({ action: "archivePrelaunch" }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown"), 9000); return; }
+    toast(res.stamped + " issues stamped pre-launch. New reports start from a clean page.", 9000);
+    loadIssues();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+function resurfaceIssue(id) {
+  apiPost({ action: "resurfaceIssue", issue_id: id }).then(function (res) {
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Back on the board for everyone.");
+    loadIssues().then(function () {
+      if (state.detailId === id) { var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0]; if (i) openDetail(i); }
+    });
+  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+}
 function deleteUser(email, name) {
   if (!confirm('Delete ' + name + ' completely?\n\nThis removes the account rather than disabling it, and cannot be undone. If they have logged, fixed or been assigned anything, use Disable instead so the record still makes sense.')) return;
   apiPost({ action: "deleteUser", email: email }).then(function (res) {
