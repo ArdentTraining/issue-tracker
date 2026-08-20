@@ -249,7 +249,7 @@
 
   /* admin */
   .area-toggle { margin-bottom: 16px; }
-  .summary-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 16px; }
+  .summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 16px; }
   @media (max-width: 640px) { .summary-row { grid-template-columns: 1fr; } }
   .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
   .stat .n { font-size: 30px; font-weight: 700; }
@@ -1847,6 +1847,7 @@ var APP_URL = window.location.href; // used in the Slack link; updated once host
 
 var PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 // WHAT is broken. Who it affects is the separate `audience` field below.
+var PRIORITY_LABEL_SHORT = { high: "High", medium: "Medium", low: "Low" };
 var CATEGORY_LABEL = { course_error: "Course error", tech_issue: "Tech issue", internal: "Tech issue", shipping: "Shipping", friction: "Friction" };
 function audienceOf(i) {
   // Old rows carried "internal" as a category; treat that as the audience.
@@ -1876,7 +1877,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r83 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r84 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8795,8 +8796,15 @@ function renderDev() {
       // One button that matters: a to-do row gets marked fixed (notes and the
       // notify tick live in the detail, and the admin verify loop catches the
       // student side); a fixed row is waiting on an admin, so just open it.
-      var word = fixed ? "Fixed" : "To do";
-      var colour = fixed ? "var(--low)" : "var(--medium)";
+      // FB-0259 (Edd): "These all say 'to do'. That tag is not needed as we are
+      // in the to do page. Instead it could show priority and number of
+      // reports." A fixed row keeps its word, because that one IS news.
+      var reports = reportCount(i);
+      var word = fixed ? "Fixed" : (PRIORITY_LABEL_SHORT[String(i.priority || "low").toLowerCase()] || "Low");
+      var colour = fixed ? "var(--low)"
+        : (String(i.priority || "").toLowerCase() === "high" ? "var(--high)"
+          : String(i.priority || "").toLowerCase() === "medium" ? "var(--medium)" : "var(--low)");
+      if (!fixed && reports > 1) sub.unshift(reports + " reports");
       var act = fixed ? "Waiting on admin check" : "Fix it, then say so";
       var btn = fixed
         ? '<button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetail(\'' + id + '\')">Open notes</button>'
@@ -9829,13 +9837,24 @@ function placeUserMenu() {
     // Phone: the trigger is in the bottom bar, so the menu goes ABOVE it.
     left = r.right - mw; top = r.top - mh - gap;
   } else {
-    // Desktop rail: out to the right of the 74px rail, bottom edge level with
-    // the trigger, so it opens upwards rather than off the bottom.
-    left = r.right + gap; top = r.bottom - mh;
+    // Desktop rail. FB-0260 (Edd): "Edd should move up and the options should
+    // appear directly underneath. Or at least connected and just to the side.
+    // Not just floating nearby." r68 opened it out to the RIGHT of the rail and
+    // bottom-aligned, which cleared the clipping problem but left it hanging in
+    // space beside the name with nothing joining the two.
+    //
+    // It now opens directly ABOVE the trigger and left-aligned with it, so the
+    // bottom edge of the menu meets the top edge of the name. Above rather than
+    // below because the trigger sits at the foot of the rail and there is never
+    // room underneath. Still moved to <body> and positioned fixed, so the rail's
+    // overflow cannot clip it (the r68 rule).
+    left = r.left; top = r.top - mh - gap;
+    // If it will not fit above, fall back to r68's sideways placement rather
+    // than running off the top of the screen.
+    if (top < pad) { left = r.right + gap; top = r.bottom - mh; }
     // r60 moved the view-as bar to left:88px to stop it fighting the menu for
-    // this corner. Opening sideways puts them back in the same 7px of screen,
-    // so when that bar is actually up, the menu steps above it rather than
-    // painting over the start of it.
+    // this corner. Only the sideways fallback can collide with it now, but the
+    // guard is cheap and the bar moves.
     var vb = $("viewAsBar");
     if (vb && vb.classList.contains("show")) {
       var v = vb.getBoundingClientRect();
