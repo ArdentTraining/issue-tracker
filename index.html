@@ -1862,7 +1862,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r79 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r80 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5999,9 +5999,14 @@ function syncSubIssues() {
 // The fields that belong to ONE issue. Everything else on the form (student,
 // contact, device, platform, checklist, outcome, courier) is shared, so an
 // edit to those applies to every issue being logged.
+// FB-0256 (Edd): "This was logged as two seperate issues. We need the 'where
+// did this end up' to be different for each issue." f_outcome was read once at
+// submit and appended to the raw text of every issue in the split, so two
+// different problems ended up carrying the same ending. It rides with the tab
+// now, like the summary and the priority.
 var SUB_FIELD_IDS = ["f_category", "f_summary", "f_priority", "f_priority_reason", "f_issue_type",
                      "f_section", "f_course", "f_module", "f_lesson", "f_lesson_code",
-                     "f_media_kind", "f_impact"];
+                     "f_media_kind", "f_impact", "f_outcome"];
 
 // Build the editable copy of one detected problem, starting from what the AI
 // read and falling back to whatever the form already holds for the primary.
@@ -6016,7 +6021,10 @@ function subEditFromEntry(sub, isPrimary) {
     f_priority_reason: sub.priority_reason, f_issue_type: sub.issue_type,
     f_section: sub.section, f_course: sub.course, f_module: sub.module,
     f_lesson: sub.lesson, f_lesson_code: sub.lesson_code,
-    f_media_kind: sub.media_kind, f_impact: sub.impact
+    f_media_kind: sub.media_kind, f_impact: sub.impact,
+    // Seed each tab's outcome from its OWN resolution note, so a split that the
+    // AI already read as two different endings starts out right (FB-0256).
+    f_outcome: sub.resolution_note || null
   };
   SUB_FIELD_IDS.forEach(function (id) {
     e.vals[id] = (from[id] != null && from[id] !== "") ? String(from[id]) : (isPrimary ? getField(id) : "");
@@ -6784,8 +6792,12 @@ function submitIssue() {
         d.image_urls = alreadyUploaded;
         d.action = "addIssue"; d.app_url = APP_URL;
         // Per-issue fields come from this tab, not from whatever tab happens to
-        // be on screen. Shared fields (student, device, platform, outcome) stay
-        // as collectForm read them.
+        // be on screen. Shared fields (student, device, platform) stay as
+        // collectForm read them; the OUTCOME is per-issue now (FB-0256).
+        var subOutcome = String(e.vals.f_outcome || "").trim();
+        d.raw_text = getField("rawText") + (subOutcome
+          ? "\n\n--- Outcome noted by " + (state.selectedInstructor || "instructor") + " ---\n" + subOutcome
+          : "");
         if (e.vals.f_category) d.category = e.vals.f_category;
         d.summary = e.vals.f_summary || d.summary;
         d.priority = String(e.vals.f_priority || "").toLowerCase() || d.priority;
@@ -9962,6 +9974,10 @@ function drawChatScan(box, targetId, rows) {
       if (state.perms && state.perms.users) refreshBackSweepNote();
       return;
     }
+    // Same again for an instructor when the only thing waiting is a suggestion
+    // they are no longer shown: the block would otherwise draw an empty
+    // "Updates on open issues" heading over nothing (FB-0255).
+    if (inActions && !(state.perms && state.perms.users) && !ups.length) { box.innerHTML = ""; return; }
     var news = rows.filter(function (r) { return String(r.kind || "new") !== "update"; });
     var ups = rows.filter(function (r) { return String(r.kind || "") === "update"; });
     var VERDICT = {
@@ -10011,6 +10027,13 @@ function drawChatScan(box, targetId, rows) {
       self_resolved: { label: "Sorted itself",  colour: "var(--low)" },
       fixed:         { label: "Already fixed",  colour: "var(--low)" }
     };
+    // FB-0255 (Edd): "Can we only show these to admin for now, just to keep it
+    // simple for the instructors when they start using this for real?" The
+    // UPDATES above stay visible to everyone - those are about students an
+    // instructor is already working with. It is the unreviewed suggestions
+    // that are noise until somebody has triaged them.
+    var canSeeSuggestions = !!(state.perms && state.perms.users);
+    if (canSeeSuggestions) {
     html += '<h3 style="margin-top:18px;">Possible new issues</h3>';
     html += news.length ? news.map(function (r) {
       var cid = esc(String(r.conversation_id));
@@ -10034,6 +10057,7 @@ function drawChatScan(box, targetId, rows) {
         '</div>' +
       '</div>';
     }).join("") : '<p class="muted small">Nothing new spotted. Every conversation gets read twice over, and the scan only queues one when both reads call it a real problem.</p>';
+    }
     box.innerHTML = html;
     if (inActions && state.perms && state.perms.users) refreshBackSweepNote();
   })();

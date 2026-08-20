@@ -1432,7 +1432,19 @@ function addIssue_(data) {
     lesson_code: data.lesson_code || '',
     issue_type: data.issue_type || '',
     summary: data.summary || '',
-    priority: (data.priority || '').toLowerCase(),
+    priority: (function () {
+      var p = String(data.priority || '').toLowerCase();
+      if (data.request_kind !== 'improvement') return p;
+      // FB-0253 (Edd): "If something is more of a feature request then a real
+      // bug, we probably want it logged as low priority." An improvement is
+      // backlog by definition - nothing is broken, so nobody is blocked. The
+      // extraction reads urgency off the words, and an enthusiastic "we really
+      // need this" comes back high. Anyone can raise it by hand afterwards;
+      // this only decides what it ARRIVES as. Note the report's own priority a
+      // few lines up is left alone, because that is a record of how the report
+      // read at the time.
+      return (p === 'high' || p === 'medium' || !p) ? 'low' : p;
+    })(),
     priority_reason: data.priority_reason || '',
     image_urls: normaliseImageUrls_(data.image_urls),
     // If the instructor has already given the student the suggested fix, this
@@ -2747,11 +2759,23 @@ function chatwootImport_(data) {
 // Browse recent picker, and the scan all agree.
 // A conversation can still be opened by pasting its link or number, so nothing
 // is unreachable, it is only out of the way.
+// FB-0257 (Edd): "The voicemail doesn't need to show here. Only tech, course
+// issues/bugs." Machine senders have a fixed address, so naming one keeps it
+// out for good and costs nothing to check.
+//
+// The limit is worth stating: this catches MACHINES, never people. A student
+// asking about a discount code arrives on an ordinary address and reads exactly
+// like a bug report until somebody opens it, so no sender rule will ever filter
+// that. Anything human stays visible and gets closed without filing.
 function isAutomatedNotice_(name, email) {
   var e = String(email || '').trim().toLowerCase();
   var n = String(name || '').trim().toLowerCase();
-  if (/@quizresults\.eu$/.test(e)) return true;
+  if (/@quizresults\.eu$/.test(e)) return true;          // mock exam results
   if (n === 'ma/exam results') return true;
+  // Catch-all for the shape rather than the domain: donotreply@, no-reply@ and
+  // friends are never a student getting in touch.
+  if (/^(donotreply|do-not-reply|noreply|no-reply|notifications?|mailer-daemon|postmaster)(@|$)/.test(e)) return true;
+  if (/^(donotreply|do not reply|no ?reply|notifications?)$/.test(n)) return true;
   return false;
 }
 function chatwootList_(data) {
@@ -5025,7 +5049,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r79 · 2026-08-20';
+var CODE_STAMP = 'r80 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
