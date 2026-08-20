@@ -904,7 +904,7 @@ function deleteUser_(body) {
     return { ok: false, error: name + ' has their name on logged work, so deleting the account would leave those entries pointing at nobody. Disable them instead - it does the same job and keeps the record honest.' };
   }
 
-  sheet.deleteRow(f.rowNum);
+  f.sheet.deleteRow(f.row);
   return { ok: true, deleted: true };
 }
 
@@ -5277,7 +5277,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r90 · 2026-08-20';
+var CODE_STAMP = 'r90.1 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
