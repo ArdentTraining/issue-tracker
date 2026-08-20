@@ -1644,13 +1644,31 @@
      later, and what the next student with the same fault ends up being told. -->
 <div class="modal-bg" id="liveOutcomeModal">
   <div class="modal" style="max-width:560px;">
-    <h3 id="liveOutcomeTitle">File it as already sorted</h3>
-    <p class="small muted" id="liveOutcomeSub" style="margin-top:0;"></p>
+    <h3 id="liveOutcomeTitle">Log this issue</h3>
+    <p class="small muted" id="liveOutcomeSub" style="margin-top:0;">Two outcomes, and they mean different things to everyone downstream.</p>
+    <!-- Edd, 19 Aug 2026: two instructor-facing outcomes, not three. Parked is
+         still a real status but it is no longer a button: an issue filed as
+         resolved that was never actually FIXED (a one-off, a workaround, a
+         student sorted by hand) is parked automatically, so it stays out of the
+         fix queues while remaining there for a future report to be linked to.
+         The instructor should not have to make that call. -->
+    <div class="row" style="gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+      <button type="button" class="ghost" id="liveOutSel_resolved" onclick="setLiveOutcome('resolved')"
+        style="flex:1 1 200px;text-align:left;padding:10px 12px;"
+        title="Everything is sorted and nobody needs to look at it again. No further contact with the student.">
+        <b>Resolved</b><br><span class="small muted">Sorted, and nothing left to do.</span>
+      </button>
+      <button type="button" class="ghost" id="liveOutSel_open" onclick="setLiveOutcome('open')"
+        style="flex:1 1 200px;text-align:left;padding:10px 12px;"
+        title="The chat with the student is finished, but the fault is not. It stays open and the student may need telling once it is fixed.">
+        <b>Still open</b><br><span class="small muted">Chat is done, the fault is not.</span>
+      </button>
+    </div>
     <label class="small" for="liveOutcomeNote" id="liveOutcomeLabel" style="display:block;margin-bottom:4px;">What actually sorted it?</label>
     <textarea id="liveOutcomeNote" rows="4" style="width:100%;font-size:13px;"></textarea>
     <div class="small muted" id="liveOutcomePrefill" style="margin-top:4px;"></div>
     <div class="btns" style="margin-top:12px;">
-      <button class="primary" id="liveOutcomeGo" onclick="liveOutcomeSubmit()">File it</button>
+      <button class="primary" id="liveOutcomeGo" onclick="liveOutcomeSubmit()">Log it</button>
       <button class="ghost" onclick="closeLiveOutcome()">Cancel</button>
     </div>
   </div>
@@ -1844,7 +1862,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r75.2 · 2026-08-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r76 · 2026-08-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2351,9 +2369,11 @@ function reqBadge(kind) {
 function queryBadge(i) {
   return i && i.dev_query_at ? '<span class="badge query-badge">Question pending</span>' : "";
 }
-function toast(msg) {
+var TOAST_TIMER = null;
+function toast(msg, ms) {
   var t = $("toast"); t.textContent = msg; t.classList.add("show");
-  setTimeout(function () { t.classList.remove("show"); }, 3200);
+  if (TOAST_TIMER) clearTimeout(TOAST_TIMER);
+  TOAST_TIMER = setTimeout(function () { t.classList.remove("show"); }, ms || 3200);
 }
 // Module titles per course, so a bare code like DS.10.19.09.2.M can be turned
 // into "Day Skipper / IRPCS / Lesson 19" on screen even when the module and
@@ -3812,17 +3832,25 @@ function renderLiveDetail() {
   }
 
   html += '<div class="row" style="margin-top:14px;flex-wrap:wrap;">' +
-    '<button class="primary" onclick="liveDraftReply()">Draft a reply</button>' +
-    '<button class="ghost" onclick="liveCheckReply()">Check for new reply</button>' +
-    '<button class="ghost" onclick="liveCheckpoint()">' + (c.issue_id ? 'Checkpoint - add an update' : 'Checkpoint - file the issue') + '</button>' +
+    '<button class="primary" onclick="liveDraftReply()" title="Writes the next message to the student in your own voice and opens it for editing. Nothing is sent until you press send.">Draft a reply</button>' +
+    '<button class="ghost" onclick="liveCheckReply()" title="Asks Chatwoot whether the student has come back. If they have, it pulls the reply in and re-reads the brief.">Check for new reply</button>' +
+    // Edd, 19 Aug 2026: the three filing buttons all did the same job and
+    // differed only in the outcome recorded, so they are one button and the
+    // outcome is a choice inside it. "Checkpoint" has gone with them: it was
+    // the only word on the row that was not plain English.
+    '<button class="ghost" onclick="liveLogIssue()" title="' +
+      (c.issue_id ? 'Adds where this has got to onto the issue already filed from this conversation.'
+                  : 'Files this conversation into the tracker. You choose whether it is resolved or still open.') +
+      '">' + (c.issue_id ? 'Update the issue' : 'Log issue') + '</button>' +
     // FB-0232. The log form has had "Submit and resolve" and "Submit and park"
     // for rounds; a conversation sorted in the chat had no equivalent here, so
     // it went in as a fresh open high and joined a fix queue for work that was
     // already done. Same two outcomes, same words.
-    '<button class="ghost" onclick="liveFileOutcome(\'resolved\')">' + (c.issue_id ? 'Sorted - resolve the issue' : 'File it as already sorted') + '</button>' +
-    '<button class="ghost" onclick="liveFileOutcome(\'parked\')">' + (c.issue_id ? 'Park the issue' : 'File it parked') + '</button>' +
-    '<button class="ghost" onclick="liveRefreshBrief()">Refresh the brief</button>' +
-    '<button class="ghost" style="color:var(--high);" onclick="liveCloseCase()">Close case</button>' +
+    '<button class="ghost" onclick="liveRefreshBrief()" title="Re-reads the whole conversation and rewrites the summary above. This one costs an AI call, which is why it is separate from the Refresh at the top.">Refresh the brief</button>' +
+    '<button class="ghost" style="color:var(--high);" onclick="liveCloseCase()" title="' +
+      (c.issue_id ? 'Closes this case. The issue stays open in Track, and the private note goes onto the Chatwoot conversation.'
+                  : 'Closes this case without filing anything. For a conversation that fizzled out or was sorted on the spot.') +
+      '">' + (c.issue_id ? 'Close case' : 'Close without filing') + '</button>' +
   '</div>';
 
   if (b.images && b.images.length) {
@@ -4038,6 +4066,8 @@ function liveCheckpoint(decision) {
         ? "Added to the case the team is already on. That one stays open - it's still live for the others on it."
         : "Rolled into the case the team is already on. This case stays open here.");
     } else if (res.resolved) toast(res.updated ? "Issue resolved, with your note saved." : "Filed as resolved. Nothing routed, nobody pinged.");
+    else if (res.auto_parked) toast("Filed and parked, not resolved: it was sorted for this student but the fault was never confirmed fixed" +
+      (res.auto_parked_why ? " (" + res.auto_parked_why + ")" : "") + ". It stays available for the next report to be linked to.", 9000);
     else if (res.parked) toast(res.updated ? "Issue parked, with your reason saved." : "Filed and parked. It wakes up if anyone else reports it.");
     else if (res.updated) toast("Checkpoint added to the issue.");
     else toast("Issue filed" + (String(res.priority || "").toLowerCase() === "high" ? " - high priority, so the team has been pinged." : "."));
@@ -4050,41 +4080,58 @@ function liveCheckpoint(decision) {
 // brief's known fix or its next step when there is one, because the answer is
 // usually already sitting there in the conversation, but always editable -
 // what the instructor actually said beats what the brief guessed.
-function liveFileOutcome(kind) {
+/* One way in to filing now (Edd, 19 Aug 2026). The popup asks which outcome,
+   because that is the only thing the three old buttons disagreed about. */
+function liveLogIssue() {
   var c = liveCaseById(state.liveSelected);
   if (!c) return;
   var b = c.brief || {};
-  var resolved = kind !== "parked";
-  state._liveOutcomeKind = resolved ? "resolved" : "parked";
-  var pre = resolved ? String(b.fix || b.next || "") : "";
-  $("liveOutcomeTitle").textContent = resolved
-    ? (c.issue_id ? "Resolve the issue from this conversation" : "File it as already sorted")
-    : (c.issue_id ? "Park the issue" : "File it parked");
-  $("liveOutcomeSub").textContent = resolved
-    ? "It still gets filed, with the answer saved against it. It won't route to a fix queue and it won't ping anyone, because there's nothing left to do."
-    : "Filed, with the reason saved, and out of everyone's queue. It wakes itself up if somebody else reports the same fault.";
-  $("liveOutcomeLabel").textContent = resolved ? "What actually sorted it?" : "Why are we parking it?";
+  setLiveOutcome("resolved");
+  var pre = String(b.fix || b.next || "");
+  $("liveOutcomeTitle").textContent = c.issue_id ? "Update the issue from this conversation" : "Log this issue";
   $("liveOutcomeNote").value = pre;
   $("liveOutcomePrefill").textContent = pre
     ? "Pre-filled from the brief. Change it to what you actually told them."
     : "";
-  $("liveOutcomeGo").textContent = resolved ? "File it as resolved" : "File it parked";
   $("liveOutcomeModal").classList.add("show");
   setTimeout(function () { $("liveOutcomeNote").focus(); }, 30);
+}
+/* Which of the two the instructor has picked. Parked is deliberately not here:
+   it is decided from the conversation when the record is filed, not chosen. */
+function setLiveOutcome(kind) {
+  state._liveOutcomeKind = (kind === "open") ? "open" : "resolved";
+  var resolved = state._liveOutcomeKind === "resolved";
+  ["resolved", "open"].forEach(function (k) {
+    var el = $("liveOutSel_" + k);
+    if (!el) return;
+    var on = (k === state._liveOutcomeKind);
+    el.style.borderColor = on ? "var(--accent)" : "";
+    el.style.background  = on ? "var(--surface)" : "";
+  });
+  $("liveOutcomeLabel").textContent = resolved
+    ? "What actually sorted it?"
+    : "Where has this got to, and what is the student waiting on?";
+  $("liveOutcomeSub").textContent = resolved
+    ? "Filed with the answer saved against it, out of the fix queues, and nobody is pinged, because there is nothing left to do. If the conversation shows it was only sorted for this one student rather than actually fixed, it is parked instead, so a later report can still be linked to it."
+    : "Filed and left open. It routes like any other issue, and the student may need telling once it is fixed.";
+  $("liveOutcomeGo").textContent = resolved ? "Log it as resolved" : "Log it as still open";
 }
 function closeLiveOutcome() { $("liveOutcomeModal").classList.remove("show"); }
 function liveOutcomeSubmit() {
   var note = String($("liveOutcomeNote").value || "").trim();
-  var kind = state._liveOutcomeKind === "parked" ? "parked" : "resolved";
+  var kind = state._liveOutcomeKind === "open" ? "open" : "resolved";
   if (!note) {
     toast(kind === "resolved"
       ? "Put what sorted it in the box first - that answer is what the next student with the same fault gets."
-      : "Say why it's being parked - a parked issue with no reason is just an open one nobody looks at.");
+      : "Say where it has got to - an open issue with no note is one nobody can pick up.");
     $("liveOutcomeNote").focus();
     return;
   }
   closeLiveOutcome();
-  liveCheckpoint({ outcome: kind, resolution_note: note });
+  // "open" carries no outcome flag, which is the original checkpoint behaviour:
+  // file it and leave it live. The note still rides along as the update text.
+  if (kind === "open") liveCheckpoint({ resolution_note: note, open_note: note });
+  else liveCheckpoint({ outcome: "resolved", resolution_note: note });
 }
 // Merge asks first (Edd's call): one click to confirm it's the case the team
 // is already on, or to log it as new - same pattern as the same-issue popup.

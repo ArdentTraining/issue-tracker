@@ -5014,7 +5014,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r75 · 2026-08-19';
+var CODE_STAMP = 'r76 · 2026-08-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6327,6 +6327,56 @@ function caseDraftReply_(data) {
 // as the log form's Submit and resolve / Submit and park, which the live case
 // has never had an equivalent of. It still gets filed either way - Edd wants
 // the record, he just doesn't want it treated as live work.
+// Filing a conversation that is already dealt with is RECORD KEEPING, not new
+// work, and it was costing the same 42 seconds as filing live work: the full
+// 26-field extraction, with max_tokens 8192 in case one thread had to split
+// into several issues. Measured 19 Aug 2026 on a 3,400-character transcript.
+//
+// This asks the same model, over the same CACHED syllabus block (so the cache
+// can still hit and the lesson codes are still mapped against the real course
+// structure), for the handful of fields a record actually needs - and caps the
+// output at 700 tokens instead of 8192. The instruction to ignore the big
+// output format rides in the VARIABLE half, so the cached half stays
+// byte-identical to the full extraction's and both share one cache entry.
+//
+// It also answers the question the instructor should not have to: was this
+// actually FIXED, or just sorted for this one student?
+function extractLite_(rawText) {
+  var instruction = '\n"""\n\n' +
+    'IGNORE the output format described above. This conversation is being filed as a RECORD of something already ' +
+    'dealt with, not as new work, so only the fields below are wanted and exactly ONE object is ever returned, ' +
+    'however many topics the conversation covers.\n\n' +
+    'confirmed_fixed is TRUE only when the underlying fault was genuinely fixed and somebody said so. ' +
+    'It is FALSE when the student was helped by hand, given a workaround or a way round it, when it stopped ' +
+    'happening on its own, or when it was only ever sorted for this one student. Being helped is not being fixed.\n\n' +
+    'Return ONLY JSON: {"category":"tech_issue|course_error|shipping","lesson_code":"<e.g. DS.09.12, or empty>",' +
+    '"section":"<or empty>","issue_type":"<or empty>","summary":"<one plain sentence, what the problem was>",' +
+    '"confirmed_fixed":true or false,"why":"<one short sentence on how it ended>"}. No prose, no fences.';
+  var call = anthropicCachedFetch_(EXTRACTION_MODEL, extractionStaticPrompt_(), rawText + instruction, 700);
+  if (!call || !call.res) return { ok: false, error: (call && call.why) || 'no response' };
+  var res = call.res;
+  if (res.getResponseCode() !== 200) return { ok: false, error: 'Anthropic ' + res.getResponseCode() + ': ' + String(res.getContentText() || '').slice(0, 200) };
+  var parsed;
+  try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { ok: false, error: 'unreadable reply' }; }
+  tallyAi_(parsed);
+  var text = '';
+  if (parsed.content && parsed.content.length) {
+    for (var i = 0; i < parsed.content.length; i++) {
+      if (parsed.content[i].type === 'text') text += parsed.content[i].text;
+    }
+  }
+  var out = null;
+  try { out = JSON.parse(String(text).replace(/^```json?\s*|\s*```$/g, '').trim()); } catch (e) { out = null; }
+  if (!out) {
+    // Forgive the two classic sins the full extraction already forgives: a
+    // chatty preamble, and a truncated tail.
+    var m = String(text).match(/\{[\s\S]*\}/);
+    if (m) { try { out = JSON.parse(m[0]); } catch (e2) { out = null; } }
+  }
+  if (!out) return { ok: false, error: 'could not read the reply as JSON' };
+  return { ok: true, fields: out, cached: !!call.cached };
+}
+
 function caseCheckpoint_(data) {
   var id = chatwootConvId_(data.conversation_id || data.conversation);
   var rec = liveCaseFind_(id);
@@ -6383,11 +6433,29 @@ function caseCheckpoint_(data) {
 
   // First checkpoint: extract, check for an open case the team is already on
   // (ask before merging), then file through the normal submit path.
-  var ex = extract_({ raw_text: imp.transcript });
-  lap('extract');
+  // Filing something already dealt with is record keeping, so it takes the light
+  // path: the same cached syllabus block, a handful of fields, and 700 output
+  // tokens instead of 8192. Filing live work still gets the full extraction,
+  // because those fields are what route it to the right queue.
+  var lite = null, ex = null, f = {};
+  if (outcome === 'resolved' || outcome === 'parked') {
+    lite = extractLite_(imp.transcript);
+    lap('extract_lite');
+    if (!lite.ok) {
+      // Never lose the filing over the fast path. Fall back to the full one and
+      // say so, rather than dropping a conversation somebody has finished with.
+      lite = null;
+      ex = extract_({ raw_text: imp.transcript });
+      lap('extract_full_fallback');
+      TT.lite_failed = 1;
+    }
+  } else {
+    ex = extract_({ raw_text: imp.transcript });
+    lap('extract');
+  }
   if (ex && ex.diag) TT.extract_cache_read = ex.diag.cache_read;
-  if (!ex || !ex.ok) return { ok: false, error: 'The extraction failed: ' + ((ex && ex.error) || 'unknown') };
-  var f = ex.fields || {};
+  if (!lite && (!ex || !ex.ok)) return { ok: false, error: 'The extraction failed: ' + ((ex && ex.error) || 'unknown') };
+  f = lite ? (lite.fields || {}) : (ex.fields || {});
   var category = String(f.category || 'tech_issue').toLowerCase();
   var payload = {
     _user: data._user,
@@ -6415,10 +6483,26 @@ function caseCheckpoint_(data) {
   // way the log form's two buttons do: status and resolved_at set on the row,
   // the routing block skipped (nothing to hand to a fix queue), and no Slack,
   // because the alert exists to make somebody drop what they are doing.
+  // Edd, 19 Aug 2026: the instructor picks Resolved or Still open, and parked is
+  // worked out rather than chosen. A conversation sorted only for THIS student -
+  // a password reset by hand, a workaround, something that stopped on its own -
+  // is not a fixed fault, and filing it resolved buries it. Parked keeps it out
+  // of the fix queues while leaving it there for the next report to be linked
+  // to, which is the whole point of the status.
+  var autoParked = false;
   if (outcome === 'resolved') {
-    payload.resolved = true;
-    payload.resolution_note = outNote;
-    payload.resolved_by = who;
+    var reallyFixed = lite ? (f.confirmed_fixed === true) : true;   // full path cannot tell, so take the instructor at their word
+    if (reallyFixed) {
+      payload.resolved = true;
+      payload.resolution_note = outNote;
+      payload.resolved_by = who;
+    } else {
+      autoParked = true;
+      payload.parked = true;
+      payload.resolution_note = outNote +
+        '\n\n[Parked rather than resolved: sorted for this student, but the fault itself was not confirmed fixed' +
+        (f.why ? ' - ' + String(f.why) : '') + '. It stays here for a later report to be linked to.]';
+    }
   } else if (outcome === 'parked') {
     payload.parked = true;
     payload.resolution_note = outNote;
@@ -6471,7 +6555,9 @@ function caseCheckpoint_(data) {
   liveCaseSave_(rec);
   return { ok: true, filed: true, merged: !!r.merged, issue_id: issueId,
     summary: payload.summary, priority: String((r.issue && r.issue.priority) || payload.priority || ''),
-    resolved: outcome === 'resolved' && !r.merged, parked: outcome === 'parked' && !r.merged,
+    resolved: outcome === 'resolved' && !autoParked && !r.merged,
+    parked: (outcome === 'parked' || autoParked) && !r.merged,
+    auto_parked: autoParked && !r.merged, auto_parked_why: autoParked ? String(f.why || '') : '',
     // A merge deliberately does NOT resolve or park the issue it joins: that
     // fault is still live for everybody else on it, and one student getting
     // sorted is no reason to stop work (the same rule addReportToIssue_ keeps
