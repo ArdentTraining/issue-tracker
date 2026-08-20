@@ -1862,7 +1862,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r78 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r79 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9942,8 +9942,10 @@ function renderChatScan(targetId) {
 // whether or not the queue has anything in it.
 function adminScanControls() {
   return '<div class="row" style="margin-bottom:6px;gap:8px;flex-wrap:wrap;justify-content:flex-start;">' +
-    '<button class="ghost small" id="scanNowBtn" style="padding:5px 12px;flex:0 0 auto;" onclick="runChatScanNow()">Scan now</button>' +
-    '<button class="ghost small" id="backSweepBtn" style="padding:5px 12px;flex:0 0 auto;" onclick="runChatBackSweep()" title="Read older Chatwoot conversations the scan has never seen, a few pages at a time">Look further back</button>' +
+    '<button class="ghost small" id="scanNowBtn" style="padding:5px 12px;flex:0 0 auto;" onclick="runChatScanNow()" ' +
+      'title="Reads the last 24 hours of Chatwoot for problems nobody has logged. The same job the automatic 5am run does, for when something has come in this morning.">Scan now</button>' +
+    '<button class="ghost small" id="backSweepBtn" style="padding:5px 12px;flex:0 0 auto;" onclick="runChatBackSweep()" ' +
+      'title="Reads OLDER conversations the scan has never seen, about 100 at a time, carrying on from where the last press stopped. Everything from before the scan existed has never been read at all.">Look further back</button>' +
     '</div>' +
     '<p class="small muted" id="backSweepNote" style="margin:-2px 0 10px;"></p>';
 }
@@ -10107,9 +10109,12 @@ function refreshBackSweepNote() {
   apiPost({ action: "chatBackSweepState" }).then(function (res) {
     if (!res || !res.ok || !$("backSweepNote")) return;
     var next = Number(res.next_page || 1);
-    $("backSweepNote").textContent = next <= 1
-      ? "Never swept. The next press reads the most recent " + (res.pages * 25) + " conversations it has not already seen."
-      : "Swept back " + ((next - 1) * 25) + " conversations so far. The next press picks up from there.";
+    $("backSweepNote").textContent =
+      "Scan now reads the last 24 hours. Look further back reads older history, " +
+      (next <= 1
+        ? "which has never been read at all - the next press takes the most recent " + (res.pages * 25) + " conversations it has not already seen."
+        : "and has reached back about " + ((next - 1) * 25) + " conversations so far - the next press picks up from there.") +
+      " Both cost API credit, and both skip anything already scanned for free.";
   }).catch(function () {});
 }
 function runChatBackSweep() {

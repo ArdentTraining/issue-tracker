@@ -273,28 +273,39 @@ var HEADERS = [
 // email spelling does not. staffLabel rewords the survivors that are phrased at
 // a student. Keep this list in step with CHECKLIST in index.html.
 var CHECKLIST_ITEMS = [
-  { id: 'confirm_error',          group: 'Identify and record', scope: 'both',    label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)", staff: true, staffLabel: "Confirmed exactly what's failing and what you're seeing (screenshot if useful)" },
-  { id: 'noted_device',           group: 'Identify and record', scope: 'both',    label: 'Noted device make, model, OS version, and browser or app', staff: true, staffLabel: 'Noted which browser, device and OS version you were on' },
-  { id: 'replicated',             group: 'Identify and record', scope: 'both',    label: 'Tried the same course, lesson and portal yourself, on your own account and device', staff: true, staffLabel: "Asked someone else on the team to try the same thing, to see if it's just you" },
-  { id: 'right_place',            group: 'Account and login',   scope: 'both',    label: 'Logging in via the right place (correct partner portal vs ardent-training.com)' },
-  { id: 'email_correct',          group: 'Account and login',   scope: 'both',    label: "Email spelled correctly, and it's the one they registered with" },
-  { id: 'password_reset',         group: 'Account and login',   scope: 'both',    label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' },
-  { id: 'social_signin_password', group: 'Account and login',   scope: 'app',     label: 'Social sign-in: created a password via "organisation -> forgot password"' },
-  { id: 'refreshed',              group: 'Standard fixes',      scope: 'browser', label: 'Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)', staff: true },
-  { id: 'logout_login',           group: 'Standard fixes',      scope: 'both',    label: 'Logged out and back in', staff: true },
-  { id: 'restart_device',         group: 'Standard fixes',      scope: 'both',    label: 'Restarted the device (or closed and reopened the app/browser)', staff: true },
-  { id: 'clear_cache',            group: 'Standard fixes',      scope: 'browser', label: 'Cleared cache / tried an incognito or private window', staff: true },
-  { id: 'app_updated',            group: 'Standard fixes',      scope: 'app',     label: 'Checked the app is up to date' },
-  { id: 'different_browser',      group: 'Standard fixes',      scope: 'browser', label: 'Tried a different browser', staff: true },
-  { id: 'different_device',       group: 'Standard fixes',      scope: 'both',    label: 'Tried a different device', staff: true },
-  { id: 'different_network',      group: 'Standard fixes',      scope: 'both',    label: 'Tried a different network (mobile data, hotspot, or another wifi)', staff: true },
-  { id: 'vpn_adblock',            group: 'Standard fixes',      scope: 'both',    label: 'Turned off any VPN, ad blocker, or content/parental filter', staff: true },
-  { id: 'storage_space',          group: 'Standard fixes',      scope: 'app',     label: "Checked there's free storage on the device (download/save problems)" }
+  { id: 'confirm_error',          group: 'Identify and record', scope: 'both',    label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)", staff: true, staffLabel: "Confirmed exactly what's failing and what you're seeing (screenshot if useful)" , todoLabel: "Confirm exactly what's failing and what the student sees (a screenshot helps)", staffTodoLabel: "Confirm exactly what's failing and what you're seeing (a screenshot helps)" },
+  { id: 'noted_device',           group: 'Identify and record', scope: 'both',    label: 'Noted device make, model, OS version, and browser or app', staff: true, staffLabel: 'Noted which browser, device and OS version you were on' , todoLabel: "Get the device make, model, OS version, and browser or app", staffTodoLabel: "Note which browser, device and OS version you are on" },
+  { id: 'replicated',             group: 'Identify and record', scope: 'both',    label: 'Tried the same course, lesson and portal yourself, on your own account and device', staff: true, staffLabel: "Asked someone else on the team to try the same thing, to see if it's just you" , todoLabel: "Try the same course, lesson and portal yourself, on your own account and device", staffTodoLabel: "Ask someone else on the team to try the same thing, to see if it is just you" },
+  { id: 'right_place',            group: 'Account and login',   scope: 'both',    label: 'Logging in via the right place (correct partner portal vs ardent-training.com)' , todoLabel: "Check they are logging in via the right place (the correct partner portal, or ardent-training.com)" },
+  { id: 'email_correct',          group: 'Account and login',   scope: 'both',    label: "Email spelled correctly, and it's the one they registered with" , todoLabel: "Check the email is spelled correctly, and that it is the one they registered with" },
+  { id: 'password_reset',         group: 'Account and login',   scope: 'both',    label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' , todoLabel: "Get them to use \"forgot password\", then type the email and password by hand (no copy-paste)" },
+  { id: 'social_signin_password', group: 'Account and login',   scope: 'app',     label: 'Social sign-in: created a password via "organisation -> forgot password"' , todoLabel: "Social sign-in: get them to create a password via \"organisation -> forgot password\"" },
+  { id: 'refreshed',              group: 'Standard fixes',      scope: 'browser', label: 'Refreshed the page, then a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on Mac)', staff: true , todoLabel: "Refresh the page, then try a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a Mac)" },
+  { id: 'logout_login',           group: 'Standard fixes',      scope: 'both',    label: 'Logged out and back in', staff: true , todoLabel: "Log out and back in" },
+  { id: 'restart_device',         group: 'Standard fixes',      scope: 'both',    label: 'Restarted the device (or closed and reopened the app/browser)', staff: true , todoLabel: "Restart the device, or close and reopen the app or browser" },
+  { id: 'clear_cache',            group: 'Standard fixes',      scope: 'browser', label: 'Cleared cache / tried an incognito or private window', staff: true , todoLabel: "Clear the cache, or try an incognito or private window" },
+  { id: 'app_updated',            group: 'Standard fixes',      scope: 'app',     label: 'Checked the app is up to date' , todoLabel: "Check the app is up to date" },
+  { id: 'different_browser',      group: 'Standard fixes',      scope: 'browser', label: 'Tried a different browser', staff: true , todoLabel: "Try a different browser" },
+  { id: 'different_device',       group: 'Standard fixes',      scope: 'both',    label: 'Tried a different device', staff: true , todoLabel: "Try a different device" },
+  { id: 'different_network',      group: 'Standard fixes',      scope: 'both',    label: 'Tried a different network (mobile data, hotspot, or another wifi)', staff: true , todoLabel: "Try a different network (mobile data, a hotspot, or another wifi)" },
+  { id: 'vpn_adblock',            group: 'Standard fixes',      scope: 'both',    label: 'Turned off any VPN, ad blocker, or content/parental filter', staff: true , todoLabel: "Turn off any VPN, ad blocker, or content/parental filter" },
+  { id: 'storage_space',          group: 'Standard fixes',      scope: 'app',     label: "Checked there's free storage on the device (download/save problems)" , todoLabel: "Check there is free storage on the device (for download or save problems)" }
 ];
 function checklistItemsFor_(staff) {
   return staff ? CHECKLIST_ITEMS.filter(function (it) { return it.staff; }) : CHECKLIST_ITEMS;
 }
 function checklistLabel_(it, staff) { return (staff && it.staffLabel) ? it.staffLabel : it.label; }
+// The same item said as an instruction rather than a record. The checklist is a
+// tick-list of what HAS been done, so its labels are past tense; a list of what
+// to try next has to be the other way round or it reads as nonsense ("Noted
+// device make, model" offered as a thing to go and do). Falls back to the
+// checklist wording if an item has no future form yet, which is still better
+// than nothing (Edd, 20 Aug 2026).
+function checklistTodoLabel_(it, staff) {
+  if (staff && it.staffTodoLabel) return it.staffTodoLabel;
+  if (it.todoLabel) return it.todoLabel;
+  return checklistLabel_(it, staff);
+}
 
 var INSTRUCTORS = [
   { name: 'Edd', email: 'ehewett@ardent-training.com' },
@@ -4455,7 +4466,7 @@ function stepsFromChecklist_(checklist, staff) {
   var out = [];
   checklistItemsFor_(staff).forEach(function (it) {
     if (out.length >= 4) return;
-    if (checklist[it.id] === 'todo') out.push(checklistLabel_(it, staff));
+    if (checklist[it.id] === 'todo') out.push(checklistTodoLabel_(it, staff));
   });
   return out;
 }
@@ -5014,7 +5025,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r77 · 2026-08-20';
+var CODE_STAMP = 'r79 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
