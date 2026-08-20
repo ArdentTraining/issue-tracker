@@ -5177,7 +5177,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r83 · 2026-08-20';
+var CODE_STAMP = 'r85 · 2026-08-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6051,7 +6051,15 @@ function isTrueLike_(v) { return v === true || String(v).toLowerCase() === 'true
 // status - still open there and the case stays, flagged "chat still open".
 // The peek is a check, never a gate, so any Chatwoot hiccup just skips it.
 function listLiveCases_(data) {
-  var rows = liveCaseRows_().filter(function (r) { return String(r.status || 'open') === 'open'; });
+  var allCases = liveCaseRows_();
+  var rows = allCases.filter(function (r) { return String(r.status || 'open') === 'open'; });
+  // FB-0270, the other half. A conversation stays open in Chatwoot long after
+  // its case here is finished, so the r69 "Open in Chatwoot" list kept offering
+  // it back and one click put it on the page again. Hand the front end the
+  // closed ones with the time they were closed, so it can leave them alone
+  // until the student actually says something new.
+  var closed = allCases.filter(function (r) { return String(r.status || '') === 'closed'; })
+    .map(function (r) { return { conversation_id: String(r.conversation_id), closed_at: r.last_activity || '' }; });
   // One read of the issue sheets, not one per case.
   var issueById = {};
   if (rows.some(function (r) { return r.issue_id; })) {
@@ -6087,7 +6095,7 @@ function listLiveCases_(data) {
   });
   var open = rows.filter(function (r) { return String(r.status) === 'open'; });
   open.sort(function (a, b) { return new Date(b.last_activity || 0) - new Date(a.last_activity || 0); });
-  return { ok: true, cases: open.map(function (r) {
+  return { ok: true, closed_cases: closed, cases: open.map(function (r) {
     return {
       conversation_id: r.conversation_id,
       student_name: r.student_name || '',
@@ -6308,8 +6316,19 @@ function caseBrief_(data) {
   var who = (data._user && data._user.name) || '';
   var now = new Date().toISOString();
   var rec = liveCaseFind_(id);
+  var isNew = !rec;
   if (!rec) rec = { conversation_id: id, opened_by: who, opened_at: now, status: 'open', issue_id: '', draft_count: 0 };
-  rec.status = 'open';
+  // FB-0270 (Edd): "Why are these still here? I swear I have closed them
+  // multiple times now..." This line used to run unconditionally, so ANY call
+  // that rebuilt the brief put a closed case straight back on the Chats page -
+  // including the background refresh that FB-0238 added after a new reply, and
+  // the r69 "Open in Chatwoot" list, which keeps offering a conversation that
+  // is still open in Chatwoot however many times its case has been finished.
+  // Closing something has to stick, or it stops meaning anything.
+  //
+  // A case reopens when a person deliberately opens it (data.reopen, sent by
+  // the Open a case path) and not otherwise.
+  if (isNew || data.reopen === true || data.reopen === 'true') rec.status = 'open';
 
   var core = caseBriefCore_(imp, null, rec.issue_id || '');
   if (core.error) return { ok: false, error: core.error };

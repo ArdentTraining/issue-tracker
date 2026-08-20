@@ -1877,7 +1877,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r84.2 · 2026-08-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r85 · 2026-08-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3625,7 +3625,7 @@ function loadLiveCases() {
   apiPost({ action: "listLiveCases" }).then(function (res) {
     state._liveLoading = false;
     if (!res || !res.ok) return;
-    state.liveCases = res.cases || [];
+    state.liveCases = res.cases || []; state.closedCases = res.closed_cases || [];
     state.liveLoaded = true;
     updateRailBadges();
     if (state.view === "live") renderLive();
@@ -3648,7 +3648,7 @@ function loadLiveCasesThenRender() {
   // Returns its promise so a caller can wait for the new brief to actually be on
   // screen before it takes its "re-reading" note down (FB-0238).
   return apiPost({ action: "listLiveCases" }).then(function (res) {
-    if (res && res.ok) { state.liveCases = res.cases || []; state.liveLoaded = true; }
+    if (res && res.ok) { state.liveCases = res.cases || []; state.closedCases = res.closed_cases || []; state.liveLoaded = true; }
     renderLive();
   }).catch(function () { renderLive(); });
 }
@@ -3703,7 +3703,20 @@ function loadOpenChats(force) {
 function unpickedChats() {
   var have = {};
   (state.liveCases || []).forEach(function (c) { have[String(c.conversation_id)] = true; });
-  return (state._openChats || []).filter(function (c) { return !have[String(c.id)]; });
+  // FB-0270: a case that has been closed stays closed. The Chatwoot
+  // conversation usually stays open for days afterwards, and offering it back
+  // is how a finished case kept reappearing. It only returns if the student has
+  // actually said something since it was closed.
+  var closedAt = {};
+  (state.closedCases || []).forEach(function (c) { closedAt[String(c.conversation_id)] = c.closed_at || ""; });
+  return (state._openChats || []).filter(function (c) {
+    var k = String(c.id);
+    if (have[k]) return false;
+    if (!(k in closedAt)) return true;
+    var since = closedAt[k];
+    if (!since) return false;                       // closed, and we cannot tell when
+    return !!(c.last_at && new Date(c.last_at) > new Date(since));
+  });
 }
 function renderOpenChats() {
   var el = $("openChats");
@@ -3951,7 +3964,7 @@ function openLiveCase(convInput) {
   var v = convInput || ($("liveCwInput") ? $("liveCwInput").value.trim() : "");
   if (!v) { toast("Paste a Chatwoot link or number first."); return; }
   busyShow("Reading the conversation and putting the brief together…");
-  apiPost({ action: "caseBrief", conversation: String(v) }).then(function (res) {
+  apiPost({ action: "caseBrief", conversation: String(v), reopen: true }).then(function (res) {
     busyHide();
     if (!res || !res.ok) { toast("Could not open it: " + ((res && res.error) || "unknown")); return; }
     if ($("liveCwInput")) $("liveCwInput").value = "";
