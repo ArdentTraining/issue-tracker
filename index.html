@@ -1753,19 +1753,29 @@
   <h3>Finding your way around</h3>
   <p>Everything hangs off the icon rail down the left. On a phone that same rail becomes a bar across the bottom, same icons, same order.</p>
   <figure class="man-shot" data-img="manual/02-rail.jpg" data-cap="The rail. What appears on it depends on the account, so yours may be shorter or longer than a colleague's."></figure>
-  <div class="man-note">
+  <div class="man-note" data-perm="log">
     <strong>You land on Actions, not on a blank form</strong>
     Opening the app puts us on the work that is waiting, because that is the question most of us come in with. Logging something new is one press of <span class="ui">New</span> from anywhere.
   </div>
+  <div class="man-note" data-noperm="log">
+    <strong>You land on your own queue</strong>
+    Opening the app puts us straight on the work waiting for us, rather than on a front page we would only click through.
+  </div>
   <div class="man-scroll"><table class="man-tbl">
     <tr><th>Rail item</th><th>What it holds</th></tr>
-    <tr><td><span class="ui">Chats</span></td><td>Live conversations pulled in from Chatwoot, with a written brief on each. The number on the icon is how many cases are open.</td></tr>
-    <tr><td><span class="ui">Actions</span></td><td>Things waiting on an instructor, plus the whole log and the board. The number is how many things are waiting.</td></tr>
-    <tr><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="log"><td><span class="ui">Chats</span></td><td>Live conversations pulled in from Chatwoot, with a written brief on each. The number on the icon is how many cases are open.</td></tr>
+    <tr data-perm="log"><td><span class="ui">Actions</span></td><td>Things waiting on an instructor, plus the whole log and the board. The number is how many things are waiting.</td></tr>
+    <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="dev"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
+    <tr data-perm="course"><td><span class="ui">Course</span></td><td>The course-fix queue, which is every course error that has been logged.</td></tr>
+    <tr data-perm="analytics"><td><span class="ui">Reports</span></td><td>The telemetry dashboard, showing how students are actually moving through the lessons.</td></tr>
+    <tr data-perm="analytics"><td><span class="ui">Stats</span></td><td>What the log itself says: where the issues are, and which lessons keep generating them.</td></tr>
+    <tr data-perm="users"><td><span class="ui">Admin</span></td><td>People, the feedback on this app, and the troubleshooting playbook.</td></tr>
     <tr><td><span class="ui">Help</span></td><td>This manual, down at the bottom.</td></tr>
   </table></div>
-  <p>Both badges count real work and nothing else. A badge counting the size of the log would sit in the hundreds and never move, and we would all stop looking at it inside a week.</p>
-  <p>Press <span class="ui">Actions</span> and a second narrow column appears next to the rail holding three pages, <span class="ui">Waiting on me</span>, <span class="ui">All issues</span>, and <span class="ui">Board</span>. On a phone those three become a row of pills across the top instead, since there is no room for a second column.</p>
+  <p data-perm="log">Both badges count real work and nothing else. A badge counting the size of the log would sit in the hundreds and never move, and we would all stop looking at it inside a week.</p>
+  <p data-perm="manage">Press <span class="ui">Actions</span> and a second narrow column appears next to the rail holding three pages, <span class="ui">Waiting on me</span>, <span class="ui">All issues</span>, and <span class="ui">Board</span>. On a phone those three become a row of pills across the top instead, since there is no room for a second column.</p>
+  <p data-noperm="manage">Most pages put a second narrow column next to the rail with the sections of that page in it. On a phone there is no room for it, so it either becomes a row of pills across the top or drops away.</p>
   <h4>Why the board is already there when you open it</h4>
   <p>The app draws the board we last saw straight away, then refreshes behind it. While a refresh is in the air there is a small <span class="ui">updating…</span> next to the title. So nothing sits on a spinner, and nothing stays stale for long.</p>
 </section>
@@ -2057,6 +2067,142 @@
   <p>For a fix that affected several people, <span class="ui">Draft "it's fixed" messages to all</span> in the issue detail writes one message per student, up to ten at a time. Nothing sends itself there either, so each one gets copied across and tweaked as you like.</p>
 </section>
 
+<section id="man-dev" data-perm="dev" data-title="Fixing what comes through">
+  <h3>Fixing what comes through</h3>
+  <p>The <span class="ui">Dev</span> queue holds tech faults an admin has looked at and handed over. Nothing lands here on its own, which is the point: by the time it reaches us somebody has confirmed it is real, worked out how many students it is hitting, and written down what has already been ruled out.</p>
+  <p>Signing in opens straight on it, on <span class="ui">To do</span>.</p>
+  <h4>The queue</h4>
+  <p>Four tiles across the top. <span class="ui">Queued</span> is passed over but nobody's name on it, <span class="ui">In progress</span> is assigned, <span class="ui">Completed</span> is anything marked fixed, and <span class="ui">Average time to fix</span> is the gap between handover and fix across all of them. The first three are buttons, so pressing one filters the list.</p>
+  <p>Three pages beside the rail. <span class="ui">To do</span>, <span class="ui">Fixed</span>, and <span class="ui">All</span>.</p>
+  <p>Each row opens with its priority and, where more than one person has reported it, the number of reports. The line underneath carries the reference, the lesson code, how many days it has been open, and who it is assigned to. Over on the right it says <span class="ui">Fix it, then say so</span> with a <span class="ui">Mark fixed</span> button.</p>
+  <p>Sorting is worth knowing about. Alongside priority there is <span class="ui">Sort: score (severity x reports)</span>, which is the raw arithmetic behind the priority rather than the banded version, so it separates two issues that both came out High.</p>
+  <h4>What we need</h4>
+  <p>Open a row and the first thing under the facts is <span class="ui">What we need</span>. That is deliberate. It used to be a wall of fields with the actual ask buried somewhere in the report, so every fix started with reading a whole conversation to work out what was being asked for.</p>
+  <p>If nobody has written one, the heading says so and the box falls back to an assembly of the summary and the checklist. There is a button, <span class="ui">Ask an admin to write this</span>, or <span class="ui">Ask for this to be clearer</span> if there is one but it is thin.</p>
+  <h4>Sizing it</h4>
+  <p><span class="ui">Estimated size of fix</span> takes Small, Medium, or Large. <span class="ui">Suggest a size</span> reads the issue and proposes one with a reason, and it saves only once you agree, so a suggestion you disagree with costs you nothing but the press.</p>
+  <h4>Priority is not ours to set</h4>
+  <p>The priority shows as a badge with the severity, the report count, and the score behind it, and there is no dropdown. It is worked out from how badly the fault hits one person and how many people have hit it, so it belongs with whoever can see the whole board.</p>
+  <p><span class="ui">Ask for a different priority</span> does not send anything. It writes an opening line into the question box further down, points it at the admins, and puts the cursor at the end for us to say why. The toast says as much: <em>Add a line on why, then press Send question.</em></p>
+  <div class="man-note warn">
+    <strong>If you edit priority some other way, the save is refused</strong>
+    The message reads <em>Only the fix size can be edited from this queue. Ask an admin for a priority change.</em> The rule used to be in the screen only, so the button was gone but the save still went through. It is enforced properly now.
+  </div>
+  <h4>Asking a question</h4>
+  <p><span class="ui">Question about this fix?</span> goes either to <span class="ui">Ask Charlie, Charly or Edd</span> or to the instructor who submitted the report, whichever is likelier to know. It lands in their Actions list and on Slack.</p>
+  <p>The pane stays open after sending, and the question and its answer are kept on the issue under <span class="ui">Questions and answers</span>, so the thread reads back later instead of living in somebody's Slack history.</p>
+  <h4>Marking it fixed</h4>
+  <p><span class="ui">Mark fixed</span> opens a box asking two things, and both are required at ten characters or more.</p>
+  <ul>
+    <li><span class="ui">What was causing it?</span></li>
+    <li><span class="ui">What did you change to fix it?</span></li>
+  </ul>
+  <p>The reason for insisting is on the box itself: this is what the next person reads when it happens again, and what an admin checks before telling the student it is sorted. A one-word note fails both jobs, so a few words is refused with <em>Say what was actually causing it - a few words is not enough to be useful later.</em></p>
+  <p>There is a tick, <span class="ui">Notify student? (asks the instructors on Slack to pass the good news on)</span>, which comes pre-ticked when there are student contacts on the issue. We do not message students ourselves; it puts it on the instructors to do.</p>
+  <p>The full report sits at the very bottom under <span class="ui">Transcript</span>, folded away, because it is reference rather than the job.</p>
+  <div class="man-note">
+    <strong>Two things that are not yours</strong>
+    <p>Handing an issue to the developers is an admin call, so an attempt to set the status yourself comes back with <em>Only an admin can pass an issue to the developers.</em></p>
+    <p>The <span class="ui">Ask</span> button on the queue bar does not work on a developer account. It needs a permission you do not have and returns <em>Couldn't get an answer: forbidden</em>. The search box next to it works fine. This one is on the list.</p>
+  </div>
+</section>
+
+<section id="man-course" data-perm="course" data-title="The course-fix queue">
+  <h3>The course-fix queue</h3>
+  <p>A wrong diagram or a clumsy question is written, not coded, so it goes to the course team and no developer ever sees it. <span class="ui">Course</span> is where those land.</p>
+  <p>It fills differently from the developer queue. A tech fault only appears there once an admin has passed it over, but a course error turns up here the moment it is logged, including the old imported ones that were never routed anywhere. So this queue is everything reported, not everything triaged.</p>
+  <h4>The queue</h4>
+  <p>Three tiles. <span class="ui">In the course-fix queue</span>, <span class="ui">Fixed / done</span>, and <span class="ui">Average time to fix</span>. Three pages beside the rail, <span class="ui">To do</span>, <span class="ui">Fixed / done</span>, and <span class="ui">All</span>.</p>
+  <p>These are cards rather than rows, and there is no fix button on the card itself, so opening one is the way in. The card carries the priority, the report count, the lesson, and the summary. It does not say "course error" anywhere, because everything in here is one.</p>
+  <p>On a course error the wording changes throughout the app. The status badge reads <span class="ui">with the course team</span> and <span class="ui">fixed by the course team</span> where a tech issue would say with developers and fixed by dev. That is worth knowing when reading someone else's board.</p>
+  <div class="man-note warn">
+    <strong>On a phone, All is out of reach</strong>
+    The three pages live in the column beside the rail, and on a phone that column is hidden. The other queues fall back to a row of pills, and this one has nothing to fall back to yet, so the tiles are the only way through and they only reach To do and Fixed / done. On a phone, work from the tiles.
+  </div>
+  <h4>Inside a card</h4>
+  <p>It is the same pane the developers use, with the course wording swapped in, so <span class="ui">What we need</span> comes first, then the facts, the assignee, the size, the checklist, notes, and the questions.</p>
+  <p>Priority is a badge rather than a dropdown, the same as for the developers, and <span class="ui">Ask for a different priority</span> writes an opening line into the question box for us to finish. Marking it fixed asks what was causing it and what changed, both required.</p>
+  <h4>Check the priorities</h4>
+  <p>This one reads the whole open queue and comes back with a list of suggested changes, each with a reason and a before-and-after, and applies none of them until we press <span class="ui">Apply</span> on that row. It takes about a minute.</p>
+  <p>If the run fails it says so in a panel that stays on screen rather than a toast that slides away, because a message nobody managed to read leaves "the button does not work" as the only thing left.</p>
+  <h4>Confusion hotspots</h4>
+  <p>Any lesson with three or more open student-confusion reports gets a drafted content tweak. Three people confused by the same lesson is usually the lesson rather than the three people, which is exactly the pattern that is invisible one report at a time.</p>
+  <p>Each draft gets <span class="ui">Accept - queue the tweak</span> or <span class="ui">Dismiss</span>. Accepting queues it as a course improvement on that lesson, and dismissing sends it away until more students hit the same thing.</p>
+  <h4>Assign all…</h4>
+  <p>For handing a batch to one person. The conditions read as a sentence left to right, along the lines of <em>item type is a knowledge check, and course is Day Skipper</em>, and a live count underneath says how many open fixes match before anything is done. There are no brackets, so a mix of "and" and "or" reads strictly left to right and the panel says so.</p>
+  <p>The confirm names the number, the person, and the sentence, and warns that anything already assigned to somebody else moves across.</p>
+  <div class="man-note">
+    <strong>The Ask button does not work on a course account</strong>
+    It needs a permission the course role does not carry, so it returns <em>Couldn't get an answer: forbidden</em>. The search box beside it is fine. On the list to fix.
+  </div>
+</section>
+
+<section id="man-analytics" data-perm="analytics" data-title="Stats and Reports">
+  <h3>Stats and Reports</h3>
+  <p>Two different questions, so two different pages. <span class="ui">Stats</span> reads the issue log and tells us what has been reported. <span class="ui">Reports</span> reads the telemetry and tells us what students actually did in the lessons.</p>
+  <h4>Stats</h4>
+  <p>Four views beside the rail, <span class="ui">All</span>, <span class="ui">Course errors</span>, <span class="ui">Tech issues</span>, and <span class="ui">Internal only</span>, and the three headline tiles follow whichever is picked.</p>
+  <p><span class="ui">Breakdown: fixes vs improvements</span> is a matrix of area against kind, with a metric switch above it for open, high priority, resolved this month, or all time. It deliberately ignores the view filter above and always shows every area, so the split can be read whole.</p>
+  <p>Then the charts. Lessons by open issues, new issues per week over the last twelve weeks, the issue-type breakdown, and a breakdown by part of the platform. The bars are clickable and take you to the issues behind them.</p>
+  <p>Above them sit the review flags. Any lesson with three or more open issues gets a line saying so and suggesting a content review. That threshold is the whole reason for the page: one report is a student, three on the same lesson is the lesson.</p>
+  <h4>Reports</h4>
+  <p>The telemetry dashboard, loaded inside the app rather than as a separate site, so the rail stays put and there is no second thing to sign in to. It used to be a link out, and pressing it left the app entirely with only a link on the far page to get back.</p>
+  <p>It also stands on its own at <code>/reports/</code>, and <code>?view=reports</code> on the app URL opens straight into it, which is handy for a bookmark.</p>
+  <p>What goes into it is student telemetry rather than anything from the issue log, so the two pages will not agree with each other and are not meant to. The one place they meet is the issue counts against each lesson, which Reports reads from here as counts only, with no summaries and nothing about any individual student.</p>
+  <div class="man-note warn">
+    <strong>Ask needs more than analytics</strong>
+    The <span class="ui">Ask about our issues</span> box on Stats needs the Track permission as well, so on an analytics-only account it comes back with <em>forbidden</em>. Anyone who also has Track is fine. On the list to fix.
+  </div>
+</section>
+
+<section id="man-admin" data-perm="users" data-title="Running the tracker">
+  <h3>Running the tracker</h3>
+  <p>Admin holds three things: the people, the feedback on this app, and the playbook behind the troubleshooting steps. It opens on whichever section you were last in.</p>
+  <h4>Adding somebody</h4>
+  <p><span class="ui">Invite a person</span> sits at the top of <span class="ui">People</span>. Email, first name, then the permissions, then <span class="ui">Send invite</span>. They get an email headed <span class="ui">Your Bugs invite</span> with a link that sets their password and drops them straight in. If it needs sending by hand, the link is shown on screen after the invite goes.</p>
+  <div class="man-note stop">
+    <strong>The invite form and the People list use different words for the same tick</strong>
+    <p>On the invite form, <span class="ui">Admin</span> is the Track permission, and the one that makes somebody an actual admin is <span class="ui">Manage users</span>. In the People list below, those same two ticks read <span class="ui">Track</span> and <span class="ui">Admin</span>.</p>
+    <p>So ticking <span class="ui">Admin</span> on the invite form does not make an admin. Use the <span class="ui">Quick preset</span> buttons and check the result in the People list, where the labels are the ones to trust.</p>
+  </div>
+  <p>The presets only tick boxes, they save nothing, so pressing one and then adjusting a tick is the normal way to use them. There is no role stored anywhere, just the six permissions.</p>
+  <p>The second group, <span class="ui">Fixes they can be given</span>, is a different kind of thing from the first. It decides who can be picked in Assigned to, not who can see the page. An admin sees both fix queues regardless, so leave these unticked for an admin who does not actually take fixes, or they end up in everyone's assignee dropdown.</p>
+  <h4>Disable, do not delete</h4>
+  <p>Disabling clears their sessions and any outstanding invite, and keeps the record intact. Deleting removes the account, and anyone whose name is on logged work would leave those entries pointing at nobody.</p>
+  <p>The app blocks the two cases that would actually break something. It refuses to delete the last account that can manage users, and it refuses to delete anyone whose name is on a report, a fix, an assignment, or a question. <span class="ui">Delete</span> is for a mistyped invite or a test account.</p>
+  <p>Re-inviting an existing email is worth care: it overwrites their permissions and blanks their password and session, so an active person is locked out until they set a new one.</p>
+  <h4>What only an admin can do</h4>
+  <ul>
+    <li>Set the priority in the developer and course queues. Everyone else gets a badge and a button to ask.</li>
+    <li>Hand an issue to the developers or the course team, from the handover fold in the issue.</li>
+    <li>See <span class="ui">Possible new issues</span>, the overnight scan's queue of things nobody logged. Instructors deliberately do not see it, to keep their list to work they have to do.</li>
+    <li>Write the <span class="ui">What we need</span> line on an issue, which is the first thing a developer reads.</li>
+    <li><span class="ui">Need more info?</span> on someone else's report, which asks the instructor who logged it. It lands in their Actions list and on Slack.</li>
+    <li>Delete anybody's issue. Everyone else can only delete their own.</li>
+  </ul>
+  <h4>The scan</h4>
+  <p>It runs at five every morning and reads the last day of Chatwoot for problems nobody logged, so the morning list is fresh. Every conversation is read by one model and then re-checked by a different one before a human sees it, because different models fail differently and the second read kills most of the false positives. Only the few things the first read flagged cost a second look.</p>
+  <p>Two buttons sit with the queue in Actions. <span class="ui">Scan now</span> does the same job as the overnight run, for when something has come in this morning. <span class="ui">Look further back</span> reads older conversations the scan has never seen, carrying on from wherever the last press stopped, and everything from before the scan existed has never been read at all.</p>
+  <p>Both cost API credit and both skip anything already scanned for free. <span class="ui">Look further back</span> asks for confirmation because it reads a batch through two models each time. The line under the buttons says how far back it has reached so far.</p>
+  <p>On the queue itself, <span class="ui">Log it</span> pulls the conversation into the log form rather than filing it. It stays in the list until an issue actually saves, so a half-finished one is never lost.</p>
+  <h4>The pre-launch archive</h4>
+  <p>Everything logged before the team came on was stamped and hidden, so people arrived to a clean board rather than to a backlog with somebody else's name on it. Instructors and developers cannot see a stamped issue at all: it is filtered out before it reaches their browser, so no count or badge can leak one.</p>
+  <p>Admins see them with a <span class="ui">pre-launch</span> badge. Nothing was closed or deleted, and a matching new report brings one back on its own, with a note saying so. There is a <span class="ui">Resurface it now</span> button for doing it by hand.</p>
+  <h4>Seeing what somebody else sees</h4>
+  <p><span class="ui">View as</span> lives in the account menu, under your own name at the foot of the rail. Pick Instructor, Developer, or Course team and the whole app re-renders with that permission set, including this manual, which cuts itself down to the sections that role gets.</p>
+  <p>A pill appears in the bottom corner while it is on, and it is only there while simulating, so there is no doubt about which mode you are in. <span class="ui">My full access</span> puts it back, and so does reloading the page.</p>
+  <div class="man-note warn">
+    <strong>It changes the screen, not your account</strong>
+    Every action still goes through as you, with your real permissions, so something the simulated role could not do will still work if you can reach it. Use it to check what people can see, not to test what they are blocked from.
+  </div>
+  <h4>Feedback on the tracker</h4>
+  <p>Everything sent with the <span class="ui">Feedback</span> pill lands here, sorted and filtered by status, kind, and date. A report moves <span class="ui">Needs testing</span>, then <span class="ui">Mark fixed</span>, then <span class="ui">Confirm fixed</span>, and can be reopened at any point.</p>
+  <p>Each one arrives with where the person was, the last few errors, the last dozen things they clicked, and a picture of their screen, which is what turns "it didn't save" into something fixable without going back to ask.</p>
+  <h4>The playbook</h4>
+  <p>The rulebook behind the troubleshooting steps instructors get offered. It can be edited directly, and as tech issues get resolved new additions are proposed above it for approval, so it grows out of what actually worked rather than out of somebody's memory.</p>
+  <p><span class="ui">Corrections to the known fixes</span> sits alongside it. When a suggested fix turns out not to apply, whoever was shown it can say so, and it waits here. A correction can narrow an entry to one course or a stated condition, or retire it. Nothing changes in the memory until it is approved here, which is what stops one wrong suggestion spreading itself to everybody.</p>
+</section>
+
 <section id="man-feedback" data-perm="" data-title="Telling us about the tracker">
   <h3>Telling us about the tracker</h3>
   <p>The <span class="ui">Feedback</span> pill sits in the bottom right of every page. It is for this app rather than for the courses, so anything in here that is broken, confusing, or could be better.</p>
@@ -2107,14 +2253,17 @@
   </table></div>
   <h4>Where things live</h4>
   <ul>
-    <li>Something waiting on me, <span class="ui">Actions</span> then <span class="ui">Waiting on me</span>.</li>
-    <li>Any report ever logged, <span class="ui">Actions</span> then <span class="ui">All issues</span>, then search.</li>
-    <li>The issue I just logged, same place, top of the list.</li>
-    <li>A student who is in touch right now, <span class="ui">Chats</span>.</li>
+    <li data-perm="log">Something waiting on me, <span class="ui">Actions</span> then <span class="ui">Waiting on me</span>.</li>
+    <li data-perm="manage">Any report ever logged, <span class="ui">Actions</span> then <span class="ui">All issues</span>, then search.</li>
+    <li data-perm="log">The issue I just logged, <span class="ui">Actions</span> then <span class="ui">All issues</span>, top of the list.</li>
+    <li data-perm="log">A student who is in touch right now, <span class="ui">Chats</span>.</li>
+    <li data-perm="dev">A fault waiting on me to fix, <span class="ui">Dev</span> then <span class="ui">To do</span>.</li>
+    <li data-perm="course">A course error waiting to be corrected, <span class="ui">Course</span> then <span class="ui">To do</span>.</li>
+    <li data-perm="users">Adding somebody to the team, <span class="ui">Admin</span> then <span class="ui">People</span>.</li>
     <li>Something wrong with this app, the <span class="ui">Feedback</span> pill, bottom right.</li>
     <li>This manual, <span class="ui">Help</span> at the bottom of the rail, from any page.</li>
   </ul>
-  <div class="man-note">
+  <div class="man-note" data-perm="log">
     <strong>If three things stick, make it these</strong>
     <p>Log it even when it is scruffy. Put the lesson code in whenever you know it, because that is what joins four reports into one fault. And write the resolution note, since it is what the next person reads when the same thing happens again.</p>
   </div>
@@ -2483,7 +2632,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r110.1 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r111 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11924,6 +12073,22 @@ function buildManual() {
     kept.push(s);
   });
   if (kept.length) kept[0].classList.add("man-first");   // no page break before page one
+
+  // Gating INSIDE a section as well, because whole sections are too coarse for
+  // the shared pages. "Finding your way around" lists the rail, and a developer
+  // has no Chats, Actions or New on theirs; without this the first page of
+  // their manual describes somebody else's app. data-perm means "only with this
+  // permission", data-noperm means "only without it", so a row can be written
+  // once for each side.
+  Array.prototype.slice.call(doc.querySelectorAll("[data-perm]")).forEach(function (el) {
+    if (el.tagName === "SECTION") return;
+    var need = el.getAttribute("data-perm");
+    if (need && !p[need]) el.parentNode.removeChild(el);
+  });
+  Array.prototype.slice.call(doc.querySelectorAll("[data-noperm]")).forEach(function (el) {
+    var no = el.getAttribute("data-noperm");
+    if (no && p[no]) el.parentNode.removeChild(el);
+  });
 
   // The screenshots load only now, and only if they are there. A manual with a
   // broken-image icon in it reads as neglected, so a missing file drops back to
