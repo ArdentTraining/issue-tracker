@@ -1814,6 +1814,41 @@ function addIssue_(data) {
 // Roll a new report into an existing issue row: add its student to the list,
 // bump the priority a level (capped at high), bump the count, and keep an
 // audit note in raw_text. Returns the same shape as addIssue_.
+// ---- r103 (22 Aug 2026): the 50,000-character cell ceiling ----------------
+// A Google Sheets cell holds at most 50,000 characters, and the image cluster
+// (ea0d1f83, 20 reports) reached it: linking one more report threw and the
+// merge was lost. Every append to raw_text or reports_json now respects a cap.
+// Nothing is lost when the cap bites - each report entry carries its own
+// raw_text, so the running "--- also reported ---" narrative is a convenience
+// copy, and the trail keeps the longest texts trimmed rather than the merge
+// refused outright.
+var CELL_CAP = 48500;
+
+function capAppend_(existing, addition) {
+  var base = String(existing || '');
+  var add = String(addition || '');
+  if (base.length + add.length <= CELL_CAP) return base + add;
+  var room = CELL_CAP - base.length;
+  if (room > 400) return base + add.slice(0, room - 60) + '\n[truncated: cell limit reached; full text in the report trail]';
+  return base;
+}
+
+function capReports_(arr) {
+  var s = JSON.stringify(arr);
+  var guard = 0;
+  while (s.length > CELL_CAP && guard++ < 60) {
+    var li = -1, ll = 0;
+    for (var i = 0; i < arr.length; i++) {
+      var l = String(arr[i].raw_text || '').length;
+      if (l > ll) { ll = l; li = i; }
+    }
+    if (li < 0 || ll < 600) break;   // nothing left worth trimming
+    arr[li].raw_text = String(arr[li].raw_text).slice(0, Math.max(400, Math.floor(ll / 2))) + ' [trimmed: cell limit]';
+    s = JSON.stringify(arr);
+  }
+  return s;
+}
+
 function addReportToIssue_(id, data, report) {
   var found = findRow_(id);
   if (!found) return { ok: false, error: 'matched issue not found: ' + id };
@@ -1842,7 +1877,7 @@ function addReportToIssue_(id, data, report) {
     });
   }
   reports.push(report);
-  rec.reports_json = JSON.stringify(reports);
+  rec.reports_json = capReports_(reports);
   rec.report_count = realReportCount_(reports);
 
   // Each extra report nudges the priority up a level, never below what this
@@ -1892,10 +1927,10 @@ function addReportToIssue_(id, data, report) {
   }
 
   var stamp = new Date().toISOString().slice(0, 10);
-  rec.raw_text = (rec.raw_text || '') + '\n\n--- also reported ' + stamp + ' by ' +
+  rec.raw_text = capAppend_(rec.raw_text, '\n\n--- also reported ' + stamp + ' by ' +
     (report.instructor_name || 'someone') +
     (report.student_name ? ' (student: ' + report.student_name + ')' : '') + ' ---\n' +
-    (data.raw_text || data.summary || '');
+    (data.raw_text || data.summary || ''));
 
   if (data.image_urls) {
     var existing = rec.image_urls ? String(rec.image_urls).split(',') : [];
@@ -2469,7 +2504,7 @@ function addUpdate_(data) {
     waiting: data.waiting ? true : undefined,
     date: new Date().toISOString()
   });
-  rec.reports_json = JSON.stringify(reps);
+  rec.reports_json = capReports_(reps);
 
   if (data.priority) rec.priority = String(data.priority).toLowerCase();
   if (data.priority_reason) rec.priority_reason = data.priority_reason;
@@ -2563,8 +2598,8 @@ function linkIssues_(data) {
       device_info: s.device_info || '', instructor_name: s.instructor_name || '', summary: s.summary || '',
       raw_text: s.raw_text || '', date: s.submitted_at || '' }];
   }
-  t.reports_json = JSON.stringify(tReps.concat(sReps));
-  t.raw_text = (t.raw_text || '') + '\n\n--- linked in from another report ---\n' + (s.raw_text || '');
+  t.reports_json = capReports_(tReps.concat(sReps));
+  t.raw_text = capAppend_(t.raw_text, '\n\n--- linked in from another report ---\n' + (s.raw_text || ''));
 
   var ti = t.image_urls ? String(t.image_urls).split(',') : [];
   var si = s.image_urls ? String(s.image_urls).split(',') : [];
@@ -2676,7 +2711,7 @@ function flagQuery_(data) {
   var reps = [];
   try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
   reps.push({ kind: 'question', instructor_name: who, summary: forWhom, raw_text: question, date: now });
-  rec.reports_json = JSON.stringify(reps);
+  rec.reports_json = capReports_(reps);
   rec.report_count = realReportCount_(reps);
 
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
@@ -2745,7 +2780,7 @@ function answerQuery_(data) {
   var reps = [];
   try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
   reps.push({ kind: 'answer', instructor_name: who, summary: 'Reply to question', raw_text: reply, date: now });
-  rec.reports_json = JSON.stringify(reps);
+  rec.reports_json = capReports_(reps);
   rec.report_count = realReportCount_(reps);
 
   var asker = rec.dev_query_by || '';
@@ -5521,7 +5556,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r102 · 2026-08-22';
+var CODE_STAMP = 'r103 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
