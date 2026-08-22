@@ -383,6 +383,7 @@ function doPost(e) {
     if (action === 'deployBackend') return jsonOut(deployBackend_(body));
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
     if (action === 'setChatwootConfig') return jsonOut(setChatwootConfig_(body));
+    if (action === 'setSlackChannel') return jsonOut(setSlackChannel_(body));   // r107: per-channel webhook, DEPLOY_KEY-gated
     if (action === 'chatwootProbe') return jsonOut(chatwootProbe_(body));
     if (action === 'runSetup') return jsonOut(runSetup_(body));
     if (action === 'runMigrateAudience') {
@@ -441,7 +442,6 @@ function doPost(e) {
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
     if (action === 'deleteUser') return jsonOut(deleteUser_(body));
-    if (action === 'archivePrelaunch') return jsonOut(archivePrelaunch_(body));
     if (action === 'resurfaceIssue') return jsonOut(resurfaceIssue_(body));
     if (action === 'lessonIssueCounts') return jsonOut(lessonIssueCounts_());
     if (action === 'estimateFixSize') return jsonOut(estimateFixSize_(body));
@@ -624,7 +624,7 @@ function reqPerm_(action) {
     case 'flagKnownFix': return 'log';
     // Confusion -> content-tweak suggestions sit with anyone who works a queue.
     case 'listContentSuggestions': case 'resolveContentSuggestion': case 'runConfusionReview': return 'work';
-    case 'archivePrelaunch': case 'resurfaceIssue':
+    case 'resurfaceIssue':
     case 'inviteUser': case 'updateUser': case 'deleteUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion': case 'suggestPlaybook':
     case 'listKnownFixFlags': case 'resolveKnownFixFlag':
@@ -952,34 +952,9 @@ function listUsers_() {
 // stamps every issue that exists at that moment. Deliberately does not care
 // about status - a resolved pre-launch issue in Track is as much old noise to a
 // new instructor as an open one.
-function archivePrelaunch_(body) {
-  var stamped = 0, total = 0;
-  var now = new Date().toISOString();
-  ISSUE_SHEETS.forEach(function (name) {
-    // Course fixes stay out of the stamp (Edd, 20 Aug 2026): "I am the one who
-    // handles them anyway." That queue is his working list, not backlog noise
-    // for the new team, so drawing the line must not empty it.
-    if (name === COURSE_SHEET) return;
-    var sh = sheetByName_(name);
-    if (!sh) return;
-    var values = sh.getDataRange().getValues();
-    if (values.length < 2) return;
-    var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
-    if (idx['prelaunch'] == null) return;   // runSetup has not appended it yet
-    var col = idx['prelaunch'] + 1;
-    var out = [];
-    for (var r = 1; r < values.length; r++) {
-      var has = !!values[r][idx['issue_id']];
-      if (has) { total++; if (!isTrueLike_(values[r][idx['prelaunch']])) stamped++; }
-      out.push([has ? 'true' : (values[r][idx['prelaunch']] || '')]);
-    }
-    if (out.length) sh.getRange(2, col, out.length, 1).setValues(out);
-  });
-  return { ok: true, stamped: stamped, total: total, at: now };
-}
-
-// One issue back on the board, by hand. The automatic route is a matching
-// report arriving (addReportToIssue_ clears the stamp itself).
+// archivePrelaunch_ removed 22 Aug 2026: the line was drawn (512 stamped) and
+// a one-shot bulk-hide left callable is an accident waiting for an API call.
+// resurfaceIssue_ and the stamp-clearing merge path remain.
 function resurfaceIssue_(body) {
   var found = findRow_(body && body.issue_id);
   if (!found) return { ok: false, error: 'No issue found with id ' + (body && body.issue_id) };
@@ -3111,6 +3086,22 @@ function chatwootProbe_(data) {
     out.profile_head = String(res2.getContentText() || '').slice(0, 120);
   } catch (e) { out.profile_error = String(e).slice(0, 160); }
   return { ok: true, probe: out };
+}
+
+// r107: store a per-channel Slack webhook (SLACK_INSTRUCTING_DAILY and
+// friends) without a trip to the script editor. DEPLOY_KEY-gated like
+// setChatwootConfig, and the field is `webhook`, never `token`, because
+// apiPost overwrites a body field named token with the session (the r95 trap).
+function setSlackChannel_(data) {
+  var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  var allowed = { SLACK_INSTRUCTING_DAILY: 1, SLACK_AUREUS_TECH: 1, SLACK_INSTRUCTING_UPDATES: 1 };
+  var name = String(data.channel_key || '').trim();
+  if (!allowed[name]) return { ok: false, error: 'channel_key must be one of: ' + Object.keys(allowed).join(', ') };
+  var url = String(data.webhook || '').trim();
+  if (url.indexOf('https://hooks.slack.com/') !== 0) return { ok: false, error: 'webhook must be a hooks.slack.com URL' };
+  PropertiesService.getScriptProperties().setProperty(name, url);
+  return { ok: true, set: name };
 }
 
 function setChatwootConfig_(data) {
@@ -5586,7 +5577,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r107 · 2026-08-22';
+var CODE_STAMP = 'r108 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
