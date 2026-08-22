@@ -2490,7 +2490,8 @@ function addUpdate_(data) {
   // at 7 - not 7-days-restarted-by-the-nudge. A real reply from the student
   // still resets everything, because that arrives as a normal update.
   var isNudge = String(data.update_kind || '') === 'nudge';
-  rec.raw_text = (rec.raw_text || '') + '\n\n--- ' + (isNudge ? 'checked in with the student ' : 'update ') + stamp + ' by ' + who + ' ---\n' + note;
+  // r106: same 50k cell ceiling as the merge paths (r103 missed this one).
+  rec.raw_text = capAppend_(rec.raw_text, '\n\n--- ' + (isNudge ? 'checked in with the student ' : 'update ') + stamp + ' by ' + who + ' ---\n' + note);
 
   // Add this update to the timeline (shown as an accordion entry in the detail).
   var reps = [];
@@ -5579,7 +5580,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r105.1 · 2026-08-22';
+var CODE_STAMP = 'r106 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
