@@ -1489,7 +1489,14 @@ function addIssue_(data) {
     instructor_email: data.instructor_email || '',
     summary: data.summary || '',
     priority: (data.priority || '').toLowerCase(),
-    raw_text: data.raw_text || '',
+    raw_text: (data.raw_text || '') +
+      // The trail must say this person is already sorted, or the next-action
+      // logic and a human reader would both start chasing a student who has
+      // been dealt with (rule change, 22 Aug 2026).
+      ((data.resolved || data.tbc || data.parked)
+        ? '\n\n[Sorted for this student at filing' + (data.resolution_note ? ': ' + String(data.resolution_note).slice(0, 300) : '') + ']'
+        : ''),
+    sorted_at_filing: (data.resolved || data.tbc || data.parked) ? true : undefined,
     recommended_steps: data.recommended_steps || null,
     date: now
   };
@@ -1520,9 +1527,19 @@ function addIssue_(data) {
   // The instructor can also decide this on the form (Round 16): merge_into is
   // an explicit "same fault, add my student as another report", and no_merge
   // is an explicit "this is different" that overrides the AI matcher too.
-  var matchId = data.resolved ? null
-    : data.no_merge ? null
-    : (data.merge_into || aiMatchIssue_(data, category));
+  // RULE CHANGE, Edd 22 Aug 2026. A filing that arrived already sorted used to
+  // skip matching entirely ("logged for the record, don't roll it into an open
+  // issue", 31 Jul). Right for one-offs; exactly wrong for a recurring fault
+  // that everyone gets workaround-ed past: every filing arrived resolved, so
+  // none ever merged, so the count never rose and the score never moved. The
+  // image-loading fault reached 15 students across 15 SEPARATE rows this way.
+  //
+  // Now a sorted filing still matches, and a match attaches it as another
+  // report on the open issue - this student is sorted and chases nobody, but
+  // the fault counts. No match, and it files as its own resolved record
+  // exactly as before. aiMatchIssue_ only ever offers open issues, so a sorted
+  // filing can never resurrect a resolved one.
+  var matchId = data.no_merge ? null : (data.merge_into || aiMatchIssue_(data, category));
   if (matchId) {
     // Never roll a fix into an improvement (or vice versa); they are different
     // things even on the same lesson, so keep them as separate entries.
@@ -5337,7 +5354,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r93 · 2026-08-20';
+var CODE_STAMP = 'r94 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
