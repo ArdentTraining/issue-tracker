@@ -824,7 +824,10 @@
      the question. Two boxes would have made people pick before they knew which
      one they wanted. */
   .man-bar { display: flex; gap: 8px; max-width: 820px; }
-  .man-bar input { flex: 1; }
+  /* type=search brings its own chrome on WebKit (inset shadow, pill corners),
+     so it is reset to look like every other input in the app. */
+  .man-bar input { flex: 1; -webkit-appearance: none; appearance: none; }
+  .man-bar input::-webkit-search-decoration, .man-bar input::-webkit-search-results-button { -webkit-appearance: none; }
   .man-hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; max-width: 820px; }
   .man-found {
     max-width: 820px; margin: 12px 0 0; font-size: 13px; color: var(--muted);
@@ -1713,7 +1716,16 @@
     </div>
   </div>
   <div class="man-bar">
-    <input id="manQ" type="text" placeholder="Search the manual, or ask a question" oninput="manualTyped()" onkeydown="manualKey(event)" autocomplete="off" aria-label="Search the manual, or ask a question">
+    <!-- FB-0284: Chrome and the password managers were offering to autofill an
+         email address in here. It is the only text input on the page, so with
+         type=text and nothing else to go on they guess. type=search plus a name
+         that does not read as a contact field, and the opt-outs the managers
+         actually honour, stop all three of them guessing. -->
+    <input id="manQ" name="manual-search" type="search" placeholder="Search the manual, or ask a question"
+           oninput="manualTyped()" onkeydown="manualKey(event)"
+           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+           data-1p-ignore data-lpignore="true" data-form-type="other"
+           aria-label="Search the manual, or ask a question">
     <button class="primary" onclick="manualAsk()">Ask</button>
   </div>
   <p class="man-hint">Typing searches as you go. To ask something in a sentence, press Enter and you get an answer back.</p>
@@ -1725,10 +1737,13 @@
   <h3>What this is for</h3>
   <p>Someone lets us know they have an issue seeing images. We work through the checklist and refreshing fixes it. The next day someone has the same issue, different instructor, same fix, but they start at the top of the list again. Three hours later, different instructor. Nobody has connected the three yet and seen this is a real issue that is affecting lots of people. It just felt like a one off little thing.</p>
   <p>That is the gap this fills. Everything a student runs into, and everything we spot ourselves, goes in one place. When the same fault turns up twice we can see that it is the same fault, so the second student gets an answer in a minute rather than ten.</p>
-  <p>It does a fair bit of the paperwork for us too. Paste a conversation in and it reads out who the student is, which lesson they were on, and what went wrong, then fills the form. Our job is to check it got that right.</p>
-  <p>Nothing sends itself. No message reaches a student unless we type it into Chatwoot ourselves, and every draft goes out under our own name, so we are always signing our own words.</p>
-  <p>Repeat reports are wanted. If a fault is already logged, adding ours to it is the useful thing to do, because the priority is worked out partly from how many people have hit it. A second report pushes it up the list. A second entry just splits the evidence in half.</p>
-  <p>A scruffy report beats no report. Half-filled and logged is worth more than perfect and still sitting in an inbox.</p>
+  <p data-perm="log">It does a fair bit of the paperwork for us too. Paste a conversation in and it reads out who the student is, which lesson they were on, and what went wrong, then fills the form. Our job is to check it got that right.</p>
+  <p data-perm="log">Nothing sends itself. No message reaches a student unless we type it into Chatwoot ourselves, and every draft goes out under our own name, so we are always signing our own words.</p>
+  <p data-perm="log">Repeat reports are wanted. If a fault is already logged, adding ours to it is the useful thing to do, because the priority is worked out partly from how many people have hit it. A second report pushes it up the list. A second entry just splits the evidence in half.</p>
+  <p data-perm="log">A scruffy report beats no report. Half-filled and logged is worth more than perfect and still sitting in an inbox.</p>
+  <p data-perm="dev,course" data-noperm="log">That connecting up is what reaches us. By the time a fault lands in the queue somebody has confirmed it is real, seen how many students are hitting it, and written down what has already been ruled out, so a fix starts from the facts rather than from a conversation to decode.</p>
+  <p data-perm="dev,course" data-noperm="log">The note we leave when we mark it fixed is the other half of the same bargain. It is what the next person reads when the fault turns up again, and what an admin checks before telling a student it is sorted.</p>
+  <p data-perm="analytics" data-noperm="log,dev,course">One thing to hold onto when reading any of it. The log only holds what somebody took the trouble to write up, so every count is a floor rather than a total, and a lesson with nothing against it may simply be one nobody reported.</p>
 </section>
 
 <section id="man-signin" data-perm="" data-title="Signing in">
@@ -2638,7 +2653,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r112 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r113 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
