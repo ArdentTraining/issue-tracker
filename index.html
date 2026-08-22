@@ -1899,7 +1899,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r95 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r96 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3593,7 +3593,16 @@ function actionRows() {
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
     .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
-    .concat(a.followups.map(function (i) { return { i: i, kind: "followup", word: "Workaround", colour: "var(--medium)", act: "Did it stick?" }; }))
+    .concat(a.followups.map(function (i) {
+      // Edd, 22 Aug 2026: this card was a mystery. Say what it is (a follow-up
+      // on a workaround the student never confirmed), and what doing nothing
+      // means (it resolves itself at 7 days), so the buttons are a choice
+      // rather than a puzzle.
+      var since = Math.floor((Date.now() - new Date(i.updated_at || i.submitted_at)) / 864e5);
+      var left = Math.max(1, 7 - since);
+      return { i: i, kind: "followup", word: "Workaround", colour: "var(--medium)",
+        act: "Given " + since + " days ago, no word from the student since. Left alone, it resolves itself in " + left + (left === 1 ? " day." : " days.") };
+    }))
     .concat(a.longOpen.map(function (i) { return { i: i, kind: "longopen", word: "Waiting", colour: "var(--high)", act: "Reassure the student" }; }));
   return rows;
 }
@@ -3624,14 +3633,14 @@ function renderActions() {
       : '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft message to student</button>' +
         ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'scannedSorted(\'' + id + '\')">No more contact needed</button>';
     else if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 days</button>' +
-      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Sorted</button>';
+      ' <button class="ghost small" style="padding:5px 12px;" title="Nothing left to chase: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>';
     else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
-    else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
-      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
+    else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" title="You have checked it yourself and it works: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'fixed\')">Draft email</button>';
-    else if (r.kind === "followup") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Sorted</button>' +
-      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
+    else if (r.kind === "followup") btn = '<button class="primary small" style="padding:5px 12px;" title="The workaround held, or the fix has since landed. Closes it for good - same as Resolved everywhere else." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsSentUpdate(\'' + id + '\')">Student updated</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft email</button>';
 
