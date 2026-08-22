@@ -5482,7 +5482,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r98 · 2026-08-22';
+var CODE_STAMP = 'r99 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6402,6 +6402,30 @@ function listLiveCases_(data) {
     var b = r._brief; b.auto_closed = new Date().toISOString();
     r.brief_json = JSON.stringify(b);
     liveCaseSave_(r);
+  });
+  // Edd, 22 Aug 2026: "Hage has been resolved in chatwoot... Should it not
+  // also be gone from here?" Yes. r89 took Chatwoot's vote away because a
+  // conversation staying OPEN was wrongly keeping finished cases alive - but
+  // that cut both directions, so a conversation resolved in Chatwoot could no
+  // longer end its case (his issue sits in the still-open image cluster, so
+  // the issue-state test above never fires). One-directional now: resolved in
+  // Chatwoot CLOSES a case; open in Chatwoot never blocks one. Peeks are
+  // capped, and only cases still open after the issue-state pass pay one.
+  var peeks = 0;
+  rows.forEach(function (r) {
+    if (String(r.status) !== 'open' || peeks >= 5) return;
+    peeks++;
+    var cwStatus = '';
+    try {
+      var conv = chatwootCall_('/conversations/' + r.conversation_id);
+      cwStatus = String((conv && conv.status) || (conv && conv.payload && conv.payload.status) || '');
+    } catch (e) { return; }
+    if (cwStatus === 'resolved') {
+      r.status = 'closed';
+      var b2 = r._brief; b2.auto_closed = new Date().toISOString(); b2.auto_close_reason = 'conversation resolved in Chatwoot';
+      r.brief_json = JSON.stringify(b2);
+      liveCaseSave_(r);
+    }
   });
   var open = rows.filter(function (r) { return String(r.status) === 'open'; });
   open.sort(function (a, b) { return new Date(b.last_activity || 0) - new Date(a.last_activity || 0); });
