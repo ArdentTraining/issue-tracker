@@ -344,6 +344,7 @@ function doGet(e) {
     if (action === 'getInvite') return jsonOut(getInvite_(p.token));   // public: validate an invite link
     if (action === 'mirror') return jsonOut(mirror_(p));               // read-only, key-gated mirror for the local Cowork sync
     if (action === 'readSheet') return jsonOut(readSheet_(p));         // read-only, MIRROR_KEY-gated: read a tab of any spreadsheet Edd can open (legacy-form reconciliation, r101)
+    if (action === 'importLegacyBatch') return jsonOut(importLegacyBatch_(p)); // WRITE, DEPLOY_KEY-gated: r102 legacy-form catch-up
 
     var user = userForToken_(p.token);
     if (!user) return jsonOut({ ok: false, error: 'unauthorized' });
@@ -1568,7 +1569,9 @@ function addIssue_(data) {
   // The account behind that name, for the same reason (Round 61). The name is
   // what we show; the email is what we can still join on in a year.
   if (data._user && data._user.email) data.instructor_email = data._user.email;
-  var now = new Date().toISOString();
+  // r102: a legacy-form import carries its original date; everything time-based
+  // (burst scoring included) must see the historic date, not today.
+  var now = data._import_date || new Date().toISOString();
   var category = (data.category || 'course_error').toLowerCase();
   // Legacy callers (and old saved drafts) may still send category 'internal'.
   // That is now an audience, not a category, and it always meant tech.
@@ -1788,6 +1791,7 @@ function addIssue_(data) {
   // Slack only for a high-priority fix; never let a Slack failure block the save.
   // Improvements never fire an alert, they are backlog, not something to jump on.
   if (String(issue.priority).toLowerCase() === 'high' && issue.request_kind !== 'improvement' &&
+      !data._suppress_slack &&
       issue.status !== 'resolved' && issue.status !== 'resolved_tbc') {
     try { sendSlack_(issue, data.app_url || getAppUrl_()); } catch (slackErr) {}
   }
@@ -1906,6 +1910,7 @@ function addReportToIssue_(id, data, report) {
   // something that has landed resolved or Resolved - TBC, and never for one that
   // was already high before this report arrived.
   if (String(rec.priority).toLowerCase() === 'high' && priorityBefore !== 'high' &&
+      !data._suppress_slack &&
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
@@ -5516,7 +5521,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r101 · 2026-08-22';
+var CODE_STAMP = 'r102 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -7667,6 +7672,166 @@ function impRecord_(fields) {
   }]);
   return rec;
 }
+
+// ---- r102 (22 Aug 2026): legacy-form catch-up import ----------------------
+// The July historical import stopped at 9 Jul 2026, but all three old forms
+// stayed in live use. This brings the gap in through the REAL filing path
+// (addIssue_), so duplicates attach to open issues, done rows arrive
+// resolved, and every record keeps its original date. DEPLOY_KEY-gated,
+// batched (Apps Script's 6-minute limit rules out one big run), progress in
+// the LEGACY_IMPORT_IDX script property.
+var LEGACY_CUTOFF = '2026-07-09T12:00';   // last July-import row was 9 Jul 11:23
+
+function legacyGapRows_() {
+  var urgMap = { 1: 'low', 2: 'low', 3: 'medium', 4: 'high', 5: 'high' };
+  var out = [];
+
+  // Course Errors/Improvements - Form responses 2 (rows after the cutoff)
+  var ceRows = SpreadsheetApp.openById(IMPORT_COURSE_ERRORS_ID).getSheetByName('Form responses 2').getDataRange().getValues();
+  for (var r = 1; r < ceRows.length; r++) {
+    var row = ceRows[r];
+    if (!row.some(function (c) { return c !== '' && c != null; })) continue;
+    var when = impIso_(row[0]);
+    if (!when || when <= LEGACY_CUTOFF) continue;
+    var kind = impClean_(row[3]) || 'Error';
+    var isImp = kind.toLowerCase().indexOf('improv') === 0;
+    var slide = impClean_(isImp ? row[9] : row[4]) || impClean_(isImp ? row[4] : row[9]);
+    var media = (impClean_(isImp ? row[10] : row[5]) || impClean_(isImp ? row[5] : row[10])).toLowerCase();
+    var sev = isImp ? row[11] : row[6];
+    if (sev === '' || sev == null) sev = isImp ? row[6] : row[11];
+    var det = impClean_(isImp ? row[12] : row[7]) || impClean_(isImp ? row[7] : row[12]);
+    var shots = [impClean_(row[8]), impClean_(row[13])].filter(String).join(', ');
+    var parsed = impParseLesson_(slide);
+    var sevn = parseInt(sev, 10); if (isNaN(sevn)) sevn = null;
+    var done = impClean_(row[15]).toLowerCase() === 'x';
+    out.push({ src: 'course', data: {
+      category: 'course_error',
+      instructor_name: impName_(row[1]),
+      course: parsed[0], module: parsed[1], lesson_code: parsed[2],
+      lesson: /^(EN|DS|YM|FT)[\s.]*\d/i.test(slide) ? slide.toUpperCase() : slide,
+      issue_type: isImp ? 'other' : 'content_error',
+      summary: impSummarise_(det, slide ? (isImp ? 'Improvement on ' : 'Error on ') + slide : kind),
+      priority: urgMap[sevn] || 'medium',
+      priority_reason: sevn != null ? 'Imported: original ' + (isImp ? 'impact' : 'urgency') + ' ' + sevn + '/5' : 'Imported: no urgency given',
+      image_urls: shots,
+      request_kind: isImp ? 'improvement' : 'fix',
+      media_kind: media === 'video' ? 'video' : media === 'text' ? 'text' : media === 'both' ? 'other' : '',
+      double_checked: impClean_(row[2]).toLowerCase() === 'yes' ? true : '',
+      impact: isImp ? (urgMap[sevn] || '') : '',
+      student_involved: 'no',
+      resolved: done, resolution_note: done ? 'Marked done in the old Course Errors spreadsheet.' : '',
+      raw_text: 'Imported from Course Errors/Improvements form (launch catch-up, 22 Aug 2026)\n' + impDump_([
+        ['Submitted', row[0]], ['Reported by', row[1]], ['Double checked', row[2]], ['Type', kind],
+        ['Slide/question', slide], ['Video or text', media], ['Urgency/impact', sev], ['Details', det],
+        ['Screenshots', shots], ['Who to fix', row[14]], ['Done', row[15]]]),
+      _import_date: when, _suppress_slack: true
+    }});
+  }
+
+  // Tech Fix Requests - Issue log form (rows after the cutoff; the form keeps
+  // no resolution record, so these arrive open for triage)
+  var tfRows = SpreadsheetApp.openById(IMPORT_TECH_ID).getSheetByName('Issue log - Form Responses').getDataRange().getValues();
+  var secMap = { website: 'website', app: 'app', both: 'other' };
+  var accessRe = /log\s?in|login|password|sign\s?in|access|locked|reset/i;
+  for (var t = 1; t < tfRows.length; t++) {
+    var tr = tfRows[t];
+    if (!tr.some(function (c) { return c !== '' && c != null; })) continue;
+    var whenT = impIso_(tr[0]);
+    if (!whenT || whenT <= LEGACY_CUTOFF) continue;
+    var parts = [impClean_(tr[1])];
+    var section = '', priRaw = '';
+    [impClean_(tr[2]), impClean_(tr[3])].forEach(function (x) {
+      var xl = x.toLowerCase();
+      if (secMap[xl]) { if (!section) section = secMap[xl]; }
+      else if (xl === 'high' || xl === 'medium' || xl === 'low') { priRaw = xl; }
+      else if (x) { parts.push(x); }
+    });
+    var devT = [impClean_(tr[6]), (tr[7] instanceof Date) ? '' : impClean_(tr[7])].filter(String).join(' ');
+    var full = parts.filter(String).join('. ');
+    out.push({ src: 'tech', data: {
+      category: 'tech_issue',
+      instructor_name: impName_(tr[4]),
+      student_name: impClean_(tr[8]), student_contact: impClean_(tr[9]),
+      device_info: devT,
+      issue_type: accessRe.test(full) ? 'access_problem' : 'bug',
+      summary: impSummarise_(full, 'Tech issue (no description)'),
+      priority: priRaw || 'low',
+      priority_reason: 'Imported from the old tech issues form; priority as given there.',
+      image_urls: impClean_(tr[5]),
+      request_kind: 'fix', section: section || 'other',
+      raw_text: 'Imported from Tech Fix Requests form (launch catch-up, 22 Aug 2026)\n' + impDump_([
+        ['Submitted', tr[0]], ['Describe issue', tr[1]], ['Issue with', tr[2]], ['Priority', tr[3]],
+        ['Owner', tr[4]], ['Images/videos', tr[5]], ['Device/OS/browser', tr[6]], ['Date', tr[7]],
+        ['Student name', tr[8]], ['Student email', tr[9]], ['Other', tr[10]], ['Forwarded to tech team', tr[11]]]),
+      _import_date: whenT, _suppress_slack: true
+    }});
+  }
+
+  // AT new strafe launch bugs (whole sheet - it postdates the July import and
+  // was never imported at all)
+  var sf = SpreadsheetApp.openById('1Pg3Orwbu72Rot4cHroVm54Y7LPjFksML2incj4qbmCc').getSheets()[0].getDataRange().getValues();
+  for (var q = 1; q < sf.length; q++) {
+    var sr = sf[q];
+    if (!sr.some(function (c) { return c !== '' && c != null; })) continue;
+    var whenS = impIso_(sr[0]);
+    if (!whenS) { // d/m/yy text fallback
+      var m = impClean_(sr[0]).match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+      if (m) whenS = '20' + m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2) + 'T09:00:00Z';
+    }
+    if (!whenS) continue;
+    var doneS = /done/i.test(impClean_(sr[8]));
+    var noteBits = [impClean_(sr[9]), impClean_(sr[7]) ? 'Solved ' + impClean_(sr[7]) : ''].filter(String).join('. ');
+    out.push({ src: 'strafe', data: {
+      category: 'tech_issue',
+      instructor_name: impName_(sr[5]),
+      issue_type: /content/i.test(impClean_(sr[4])) ? 'content_error' : 'bug',
+      summary: impSummarise_([impClean_(sr[1]), impClean_(sr[2])].filter(String).join(': '), 'Launch bug (no description)'),
+      priority: 'medium',
+      priority_reason: 'Imported from the strafe launch sheet; no priority recorded there.',
+      section: /app/i.test(sr[3]) ? (/web/i.test(sr[3]) ? 'other' : 'app') : 'website',
+      image_urls: impClean_(sr[6]),
+      request_kind: 'fix', student_involved: 'no',
+      resolved: doneS,
+      resolution_note: doneS ? ('Marked done on the strafe launch sheet.' + (noteBits ? ' ' + noteBits : '')) : '',
+      raw_text: 'Imported from AT new strafe launch bugs and issues (launch catch-up, 22 Aug 2026)\n' + impDump_([
+        ['Date', sr[0]], ['Section', sr[1]], ['Use case', sr[2]], ['App/Web', sr[3]], ['Kind', sr[4]],
+        ['Reported by', sr[5]], ['Media', sr[6]], ['Date solved', sr[7]], ['Status', sr[8]], ['Comments', sr[9]]]),
+      _import_date: whenS, _suppress_slack: true
+    }});
+  }
+
+  out.sort(function (a, b) { return a.data._import_date < b.data._import_date ? -1 : 1; });
+  return out;
+}
+
+function importLegacyBatch_(p) {
+  var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!mk || !p || p.key !== mk) return { ok: false, error: 'unauthorized' };
+  var props = PropertiesService.getScriptProperties();
+  if (p.reset) props.setProperty('LEGACY_IMPORT_IDX', '0');
+  var idx = parseInt(props.getProperty('LEGACY_IMPORT_IDX') || '0', 10);
+  var rows = legacyGapRows_();
+  if (p.count_only) {
+    var bySrc = {}; rows.forEach(function (r) { bySrc[r.src] = (bySrc[r.src] || 0) + 1; });
+    return { ok: true, total: rows.length, idx: idx, by_source: bySrc };
+  }
+  var n = parseInt(p.n, 10) || 3;
+  var end = Math.min(idx + n, rows.length);
+  var results = [];
+  for (var i = idx; i < end; i++) {
+    try {
+      var res = addIssue_(rows[i].data);
+      results.push({ i: i, src: rows[i].src, ok: !!(res && res.ok), merged: !!(res && res.merged),
+        id: (res && res.issue && res.issue.issue_id) ? String(res.issue.issue_id).slice(0, 8) : (res && res.issue_id ? String(res.issue_id).slice(0, 8) : ''),
+        sum: String(rows[i].data.summary || '').slice(0, 80) });
+    } catch (err) {
+      results.push({ i: i, src: rows[i].src, ok: false, error: String(err).slice(0, 160) });
+    }
+    props.setProperty('LEGACY_IMPORT_IDX', String(i + 1));
+  }
+  return { ok: true, from: idx, done: end, total: rows.length, results: results };
+}
+
 
 function importHistoricalIssues() {
   // Guard: refuse to run if imported rows already exist in either sheet.
