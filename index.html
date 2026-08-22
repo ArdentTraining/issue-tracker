@@ -1902,7 +1902,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r97 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r97.1 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3593,8 +3593,13 @@ function draftTemplateFor(id, kind) {
       (fix ? ": " + fix : ".") + "\n\nGive it another go when you get a minute, and shout if anything still looks off. " +
       "Thanks for flagging it - reports like yours make the course better for everyone.\n\n" + me;
   } else if (kind === "followup") {
-    text = "Hi " + name + ",\n\nJust checking in on the issue you reported on " + lesson + ". Did the workaround we suggested do the trick? " +
-      "If everything is working, brilliant - if not, tell us what you're seeing and we'll dig deeper.\n\n" + me;
+    // A shipped fix and a workaround need different words: "did our suggestion
+    // hold" versus "the fix has gone out, does it work for you".
+    text = (i.dev_fixed_at || i.dev_passed_at)
+      ? "Hi " + name + ",\n\nJust checking in on the issue you reported on " + lesson + ". A fix has since gone out, so it should be behaving itself now. " +
+        "Could you give it another go and let us know it's working for you? If anything still looks off, tell us what you're seeing and we'll get straight back on it.\n\n" + me
+      : "Hi " + name + ",\n\nJust checking in on the issue you reported on " + lesson + ". Did the workaround we suggested do the trick? " +
+        "If everything is working, brilliant - if not, tell us what you're seeing and we'll dig deeper.\n\n" + me;
   } else {
     text = "Hi " + name + ",\n\nA quick note about the issue you reported on " + lesson + ": we're still on it. " +
       "It's not forgotten, and we'll let you know the moment it's sorted. Thanks for bearing with us.\n\n" + me;
@@ -3629,10 +3634,17 @@ function actionRows() {
       var since = Math.floor((Date.now() - new Date(i.updated_at || i.submitted_at)) / 864e5);
       var left = Math.max(1, 7 - since);
       var nudge = parseReports(i).filter(function (r) { return String(r.kind).toLowerCase() === "nudge"; }).pop();
+      // Edd, 22 Aug 2026: "we fixed the bug and updated the apps... That is not
+      // a workaround." A TBC that went THROUGH the developers is a shipped fix
+      // awaiting the student's confirmation; one that never did is an
+      // instructor's workaround holding the student together. Same clock, very
+      // different claim, so the badge and the words follow the trail.
+      var isFix = !!(i.dev_fixed_at || i.dev_passed_at);
+      var what = isFix ? "Fix sent" : "Workaround";
       var act = nudge
         ? "Nudged " + fmtDate(nudge.date) + ", still nothing back. Left alone, it resolves itself in " + left + (left === 1 ? " day." : " days.")
-        : "Given " + since + " days ago, no word from the student since. One check-in is worth it; left alone, it resolves itself in " + left + (left === 1 ? " day." : " days.");
-      return { i: i, kind: "followup", word: "Workaround", colour: "var(--medium)", act: act, nudged: !!nudge };
+        : (isFix ? "Fixed and the student told " : "Given ") + since + " days ago, no word from the student since. One check-in is worth it; left alone, it resolves itself in " + left + (left === 1 ? " day." : " days.");
+      return { i: i, kind: "followup", word: what, colour: isFix ? "var(--low)" : "var(--medium)", act: act, nudged: !!nudge };
     }))
     .concat(a.longOpen.map(function (i) { return { i: i, kind: "longopen", word: "Waiting", colour: "var(--high)", act: "Reassure the student" }; }));
   return rows;
