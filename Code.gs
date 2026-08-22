@@ -545,11 +545,16 @@ function findUserByEmail_(email) { return findUserByField_('email', email); }
 
 function userForToken_(token) {
   if (!token) return null;
-  var f = findUserByField_('session_token', token);
+  var f = findUserBySession_(token);
   if (!f) return null;
   if (String(f.user.status).toLowerCase() !== 'active') return null;
-  var exp = new Date(f.user.session_expires);
-  if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) return null;
+  if (f.legacy) {
+    // Legacy single-token row: expiry lives in the column, as it always did.
+    var exp = new Date(f.user.session_expires);
+    if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) return null;
+  } else {
+    if (!f.entry || !isFinite(Number(f.entry.e)) || Number(f.entry.e) < Date.now()) return null;
+  }
   return f.user;
 }
 function permsOf_(user) {
@@ -673,10 +678,60 @@ function tokenExpired_(token) {
   return !isFinite(exp) || Date.now() > exp;
 }
 
+// ---- multi-device sessions (Edd, 22 Aug 2026) ------------------------------
+// One session per account meant every phone login kicked the desktop out and
+// vice versa - "I seem to be asked to login multiple times a day" was two
+// devices taking turns invalidating each other, and from Monday every
+// instructor with a phone and a laptop would have inherited it.
+//
+// The session_token cell now holds a JSON array of {t, e} entries, newest
+// first, capped at MAX_SESSIONS per person. A cell that is NOT JSON is a
+// legacy single token and keeps working exactly as before, read against the
+// session_expires column - which is what keeps the Claude service account
+// (a hand-minted 5-year token that never logs in) alive untouched.
+var MAX_SESSIONS = 6;
+function sessionEntries_(cell) {
+  var raw = String(cell || '').trim();
+  if (!raw) return null;
+  if (raw.charAt(0) !== '[') return 'legacy';
+  try { var a = JSON.parse(raw); return (a && a.length !== undefined) ? a : null; } catch (e) { return null; }
+}
+function findUserBySession_(token) {
+  var sheet = usersSheet_();
+  if (!sheet || !token) return null;
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return null;
+  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  for (var r = 1; r < values.length; r++) {
+    var cell = values[r][idx['session_token']];
+    var entries = sessionEntries_(cell);
+    if (entries === 'legacy') {
+      if (String(cell) === String(token)) return { row: r + 1, sheet: sheet, idx: idx, user: rowToUser_(values[r], idx), legacy: true };
+    } else if (entries) {
+      for (var i = 0; i < entries.length; i++) {
+        if (String(entries[i].t) === String(token)) {
+          return { row: r + 1, sheet: sheet, idx: idx, user: rowToUser_(values[r], idx), entry: entries[i], entries: entries };
+        }
+      }
+    }
+  }
+  return null;
+}
 function startSession_(f) {
   var token = newToken_();
-  setCell_(f, 'session_token', token);
-  setCell_(f, 'session_expires', new Date(Date.now() + SESSION_DAYS * 24 * 3600 * 1000).toISOString());
+  var expiry = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
+  var cell = f.user.session_token;
+  var entries = sessionEntries_(cell);
+  if (entries === 'legacy') {
+    // Carry the existing single token forward as an entry, so logging in on a
+    // second device no longer kills the first - the whole point.
+    var legacyExp = new Date(f.user.session_expires).getTime();
+    entries = [{ t: String(cell), e: isFinite(legacyExp) ? legacyExp : expiry }];
+  } else if (!entries) entries = [];
+  entries.unshift({ t: token, e: expiry });
+  entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > Date.now(); }).slice(0, MAX_SESSIONS);
+  setCell_(f, 'session_token', JSON.stringify(entries));
+  setCell_(f, 'session_expires', new Date(expiry).toISOString());
   return token;
 }
 
@@ -739,8 +794,16 @@ function acceptInvite_(body) {
 }
 
 function logout_(token) {
-  var f = findUserByField_('session_token', token);
-  if (f) { setCell_(f, 'session_token', ''); setCell_(f, 'session_expires', ''); }
+  var f = findUserBySession_(token);
+  if (!f) return { ok: true };
+  if (f.legacy) {
+    f.sheet.getRange(f.row, f.idx['session_token'] + 1).setValue('');
+    f.sheet.getRange(f.row, f.idx['session_expires'] + 1).setValue('');
+  } else {
+    // Log out THIS device only. The others stay signed in, which is the point.
+    var keep = (f.entries || []).filter(function (x) { return String(x.t) !== String(token); });
+    f.sheet.getRange(f.row, f.idx['session_token'] + 1).setValue(keep.length ? JSON.stringify(keep) : '');
+  }
   return { ok: true };
 }
 
@@ -5419,7 +5482,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r97 · 2026-08-22';
+var CODE_STAMP = 'r98 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

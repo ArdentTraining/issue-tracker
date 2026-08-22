@@ -1902,7 +1902,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r97.1 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r98 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3871,12 +3871,14 @@ function renderLive() {
       (unpickedChats().length ? ' There are open conversations in Chatwoot below - pick one up to start.' : ' Paste a Chatwoot link above, or Browse recent, to open one.') + '</p>';
   } else {
     el.innerHTML = cases.map(function (c) {
-      var first = String(c.last_touched_by || c.opened_by || "").split(" ")[0];
+      // Edd, 22 Aug 2026: "things seem to get 'assigned' to a person. we don't
+      // need this feature on this page." The chip read as ownership, and this
+      // page is just what is live in Chatwoot that might be a bug - who
+      // touched it last lives in the trail, not on the card.
       return '<div class="issue-card" data-conv="' + esc(c.conversation_id) + '" onclick="selectLiveCase(\'' + esc(c.conversation_id) + '\')">' +
         '<div class="top">' +
           (liveIsUnread(c) ? '<span class="live-dot" title="New activity since you last looked"></span>' : '') +
           '<strong>' + esc(c.student_name || ("Conversation #" + c.conversation_id)) + '</strong>' +
-          (first ? '<span class="name-chip" title="Last touched by ' + esc(c.last_touched_by || c.opened_by || "") + '">' + esc(first) + '</span>' : '') +
           (c.issue_id ? '<span class="badge type-badge">issue filed</span>' : '') +
           (c.chat_still_open ? '<span class="badge chat-badge" title="The issue is wrapped up, but the conversation is still open in Chatwoot">chat still open in Chatwoot</span>' : '') +
           '<span class="who">' + fmtDate(c.last_activity) + '</span>' +
@@ -3926,9 +3928,7 @@ function renderLiveDetail() {
     '<button class="close" onclick="state.liveSelected=null;hideLiveDetail();markLiveActive();">&times;</button>' +
     '<h2 style="margin:0 0 4px;">' + esc(c.student_name || ("Conversation #" + c.conversation_id)) + '</h2>' +
     '<div class="small muted" style="margin-bottom:10px;">' +
-      (c.student_contact ? esc(c.student_contact) + ' · ' : '') +
-      'opened by ' + esc(c.opened_by || "—") +
-      (c.last_touched_by && c.last_touched_by !== c.opened_by ? ' · last touched by ' + esc(c.last_touched_by) : '') +
+      (c.student_contact ? esc(c.student_contact) : '') +
       (b.link ? ' · <a href="' + esc(b.link) + '" target="_blank" style="color:var(--accent);">open in Chatwoot</a>' : '') +
       // Edd, 19 Aug 2026: three buttons on the row, not five. These two are
       // housekeeping rather than decisions - one re-reads, one walks away - so
