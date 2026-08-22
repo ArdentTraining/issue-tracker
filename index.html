@@ -2472,7 +2472,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r108 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r109 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11974,6 +11974,10 @@ function manualFind() {
         '<button class="ghost small" style="padding:3px 10px;" onclick="manualClearSearch()">Show all of it</button>';
     }
   }
+  // The contents follow the filter. Leaving them whole would offer a list of
+  // links to sections that are no longer on the page, which is the same fault
+  // as a badge that disagrees with its list.
+  renderSubRail();
   manualSpy();
 }
 function manualClearSearch() {
@@ -11981,6 +11985,7 @@ function manualClearSearch() {
   manualUnmark();
   manualSections().forEach(function (s) { s.classList.remove("gone"); });
   if ($("manFound")) $("manFound").innerHTML = "";
+  renderSubRail();
   manualSpy();
 }
 // Highlighting walks the text nodes rather than rewriting innerHTML, so the
