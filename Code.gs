@@ -2943,7 +2943,14 @@ function setChatwootConfig_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
   var props = PropertiesService.getScriptProperties();
-  if (data.token) props.setProperty('CHATWOOT_TOKEN', String(data.token));
+  // THE TRAP (22 Aug 2026): the app's own apiPost overwrites a body field named
+  // `token` with the caller's SESSION token, on every request. Called through
+  // it, this endpoint stored a tracker session as the Chatwoot token and every
+  // Chatwoot call 401'd - which read exactly like an expired Chatwoot token and
+  // burned two of Edd's real ones before the probe caught it. `chatwoot_token`
+  // cannot be clobbered, so it wins; the bare name stays for the curl path.
+  var cw = data.chatwoot_token || data.token;
+  if (cw) props.setProperty('CHATWOOT_TOKEN', String(cw));
   if (data.account_id) props.setProperty('CHATWOOT_ACCOUNT_ID', String(data.account_id));
   return { ok: true };
 }
@@ -5405,7 +5412,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r95.1 · 2026-08-22';
+var CODE_STAMP = 'r95.2 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
