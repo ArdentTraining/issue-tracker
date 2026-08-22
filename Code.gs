@@ -3083,7 +3083,10 @@ function chatwootProbe_(data) {
       out.conv = { id: cj.id, status: cj.status,
         contact_id: sender.id, contact_name: sender.name, contact_email: sender.email,
         last_activity_at: cj.last_activity_at ? new Date(cj.last_activity_at * 1000).toISOString() : null,
-        messages: (cj.messages || []).length, channel: (meta.channel || cj.channel || '') };
+        messages: (cj.messages || []).length, channel: (meta.channel || cj.channel || ''),
+        texts: (cj.messages || []).slice(0, 5).map(function (m) {
+          return { who: m.message_type === 1 ? 'staff' : 'student', at: m.created_at ? new Date(m.created_at * 1000).toISOString() : '', text: String(m.content || '').slice(0, 600) };
+        }) };
     } catch (e) { out.conv_error = String(e).slice(0, 160); }
     return { ok: true, probe: out };
   }
