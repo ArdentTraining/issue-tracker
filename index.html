@@ -875,8 +875,10 @@
     display: flex; align-items: center; justify-content: center;
   }
   .man-shot { margin: 4px 0 18px; }
+  /* max-width, not width: the rail strip is 140px wide and would look absurd
+     blown up to the 760px column. Wide shots still fill it. */
   .man-shot img {
-    display: block; width: 100%; height: auto; border: 1px solid var(--line);
+    display: block; max-width: 100%; height: auto; border: 1px solid var(--line);
     border-radius: 8px; background: var(--bg);
   }
   .man-shot figcaption { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
@@ -11619,7 +11621,7 @@ function printManual() {
   <p>An invite email arrives with the subject <span class="ui">Your Bugs invite</span>. Open the link, choose a password of at least eight characters, type it again to confirm, and press <span class="ui">Create account</span>. That drops you straight into the app, so there is no second sign-in to do.</p>
   <p>If the link says it is not valid, it has already been used or it has expired. Ask Edd for a fresh one rather than trying it again.</p>
   <h4>Every time after that</h4>
-  <figure class="man-shot" data-img="manual/01-signin.png" data-cap="The sign-in box. Same email you got the invite on."></figure>
+  <figure class="man-shot" data-img="manual/01-signin.jpg" data-cap="The sign-in box. Same email you got the invite on."></figure>
   <p>Email and password, then <span class="ui">Sign in</span>. Pressing Enter in either box does the same thing.</p>
   <p>Get it wrong and it says <em>Wrong email or password</em> without telling you which, which is deliberate: it stops the box being used to work out whose email addresses are registered. Eight wrong goes in a row locks that address for ten minutes.</p>
   <p>Forgotten it, press <span class="ui">Forgot your password?</span>, put your email in, and a link comes through that lasts an hour. The message you get back is the same whether or not the address is registered, for the same reason as above, so check your spam folder before assuming it did not send.</p>
@@ -11638,7 +11640,7 @@ function printManual() {
 <section id="man-around" data-perm="" data-title="Finding your way around">
   <h3>Finding your way around</h3>
   <p>Everything hangs off the icon rail down the left. On a phone that same rail becomes a bar across the bottom, with the same icons in the same order.</p>
-  <figure class="man-shot" data-img="manual/02-rail.png" data-cap="The rail. What you see depends on your account, so yours may be shorter or longer than a colleague's."></figure>
+  <figure class="man-shot" data-img="manual/02-rail.jpg" data-cap="The rail. What you see depends on your account, so yours may be shorter or longer than a colleague's."></figure>
   <div class="man-note">
     <strong>You land on Actions, not on a blank form</strong>
     Opening the app puts you on the work that is waiting, because that is the question you actually came in with. Logging something new is one press of <span class="ui">New</span> from wherever you are.
@@ -11660,7 +11662,7 @@ function printManual() {
   <h3>Logging a report</h3>
   <p class="lede">The one thing everybody does, so it is worth doing once properly.</p>
   <p>Press <span class="ui">New</span> on the rail. Your name is already at the top under <span class="ui">Logging as</span>, so there is nothing to pick.</p>
-  <figure class="man-shot" data-img="manual/03-newreport.png" data-cap="The form before extraction. Three things on it: what kind of report, where the words come from, and any screenshots."></figure>
+  <figure class="man-shot" data-img="manual/03-newreport.jpg" data-cap="The form before extraction. Three things on it: what kind of report, where the words come from, and any screenshots."></figure>
 
   <h4>Step one: what kind of report is this?</h4>
   <p>Two buttons at the top.</p>
@@ -11688,7 +11690,7 @@ function printManual() {
   <h4>Step four: press Extract</h4>
   <p>This is the bit that does the work. A panel comes up saying <span class="ui">Reading the report…</span> and starts counting seconds after a few. Usually it is quick. A long conversation can take up to a minute, and it tells you so rather than leaving you wondering.</p>
   <p>When it lands, a section called <span class="ui">Extracted details</span> appears with the fields filled in, and the status line says <em>Done. Check the fields and edit anything that is off.</em></p>
-  <figure class="man-shot" data-img="manual/04-extracted.png" data-cap="Extracted details. Everything here is editable, and the folded headings show what is inside without opening them."></figure>
+  <figure class="man-shot" data-img="manual/04-extracted.jpg" data-cap="Extracted details. Everything here is editable, and the folded headings show what is inside without opening them."></figure>
   <p>Underneath there is a one-tap question, <span class="ui">Did that come out right?</span>, with <span class="ui">Spot on</span> and <span class="ui">Needed fixing</span>. Pressing one takes a second and it is how the extraction gets better, so please do use it.</p>
   <div class="man-note warn">
     <strong>If the extraction fails</strong>
@@ -11735,6 +11737,7 @@ function printManual() {
     <tr><td><span class="ui">How it's filed</span></td><td>Browser or app, which part of the platform, whether this is a <span class="ui">Fix</span> or an <span class="ui">Improvement</span>, the issue type, and the reason behind the priority. An improvement goes on the backlog quietly: no troubleshooting steps, no alert, nobody paged.</td></tr>
     <tr><td><span class="ui">Where did this end up?</span></td><td>Anything that happened after the pasted conversation. There is a <span class="ui">Use suggested text</span> button that fills it from what the conversation showed. If the conversation did not show how it ended it says so rather than inventing something, and that one is yours to write.</td></tr>
   </table>
+  <figure class="man-shot" data-img="manual/04b-groups.jpg" data-cap="Severity and priority in the open, then the folded groups. Each heading previews what is inside it."></figure>
   <p>Under the folds there is a tick for <span class="ui">This student needs no further contact</span>. That is for when we have worked round it by hand and they have what they need. The fault stays open for the developers, we just stop chasing this one student about it.</p>
 </section>
 
@@ -11749,7 +11752,7 @@ function printManual() {
   <p>Comes up when the report points at a lesson but not at which part of it. If it is in the conversation, or you can find out, put the number in. If there is no way to know, press skip. Nobody minds a skip, and a wrong number is worse than none.</p>
 
   <h4>Is this the same fault, already on the log?</h4>
-  <figure class="man-shot" data-img="manual/06-dup.png" data-cap="The duplicate picker. Your own report sits at the bottom, deliberately not styled as a card, so it cannot be mistaken for one of the candidates."></figure>
+  <figure class="man-shot" data-img="manual/06-dup.jpg" data-cap="The duplicate picker. Your own report sits at the bottom, deliberately not styled as a card, so it cannot be mistaken for one of the candidates."></figure>
   <p>Up to three candidates, each showing who logged it, when, its priority and status, and enough of the summary to judge. Pick the one that is the same fault and press <span class="ui">Yes - add mine to it</span>.</p>
   <p>Adding it on keeps one trail and pushes the fault up the priority list. If you are not sure, log it separately: merging two later is easy, and untangling one entry that holds two different faults is not.</p>
 
@@ -11781,7 +11784,7 @@ function printManual() {
 <section id="man-checklist" data-perm="log" data-title="The troubleshooting checklist">
   <h3>The troubleshooting checklist</h3>
   <p>Tech issues get a seventeen-item checklist between the filing fields and the outcome box. It is pre-filled from the conversation, so a lot of it is already ticked before you touch it.</p>
-  <figure class="man-shot" data-img="manual/05-checklist.png" data-cap="Each row has three buttons: the verb, N/A, and Not yet. Ticking saves in the background."></figure>
+  <figure class="man-shot" data-img="manual/05-checklist.jpg" data-cap="Each row has three buttons: the verb, N/A, and Not yet. Ticking saves in the background."></figure>
   <p>It exists because a developer picking up a ticket needs to know what has already been ruled out. Without it the first reply is always the same three questions, and the student waits another day for us to ask what browser they are on.</p>
   <p>Three groups: identify and record, account and login, and standard fixes. Mark anything that does not apply as <span class="ui">N/A</span> rather than leaving it blank, because a blank reads as "nobody looked" and an N/A reads as "looked, does not apply".</p>
   <p>If there is no student on the report, or it is about our own systems, you get a shorter twelve-item version in staff wording: the account and student steps drop out, since they cannot apply.</p>
@@ -11790,7 +11793,7 @@ function printManual() {
 <section id="man-submit" data-perm="log" data-title="Submitting">
   <h3>Submitting</h3>
   <p>The buttons live in a bar pinned to the bottom of the screen, so they are always in reach however long the form has got.</p>
-  <figure class="man-shot" data-img="manual/07-submit.png" data-cap="The submit row. Which buttons show depends on what the form knows."></figure>
+  <figure class="man-shot" data-img="manual/07-submit.jpg" data-cap="The submit row. Which buttons show depends on what the form knows."></figure>
   <table class="man-tbl">
     <tr><th>Button</th><th>What it does</th></tr>
     <tr><td><span class="ui">Submit issue</span></td><td>Logs it and leaves it open. Relabels itself to <span class="ui">Submit all 3 issues</span> for a split, or <span class="ui">Add update</span> when it is going onto an existing report.</td></tr>
@@ -11823,7 +11826,7 @@ function printManual() {
   <h3>Waiting on me</h3>
   <p class="lede">The list that tells you what to do next. If it is empty, you are done.</p>
   <p>Everything here needs an instructor rather than a developer. It is shared: the team is small and any of us can pick up any of it, so what you see is what everybody sees. The number on the rail is the length of this list, counted by the same function that draws it, so the badge and the list can never disagree.</p>
-  <figure class="man-shot" data-img="manual/08-actions.png" data-cap="Each row: a coloured word saying what kind of job it is, the issue, and the buttons to deal with it."></figure>
+  <figure class="man-shot" data-img="manual/08-actions.jpg" data-cap="Each row: a coloured word saying what kind of job it is, the issue, and the buttons to deal with it."></figure>
   <p>Empty state reads <em>Nothing waiting on you. Have a cup of tea.</em> That is not a joke at your expense, it means it.</p>
   <table class="man-tbl">
     <tr><th>Word</th><th>What it wants</th></tr>
@@ -11850,7 +11853,7 @@ function printManual() {
 <section id="man-track" data-perm="manage" data-title="All issues and the Board">
   <h3>All issues and the Board</h3>
   <p>Two ways of looking at the same log. <span class="ui">All issues</span> is a searchable list, <span class="ui">Board</span> is six columns you can drag cards between.</p>
-  <figure class="man-shot" data-img="manual/09-allissues.png" data-cap="Three tiles at the top, the control bar, then the list. Whatever filters are on show as chips underneath, each with a cross."></figure>
+  <figure class="man-shot" data-img="manual/09-allissues.jpg" data-cap="Three tiles at the top, the control bar, then the list. Whatever filters are on show as chips underneath, each with a cross."></figure>
   <h4>Finding one thing</h4>
   <p>The search box filters as you type, across the student's name, the lesson, the summary, the device, the resolution note, the reference, and every word of the original report. If it matched something your filters are hiding, it tells you underneath: <em>7 more matches "smith" outside these filters</em>, with a button to clear them.</p>
   <h4>Filtering</h4>
@@ -11861,7 +11864,7 @@ function printManual() {
   <h4>Sorting</h4>
   <p>Priority is the default, which is triage order: priority, then how many people have reported it, then newest. The others are longest open, newest, most reported, oldest first, and reported by name.</p>
   <h4>The Board</h4>
-  <figure class="man-shot" data-img="manual/10-board.png" data-cap="Six columns. The column is the status, which is why the cards do not repeat it on a badge."></figure>
+  <figure class="man-shot" data-img="manual/10-board.jpg" data-cap="Six columns. The column is the status, which is why the cards do not repeat it on a badge."></figure>
   <p>Open, In progress, With devs or course team, Fixed awaiting check, Resolved TBC, and Resolved. Dragging a card to another column changes its status.</p>
   <div class="man-note warn">
     <strong>Careful on a trackpad</strong>
@@ -11872,7 +11875,7 @@ function printManual() {
 <section id="man-detail" data-perm="log" data-title="Opening an issue">
   <h3>Opening an issue</h3>
   <p>Click any card or any Actions row. On a wide screen the detail docks beside the list and you can drag the divider to resize it. On a phone it slides in over the top with a <span class="ui">← Back</span> button.</p>
-  <figure class="man-shot" data-img="manual/11-detail.png" data-cap="The detail pane. Everything you need to act sits above the folds; the reference material is folded away below."></figure>
+  <figure class="man-shot" data-img="manual/11-detail.jpg" data-cap="The detail pane. Everything you need to act sits above the folds; the reference material is folded away below."></figure>
   <p>It reads top to bottom in the order you actually need it.</p>
   <ol class="man-steps">
     <li><strong>The badges.</strong> The reference like <code>#5C8EC7</code>, the priority, the status, and how many reports have rolled into it. Clicking the reference copies it, which is what you want when pasting it into Slack.</li>
@@ -11917,7 +11920,7 @@ function printManual() {
   <h3>Live chats</h3>
   <p class="lede">A student is in touch right now and you want to know what to say.</p>
   <p><span class="ui">Chats</span> pulls a Chatwoot conversation in, reads it, and writes you a brief. The report then falls out of the conversation rather than being typed up separately afterwards.</p>
-  <figure class="man-shot" data-img="manual/13-chats.png" data-cap="The case list on the left, the brief on the right. Cases are shared, so anyone can pick one up."></figure>
+  <figure class="man-shot" data-img="manual/13-chats.jpg" data-cap="The case list on the left, the brief on the right. Cases are shared, so anyone can pick one up."></figure>
   <h4>Opening a case</h4>
   <p>Paste a Chatwoot link or number and press <span class="ui">Open a case</span>, or press <span class="ui">Browse recent</span> and pick one. Underneath the list there is an <span class="ui">Open in Chatwoot</span> section showing conversations that are open in Chatwoot with no case on them yet.</p>
   <h4>What the brief tells you</h4>
@@ -11953,7 +11956,7 @@ function printManual() {
 <section id="man-students" data-perm="log" data-title="Messages to students">
   <h3>Messages to students</h3>
   <p>Any button that says <span class="ui">Draft</span> or <span class="ui">Nudge</span> opens the same box: a suggested message, written in your voice, that you edit and send yourself.</p>
-  <figure class="man-shot" data-img="manual/14-draft.png" data-cap="A draft. Read it through and change anything that is not how you would put it."></figure>
+  <figure class="man-shot" data-img="manual/14-draft.jpg" data-cap="A draft. Read it through and change anything that is not how you would put it."></figure>
   <p>The line at the top says it is a suggested draft, and it stays there on purpose. This message goes out under your name, so you should always be able to tell what you are signing.</p>
   <p>Sometimes an amber box says <span class="ui">Before you send, do this:</span> and names something on our side, like a password reset or a course assignment. The draft is written as though it has already been done, so do it before the message goes.</p>
   <p><span class="ui">Copy</span> takes it, <span class="ui">Open in Chatwoot</span> takes you to the conversation. On some drafts there is a marker to say you have sent it, which flips the issue from Scanned to Waiting in Actions so nobody chases it twice.</p>
@@ -11963,7 +11966,7 @@ function printManual() {
 <section id="man-feedback" data-perm="" data-title="Telling us about the tracker">
   <h3>Telling us about the tracker</h3>
   <p>The <span class="ui">Feedback</span> pill sits in the bottom right of every page. It is for this app, not for the courses: something in here broken, confusing, or an idea to make it better.</p>
-  <figure class="man-shot" data-img="manual/15-feedback.png" data-cap="One box. No category to pick and no urgency to rate, because both are worked out from what you write."></figure>
+  <figure class="man-shot" data-img="manual/15-feedback.jpg" data-cap="One box. No category to pick and no urgency to rate, because both are worked out from what you write."></figure>
   <p>Write it in plain English and press <span class="ui">Send</span>. There is deliberately no dropdown asking whether it is a bug or an idea, and no tick for whether it is blocking you, because both are answerable from what you have written and nobody should have to classify their own bug report before they can send it.</p>
   <p>It quietly takes a picture of the screen you are on and attaches where you were, the last few errors, and the last dozen things you did. That is what turns "it didn't save" into something fixable without a conversation. It never includes your password or your login token.</p>
   <p><span class="ui">Take a screenshot now</span> hides the box, draws the page, and brings the box back with the picture attached, which is easier than alt-printscreen and finding the file.</p>

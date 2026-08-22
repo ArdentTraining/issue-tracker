@@ -14,6 +14,13 @@
 !index.html
 !reports/
 !reports/index.html
+# The user manual's screenshots. Images only, and nothing in them is real: the
+# manual is served from this public repo, so a shot of the live board would put
+# student contact details on the open internet. See manual/README.md.
+!manual/
+!manual/*.jpg
+!manual/*.png
+!manual/README.md
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
