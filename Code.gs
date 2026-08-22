@@ -343,6 +343,7 @@ function doGet(e) {
     if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
     if (action === 'getInvite') return jsonOut(getInvite_(p.token));   // public: validate an invite link
     if (action === 'mirror') return jsonOut(mirror_(p));               // read-only, key-gated mirror for the local Cowork sync
+    if (action === 'readSheet') return jsonOut(readSheet_(p));         // read-only, MIRROR_KEY-gated: read a tab of any spreadsheet Edd can open (legacy-form reconciliation, r101)
 
     var user = userForToken_(p.token);
     if (!user) return jsonOut({ ok: false, error: 'unauthorized' });
@@ -1158,6 +1159,39 @@ function getInstructorsSheet_() { return sheetByName_(INSTRUCTORS_SHEET); }
 // more (no writes, no login, no account access). Rotate it by changing the
 // property. Returns the most recent issues (newest first) plus all feedback.
 // Optional params: key (required), limit (default 50), since (ISO date).
+// r101 (22 Aug 2026): key-gated read of an external spreadsheet tab, so the
+// legacy form sheets (Tech Fix Requests, Course Errors responses, strafe
+// launch bugs) can be reconciled against the tracker before launch. Runs as
+// Edd, so it can open anything Edd can. Read-only; never writes.
+function readSheet_(p) {
+  var key = PropertiesService.getScriptProperties().getProperty('MIRROR_KEY');
+  if (!key || !p || p.key !== key) return { ok: false, error: 'unauthorized' };
+  if (!p.sheet_id) return { ok: false, error: 'sheet_id required' };
+  try {
+    var ss = SpreadsheetApp.openById(String(p.sheet_id));
+    var tabs = ss.getSheets().map(function (sh) { return { name: sh.getName(), gid: sh.getSheetId(), rows: sh.getLastRow(), cols: sh.getLastColumn() }; });
+    if (p.list_tabs) return { ok: true, title: ss.getName(), tabs: tabs };
+    var sheet = null;
+    if (p.gid != null && p.gid !== '') {
+      var gid = parseInt(p.gid, 10);
+      ss.getSheets().forEach(function (sh) { if (sh.getSheetId() === gid) sheet = sh; });
+    } else if (p.tab) {
+      sheet = ss.getSheetByName(String(p.tab));
+    }
+    if (!sheet) return { ok: false, error: 'tab not found', tabs: tabs };
+    var lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+    if (!lastRow || !lastCol) return { ok: true, title: ss.getName(), tab: sheet.getName(), values: [] };
+    var start = parseInt(p.start_row, 10) || 1;
+    var max = parseInt(p.max_rows, 10) || 1000;
+    var n = Math.min(max, lastRow - start + 1);
+    if (n < 1) return { ok: true, title: ss.getName(), tab: sheet.getName(), values: [], last_row: lastRow };
+    var values = sheet.getRange(start, 1, n, lastCol).getDisplayValues();
+    return { ok: true, title: ss.getName(), tab: sheet.getName(), start_row: start, last_row: lastRow, values: values };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 function mirror_(p) {
   var key = PropertiesService.getScriptProperties().getProperty('MIRROR_KEY');
   if (!key || !p || p.key !== key) return { ok: false, error: 'unauthorized' };
@@ -5482,7 +5516,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r99 · 2026-08-22';
+var CODE_STAMP = 'r101 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
