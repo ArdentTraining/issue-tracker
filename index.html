@@ -801,6 +801,123 @@
     body.shell .drawer .close { left: 10px; right: auto; color: var(--text); font-size: 0; }
     body.shell .drawer .close::before { content: "\2190  Back"; font-size: 14px; }
   }
+
+  /* ===================== ROUND 101: THE USER MANUAL =====================
+     A "?" at the bottom of the rail opens the manual for whoever is signed
+     in. Every section carries a data-perm; openManual() hides the ones this
+     account has no permission for, so an instructor never reads a page about
+     a queue they cannot see. One document, filtered, rather than a folder of
+     near-identical PDFs that drift apart.
+
+     The panel reuses .overlay + .drawer so it behaves like the issue detail
+     everyone already knows: click the dark, or the cross, to get out. */
+  .help-drawer { width: 100%; }
+  @media (min-width: 761px) { .help-drawer { width: min(1180px, 92vw); } }
+  .man-head {
+    position: sticky; top: -20px; z-index: 3; margin: -20px -20px 0; padding: 16px 56px 14px 20px;
+    background: var(--surface); border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  .man-head h2 { margin: 0; font-family: "Hedvig Letters Serif", Georgia, serif; font-weight: 400; font-size: 21px; }
+  .man-head .man-who { font-size: 12.5px; color: var(--muted); }
+  .man-head .man-acts { margin-left: auto; display: flex; gap: 8px; }
+  .man-body { display: grid; grid-template-columns: 1fr; gap: 24px; padding-top: 18px; }
+  @media (min-width: 900px) { .man-body { grid-template-columns: 210px 1fr; } }
+  .man-toc { align-self: start; }
+  @media (min-width: 900px) { .man-toc { position: sticky; top: 74px; max-height: calc(100vh - 130px); overflow-y: auto; } }
+  .man-toc h3 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 0 0 8px; }
+  .man-toc a {
+    display: block; padding: 5px 9px; border-radius: 7px; font-size: 13px;
+    color: var(--muted); text-decoration: none; line-height: 1.3; cursor: pointer;
+  }
+  .man-toc a:hover { background: var(--bg); color: var(--text); }
+  .man-toc a.on { background: var(--surface-2); color: var(--text); font-weight: 600; }
+  .man-doc { max-width: 760px; font-size: 14.5px; line-height: 1.6; }
+  .man-doc section { scroll-margin-top: 80px; padding-bottom: 10px; }
+  .man-doc section + section { border-top: 1px solid var(--line); padding-top: 26px; margin-top: 12px; }
+  .man-doc h3 {
+    font-family: "Hedvig Letters Serif", Georgia, serif; font-weight: 400; font-size: 20px;
+    color: var(--text); text-transform: none; letter-spacing: -0.01em; margin: 0 0 10px;
+  }
+  .man-doc h4 { font-size: 14.5px; font-weight: 600; color: var(--text); margin: 22px 0 6px; }
+  .man-doc p { margin: 0 0 11px; }
+  .man-doc ul, .man-doc ol { margin: 0 0 12px; padding-left: 20px; }
+  .man-doc li { margin-bottom: 5px; }
+  .man-doc .lede { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .man-doc code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 6px; white-space: nowrap;
+  }
+  /* A button or label quoted from the app, so the words on the page and the
+     words on the screen are visibly the same thing. */
+  .man-doc .ui {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 6px;
+  }
+  .man-note {
+    border: 1px solid var(--accent); background: rgba(94,114,235,0.10);
+    border-radius: 8px; padding: 11px 14px; margin: 0 0 14px; font-size: 13.5px;
+  }
+  .man-note.warn { border-color: var(--medium); background: rgba(254,193,149,0.10); }
+  .man-note.stop { border-color: var(--high); background: rgba(255,145,144,0.12); }
+  .man-note strong { display: block; margin-bottom: 3px; }
+  .man-note p:last-child { margin-bottom: 0; }
+  .man-steps { counter-reset: manstep; padding-left: 0; list-style: none; }
+  .man-steps > li {
+    counter-increment: manstep; position: relative; padding-left: 34px; margin-bottom: 13px;
+  }
+  .man-steps > li::before {
+    content: counter(manstep); position: absolute; left: 0; top: 0;
+    width: 23px; height: 23px; border-radius: 999px; background: var(--surface-2);
+    color: var(--text); font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .man-shot { margin: 4px 0 18px; }
+  .man-shot img {
+    display: block; width: 100%; height: auto; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg);
+  }
+  .man-shot figcaption { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .man-tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 0 0 14px; }
+  .man-tbl th, .man-tbl td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .man-tbl th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .man-tbl tr:last-child td { border-bottom: none; }
+  .man-scroll { overflow-x: auto; }
+
+  /* ---- printing, which is how the PDF gets made ----
+     No library and no CDN: the browser already writes a better PDF than
+     anything we would bundle, and it stays in step with the manual because
+     it IS the manual. Everything except the document comes off the page. */
+  @media print {
+    body.manual-print > *:not(#helpOverlay) { display: none !important; }
+    body.manual-print #helpOverlay { position: static !important; display: block !important; background: none !important; overflow: visible !important; }
+    body.manual-print #helpOverlay .drawer {
+      position: static !important; width: auto !important; max-width: none !important;
+      height: auto !important; overflow: visible !important; border: none !important;
+      background: #fff !important; color: #000 !important; padding: 0 !important;
+    }
+    body.manual-print .man-head { position: static !important; margin: 0 0 18px; padding: 0 0 12px; border-bottom: 1px solid #999; background: none !important; }
+    body.manual-print .man-head h2 { color: #000; }
+    body.manual-print .man-head .man-acts, body.manual-print #helpOverlay .close, body.manual-print .man-toc { display: none !important; }
+    body.manual-print .man-body { display: block !important; padding-top: 0; }
+    body.manual-print .man-doc { max-width: none; color: #000; font-size: 11pt; line-height: 1.45; }
+    body.manual-print .man-doc h3 { color: #000; page-break-after: avoid; break-after: avoid; }
+    body.manual-print .man-doc h4 { color: #000; page-break-after: avoid; break-after: avoid; }
+    body.manual-print .man-doc .lede, body.manual-print .man-shot figcaption, body.manual-print .man-tbl th { color: #444; }
+    body.manual-print .man-doc section { page-break-before: always; break-before: page; border-top: none !important; padding-top: 0; margin-top: 0; }
+    body.manual-print .man-doc section.man-first { page-break-before: auto; break-before: auto; }
+    body.manual-print .man-shot, body.manual-print .man-note, body.manual-print .man-tbl { page-break-inside: avoid; break-inside: avoid; }
+    body.manual-print .man-shot img { border: 1px solid #bbb; max-height: 14cm; width: auto; max-width: 100%; }
+    body.manual-print .man-note { border: 1px solid #999 !important; background: #f4f4f4 !important; }
+    body.manual-print .man-doc .ui, body.manual-print .man-doc code { background: #eee; border-color: #ccc; color: #000; }
+    body.manual-print .man-tbl th, body.manual-print .man-tbl td { border-bottom: 1px solid #ccc; }
+    body.manual-print .man-shot.pending { display: none !important; }
+    body.manual-print .man-steps > li::before { background: #ddd; color: #000; }
+    @page { margin: 16mm 14mm; }
+  }
+
 </style>
 </head>
 <body>
@@ -853,6 +970,14 @@
   <!-- The user menu (theme, password, log out) moves down here in the shell;
        applyShell() carries the existing #userbox node in, so it is the same
        menu with the same handlers, not a second copy. -->
+  <!-- Round 101: the manual. Deliberately NOT permission-gated - everybody gets
+       a manual, it just gets shorter the fewer permissions the account holds.
+       Sits at the foot of the rail, under the last section and above the user
+       menu, so it is in the same corner on every page. -->
+  <button type="button" class="rail-item" id="railHelp" onclick="openManual()" title="User manual">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.35 9.2a2.7 2.7 0 0 1 5.25.9c0 1.8-2.6 2.15-2.6 3.9"/><line x1="12" y1="17.3" x2="12" y2="17.3"/></svg>
+    <span class="ri-word">Help</span>
+  </button>
   <div class="rail-foot" id="railFoot"></div>
 </nav>
 
@@ -1898,7 +2023,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r100.1 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r101 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2686,6 +2811,9 @@ function shortId(i) {
 function init() {
   initPressFeedback();
   mountHelpDots();
+  // Round 101: the contents list follows the manual as it scrolls.
+  var _manDrawer = $("helpDrawer");
+  if (_manDrawer) _manDrawer.addEventListener("scroll", manualSpy);
   scheduleSaveBar();
   var cs = $("f_courier");
   if (cs) cs.innerHTML = COURIERS.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("");
@@ -11243,6 +11371,157 @@ function markFeedback(id, status) {
 
 // ============================ GO ============================
 init();
+
+// ============================ ROUND 101: THE MANUAL ============================
+// One document in the page, filtered by permission on open. The alternative was
+// a folder of PDFs, one per role, which drift apart the moment anything changes
+// and are never open when somebody needs them. This is always the same age as
+// the app it describes, because it ships inside it.
+//
+// Sections carry data-perm. Empty means everybody; otherwise it is the key the
+// account must hold. Anything gated off is REMOVED from the copy that gets
+// shown, not merely hidden, so it cannot be found by scrolling, printed into
+// the PDF, or read out of the DOM by somebody curious.
+var MANUAL_ROLES = [
+  ["users", "Admin"], ["dev", "Developer"], ["course", "Course team"],
+  ["analytics", "Analytics"], ["manage", "Instructor"], ["log", "Instructor"]
+];
+var manualBuiltFor = null;   // the perm signature the current copy was built for
+
+function manualRoleLabel() {
+  var p = state.perms || {};
+  for (var i = 0; i < MANUAL_ROLES.length; i++) {
+    if (p[MANUAL_ROLES[i][0]]) return MANUAL_ROLES[i][1];
+  }
+  return "";
+}
+
+function manualPermSig() {
+  var p = state.perms || {};
+  return ["log", "manage", "analytics", "dev", "course", "users"]
+    .map(function (k) { return p[k] ? k : ""; }).join(",");
+}
+
+// The gated-away sections are cut from a stored master, so re-opening after a
+// view-as switch rebuilds from the full text rather than from what survived
+// the last pass. Cutting a cut copy would only ever lose more.
+var manualMaster = null;
+
+function buildManual() {
+  var doc = $("manDoc");
+  if (!doc) return;
+  if (manualMaster === null) manualMaster = doc.innerHTML;
+  doc.innerHTML = manualMaster;
+
+  var p = state.perms || {};
+  var secs = Array.prototype.slice.call(doc.querySelectorAll("section"));
+  var kept = [];
+  secs.forEach(function (s) {
+    var need = s.getAttribute("data-perm") || "";
+    if (need && !p[need]) { s.parentNode.removeChild(s); return; }
+    kept.push(s);
+  });
+  if (kept.length) kept[0].classList.add("man-first");   // no page break before page one
+
+  // Contents, built from what actually survived, so there is never a link to a
+  // section this account cannot see.
+  var toc = $("manTocList");
+  if (toc) {
+    toc.innerHTML = "";
+    kept.forEach(function (s) {
+      var a = document.createElement("a");
+      a.textContent = s.getAttribute("data-title") || s.id;
+      a.setAttribute("data-for", s.id);
+      a.href = "#" + s.id;
+      a.onclick = function (e) {
+        e.preventDefault();
+        s.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      toc.appendChild(a);
+    });
+  }
+
+  // Screenshots load only now, and only if they are there. A manual with a
+  // broken-image icon in it reads as neglected, so a missing file degrades to
+  // a quiet dashed box instead.
+  Array.prototype.slice.call(doc.querySelectorAll("figure[data-img]")).forEach(function (f) {
+    var src = f.getAttribute("data-img");
+    var cap = f.getAttribute("data-cap") || "";
+    var img = document.createElement("img");
+    img.alt = cap || "Screenshot from the app";
+    img.loading = "lazy";
+    img.onerror = function () {
+      f.classList.add("pending");
+      f.innerHTML = "";
+      f.textContent = cap ? ("Screenshot to come: " + cap) : "Screenshot to come.";
+    };
+    img.src = src;
+    f.appendChild(img);
+    if (cap) {
+      var c = document.createElement("figcaption");
+      c.textContent = cap;
+      f.appendChild(c);
+    }
+  });
+
+  var who = $("manWho");
+  if (who) {
+    var role = manualRoleLabel();
+    who.textContent = role ? (role + " edition") : "";
+  }
+  manualBuiltFor = manualPermSig();
+}
+
+function openManual() {
+  var ov = $("helpOverlay");
+  if (!ov) return;
+  // Rebuild when the permissions have moved since last time, which is what
+  // happens when an admin uses the view-as bar.
+  if (manualBuiltFor !== manualPermSig()) buildManual();
+  ov.classList.add("show");
+  var d = $("helpDrawer");
+  if (d) { d.scrollTop = 0; manualSpy(); }
+}
+
+function closeManual() {
+  var ov = $("helpOverlay");
+  if (ov) ov.classList.remove("show");
+}
+
+// Which section is on screen, so the contents list says where you are. Cheap
+// enough to run on scroll without throttling: it is a dozen getBoundingClientRect
+// calls on a list that is only in the DOM while the manual is open.
+function manualSpy() {
+  var doc = $("manDoc"), toc = $("manTocList");
+  if (!doc || !toc) return;
+  var secs = doc.querySelectorAll("section");
+  var here = null;
+  for (var i = 0; i < secs.length; i++) {
+    if (secs[i].getBoundingClientRect().top <= 140) here = secs[i].id;
+  }
+  if (!here && secs.length) here = secs[0].id;
+  Array.prototype.slice.call(toc.querySelectorAll("a")).forEach(function (a) {
+    a.classList.toggle("on", a.getAttribute("data-for") === here);
+  });
+}
+
+// The PDF. The browser's own print-to-PDF beats anything we could bundle, it
+// needs no library and no CDN, and it cannot go stale because it IS the manual
+// rather than a copy of it. The print stylesheet takes the app off the page.
+function printManual() {
+  if (!$("helpOverlay") || !$("helpOverlay").classList.contains("show")) openManual();
+  document.body.classList.add("manual-print");
+  var done = function () {
+    document.body.classList.remove("manual-print");
+    window.removeEventListener("afterprint", done);
+  };
+  window.addEventListener("afterprint", done);
+  // Safari and some Chrome builds never fire afterprint from a blocked dialog,
+  // so this is the belt to that braces.
+  setTimeout(function () { document.body.classList.remove("manual-print"); }, 60000);
+  setTimeout(function () { window.print(); }, 60);
+}
+
 </script>
 <!-- Busy overlay (Edd, FB-0169): a proper can't-miss "working on it" while a
      slow call runs, instead of a small toast in the corner. -->
@@ -11292,5 +11571,463 @@ init();
     </div>
   </div>
 </div>
+<!-- ===================== ROUND 101: THE MANUAL ITSELF =====================
+     Written once, filtered by permission. Every <section> carries data-perm:
+     an empty one is for everybody, otherwise it is the permission key the
+     account must hold (log, manage, dev, course, analytics, users). Sections
+     for a permission this account lacks are removed on open, and the contents
+     list is built from whatever is left, so there is never a link to a page
+     that is not there.
+
+     Screenshots live as files under manual/ rather than base64 in here, so
+     this file stays a sensible size and the pictures only load when somebody
+     actually opens the manual. Nothing in them is real: every student name,
+     email and report in a screenshot is made up, because this file is served
+     from a PUBLIC repo and anyone can read it. Keep it that way. -->
+<div class="overlay" id="helpOverlay" onclick="if(event.target===this)closeManual()">
+  <div class="drawer help-drawer" id="helpDrawer">
+    <button class="close" onclick="closeManual()" aria-label="Close the manual">&times;</button>
+    <div class="man-head">
+      <h2>User manual</h2>
+      <span class="man-who" id="manWho"></span>
+      <div class="man-acts">
+        <button class="ghost small" style="padding:5px 12px;" onclick="printManual()" title="Opens your browser's print box. Choose 'Save as PDF' as the destination to keep a copy.">Download PDF</button>
+      </div>
+    </div>
+    <div class="man-body">
+      <nav class="man-toc" id="manToc" aria-label="Manual contents"><h3>Contents</h3><div id="manTocList"></div></nav>
+      <article class="man-doc" id="manDoc">
+
+<section id="man-intro" data-perm="" data-title="What this is for">
+  <h3>What this is for</h3>
+  <p class="lede">Five minutes here saves an afternoon later. Read it once before your first report.</p>
+  <p>A student emails to say the tide diagram in Day Skipper module 9 is wrong. We fix it. Three weeks later a different instructor gets the same email, because nobody outside that first conversation ever knew it happened.</p>
+  <p>That is the gap this app fills. Everything a student runs into, and everything we spot ourselves, goes in one place. So when the same fault turns up twice we can see it is the same fault, and the second student gets an answer in a minute rather than a week.</p>
+  <p>It does a fair bit of the paperwork for us. Paste the conversation in and it reads out who the student is, which lesson they were on, and what went wrong, then fills the form. Our job is to check it got that right, and to say what we know that the conversation does not.</p>
+  <h4>Three things worth knowing before anything else</h4>
+  <ul>
+    <li><strong>Nothing sends itself.</strong> No message goes to a student unless we press send, and every draft goes out under our own name.</li>
+    <li><strong>Repeat reports are wanted.</strong> If a fault is already logged, adding ours to it is the useful thing to do. It pushes the fault up the list, which is exactly what repeat reports are for.</li>
+    <li><strong>A rough report beats no report.</strong> Half-filled and logged is worth more than perfect and still in your inbox.</li>
+  </ul>
+</section>
+
+<section id="man-signin" data-perm="" data-title="Signing in">
+  <h3>Signing in</h3>
+  <p>The app lives at <code>ardenttraining.github.io/issue-tracker</code>. Worth a bookmark, and it works on a phone as well as a laptop.</p>
+  <h4>The first time</h4>
+  <p>An invite email arrives with the subject <span class="ui">Your Bugs invite</span>. Open the link, choose a password of at least eight characters, type it again to confirm, and press <span class="ui">Create account</span>. That drops you straight into the app, so there is no second sign-in to do.</p>
+  <p>If the link says it is not valid, it has already been used or it has expired. Ask Edd for a fresh one rather than trying it again.</p>
+  <h4>Every time after that</h4>
+  <figure class="man-shot" data-img="manual/01-signin.png" data-cap="The sign-in box. Same email you got the invite on."></figure>
+  <p>Email and password, then <span class="ui">Sign in</span>. Pressing Enter in either box does the same thing.</p>
+  <p>Get it wrong and it says <em>Wrong email or password</em> without telling you which, which is deliberate: it stops the box being used to work out whose email addresses are registered. Eight wrong goes in a row locks that address for ten minutes.</p>
+  <p>Forgotten it, press <span class="ui">Forgot your password?</span>, put your email in, and a link comes through that lasts an hour. The message you get back is the same whether or not the address is registered, for the same reason as above, so check your spam folder before assuming it did not send.</p>
+  <h4>Staying signed in</h4>
+  <p>You can be signed in on up to six devices at once, and a session lasts thirty days. Phone, laptop, and the machine at home can all stay logged in together. Signing in on a seventh pushes the oldest one off.</p>
+  <p><span class="ui">Log out</span> signs out the device you are on and leaves the others alone. That is the point of it, so logging out of a shared computer does not knock you off your own phone.</p>
+  <h4>Your name at the bottom of the rail</h4>
+  <p>Press it for three things.</p>
+  <ul>
+    <li><span class="ui">Theme</span> cycles through auto, light, and dark. Auto follows whatever the device is set to. The menu stays open so you can see each one as you go.</li>
+    <li><span class="ui">Change password</span> asks for the current one, then the new one twice.</li>
+    <li><span class="ui">Log out</span>, as above.</li>
+  </ul>
+</section>
+
+<section id="man-around" data-perm="" data-title="Finding your way around">
+  <h3>Finding your way around</h3>
+  <p>Everything hangs off the icon rail down the left. On a phone that same rail becomes a bar across the bottom, with the same icons in the same order.</p>
+  <figure class="man-shot" data-img="manual/02-rail.png" data-cap="The rail. What you see depends on your account, so yours may be shorter or longer than a colleague's."></figure>
+  <div class="man-note">
+    <strong>You land on Actions, not on a blank form</strong>
+    Opening the app puts you on the work that is waiting, because that is the question you actually came in with. Logging something new is one press of <span class="ui">New</span> from wherever you are.
+  </div>
+  <table class="man-tbl">
+    <tr><th>Rail item</th><th>What it holds</th></tr>
+    <tr><td><span class="ui">Chats</span></td><td>Live conversations pulled in from Chatwoot, with a written brief on each one. The number on the icon is how many cases are open.</td></tr>
+    <tr><td><span class="ui">Actions</span></td><td>Things waiting on an instructor, plus the whole log and the board. The number on the icon is how many things are waiting.</td></tr>
+    <tr><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on you.</td></tr>
+    <tr><td><span class="ui">?</span></td><td>This manual.</td></tr>
+  </table>
+  <p>Both badges count real work and nothing else, so a number on the rail always means there is something to do.</p>
+  <p>Press <span class="ui">Actions</span> and a second narrow column appears next to the rail with three pages in it: <span class="ui">Waiting on me</span>, <span class="ui">All issues</span>, and <span class="ui">Board</span>. On a phone those three become a row of pills across the top instead.</p>
+  <h4>A quiet detail worth trusting</h4>
+  <p>The app draws the board you last saw straight away, then refreshes behind it. While a refresh is in the air you get a small <span class="ui">updating…</span> next to the title. Nothing is stale for long, and you never wait on a spinner to read something you have already read.</p>
+</section>
+
+<section id="man-log" data-perm="log" data-title="Logging a report">
+  <h3>Logging a report</h3>
+  <p class="lede">The one thing everybody does, so it is worth doing once properly.</p>
+  <p>Press <span class="ui">New</span> on the rail. Your name is already at the top under <span class="ui">Logging as</span>, so there is nothing to pick.</p>
+  <figure class="man-shot" data-img="manual/03-newreport.png" data-cap="The form before extraction. Three things on it: what kind of report, where the words come from, and any screenshots."></figure>
+
+  <h4>Step one: what kind of report is this?</h4>
+  <p>Two buttons at the top.</p>
+  <ul>
+    <li><span class="ui">Reported by a student</span> is the default, and it is right whenever a student is involved, even if we sorted it in the chat.</li>
+    <li><span class="ui">General bug / suggestion</span> is for something we spotted ourselves, or an idea. The portals, the website, admin, infrastructure, an improvement. No student is attached, so there are no steps to work through with one.</li>
+  </ul>
+  <p>Picking one by hand sticks. The extraction will not quietly flip it back on you. If you leave it alone and the conversation turns out to have no student in it, the form switches itself and says so, and you can switch it straight back.</p>
+
+  <h4>Step two: get the words in</h4>
+  <p>Three ways, and they all end up in the same box.</p>
+  <ol class="man-steps">
+    <li><strong>Pull it from a live chat.</strong> Paste a Chatwoot link or just the conversation number into <span class="ui">Chatwoot link or number</span> and press <span class="ui">Import</span>. It brings the whole conversation across, plus the student's name and email from their contact record, plus any screenshots they shared. The contact record beats anything read out of the words, so those two fields are worth trusting.</li>
+    <li><strong>Browse recent.</strong> Same thing, but it shows you the recent conversations to pick from. Handy when you have not got the link to hand.</li>
+    <li><strong>Paste it yourself.</strong> An email, a chat transcript, your own notes, or a mix of all three. It reads scruffy notes perfectly well, so there is no need to tidy them first.</li>
+  </ol>
+  <div class="man-note">
+    <strong>Coming back to something already logged?</strong>
+    Paste the new part of the conversation exactly the same way. The app spots that it belongs to an existing report and offers to add it on as an update rather than starting a second entry.
+  </div>
+
+  <h4>Step three: screenshots</h4>
+  <p>Up to five, five megabytes each, in JPG, PNG, GIF, or WebP. They show up as thumbnails with a small cross to take one off again. A picture of the actual error saves the developers a lot of guessing, so it is worth grabbing one whenever there is something to see.</p>
+
+  <h4>Step four: press Extract</h4>
+  <p>This is the bit that does the work. A panel comes up saying <span class="ui">Reading the report…</span> and starts counting seconds after a few. Usually it is quick. A long conversation can take up to a minute, and it tells you so rather than leaving you wondering.</p>
+  <p>When it lands, a section called <span class="ui">Extracted details</span> appears with the fields filled in, and the status line says <em>Done. Check the fields and edit anything that is off.</em></p>
+  <figure class="man-shot" data-img="manual/04-extracted.png" data-cap="Extracted details. Everything here is editable, and the folded headings show what is inside without opening them."></figure>
+  <p>Underneath there is a one-tap question, <span class="ui">Did that come out right?</span>, with <span class="ui">Spot on</span> and <span class="ui">Needed fixing</span>. Pressing one takes a second and it is how the extraction gets better, so please do use it.</p>
+  <div class="man-note warn">
+    <strong>If the extraction fails</strong>
+    The fields open up anyway so you can fill them by hand, and Priority and Severity are put back to blank on purpose so a dropped call cannot leave something sitting on High by accident. There is a <span class="ui">Retry</span> button. The summary and the priority are the only two we really need before saving.
+  </div>
+</section>
+
+<section id="man-fields" data-perm="log" data-title="Checking the fields">
+  <h3>Checking the fields</h3>
+  <p>Three fields sit out in the open because they matter most, and the rest are folded away in groups. Each folded heading carries a one-line preview of what is inside, so you can see whether it needs opening without opening it.</p>
+
+  <h4>Category</h4>
+  <p>What kind of problem it is, and it decides which of the other fields are worth asking about.</p>
+  <table class="man-tbl">
+    <tr><th>Category</th><th>When</th></tr>
+    <tr><td>Course error</td><td>The lesson content is wrong or confusing.</td></tr>
+    <tr><td>Tech issue</td><td>Login, access, progress, formatting, or anything that is not about lesson content. These do not need a lesson, so the course fields can stay blank.</td></tr>
+    <tr><td>Shipping</td><td>A pack, chart, or almanac that has not arrived, or arrived wrong.</td></tr>
+    <tr><td>Friction</td><td>Nothing is broken, but the design cost someone money or time.</td></tr>
+  </table>
+
+  <h4>Summary</h4>
+  <p>One line. This is what everybody reads on the board, on the Actions list, and in the Slack ping, so it is the field most worth a second of your time. Say what is broken and where, not how it was reported.</p>
+
+  <h4>Severity, and why you do not really set the priority</h4>
+  <p>Severity is how badly this hits one person, ignoring how many people have hit it.</p>
+  <ul>
+    <li><strong>Severe</strong>: they cannot continue the course, sit the exam, or pay.</li>
+    <li><strong>Moderate</strong>: it gets in the way, but they can carry on.</li>
+    <li><strong>Low</strong>: an annoyance, cosmetic, or a typo that misleads nobody.</li>
+  </ul>
+  <p>Priority is then worked out from severity and the number of reports, rather than being anybody's opinion. Severe is always high. Otherwise the score is the severity weight multiplied by the square root of how many people have reported it, which is why five typos still lose to one blocked student, and why the fortieth report of the same annoyance does finally climb the list.</p>
+  <div class="man-note warn">
+    <strong>The Priority box still asks you for one</strong>
+    Submit will not let you past without a priority, but on a new report the severity you picked overrides whatever you chose. So set the severity honestly, put something sensible in the priority box to get past the check, and do not agonise over it. This one is on the list to tidy up.
+  </div>
+
+  <h4>The folded groups</h4>
+  <table class="man-tbl">
+    <tr><th>Group</th><th>What is in it</th></tr>
+    <tr><td><span class="ui">The parcel</span></td><td>Shipping only. Courier and tracking number. The tracking number is what joins the threads, so a second or third email about the same parcel folds into the one entry instead of starting a new one. <span class="ui">Chase it on</span> defaults to three days if you leave it blank.</td></tr>
+    <tr><td><span class="ui">The student</span></td><td>Name, contact, and their device, browser, and OS for a tech issue. For a course error there is a tick for <span class="ui">I've double-checked this myself</span>, which is worth being honest about.</td></tr>
+    <tr><td><span class="ui">The lesson</span></td><td>Course, lesson code, module, and the slide or question. The lesson code is what lets us see that four separate reports are all about the same lesson, so it earns its keep.</td></tr>
+    <tr><td><span class="ui">How it's filed</span></td><td>Browser or app, which part of the platform, whether this is a <span class="ui">Fix</span> or an <span class="ui">Improvement</span>, the issue type, and the reason behind the priority. An improvement goes on the backlog quietly: no troubleshooting steps, no alert, nobody paged.</td></tr>
+    <tr><td><span class="ui">Where did this end up?</span></td><td>Anything that happened after the pasted conversation. There is a <span class="ui">Use suggested text</span> button that fills it from what the conversation showed. If the conversation did not show how it ended it says so rather than inventing something, and that one is yours to write.</td></tr>
+  </table>
+  <p>Under the folds there is a tick for <span class="ui">This student needs no further contact</span>. That is for when we have worked round it by hand and they have what they need. The fault stays open for the developers, we just stop chasing this one student about it.</p>
+</section>
+
+<section id="man-popups" data-perm="log" data-title="The popups after Extract">
+  <h3>The popups after Extract</h3>
+  <p class="lede">They come one at a time, in a queue, so nothing gets scrolled past. Each one is asking for something the conversation did not say.</p>
+
+  <h4>Student email</h4>
+  <p>Comes up when there is a student but no email in the message. We need it so we can tell them when it is fixed. There is a <span class="ui">Skip for now</span>, and a third option, <span class="ui">No student involved - I spotted this myself</span>, which flips the whole form over to a general bug.</p>
+
+  <h4>Which slide or question?</h4>
+  <p>Comes up when the report points at a lesson but not at which part of it. If it is in the conversation, or you can find out, put the number in. If there is no way to know, press skip. Nobody minds a skip, and a wrong number is worse than none.</p>
+
+  <h4>Is this the same fault, already on the log?</h4>
+  <figure class="man-shot" data-img="manual/06-dup.png" data-cap="The duplicate picker. Your own report sits at the bottom, deliberately not styled as a card, so it cannot be mistaken for one of the candidates."></figure>
+  <p>Up to three candidates, each showing who logged it, when, its priority and status, and enough of the summary to judge. Pick the one that is the same fault and press <span class="ui">Yes - add mine to it</span>.</p>
+  <p>Adding it on keeps one trail and pushes the fault up the priority list. If you are not sure, log it separately: merging two later is easy, and untangling one entry that holds two different faults is not.</p>
+
+  <h4>This looks like N separate issues</h4>
+  <p>A long email often carries two or three unrelated problems. Each row can be set to:</p>
+  <ul>
+    <li><span class="ui">Separate</span>: opens its own issue, with its own lesson, priority, and resolution.</li>
+    <li><span class="ui">Fold in</span>: opens no issue, but writes the line onto the first one so it is still on the record.</li>
+    <li><span class="ui">Drop</span>: logs nothing at all, for something needing no follow-up like a parcel that has since turned up.</li>
+  </ul>
+  <p>Press <span class="ui">Continue</span> and you get a tab per issue to check before anything saves. The student, the screenshots, and the checklist are shared across all of them; the lesson, category, priority, and outcome are per issue. They all save together on one press of Submit.</p>
+
+  <h4>This student already has an open issue</h4>
+  <p>Check whether it is the same problem. If it is, <span class="ui">Confirm same issue - add as update</span> keeps it in one entry, and the Submit button relabels itself to <span class="ui">Add update</span> so you can see what is about to happen. If it is not, log it as new.</p>
+
+  <h4>Suggested fix from a past issue</h4>
+  <p>Somebody has hit this before and we know what sorted it. There is a tick to mark it <span class="ui">Resolved (TBC)</span> if you have passed the fix on. Please still submit it, so we can count how many people are hitting the same thing.</p>
+  <p>If the suggestion is wrong here, press <span class="ui">This doesn't apply here</span> and say why. It goes to Edd to approve and nothing in the memory changes until he has looked, so a wrong suggestion cannot quietly spread.</p>
+
+  <h4>Things to try with the student</h4>
+  <p>Tech issues only. A numbered list read off this actual conversation, so it should not repeat what has already been tried. Sometimes it opens with a line in red telling you to escalate to Edd or Stu now, and that is worth taking at face value.</p>
+  <div class="man-note stop">
+    <strong>This one is a gate</strong>
+    Submit will not go through until you press <span class="ui">Got it, I'll try these and submit</span>. If Submit seems to do nothing except reopen this box, that is why. There is a <span class="ui">Show again</span> on the form to get the list back.
+  </div>
+  <p>Occasionally it warns you that these are the standard first steps rather than ones read off the conversation, because the helper could not read the transcript that time. Check them against what has already been tried before passing any on.</p>
+</section>
+
+<section id="man-checklist" data-perm="log" data-title="The troubleshooting checklist">
+  <h3>The troubleshooting checklist</h3>
+  <p>Tech issues get a seventeen-item checklist between the filing fields and the outcome box. It is pre-filled from the conversation, so a lot of it is already ticked before you touch it.</p>
+  <figure class="man-shot" data-img="manual/05-checklist.png" data-cap="Each row has three buttons: the verb, N/A, and Not yet. Ticking saves in the background."></figure>
+  <p>It exists because a developer picking up a ticket needs to know what has already been ruled out. Without it the first reply is always the same three questions, and the student waits another day for us to ask what browser they are on.</p>
+  <p>Three groups: identify and record, account and login, and standard fixes. Mark anything that does not apply as <span class="ui">N/A</span> rather than leaving it blank, because a blank reads as "nobody looked" and an N/A reads as "looked, does not apply".</p>
+  <p>If there is no student on the report, or it is about our own systems, you get a shorter twelve-item version in staff wording: the account and student steps drop out, since they cannot apply.</p>
+</section>
+
+<section id="man-submit" data-perm="log" data-title="Submitting">
+  <h3>Submitting</h3>
+  <p>The buttons live in a bar pinned to the bottom of the screen, so they are always in reach however long the form has got.</p>
+  <figure class="man-shot" data-img="manual/07-submit.png" data-cap="The submit row. Which buttons show depends on what the form knows."></figure>
+  <table class="man-tbl">
+    <tr><th>Button</th><th>What it does</th></tr>
+    <tr><td><span class="ui">Submit issue</span></td><td>Logs it and leaves it open. Relabels itself to <span class="ui">Submit all 3 issues</span> for a split, or <span class="ui">Add update</span> when it is going onto an existing report.</td></tr>
+    <tr><td><span class="ui">Submit and resolve</span></td><td>For something already sorted. Needs the outcome box filled in first.</td></tr>
+    <tr><td><span class="ui">Submit and park</span></td><td>Filed away as probably a one-off. It wakes itself up if anyone reports the same thing again. Also needs the outcome box.</td></tr>
+    <tr><td><span class="ui">Clear / new</span></td><td>Empties the form and starts again.</td></tr>
+  </table>
+  <h4>What stops a submit</h4>
+  <p>Five checks, and each one tells you which field it is waiting on and scrolls you to it.</p>
+  <ol>
+    <li>No summary. <em>Add a one-line summary before saving. It's what we all read on the board.</em></li>
+    <li>No priority. <em>Pick a priority before saving. High goes straight to the devs, so it's worth a moment.</em></li>
+    <li>A student-facing tech fix with no valid email, because a fix nobody can be told about is only half done.</li>
+    <li>Things to try not yet acknowledged.</li>
+    <li>Resolve or park pressed with the outcome box empty.</li>
+  </ol>
+  <div class="man-note">
+    <strong>What happens after you press it</strong>
+    <p>The form clears completely and you are put back to a blank one, ready for the next report. Screenshots upload in the background once the entry is safely saved, and you get a toast when they land.</p>
+    <p>You are <em>not</em> taken to the issue you just made. To see it, go to <span class="ui">Actions</span> then <span class="ui">All issues</span>, where it will be at the top.</p>
+  </div>
+  <h4>Two questions that can follow</h4>
+  <ul>
+    <li><span class="ui">Was that a one-off?</span> appears when it landed as Resolved (TBC). The student has a workaround, but we do not yet know whether the underlying fault hits everybody. If you cannot check right now, the third option puts it on Slack so it is waiting for you.</li>
+    <li><span class="ui">Log that as an improvement too?</span> appears when your outcome note reads like an idea. It goes on the backlog for review and never routes or pages anyone.</li>
+  </ul>
+</section>
+
+<section id="man-actions" data-perm="log" data-title="Waiting on me">
+  <h3>Waiting on me</h3>
+  <p class="lede">The list that tells you what to do next. If it is empty, you are done.</p>
+  <p>Everything here needs an instructor rather than a developer. It is shared: the team is small and any of us can pick up any of it, so what you see is what everybody sees. The number on the rail is the length of this list, counted by the same function that draws it, so the badge and the list can never disagree.</p>
+  <figure class="man-shot" data-img="manual/08-actions.png" data-cap="Each row: a coloured word saying what kind of job it is, the issue, and the buttons to deal with it."></figure>
+  <p>Empty state reads <em>Nothing waiting on you. Have a cup of tea.</em> That is not a joke at your expense, it means it.</p>
+  <table class="man-tbl">
+    <tr><th>Word</th><th>What it wants</th></tr>
+    <tr><td><span class="ui">Scanned</span></td><td>The overnight scan found this in Chatwoot and nobody has looked in on the student yet. Draft them a message, or mark that no more contact is needed.</td></tr>
+    <tr><td><span class="ui">Replied</span></td><td>We answered and the student has come back. Worth reading.</td></tr>
+    <tr><td><span class="ui">Waiting</span></td><td>We answered and heard nothing for a few days. A nudge, or let it go.</td></tr>
+    <tr><td><span class="ui">Chase</span></td><td>A parcel is due a chase today. Poke the courier, then <span class="ui">Chased - remind in 3 days</span> puts it back on the list.</td></tr>
+    <tr><td><span class="ui">Question</span></td><td>A developer or the course team has asked us something and the fix is held up until it is answered.</td></tr>
+    <tr><td><span class="ui">Fixed</span></td><td>Either a fix has landed and needs checking, or it is checked and the student needs telling.</td></tr>
+    <tr><td><span class="ui">Fix sent</span> / <span class="ui">Workaround</span></td><td>The student was told days ago and has said nothing since. One check-in is worth it. Left alone it resolves itself on schedule, and the row tells you how many days that is.</td></tr>
+  </table>
+  <p>Under each title there is a line with the reference, the student's first name, the lesson, and <span class="ui">chat open</span> if there is a live conversation on it.</p>
+  <h4>The buttons, and what they actually mean</h4>
+  <ul>
+    <li><span class="ui">Nudge the student</span> opens a ready-written check-in asking whether the fix worked. Send it, press the sent marker, and the clock keeps running.</li>
+    <li><span class="ui">Checked - resolve</span> means you have tried it yourself and it works. It closes the issue.</li>
+    <li><span class="ui">Park it</span> is for probably a one-off, not worth developer time. It is filed away and wakes itself up if anyone reports the same thing again, so parking is not the same as giving up.</li>
+    <li><span class="ui">No more contact needed</span> takes this student off the chase list. The fault stays in its queue.</li>
+    <li><span class="ui">Student told</span> ticks off the telling job. It does not resolve the fault.</li>
+  </ul>
+  <p>Below the list you may see <span class="ui">Updates on open issues</span>: students who have got back in touch on something already open, with a badge saying whether it sounds fixed, still broken, or just new detail. Add it to the issue, and resolve or reopen in the same press.</p>
+</section>
+
+<section id="man-track" data-perm="manage" data-title="All issues and the Board">
+  <h3>All issues and the Board</h3>
+  <p>Two ways of looking at the same log. <span class="ui">All issues</span> is a searchable list, <span class="ui">Board</span> is six columns you can drag cards between.</p>
+  <figure class="man-shot" data-img="manual/09-allissues.png" data-cap="Three tiles at the top, the control bar, then the list. Whatever filters are on show as chips underneath, each with a cross."></figure>
+  <h4>Finding one thing</h4>
+  <p>The search box filters as you type, across the student's name, the lesson, the summary, the device, the resolution note, the reference, and every word of the original report. If it matched something your filters are hiding, it tells you underneath: <em>7 more matches "smith" outside these filters</em>, with a button to clear them.</p>
+  <h4>Filtering</h4>
+  <p>The <span class="ui">Filter</span> button carries a count of how many are on. Status, priority, type, and course are dropdowns. Area, audience, and kind are pill groups that work as tick boxes, so you can have course errors and shipping on together.</p>
+  <p>The status filter starts on <span class="ui">Unresolved (anything still to do)</span> rather than showing everything, since a list of nine hundred resolved issues is not a working list.</p>
+  <h4>Ask</h4>
+  <p>The <span class="ui">Ask</span> button puts a question to the whole log in plain English, along the lines of "which lesson has the most reports?". It reads everything to answer, so give it a few seconds. The search box carries on filtering underneath either way.</p>
+  <h4>Sorting</h4>
+  <p>Priority is the default, which is triage order: priority, then how many people have reported it, then newest. The others are longest open, newest, most reported, oldest first, and reported by name.</p>
+  <h4>The Board</h4>
+  <figure class="man-shot" data-img="manual/10-board.png" data-cap="Six columns. The column is the status, which is why the cards do not repeat it on a badge."></figure>
+  <p>Open, In progress, With devs or course team, Fixed awaiting check, Resolved TBC, and Resolved. Dragging a card to another column changes its status.</p>
+  <div class="man-note warn">
+    <strong>Careful on a trackpad</strong>
+    Cards are draggable, so it is easy to change a status by accident. If you do, drag it back: the change is not announced to anybody and nothing is sent.
+  </div>
+</section>
+
+<section id="man-detail" data-perm="log" data-title="Opening an issue">
+  <h3>Opening an issue</h3>
+  <p>Click any card or any Actions row. On a wide screen the detail docks beside the list and you can drag the divider to resize it. On a phone it slides in over the top with a <span class="ui">← Back</span> button.</p>
+  <figure class="man-shot" data-img="manual/11-detail.png" data-cap="The detail pane. Everything you need to act sits above the folds; the reference material is folded away below."></figure>
+  <p>It reads top to bottom in the order you actually need it.</p>
+  <ol class="man-steps">
+    <li><strong>The badges.</strong> The reference like <code>#5C8EC7</code>, the priority, the status, and how many reports have rolled into it. Clicking the reference copies it, which is what you want when pasting it into Slack.</li>
+    <li><strong>Other issues on this lesson.</strong> If two or three more are open on the same lesson code, a box says so with a button to see them all. Fixing them together is nearly always quicker than one at a time.</li>
+    <li><strong>Affected students.</strong> Everyone rolled into this issue, with a <span class="ui">Copy all contacts</span> button, and once it is fixed a <span class="ui">Draft "it's fixed" messages to all</span> that writes one message per student.</li>
+    <li><strong>Last update.</strong> The newest thing anyone added, with who added it.</li>
+    <li><strong>Next action.</strong> See below.</li>
+    <li><strong>The update card.</strong> Where you change anything.</li>
+  </ol>
+
+  <h4>Next action</h4>
+  <p>The app reads the whole thread and suggests one thing to do next, with the reasoning underneath and how many entries it read. It may open with <em>We have asked, and the ball is with the student</em>, or <em>One for us to do, not the student</em>, which is usually the bit you wanted to know.</p>
+  <p>While it is thinking you get the standard suggestion off the status and the checklist, clearly labelled as such. If it could not read the thread it says so in red rather than passing off a generic line as a considered one. <span class="ui">Rethink this</span> asks again.</p>
+
+  <h4>Changing something</h4>
+  <p>Everything lives in one bordered card.</p>
+  <ul>
+    <li><span class="ui">Status</span> and <span class="ui">Priority</span> dropdowns. For a course error the handover options read "with the course team" rather than "with developers".</li>
+    <li>One box that changes job. Normally it is <span class="ui">Post an update</span>. Set the status to Resolved and it relabels itself to <span class="ui">Resolution note</span>, keeps whatever you had typed, and reminds you it will be saved as the resolution.</li>
+    <li><span class="ui">Extract and add update</span> reads a pasted conversation into the issue. <span class="ui">Fetch update</span> goes and looks in Chatwoot for a newer conversation with this student and pulls anything relevant in.</li>
+    <li>Two ticks. <span class="ui">Students notified</span> ticks off the telling job and drops it out of Actions; it does not resolve the fault. <span class="ui">Student needs no further contact</span> stops us chasing this one student while the fault stays open.</li>
+    <li><span class="ui">Save changes</span>. On a long pane a save bar follows you down the screen so the button is never out of reach.</li>
+  </ul>
+  <p>Resolving without a note is refused: <em>Add a resolution note before resolving.</em> That line is what the next person reads when the same fault turns up, so it earns the two seconds.</p>
+
+  <h4>When a fix comes back</h4>
+  <p>A green box says the developer or the course team believes it is fixed, and offers three ways out: <span class="ui">Verified - resolve</span> when you have checked it, <span class="ui">Park it</span> if it is not really fixed and not worth chasing, or <span class="ui">Not fixed - reopen</span> if it is wrong.</p>
+
+  <h4>Questions from the team</h4>
+  <p>A pending question shows in an amber box with a reply box under it. Answering there answers it wherever it was asked from, so there is no need to go and find the person.</p>
+
+  <h4>The folds at the bottom</h4>
+  <p><span class="ui">Details, reports and screenshots</span> holds the full record: who logged it, every report and update in order, the steps suggested at submission, and the screenshots. There is also <span class="ui">Split apart</span> for an entry that turned out to hold two different faults, and <span class="ui">Link into another report</span> for the reverse.</p>
+  <div class="man-note stop">
+    <strong>Delete is permanent</strong>
+    <p>You can delete a report you logged yourself. It takes the whole entry: every report rolled into it, every update, the checklist, and the resolution note. There is no bin and no undo. Screenshots stay in Drive but the links to them go.</p>
+    <p>Nearly always, park it or resolve it instead. A parked issue costs nothing and comes back on its own if someone else hits the same thing.</p>
+  </div>
+</section>
+
+<section id="man-chats" data-perm="log" data-title="Live chats">
+  <h3>Live chats</h3>
+  <p class="lede">A student is in touch right now and you want to know what to say.</p>
+  <p><span class="ui">Chats</span> pulls a Chatwoot conversation in, reads it, and writes you a brief. The report then falls out of the conversation rather than being typed up separately afterwards.</p>
+  <figure class="man-shot" data-img="manual/13-chats.png" data-cap="The case list on the left, the brief on the right. Cases are shared, so anyone can pick one up."></figure>
+  <h4>Opening a case</h4>
+  <p>Paste a Chatwoot link or number and press <span class="ui">Open a case</span>, or press <span class="ui">Browse recent</span> and pick one. Underneath the list there is an <span class="ui">Open in Chatwoot</span> section showing conversations that are open in Chatwoot with no case on them yet.</p>
+  <h4>What the brief tells you</h4>
+  <ul>
+    <li><span class="ui">Where this stands</span>, in a couple of lines, plus the student's device.</li>
+    <li><span class="ui">What's been tried</span>, so you do not send them round the same loop twice.</li>
+    <li><span class="ui">Recommended next step</span>, sometimes prefixed <em>One for us to do, not the student</em>.</li>
+    <li><span class="ui">We've seen this before</span>, in green, when a past issue had a fix that fits.</li>
+    <li>The screenshots and the full conversation, folded away underneath.</li>
+  </ul>
+  <h4>The three buttons</h4>
+  <table class="man-tbl">
+    <tr><th>Button</th><th>What it does</th></tr>
+    <tr><td><span class="ui">Draft a reply</span></td><td>Writes the next message in your own voice and opens it for editing. Nothing is sent until you send it.</td></tr>
+    <tr><td><span class="ui">Check for new reply</span></td><td>Asks Chatwoot whether the student has come back. If they have, it pulls the reply in and re-reads the brief.</td></tr>
+    <tr><td><span class="ui">Log issue</span></td><td>Files the conversation into the tracker.</td></tr>
+  </table>
+  <p>A blue dot on a case means something has happened since you personally last opened it. <span class="ui">Refresh</span> at the top of the list is free and re-reads everything. <span class="ui">refresh the brief</span> inside a case costs an AI call, which is why it is a separate, quieter link.</p>
+  <h4>Filing it</h4>
+  <p>Two choices, and the words under each one change as you pick.</p>
+  <ul>
+    <li><span class="ui">Resolved</span>: sorted, and nothing left to do.</li>
+    <li><span class="ui">Still open</span>: the chat is done, the fault is not. It stays open and the student may need telling once it is fixed.</li>
+  </ul>
+  <p>The note is required either way, pre-filled from the brief, and worth changing to what you actually told them. An open issue with no note is one nobody else can pick up.</p>
+  <div class="man-note">
+    <strong>There is no Park button here on purpose</strong>
+    If you file it as resolved but the conversation shows it was only sorted for this one student rather than actually fixed, it parks itself and tells you why. That call should not be yours to make in the middle of a conversation.
+  </div>
+  <p>Once filed, the case closes itself and drops off the Chats page, because the work has moved to the issue. If it merged into a case a colleague is already on, it deliberately stays put, since it is still live for them.</p>
+</section>
+
+<section id="man-students" data-perm="log" data-title="Messages to students">
+  <h3>Messages to students</h3>
+  <p>Any button that says <span class="ui">Draft</span> or <span class="ui">Nudge</span> opens the same box: a suggested message, written in your voice, that you edit and send yourself.</p>
+  <figure class="man-shot" data-img="manual/14-draft.png" data-cap="A draft. Read it through and change anything that is not how you would put it."></figure>
+  <p>The line at the top says it is a suggested draft, and it stays there on purpose. This message goes out under your name, so you should always be able to tell what you are signing.</p>
+  <p>Sometimes an amber box says <span class="ui">Before you send, do this:</span> and names something on our side, like a password reset or a course assignment. The draft is written as though it has already been done, so do it before the message goes.</p>
+  <p><span class="ui">Copy</span> takes it, <span class="ui">Open in Chatwoot</span> takes you to the conversation. On some drafts there is a marker to say you have sent it, which flips the issue from Scanned to Waiting in Actions so nobody chases it twice.</p>
+  <p>For a fix that affected several students, <span class="ui">Draft "it's fixed" messages to all</span> in the issue detail writes one message per student, up to ten at a time. Nothing sends itself there either: copy each one across and tweak as you like.</p>
+</section>
+
+<section id="man-feedback" data-perm="" data-title="Telling us about the tracker">
+  <h3>Telling us about the tracker</h3>
+  <p>The <span class="ui">Feedback</span> pill sits in the bottom right of every page. It is for this app, not for the courses: something in here broken, confusing, or an idea to make it better.</p>
+  <figure class="man-shot" data-img="manual/15-feedback.png" data-cap="One box. No category to pick and no urgency to rate, because both are worked out from what you write."></figure>
+  <p>Write it in plain English and press <span class="ui">Send</span>. There is deliberately no dropdown asking whether it is a bug or an idea, and no tick for whether it is blocking you, because both are answerable from what you have written and nobody should have to classify their own bug report before they can send it.</p>
+  <p>It quietly takes a picture of the screen you are on and attaches where you were, the last few errors, and the last dozen things you did. That is what turns "it didn't save" into something fixable without a conversation. It never includes your password or your login token.</p>
+  <p><span class="ui">Take a screenshot now</span> hides the box, draws the page, and brings the box back with the picture attached, which is easier than alt-printscreen and finding the file.</p>
+  <p>You get a reference back, like <em>Thanks, your feedback was sent. It's FB-0281</em>. Worth quoting if you mention it to Edd.</p>
+</section>
+
+<section id="man-gotchas" data-perm="log" data-title="Things that catch people out">
+  <h3>Things that catch people out</h3>
+  <p class="lede">None of these are your fault. They are on the list, and in the meantime here is what is going on.</p>
+  <table class="man-tbl">
+    <tr><th>What you see</th><th>What is happening</th></tr>
+    <tr><td>Submit does nothing and a popup keeps coming back</td><td>Things to try has not been acknowledged. Press <span class="ui">Got it, I'll try these and submit</span>.</td></tr>
+    <tr><td>Submit and resolve does nothing</td><td>The outcome box is empty. It needs a line about what actually sorted it.</td></tr>
+    <tr><td>You picked a priority and it saved as something else</td><td>Severity decides priority on a new report. Set the severity honestly and the number looks after itself.</td></tr>
+    <tr><td>You submitted and the form went blank</td><td>That is a successful save. Find it under <span class="ui">All issues</span>.</td></tr>
+    <tr><td>An update flashes on then reverts, with a toast</td><td>The save failed, so it was put back as it was. Try again; if it keeps happening, send feedback.</td></tr>
+    <tr><td>The <span class="ui">Developers</span> fold says "not passed to the developers yet" with no button</td><td>Handing over is an admin job. Set the priority and leave it, or ask Edd, Charly, or Charlie.</td></tr>
+    <tr><td>Something takes ages</td><td>Extract, the brief, the drafts, and the next action all read whole conversations. The overlay counts the seconds so you know it is working.</td></tr>
+    <tr><td>A colleague is in the same case</td><td>Cases are shared. Press <span class="ui">Refresh</span> at the top of the Chats list, which costs nothing.</td></tr>
+    <tr><td>You cannot close a popup</td><td>There is no Escape key handler yet. Use the popup's own button.</td></tr>
+  </table>
+</section>
+
+<section id="man-ref" data-perm="" data-title="Quick reference">
+  <h3>Quick reference</h3>
+  <h4>Statuses, in the order things usually travel</h4>
+  <table class="man-tbl">
+    <tr><th>Status</th><th>Means</th></tr>
+    <tr><td>Open</td><td>Logged, waiting for triage.</td></tr>
+    <tr><td>In progress</td><td>Somebody is on it.</td></tr>
+    <tr><td>With developers / with the course team</td><td>Handed over. Nothing needed from us right now.</td></tr>
+    <tr><td>Fixed by dev / by the course team</td><td>They say it is done. Somebody needs to check, then tell the students.</td></tr>
+    <tr><td>Resolved - TBC</td><td>The student has an answer, but we have not confirmed the underlying fault is gone. Auto-resolves after seven quiet days.</td></tr>
+    <tr><td>Parked</td><td>Probably a one-off. Wakes itself up if anyone reports the same thing.</td></tr>
+    <tr><td>Resolved</td><td>Done.</td></tr>
+    <tr><td>Past</td><td>Imported from the old log, before this app existed.</td></tr>
+  </table>
+  <h4>Severity, which is the one you set</h4>
+  <table class="man-tbl">
+    <tr><th>Severity</th><th>Test</th></tr>
+    <tr><td>Severe</td><td>They cannot continue the course, sit the exam, or pay. Always goes to high priority.</td></tr>
+    <tr><td>Moderate</td><td>It gets in the way, but they can carry on.</td></tr>
+    <tr><td>Low</td><td>An annoyance, cosmetic, or a typo that misleads nobody.</td></tr>
+  </table>
+  <h4>Where things live</h4>
+  <ul>
+    <li>Something waiting on me: <span class="ui">Actions</span> then <span class="ui">Waiting on me</span>.</li>
+    <li>Find any report ever logged: <span class="ui">Actions</span> then <span class="ui">All issues</span>, and search.</li>
+    <li>The issue I just logged: same place, top of the list.</li>
+    <li>A student who is in touch right now: <span class="ui">Chats</span>.</li>
+    <li>Something wrong with this app: the <span class="ui">Feedback</span> pill, bottom right.</li>
+    <li>This manual: the <span class="ui">?</span> at the bottom of the rail, on any page.</li>
+  </ul>
+  <div class="man-note">
+    <strong>If you take three things away</strong>
+    <p>Log it even when it is scruffy. Put the lesson code in when you know it. Write the resolution note, because it is what the next person reads when the same thing happens again.</p>
+  </div>
+  <p class="small muted" style="margin-top:18px;">Something here wrong, out of date, or missing? Press <span class="ui">Feedback</span> and say so. This manual is part of the app, so it gets fixed the same way everything else does.</p>
+</section>
+
+      </article>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
