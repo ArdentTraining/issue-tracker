@@ -3069,6 +3069,24 @@ function chatwootProbe_(data) {
   var cfg = chatwootCfg_();
   var out = { token_head: String(cfg.token).slice(0, 4), token_len: String(cfg.token).length,
               account: cfg.account, base: CHATWOOT_BASE };
+  // r105.1 diagnostic: look at ONE conversation's plumbing (who its contact
+  // is, when it last moved) - added chasing FB-0281, where Sergei's replies
+  // lived in conversations the contact walk never returned.
+  if (data.conv) {
+    try {
+      var rc = UrlFetchApp.fetch(CHATWOOT_BASE + '/api/v1/accounts/' + cfg.account + '/conversations/' + encodeURIComponent(String(data.conv)),
+        { muteHttpExceptions: true, headers: { api_access_token: cfg.token } });
+      out.conv_status = rc.getResponseCode();
+      var cj = {};
+      try { cj = JSON.parse(rc.getContentText() || '{}'); } catch (e2) {}
+      var meta = cj.meta || {}; var sender = meta.sender || {};
+      out.conv = { id: cj.id, status: cj.status,
+        contact_id: sender.id, contact_name: sender.name, contact_email: sender.email,
+        last_activity_at: cj.last_activity_at ? new Date(cj.last_activity_at * 1000).toISOString() : null,
+        messages: (cj.messages || []).length, channel: (meta.channel || cj.channel || '') };
+    } catch (e) { out.conv_error = String(e).slice(0, 160); }
+    return { ok: true, probe: out };
+  }
   try {
     var res = UrlFetchApp.fetch(CHATWOOT_BASE + '/api/v1/accounts/' + cfg.account + '/conversations?status=open&page=1',
       { muteHttpExceptions: true, headers: { api_access_token: cfg.token } });
@@ -5558,7 +5576,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r105 · 2026-08-22';
+var CODE_STAMP = 'r105.1 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
