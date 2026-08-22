@@ -1026,6 +1026,18 @@
       <!-- No position in here (FB-0241). placeUserMenu() sets position, left
            and top on every open, measured against the viewport. -->
       <div id="userMenu" class="hidden" style="position:fixed;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,0.35);min-width:170px;text-align:left;">
+        <!-- FB-0282 (Edd, 22 Aug): the view-as control lives here now. The old
+             floating bar stays on as the can't-miss indicator, but ONLY while a
+             simulation is actually running - idle, the corner is clean. -->
+        <div id="viewAsMenuWrap" style="display:none;border-bottom:1px solid var(--line);margin-bottom:4px;padding:4px 12px 8px;">
+          <div class="small muted" style="padding:2px 0 4px;">View as</div>
+          <select id="viewAsMenuSelect" style="width:100%;font-size:12.5px;padding:4px 6px;" onclick="event.stopPropagation();" onchange="event.stopPropagation();setViewAs(this.value)">
+            <option value="">My full access</option>
+            <option value="instructor">Instructor</option>
+            <option value="dev">Developer</option>
+            <option value="course">Course team</option>
+          </select>
+        </div>
         <button class="ghost small" id="themeBtn" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="event.stopPropagation();cycleTheme()">Theme</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();openChangePassword()">Change password</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();doLogout()">Log out</button>
@@ -2471,7 +2483,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r110 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r110.1 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3380,10 +3392,16 @@ function updateViewAsBar() {
   var bar = $("viewAsBar");
   if (!bar) return;
   var realPerms = (state.realUser && state.realUser.perms) || {};
-  bar.classList.toggle("show", !!realPerms.users);
+  // FB-0282: the control moved into the account menu; the bar is now purely
+  // the you-are-simulating indicator, so idle it disappears entirely.
+  bar.classList.toggle("show", !!realPerms.users && !!state.viewAs);
   bar.classList.toggle("simulating", !!state.viewAs);
   var sel = $("viewAsSelect");
   if (sel) sel.value = state.viewAs || "";
+  var menuWrap = $("viewAsMenuWrap");
+  if (menuWrap) menuWrap.style.display = realPerms.users ? "block" : "none";
+  var menuSel = $("viewAsMenuSelect");
+  if (menuSel) menuSel.value = state.viewAs || "";
   $("viewAsLabel").textContent = state.viewAs ? "Viewing as" : "View as";
   positionViewAsBar();
 }
@@ -6199,9 +6217,16 @@ function requestTroubleshoot(checklistOnly) {
   var payload = { action: "troubleshoot", raw_text: raw, staff: formIsStaffTroubleshooting() };
   var target = (state.existingMatches || []).filter(function (m) { return m.issue_id === state.updateTargetId; })[0];
   if (target && target.raw_text) payload.existing_history = target.raw_text;
-  showLoading(payload.staff ? "Checking what to try…" : "Checking what to try with the student…");
+  // Edd, 22 Aug 2026: extract (30s) then a BLOCKING 38s overlay for these
+  // steps was the whole reason filing felt slow. The steps only matter at the
+  // end of the form, so they cook in the background while the instructor
+  // reviews the extracted fields. If the form has moved on by the time they
+  // arrive (submitted, cleared, new paste), they are stale and get dropped.
+  var rawAtRequest = raw;
+  $("extractStatus").textContent = "working out what to try, in the background…";
   apiPost(payload).then(function (res) {
-    hideLoading();
+    if (getField("rawText") !== rawAtRequest) return;
+    $("extractStatus").textContent = "";
     if (res && res.ok) {
       // AI pre-fills the pre-dev checklist from the conversation; instructor adjusts.
       state.checklist = (res.checklist && typeof res.checklist === "object") ? res.checklist : {};
@@ -6210,7 +6235,7 @@ function requestTroubleshoot(checklistOnly) {
     if (!checklistOnly && res && res.ok && res.found && res.steps && res.steps.length) {
       showTroubleshoot(res.steps, res.escalate, res.note, payload.staff, res.degraded, res.reason);
     }
-  }).catch(function (e) { hideLoading(); console.error(e); });
+  }).catch(function (e) { if (getField("rawText") === rawAtRequest) $("extractStatus").textContent = ""; console.error(e); });
 }
 
 // ---- same fault, different student: offer to add as another report --------
