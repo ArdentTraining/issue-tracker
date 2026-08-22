@@ -1754,7 +1754,7 @@ function addReportToIssue_(id, data, report) {
   var svNow = severityOf_(rec);
   if (order[svIn] && order[svIn] > (order[svNow] || 0)) svNow = svIn;
   rec.severity = svNow;
-  rec.priority = priorityFromScore_({ severity: svNow, report_count: rec.report_count });
+  rec.priority = priorityFromScore_({ severity: svNow, report_count: rec.report_count, reports_json: rec.reports_json });
 
   // TBC handling on a repeat report:
   //  - if the instructor has applied the suggested fix, mark it Resolved - TBC
@@ -1851,10 +1851,34 @@ function severityOf_(rec) {
   var p = String((rec && rec.priority) || '').toLowerCase();
   return p === 'high' ? 'severe' : (p === 'medium' ? 'moderate' : 'low');
 }
+// Edd, 22 Aug 2026: "repeated reports in a narrow time frame should multiply
+// its priority score." A fault hitting three people THIS WEEK is hotter than
+// one that collected three reports over four months, and plain sqrt(n) cannot
+// tell them apart. So a report from the last 7 days counts twice - beyond the
+// first, which keeps every single-report score exactly where the agreed table
+// put it. The bonus decays on its own: as reports age past a week they drop
+// back to counting once, so a fault that goes quiet cools down without anyone
+// touching it.
+var BURST_WINDOW_DAYS = 7;
+function recentReportCount_(rec) {
+  var reps = [];
+  try { reps = rec && rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
+  if (!reps.length) return 1;   // a bare row: its one report is its submission
+  var cutoff = Date.now() - BURST_WINDOW_DAYS * 24 * 3600 * 1000;
+  var n = 0;
+  for (var i = 0; i < reps.length; i++) {
+    var k = String(reps[i].kind || 'report').toLowerCase();
+    if (k === 'question' || k === 'answer' || k === 'update') continue;
+    var d = new Date(reps[i].date || 0).getTime();
+    if (d >= cutoff) n++;
+  }
+  return n;
+}
 function issueScore_(rec) {
   var w = SEVERITY_WEIGHT[severityOf_(rec)] || 1;
   var n = Math.max(1, Number((rec && rec.report_count) || 1));
-  return Math.round(w * Math.sqrt(n) * 10) / 10;
+  var recent = Math.max(0, recentReportCount_(rec) - 1);
+  return Math.round(w * Math.sqrt(n + recent) * 10) / 10;
 }
 // Severe is ALWAYS high, however few people have hit it: one person unable to
 // get into a course they paid for does not become less urgent for being alone.
@@ -5354,7 +5378,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r94 · 2026-08-22';
+var CODE_STAMP = 'r95 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

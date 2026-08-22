@@ -1899,7 +1899,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r94 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r95 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2624,7 +2624,17 @@ function severityOf(i) {
 function issueScore(i) {
   var w = SEVERITY_WEIGHT[severityOf(i)] || 1;
   var n = Math.max(1, Number(reportCount(i) || 1));
-  return Math.round(w * Math.sqrt(n) * 10) / 10;
+  // A report from the last 7 days counts twice, beyond the first (Edd, 22 Aug
+  // 2026): three people this week outranks three people since May, and the
+  // bonus decays by itself as reports age out of the window. Mirrors
+  // issueScore_ in Code.gs - change both or the board disagrees with the sheet.
+  var cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+  var recent = parseReports(i).filter(function (r) {
+    var k = String(r.kind || "report").toLowerCase();
+    if (k === "question" || k === "answer" || k === "update") return false;
+    return new Date(r.date || 0).getTime() >= cutoff;
+  }).length;
+  return Math.round(w * Math.sqrt(n + Math.max(0, recent - 1)) * 10) / 10;
 }
 function catOf(i) {
   var c = (i.category || "course_error").toLowerCase();
