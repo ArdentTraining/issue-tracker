@@ -503,7 +503,10 @@
   .act-row:hover, .act-row.active { border-color: var(--accent); }
   .act-row .act-title { font-size: 14px; line-height: 1.35; }
   .act-row .act-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
-  .act-row .act-do { font-size: 12.5px; color: var(--accent); font-weight: 600; display: block; margin-bottom: 5px; }
+  .act-row .act-do { font-size: 12.5px; color: var(--accent); font-weight: 600; display: block; margin-bottom: 5px; max-width: 420px; margin-left: auto; }
+  /* The third cell holds the act line and its buttons; both sit flush right,
+     however long the explanation above them runs (Edd, 22 Aug). */
+  .act-row > div:last-child { text-align: right; }
   .act-word { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px; border-radius: 999px;
               text-align: center; white-space: nowrap; overflow: hidden; }
   /* On a phone everything stacks and stays visible - nothing is hidden, it
@@ -1899,7 +1902,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r96 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r97 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3442,17 +3445,42 @@ function openDraftModal(id, text, voiced) {
   // from Scanned to Waiting.
   var sw = $("draftSentWrap");
   if (sw) {
+    // A day-3 nudge draft gets the marker too, wired to the nudge recorder so
+    // the check-in lands on the trail without touching the 7-day clock.
+    var isNudgeDraft = state._nudgeFor === i.issue_id;
     var scanRow = String(i.instructor_name || "") === "Overnight scan" && !isTrue(i.student_sorted) &&
       ["resolved", "past", "parked", "resolved_tbc"].indexOf(String(i.status || "open").toLowerCase()) < 0 &&
       !scanReplied(i);  // already marked as waiting - no second marker needed
-    sw.style.display = scanRow ? "" : "none";
+    sw.style.display = (scanRow || isNudgeDraft) ? "" : "none";
     var sb = $("draftSentBtn");
-    if (sb) sb.onclick = function () { draftMarkSent(i.issue_id); };
+    if (sb) sb.onclick = isNudgeDraft
+      ? function () { nudgeMarkSent(i.issue_id); }
+      : function () { draftMarkSent(i.issue_id); };
   }
   $("draftOverlay").style.display = "flex";
 }
 // Post the "I've replied" marker. keep_status because this is bookkeeping,
 // not fresh news from the student - it must never reopen anything.
+// The day-3 check-in (Edd, 22 Aug 2026). Opens the ready check-in draft; the
+// nudge is recorded when the sent marker is pressed, not when the draft opens -
+// intent is not completion (the FB-0145 lesson). Recording it does NOT touch
+// the clocks, so nudge-at-3, resolve-at-7 stays 7 days total.
+function nudgeStudent(id) {
+  state._nudgeFor = id;
+  draftStudentMessage(id, "followup");
+}
+function nudgeMarkSent(id) {
+  apiPost({ action: "addUpdate", issue_id: id, update_kind: "nudge", keep_status: true,
+    summary: "Checked in with the student - did the fix work?",
+    raw_text: "Sent the day-3 check-in asking whether the fix or workaround did the job." })
+  .then(function (res) {
+    state._nudgeFor = null;
+    if (!res || !res.ok) { toast("Could not record it: " + ((res && res.error) || "unknown")); return; }
+    toast("Check-in recorded. If nothing comes back, it resolves itself on schedule.");
+    $("draftOverlay").style.display = "none";
+    loadIssues();
+  }).catch(function (e) { toast("Could not record it. See console."); console.error(e); });
+}
 function draftMarkSent(id) {
   apiPost({ action: "addUpdate", issue_id: id, keep_status: true,
     summary: "Replied to the student - waiting on their response.",
@@ -3594,14 +3622,17 @@ function actionRows() {
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
     .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
     .concat(a.followups.map(function (i) {
-      // Edd, 22 Aug 2026: this card was a mystery. Say what it is (a follow-up
-      // on a workaround the student never confirmed), and what doing nothing
-      // means (it resolves itself at 7 days), so the buttons are a choice
-      // rather than a puzzle.
+      // Edd's flow (22 Aug 2026): fix given -> resolved TBC -> ONE nudge to the
+      // student at day 3 -> resolves itself at day 7 total. The nudge is
+      // recorded on the trail without touching the clocks, so the card knows
+      // whether it has already asked and 7 days stays 7 days.
       var since = Math.floor((Date.now() - new Date(i.updated_at || i.submitted_at)) / 864e5);
       var left = Math.max(1, 7 - since);
-      return { i: i, kind: "followup", word: "Workaround", colour: "var(--medium)",
-        act: "Given " + since + " days ago, no word from the student since. Left alone, it resolves itself in " + left + (left === 1 ? " day." : " days.") };
+      var nudge = parseReports(i).filter(function (r) { return String(r.kind).toLowerCase() === "nudge"; }).pop();
+      var act = nudge
+        ? "Nudged " + fmtDate(nudge.date) + ", still nothing back. Left alone, it resolves itself in " + left + (left === 1 ? " day." : " days.")
+        : "Given " + since + " days ago, no word from the student since. One check-in is worth it; left alone, it resolves itself in " + left + (left === 1 ? " day." : " days.");
+      return { i: i, kind: "followup", word: "Workaround", colour: "var(--medium)", act: act, nudged: !!nudge };
     }))
     .concat(a.longOpen.map(function (i) { return { i: i, kind: "longopen", word: "Waiting", colour: "var(--high)", act: "Reassure the student" }; }));
   return rows;
@@ -3639,7 +3670,9 @@ function renderActions() {
       ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'fixed\')">Draft email</button>';
-    else if (r.kind === "followup") btn = '<button class="primary small" style="padding:5px 12px;" title="The workaround held, or the fix has since landed. Closes it for good - same as Resolved everywhere else." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>' +
+    else if (r.kind === "followup") btn = (r.nudged ? '' :
+      '<button class="primary small" style="padding:5px 12px;" title="Opens a ready-written check-in asking if the fix worked. Send it, press the sent marker, and the 7-day clock keeps running." onclick="' + stop + 'nudgeStudent(\'' + id + '\')">Nudge the student</button> ') +
+      '<button class="' + (r.nudged ? 'primary' : 'ghost') + ' small" style="padding:5px 12px;" title="The workaround held, or the fix has since landed. Closes it for good - same as Resolved everywhere else." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsSentUpdate(\'' + id + '\')">Student updated</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft email</button>';

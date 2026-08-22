@@ -1869,7 +1869,7 @@ function recentReportCount_(rec) {
   var n = 0;
   for (var i = 0; i < reps.length; i++) {
     var k = String(reps[i].kind || 'report').toLowerCase();
-    if (k === 'question' || k === 'answer' || k === 'update') continue;
+    if (k === 'question' || k === 'answer' || k === 'update' || k === 'nudge') continue;
     var d = new Date(reps[i].date || 0).getTime();
     if (d >= cutoff) n++;
   }
@@ -1900,7 +1900,7 @@ function realReportCount_(reps) {
   var n = 0;
   for (var i = 0; i < reps.length; i++) {
     var k = String(reps[i].kind || 'report').toLowerCase();
-    if (k === 'question' || k === 'answer' || k === 'update') continue;
+    if (k === 'question' || k === 'answer' || k === 'update' || k === 'nudge') continue;
     n++;
   }
   return n || 1;   // an old row with only untyped entries still counts as one
@@ -2344,13 +2344,20 @@ function addUpdate_(data) {
   var who = (data._user && data._user.name) || data.instructor_name || 'someone';
   var stamp = new Date().toISOString().slice(0, 10);
   var note = data.raw_text || data.summary || '';
-  rec.raw_text = (rec.raw_text || '') + '\n\n--- update ' + stamp + ' by ' + who + ' ---\n' + note;
+  // The day-3 check-in on an unconfirmed fix (Edd, 22 Aug 2026). It records
+  // itself on the trail so everyone can see the student was asked, but it must
+  // NOT touch updated_at: that field drives both the follow-up card and the
+  // 7-day auto-resolve, and Edd's rule is 7 days TOTAL - nudge at 3, resolve
+  // at 7 - not 7-days-restarted-by-the-nudge. A real reply from the student
+  // still resets everything, because that arrives as a normal update.
+  var isNudge = String(data.update_kind || '') === 'nudge';
+  rec.raw_text = (rec.raw_text || '') + '\n\n--- ' + (isNudge ? 'checked in with the student ' : 'update ') + stamp + ' by ' + who + ' ---\n' + note;
 
   // Add this update to the timeline (shown as an accordion entry in the detail).
   var reps = [];
   try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
   reps.push({
-    kind: 'update',
+    kind: isNudge ? 'nudge' : 'update',
     student_name: data.student_name || '', student_contact: data.student_contact || '',
     device_info: data.device_info || '', instructor_name: who,
     summary: data.summary || '', priority: String(data.priority || '').toLowerCase(),
@@ -2405,7 +2412,7 @@ function addUpdate_(data) {
     if (data.resolution_note) rec.resolution_note = data.resolution_note;
   }
 
-  rec.updated_at = new Date().toISOString();
+  if (!isNudge) rec.updated_at = new Date().toISOString();
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
 
   if (String(rec.priority).toLowerCase() === 'high' && priorityBefore !== 'high' &&
@@ -5412,7 +5419,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r95.2 · 2026-08-22';
+var CODE_STAMP = 'r97 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
