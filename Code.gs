@@ -46,7 +46,7 @@ var SLACK_NOTICES = {
   //      notice keeps working from the day it is switched on and moves the day
   //      the property is filled in. No code change and no deploy to move one.
   high_priority:     { on: true,  to: '' },                           // stays put
-  shipping_chase:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
+  shipping_chase:    { on: true,  to: 'SLACK_SHIPPING_ISSUES' },   // r109: shipping got its own channel
   notify_student:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
   query_raised:      { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
   query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
@@ -3095,13 +3095,25 @@ function chatwootProbe_(data) {
 function setSlackChannel_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
-  var allowed = { SLACK_INSTRUCTING_DAILY: 1, SLACK_AUREUS_TECH: 1, SLACK_INSTRUCTING_UPDATES: 1 };
+  var allowed = { SLACK_INSTRUCTING_DAILY: 1, SLACK_AUREUS_TECH: 1, SLACK_INSTRUCTING_UPDATES: 1,
+                  SLACK_SHIPPING_ISSUES: 1, SLACK_WEBHOOK_URL: 1 };  // r109: shipping channel + the main channel itself
   var name = String(data.channel_key || '').trim();
   if (!allowed[name]) return { ok: false, error: 'channel_key must be one of: ' + Object.keys(allowed).join(', ') };
   var url = String(data.webhook || '').trim();
   if (url.indexOf('https://hooks.slack.com/') !== 0) return { ok: false, error: 'webhook must be a hooks.slack.com URL' };
   PropertiesService.getScriptProperties().setProperty(name, url);
-  return { ok: true, set: name };
+  // Prove the wire with a labelled hello, so whoever is looking at the channel
+  // sees it arrive and nobody has to trust an "ok" (r109).
+  var test = { sent: false };
+  if (!data.quiet) {
+    try {
+      var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json',
+        payload: JSON.stringify({ text: ':white_check_mark: Bug tracker wired to this channel (' + name + '), ' + new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC. This is a one-off test message.' }),
+        muteHttpExceptions: true });
+      test = { sent: res.getResponseCode() === 200, status: res.getResponseCode() };
+    } catch (e) { test = { sent: false, error: String(e).slice(0, 120) }; }
+  }
+  return { ok: true, set: name, test: test };
 }
 
 function setChatwootConfig_(data) {
@@ -5577,7 +5589,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r108 · 2026-08-22';
+var CODE_STAMP = 'r109.1 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
