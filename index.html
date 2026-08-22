@@ -641,7 +641,7 @@
   }
   /* New report is the composer, so it reads as an action and not as another
      place to browse. */
-  .rail-item.rail-new { background: var(--accent); color: #fff; margin-bottom: 6px; }
+  .rail-item.rail-new { background: var(--accent); color: #fff; margin-top: 6px; margin-bottom: 6px; }
   .rail-item.rail-new:hover { background: var(--coral); color: #021231; }
   .rail-item.rail-new.active::before { display: none; }
   .rail-badge {
@@ -819,10 +819,6 @@
      path changed underneath. Permission-gated items are hidden by applyPerms
      exactly as the tabs were. -->
 <nav class="rail" id="rail" aria-label="Sections">
-  <button type="button" class="rail-item rail-new" id="railNew" onclick="railGo('instructor')" title="Log a new report">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    <span class="ri-word">New</span>
-  </button>
   <button type="button" class="rail-item" id="railChats" onclick="railGo('live')" title="Open conversations">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.3-.6L3 21l1.7-5a8.2 8.2 0 0 1-.7-3.4 8.4 8.4 0 0 1 8.5-8.5 8.4 8.4 0 0 1 8.5 8.4z"/></svg>
     <span class="ri-word">Chats</span>
@@ -832,6 +828,10 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.6 2.4 17a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
     <span class="ri-word">Actions</span>
     <span class="rail-badge" id="railBadgeIssues"></span>
+  </button>
+  <button type="button" class="rail-item rail-new" id="railNew" onclick="railGo('instructor')" title="Log a new report">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    <span class="ri-word">New</span>
   </button>
   <div class="rail-div" id="railDiv"></div>
   <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
@@ -1902,7 +1902,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r98 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r100 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
