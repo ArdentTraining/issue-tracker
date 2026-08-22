@@ -641,9 +641,6 @@
   }
   /* New report is the composer, so it reads as an action and not as another
      place to browse. */
-  .rail-item.rail-new { background: var(--accent); color: #fff; margin-top: 6px; margin-bottom: 6px; }
-  .rail-item.rail-new:hover { background: var(--coral); color: #021231; }
-  .rail-item.rail-new.active::before { display: none; }
   .rail-badge {
     position: absolute; top: 3px; right: 8px; min-width: 17px; height: 17px;
     border-radius: 999px; background: var(--high); color: #021231;
@@ -788,7 +785,6 @@
     .rail-item svg { width: 20px; height: 20px; }
     .rail-item .ri-word { font-size: 9px; }
     .rail-item.active::before { left: 6px; right: 6px; top: -4px; bottom: auto; width: auto; height: 3px; border-radius: 0 0 3px 3px; }
-    .rail-item.rail-new { margin-bottom: 0; border-radius: 10px; }
     .rail-div { display: none; }
     .rail-foot { margin-top: 0; padding-top: 0; flex: 1 1 0; min-width: 0; align-self: center; }
     body.shell .rail-foot #userbox > button { padding: 6px 1px; font-size: 10.5px; overflow: hidden; }
@@ -829,7 +825,7 @@
     <span class="ri-word">Actions</span>
     <span class="rail-badge" id="railBadgeIssues"></span>
   </button>
-  <button type="button" class="rail-item rail-new" id="railNew" onclick="railGo('instructor')" title="Log a new report">
+  <button type="button" class="rail-item" id="railNew" onclick="railGo('instructor')" title="Log a new report">
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     <span class="ri-word">New</span>
   </button>
@@ -1902,7 +1898,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r100 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r100.1 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
