@@ -381,6 +381,7 @@ function doPost(e) {
     if (action === 'deployBackend') return jsonOut(deployBackend_(body));
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
     if (action === 'setChatwootConfig') return jsonOut(setChatwootConfig_(body));
+    if (action === 'chatwootProbe') return jsonOut(chatwootProbe_(body));
     if (action === 'runSetup') return jsonOut(runSetup_(body));
     if (action === 'runMigrateAudience') {
       var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
@@ -2912,6 +2913,32 @@ function setSlackWebhook_(data) {
 // setChatwootConfig below. Cloud only for now (app.chatwoot.com).
 var CHATWOOT_BASE = 'https://app.chatwoot.com';
 
+// Temporary diagnostic (22 Aug 2026, DEPLOY_KEY-gated): says what token the
+// backend is actually holding (masked) and what Chatwoot answers it, so a 401
+// can be split into "stored wrong" vs "rejected by Chatwoot". Safe to leave:
+// it never returns the token itself.
+function chatwootProbe_(data) {
+  var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  var cfg = chatwootCfg_();
+  var out = { token_head: String(cfg.token).slice(0, 4), token_len: String(cfg.token).length,
+              account: cfg.account, base: CHATWOOT_BASE };
+  try {
+    var res = UrlFetchApp.fetch(CHATWOOT_BASE + '/api/v1/accounts/' + cfg.account + '/conversations?status=open&page=1',
+      { muteHttpExceptions: true, headers: { api_access_token: cfg.token } });
+    out.status = res.getResponseCode();
+    out.body_head = String(res.getContentText() || '').slice(0, 120);
+  } catch (e) { out.fetch_error = String(e).slice(0, 160); }
+  // And the profile endpoint, which validates a token without needing an account.
+  try {
+    var res2 = UrlFetchApp.fetch(CHATWOOT_BASE + '/api/v1/profile',
+      { muteHttpExceptions: true, headers: { api_access_token: cfg.token } });
+    out.profile_status = res2.getResponseCode();
+    out.profile_head = String(res2.getContentText() || '').slice(0, 120);
+  } catch (e) { out.profile_error = String(e).slice(0, 160); }
+  return { ok: true, probe: out };
+}
+
 function setChatwootConfig_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
@@ -5378,7 +5405,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r95 · 2026-08-22';
+var CODE_STAMP = 'r95.1 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
