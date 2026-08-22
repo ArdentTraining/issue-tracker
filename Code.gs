@@ -468,6 +468,7 @@ function doPost(e) {
     if (action === 'attachImages') return jsonOut(attachImages_(body));
     if (action === 'extract') return jsonOut(extract_(body));
     if (action === 'askIssues') return jsonOut(askIssues_(body));
+    if (action === 'askManual') return jsonOut(askManual_(body));
     if (action === 'suggestFix') return jsonOut(suggestFix_(body));
     if (action === 'troubleshoot') return jsonOut(troubleshoot_(body));
     if (action === 'sameIssue') return jsonOut(sameIssue_(body));
@@ -632,6 +633,11 @@ function reqPerm_(action) {
     // changing your own password. These used to ride on the old open default;
     // they are listed here now so the default can shut.
     case 'uploadImage': case 'addFeedback': case 'changePassword': return 'any';
+    // Asking the manual a question. 'any' because everybody gets a manual,
+    // and the text it answers from is sent up by the browser, which has
+    // already cut it down to the sections this account is allowed to read.
+    // So the gate on the answer is the same gate as on the page.
+    case 'askManual': return 'any';
     // deleteIssue also used to ride on the default. It has always checked
     // ownership inside deleteIssue_ (your own, or the users permission), so this
     // is the outer gate only: you have to be someone who works issues at all.
@@ -1408,7 +1414,7 @@ var READ_ONLY_ACTIONS = {
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1, getAssignees: 1,
   getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1, chatBackSweepState: 1, lessonIssueCounts: 1,
-  listVoiceGuides: 1, listContentSuggestions: 1, getManifest: 1, extract: 1, askIssues: 1,
+  listVoiceGuides: 1, listContentSuggestions: 1, getManifest: 1, extract: 1, askIssues: 1, askManual: 1,
   suggestFix: 1, troubleshoot: 1, matchUpdate: 1, draftStudentMessage: 1, listLiveCases: 1,
   // Reads open issues and answers a question; writes nothing, so the cached
   // list projection survives it (the Round 54 invalidation rule).
@@ -5580,7 +5586,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r106 · 2026-08-22';
+var CODE_STAMP = 'r107 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -8166,6 +8172,79 @@ function patchImportedLessonRefs() {
 // resources page gone down?"). Builds a compact one-line-per-issue digest of
 // every row in both sheets and lets the model count and summarise. Read-only:
 // it never writes anything, so a wrong answer costs nothing but a shrug.
+// ===================== ROUND 104: ASKING THE MANUAL =====================
+// One bar on the manual page does both jobs. Typing filters the page in the
+// browser, free and instant; pressing Ask sends the question here with the
+// manual text the browser is currently showing.
+//
+// The text comes UP from the browser rather than living here on purpose. The
+// manual is one document filtered by permission, and the browser has already
+// cut it to the sections this account can read, so an answer can never quote
+// a page the person is not allowed to open. It also means the answer is always
+// read off the manual that shipped, with no second copy here to drift.
+function askManual_(body) {
+  var q = String(body.question || '').trim();
+  if (!q) return { ok: false, error: 'No question given.' };
+  if (q.length > 400) return { ok: false, error: 'That question is a bit long - try it in a sentence.' };
+  var doc = String(body.context || '').trim();
+  if (!doc) return { ok: false, error: 'The manual did not come through. Reload the page and try again.' };
+  if (doc.length > 90000) doc = doc.slice(0, 90000);
+  var who = String(body.role || '').trim();
+
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) return { ok: false, error: 'No API key configured.' };
+
+  var prompt = 'Below is the user manual for Bugs, the issue tracker used by instructors at Ardent Training, ' +
+    'a sailing school. Somebody using the app has asked a question about how to do something in it.\n\n' +
+    'Answer using ONLY what the manual says. Do not invent a button, a field or a step that is not in the text. ' +
+    'If the manual does not cover it, say so plainly and suggest they press the Feedback button and ask, ' +
+    'rather than guessing.\n\n' +
+    (who ? ('This person is signed in as: ' + who + '. The manual below is already cut down to what they can see, ' +
+            'so never point them at something that is not in it.\n\n') : '') +
+    'How to write the answer:\n' +
+    '- Plain text. No markdown, no headings, no bullet characters, no bold.\n' +
+    '- Short. Two or three sentences for a simple question. Numbered steps (1. 2. 3.) only when it really is a sequence.\n' +
+    '- Warm and plain-English, the way a colleague would answer across the desk. British spelling.\n' +
+    '- Say "we" and "us" about the team, and name buttons exactly as the manual names them.\n' +
+    '- No em dashes. Use commas, full stops or brackets.\n' +
+    '- Do not open with a preamble like "Great question" or "According to the manual". Just answer.\n' +
+    '- Do not mention being a model, an assistant, or anything about how the answer was produced.\n' +
+    '- Finish with a line in exactly this form naming the section it came from: SECTION: <the section heading>\n' +
+    '  Use the heading exactly as it appears in the manual. If it came from more than one, name the main one. ' +
+    'If the manual does not answer it, leave the section line off entirely.\n\n' +
+    'THE MANUAL:\n' + doc + '\n\nQUESTION: ' + q;
+
+  var res;
+  try {
+    res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      // Same trap as askIssues_ and Round 44: the thinking spends from this
+      // budget too, so a small number here comes back with no text at all.
+      payload: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 4000, messages: [{ role: 'user', content: prompt }] })
+    });
+  } catch (e) { return { ok: false, error: 'The request failed: ' + e }; }
+  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
+    return { ok: false, error: 'The request failed (' + res.getResponseCode() + ').' };
+  }
+  var parsed; try { parsed = JSON.parse(res.getContentText()); } catch (e) { return { ok: false, error: 'The reply came back unreadable.' }; }
+  tallyAi_(parsed);
+  var text = '';
+  if (parsed.content) for (var i = 0; i < parsed.content.length; i++) {
+    if (parsed.content[i].type === 'text') text += parsed.content[i].text;
+  }
+  if (!text.trim()) {
+    return { ok: false, error: 'The reply came back with no answer in it (stopped: ' + (parsed.stop_reason || '?') +
+      '; ' + ((parsed.usage && parsed.usage.output_tokens) || '?') + ' output tokens).' };
+  }
+  // Split the section line off so the page can turn it into a real link to
+  // that part of the manual rather than leaving it as words in a paragraph.
+  var answer = text.trim(), section = '';
+  var m = answer.match(/\n?SECTION:\s*(.+)\s*$/);
+  if (m) { section = m[1].trim(); answer = answer.slice(0, m.index).trim(); }
+  return { ok: true, answer: answer, section: section };
+}
+
 function askIssues_(body) {
   var q = String(body.question || '').trim();
   if (!q) return { ok: false, error: 'No question given.' };
