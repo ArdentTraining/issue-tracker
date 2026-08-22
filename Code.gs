@@ -452,6 +452,7 @@ function doPost(e) {
     if (action === 'bulkAssign') return jsonOut(bulkAssign_(body));
     if (action === 'courseReview') return jsonOut(courseReview_(body));
     if (action === 'fetchStudentUpdate') return jsonOut(fetchStudentUpdate_(body));
+    if (action === 'peekStudentActivity') return jsonOut(peekStudentActivity_(body)); // FB-0281: cheap no-AI look before the card claims silence
     if (action === 'listLiveCases') return jsonOut(listLiveCases_(body));
     if (action === 'caseBrief') return jsonOut(caseBrief_(body));
     if (action === 'caseCheckReply') return jsonOut(caseCheckReply_(body));
@@ -611,6 +612,7 @@ function reqPerm_(action) {
     // other update paths.
     case 'bulkAssign': case 'courseReview': return 'work';
     case 'fetchStudentUpdate': return 'log';
+    case 'peekStudentActivity': return 'log';
     // The Live Case workspace (Round 45): visible to every instructor-level
     // user, and cases are shared - anyone can pick one up and carry on.
     case 'listLiveCases': case 'caseBrief': case 'caseCheckReply': case 'caseDraftReply':
@@ -5556,7 +5558,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r103 · 2026-08-22';
+var CODE_STAMP = 'r105 · 2026-08-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6160,6 +6162,53 @@ function chatwootContactUrl_(data) {
     if (!found.hit) return { ok: false, error: contactMissMessage_(email, found.match) };
     return { ok: true, url: base + found.hit.id, match: found.match };
   } catch (e) { return { ok: false, error: String(e) }; }
+}
+
+// FB-0281 (Edd, 22 Aug 2026): Sergei's follow-up card said "no word from the
+// student since" while his email replies sat in Chatwoot as conversations the
+// tracker had never read - email replies often arrive as NEW conversations
+// rather than the thread we know. This is the LOOK the card takes before it
+// makes that claim: same contact-and-conversations walk as fetchStudentUpdate_
+// (same stamp-dedupe, same submitted_at gate per FB-0199), but no AI read and
+// no writes, so it is cheap enough to run on every card render.
+function peekStudentActivity_(data) {
+  var id = data.issue_id;
+  if (!id) return { ok: false, error: 'peekStudentActivity needs an issue_id' };
+  var found = findRow_(id);
+  if (!found) return { ok: false, error: 'No issue found with id ' + id };
+  var rec = found.record;
+  var email = String(rec.student_contact || '').trim().toLowerCase();
+  if (email.indexOf('@') < 0) {
+    try {
+      (JSON.parse(rec.reports_json || '[]') || []).forEach(function (rp) {
+        var c = String(rp.student_contact || '').trim().toLowerCase();
+        if (email.indexOf('@') < 0 && c.indexOf('@') > 0) email = c;
+      });
+    } catch (e) {}
+  }
+  if (email.indexOf('@') < 0) return { ok: true, fresh: 0 };
+  var hit = null;
+  var stored = String(rec.chatwoot_contact_id || '').trim();
+  if (stored) { hit = { id: stored }; }
+  else {
+    try { var f = chatwootFindContact_(email); hit = f.hit; }
+    catch (e) { return { ok: true, fresh: 0, note: 'contact lookup failed' }; }
+    if (!hit) return { ok: true, fresh: 0 };
+  }
+  var convs;
+  try { var cv = chatwootCall_('/contacts/' + hit.id + '/conversations'); convs = (cv && cv.payload) || []; }
+  catch (e) { return { ok: true, fresh: 0, note: 'conversation list failed' }; }
+  var since = new Date(rec.submitted_at || rec.updated_at || 0).getTime();
+  var already = String(rec.raw_text || '');
+  var fresh = convs.filter(function (c) {
+    var t = Number(c.last_activity_at || c.timestamp || 0) * 1000;
+    if (!(t > since)) return false;
+    return already.indexOf('Chatwoot conversation ' + c.id) < 0;
+  });
+  fresh.sort(function (a, b) { return Number(b.last_activity_at || 0) - Number(a.last_activity_at || 0); });
+  return { ok: true, fresh: fresh.length,
+    newest: fresh[0] ? new Date(Number(fresh[0].last_activity_at || 0) * 1000).toISOString() : '',
+    url: fresh[0] ? CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/conversations/' + fresh[0].id : '' };
 }
 
 // "Fetch update" from the detail pane (Edd, FB-0173): go and look in Chatwoot

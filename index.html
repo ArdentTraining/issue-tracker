@@ -2025,7 +2025,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r101 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r105 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3809,7 +3809,7 @@ function renderActions() {
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'fixed\')">Draft email</button>';
     else if (r.kind === "followup") btn = (r.nudged ? '' :
-      '<button class="primary small" style="padding:5px 12px;" title="Opens a ready-written check-in asking if the fix worked. Send it, press the sent marker, and the 7-day clock keeps running." onclick="' + stop + 'nudgeStudent(\'' + id + '\')">Nudge the student</button> ') +
+      '<button class="primary small fu-nudge" style="padding:5px 12px;" title="Opens a ready-written check-in asking if the fix worked. Send it, press the sent marker, and the 7-day clock keeps running." onclick="' + stop + 'nudgeStudent(\'' + id + '\')">Nudge the student</button> ') +
       '<button class="' + (r.nudged ? 'primary' : 'ghost') + ' small" style="padding:5px 12px;" title="The workaround held, or the fix has since landed. Closes it for good - same as Resolved everywhere else." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsSentUpdate(\'' + id + '\')">Student updated</button>' +
@@ -3835,11 +3835,44 @@ function renderActions() {
         '<span class="act-word" style="background:' + r.colour + ';color:#02121f;">' + esc(r.word) + '</span>' +
         '<div><div class="act-title">' + esc(cardTitle(i)) + '</div>' +
           (sub.length ? '<div class="act-sub">' + esc(sub.join(" · ")) + '</div>' : '') + '</div>' +
-        '<div><span class="act-do">' + esc(r.act) + '</span>' + btn + '</div>' +
+        '<div><span class="act-do">' + esc(r.act) + '</span>' +
+          (r.kind === "followup" ? '<span class="fu-peek" id="fuPeek-' + id.slice(0, 8) + '"></span>' : '') + btn + '</div>' +
       '</div>';
   }).join("");
   markActiveCard();
   renderChatScan("actionsScan");
+  peekFollowups(rows);
+}
+
+// FB-0281 (Edd, 22 Aug 2026): the card used to claim "no word from the student
+// since" without ever looking. Sergei had replied by EMAIL, which Chatwoot
+// files as new conversations the tracker never linked, and the card was one
+// click from nudging a student who had already answered. Now every follow-up
+// card takes a cheap look first (no AI, cached for the page), and when the
+// student HAS written it says so, links the conversation, and withdraws the
+// nudge button.
+function peekFollowups(rows) {
+  if (!state._fuPeeks) state._fuPeeks = {};
+  rows.filter(function (r) { return r.kind === "followup"; }).forEach(function (r) {
+    var id = r.i.issue_id, key = String(id).slice(0, 8);
+    var apply = function (p) {
+      if (!p || !p.ok || !p.fresh) return;
+      var el = $("fuPeek-" + key);
+      if (!el) return;
+      el.innerHTML = '<br><span style="color:var(--medium);font-weight:600;">The student HAS written since - ' +
+        p.fresh + ' conversation' + (p.fresh > 1 ? 's' : '') + ' (likely email) never linked to this case.</span> ' +
+        (p.url ? '<a href="' + p.url + '" target="_blank" rel="noopener" onclick="event.stopPropagation();">Read it in Chatwoot</a>, then' : 'Press') +
+        ' Fetch update in the case to pull it in.';
+      var row = el.closest ? el.closest('.act-row') : null;
+      var nb = row ? row.querySelector('.fu-nudge') : null;
+      if (nb) nb.style.display = 'none';
+    };
+    if (state._fuPeeks[id]) { apply(state._fuPeeks[id]); return; }
+    apiPost({ action: "peekStudentActivity", issue_id: id }).then(function (p) {
+      state._fuPeeks[id] = p || { ok: false };
+      apply(p);
+    }).catch(function () {});
+  });
 }
 
 // ============================ LIVE CASES (Round 45) ============================
