@@ -1766,8 +1766,8 @@
     <tr data-perm="log"><td><span class="ui">Chats</span></td><td>Live conversations pulled in from Chatwoot, with a written brief on each. The number on the icon is how many cases are open.</td></tr>
     <tr data-perm="log"><td><span class="ui">Actions</span></td><td>Things waiting on an instructor, plus the whole log and the board. The number is how many things are waiting.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
-    <tr data-perm="dev"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
-    <tr data-perm="course"><td><span class="ui">Course</span></td><td>The course-fix queue, which is every course error that has been logged.</td></tr>
+    <tr data-perm="dev,users"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
+    <tr data-perm="course,users"><td><span class="ui">Course</span></td><td>The course-fix queue, which is every course error that has been logged.</td></tr>
     <tr data-perm="analytics"><td><span class="ui">Reports</span></td><td>The telemetry dashboard, showing how students are actually moving through the lessons.</td></tr>
     <tr data-perm="analytics"><td><span class="ui">Stats</span></td><td>What the log itself says: where the issues are, and which lessons keep generating them.</td></tr>
     <tr data-perm="users"><td><span class="ui">Admin</span></td><td>People, the feedback on this app, and the troubleshooting playbook.</td></tr>
@@ -2067,10 +2067,11 @@
   <p>For a fix that affected several people, <span class="ui">Draft "it's fixed" messages to all</span> in the issue detail writes one message per student, up to ten at a time. Nothing sends itself there either, so each one gets copied across and tweaked as you like.</p>
 </section>
 
-<section id="man-dev" data-perm="dev" data-title="Fixing what comes through">
+<section id="man-dev" data-perm="dev,users" data-title="Fixing what comes through">
   <h3>Fixing what comes through</h3>
   <p>The <span class="ui">Dev</span> queue holds tech faults an admin has looked at and handed over. Nothing lands here on its own, which is the point: by the time it reaches us somebody has confirmed it is real, worked out how many students it is hitting, and written down what has already been ruled out.</p>
-  <p>Signing in opens straight on it, on <span class="ui">To do</span>.</p>
+  <p data-noperm="log">Signing in opens straight on it, on <span class="ui">To do</span>.</p>
+  <p data-perm="log">It is the <span class="ui">Dev</span> item on the rail, opening on <span class="ui">To do</span>.</p>
   <h4>The queue</h4>
   <p>Four tiles across the top. <span class="ui">Queued</span> is passed over but nobody's name on it, <span class="ui">In progress</span> is assigned, <span class="ui">Completed</span> is anything marked fixed, and <span class="ui">Average time to fix</span> is the gap between handover and fix across all of them. The first three are buttons, so pressing one filters the list.</p>
   <p>Three pages beside the rail. <span class="ui">To do</span>, <span class="ui">Fixed</span>, and <span class="ui">All</span>.</p>
@@ -2081,13 +2082,14 @@
   <p>If nobody has written one, the heading says so and the box falls back to an assembly of the summary and the checklist. There is a button, <span class="ui">Ask an admin to write this</span>, or <span class="ui">Ask for this to be clearer</span> if there is one but it is thin.</p>
   <h4>Sizing it</h4>
   <p><span class="ui">Estimated size of fix</span> takes Small, Medium, or Large. <span class="ui">Suggest a size</span> reads the issue and proposes one with a reason, and it saves only once you agree, so a suggestion you disagree with costs you nothing but the press.</p>
-  <h4>Priority is not ours to set</h4>
-  <p>The priority shows as a badge with the severity, the report count, and the score behind it, and there is no dropdown. It is worked out from how badly the fault hits one person and how many people have hit it, so it belongs with whoever can see the whole board.</p>
-  <p><span class="ui">Ask for a different priority</span> does not send anything. It writes an opening line into the question box further down, points it at the admins, and puts the cursor at the end for us to say why. The toast says as much: <em>Add a line on why, then press Send question.</em></p>
-  <div class="man-note warn">
+  <h4>Priority</h4>
+  <p data-noperm="users">The priority shows as a badge with the severity, the report count, and the score behind it, and there is no dropdown. It is worked out from how badly the fault hits one person and how many people have hit it, so it belongs with whoever can see the whole board.</p>
+  <p data-noperm="users"><span class="ui">Ask for a different priority</span> does not send anything. It writes an opening line into the question box further down, points it at the admins, and puts the cursor at the end for us to say why. The toast says as much: <em>Add a line on why, then press Send question.</em></p>
+  <div class="man-note warn" data-noperm="users">
     <strong>If you edit priority some other way, the save is refused</strong>
     The message reads <em>Only the fix size can be edited from this queue. Ask an admin for a priority change.</em> The rule used to be in the screen only, so the button was gone but the save still went through. It is enforced properly now.
   </div>
+  <p data-perm="users">You get a dropdown here, because you hold Manage users. Everyone else sees a read-only badge with the severity, the report count, and the score behind it, plus a button to ask you for a change. It arrives as a question on the issue with their reasoning attached.</p>
   <h4>Asking a question</h4>
   <p><span class="ui">Question about this fix?</span> goes either to <span class="ui">Ask Charlie, Charly or Edd</span> or to the instructor who submitted the report, whichever is likelier to know. It lands in their Actions list and on Slack.</p>
   <p>The pane stays open after sending, and the question and its answer are kept on the issue under <span class="ui">Questions and answers</span>, so the thread reads back later instead of living in somebody's Slack history.</p>
@@ -2100,14 +2102,17 @@
   <p>The reason for insisting is on the box itself: this is what the next person reads when it happens again, and what an admin checks before telling the student it is sorted. A one-word note fails both jobs, so a few words is refused with <em>Say what was actually causing it - a few words is not enough to be useful later.</em></p>
   <p>There is a tick, <span class="ui">Notify student? (asks the instructors on Slack to pass the good news on)</span>, which comes pre-ticked when there are student contacts on the issue. We do not message students ourselves; it puts it on the instructors to do.</p>
   <p>The full report sits at the very bottom under <span class="ui">Transcript</span>, folded away, because it is reference rather than the job.</p>
-  <div class="man-note">
-    <strong>Two things that are not yours</strong>
-    <p>Handing an issue to the developers is an admin call, so an attempt to set the status yourself comes back with <em>Only an admin can pass an issue to the developers.</em></p>
-    <p>The <span class="ui">Ask</span> button on the queue bar does not work on a developer account. It needs a permission you do not have and returns <em>Couldn't get an answer: forbidden</em>. The search box next to it works fine. This one is on the list.</p>
+  <div class="man-note" data-noperm="users">
+    <strong>Handing work over is not yours</strong>
+    An issue reaches this queue when an admin passes it, and setting that status yourself comes back with <em>Only an admin can pass an issue to the developers.</em>
+  </div>
+  <div class="man-note warn" data-noperm="manage">
+    <strong>The Ask button does not work from here</strong>
+    It needs a permission this account does not carry, so it returns <em>Couldn't get an answer: forbidden</em>. The search box next to it is fine. On the list to fix.
   </div>
 </section>
 
-<section id="man-course" data-perm="course" data-title="The course-fix queue">
+<section id="man-course" data-perm="course,users" data-title="The course-fix queue">
   <h3>The course-fix queue</h3>
   <p>A wrong diagram or a clumsy question is written, not coded, so it goes to the course team and no developer ever sees it. <span class="ui">Course</span> is where those land.</p>
   <p>It fills differently from the developer queue. A tech fault only appears there once an admin has passed it over, but a course error turns up here the moment it is logged, including the old imported ones that were never routed anywhere. So this queue is everything reported, not everything triaged.</p>
@@ -2121,7 +2126,8 @@
   </div>
   <h4>Inside a card</h4>
   <p>It is the same pane the developers use, with the course wording swapped in, so <span class="ui">What we need</span> comes first, then the facts, the assignee, the size, the checklist, notes, and the questions.</p>
-  <p>Priority is a badge rather than a dropdown, the same as for the developers, and <span class="ui">Ask for a different priority</span> writes an opening line into the question box for us to finish. Marking it fixed asks what was causing it and what changed, both required.</p>
+  <p data-noperm="users">Priority is a badge rather than a dropdown, the same as for the developers, and <span class="ui">Ask for a different priority</span> writes an opening line into the question box for us to finish. Marking it fixed asks what was causing it and what changed, both required.</p>
+  <p data-perm="users">Priority is a dropdown here, because you hold Manage users. Marking it fixed asks what was causing it and what changed, both required.</p>
   <h4>Check the priorities</h4>
   <p>This one reads the whole open queue and comes back with a list of suggested changes, each with a reason and a before-and-after, and applies none of them until we press <span class="ui">Apply</span> on that row. It takes about a minute.</p>
   <p>If the run fails it says so in a panel that stays on screen rather than a toast that slides away, because a message nobody managed to read leaves "the button does not work" as the only thing left.</p>
@@ -2131,9 +2137,9 @@
   <h4>Assign all…</h4>
   <p>For handing a batch to one person. The conditions read as a sentence left to right, along the lines of <em>item type is a knowledge check, and course is Day Skipper</em>, and a live count underneath says how many open fixes match before anything is done. There are no brackets, so a mix of "and" and "or" reads strictly left to right and the panel says so.</p>
   <p>The confirm names the number, the person, and the sentence, and warns that anything already assigned to somebody else moves across.</p>
-  <div class="man-note">
-    <strong>The Ask button does not work on a course account</strong>
-    It needs a permission the course role does not carry, so it returns <em>Couldn't get an answer: forbidden</em>. The search box beside it is fine. On the list to fix.
+  <div class="man-note warn" data-noperm="manage">
+    <strong>The Ask button does not work from here</strong>
+    It needs a permission this account does not carry, so it returns <em>Couldn't get an answer: forbidden</em>. The search box beside it is fine. On the list to fix.
   </div>
 </section>
 
@@ -2149,9 +2155,9 @@
   <p>The telemetry dashboard, loaded inside the app rather than as a separate site, so the rail stays put and there is no second thing to sign in to. It used to be a link out, and pressing it left the app entirely with only a link on the far page to get back.</p>
   <p>It also stands on its own at <code>/reports/</code>, and <code>?view=reports</code> on the app URL opens straight into it, which is handy for a bookmark.</p>
   <p>What goes into it is student telemetry rather than anything from the issue log, so the two pages will not agree with each other and are not meant to. The one place they meet is the issue counts against each lesson, which Reports reads from here as counts only, with no summaries and nothing about any individual student.</p>
-  <div class="man-note warn">
+  <div class="man-note warn" data-noperm="manage">
     <strong>Ask needs more than analytics</strong>
-    The <span class="ui">Ask about our issues</span> box on Stats needs the Track permission as well, so on an analytics-only account it comes back with <em>forbidden</em>. Anyone who also has Track is fine. On the list to fix.
+    The <span class="ui">Ask about our issues</span> box on Stats needs the Track permission as well, so on this account it comes back with <em>forbidden</em>. On the list to fix.
   </div>
 </section>
 
@@ -2632,7 +2638,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r111 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r112 · 2026-08-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -12066,10 +12072,16 @@ function buildManual() {
   doc.innerHTML = manualMaster;
 
   var p = state.perms || {};
+  // A comma-separated list means ANY of them, because that is how the rail
+  // gates itself: Dev shows for "dev OR users", so an admin who is not in the
+  // assignee list still opens that queue and still needs the page about it.
+  var holds = function (list) {
+    return String(list || "").split(",").some(function (k) { return k && p[k.trim()]; });
+  };
   var kept = [];
   manualSections().forEach(function (s) {
     var need = s.getAttribute("data-perm") || "";
-    if (need && !p[need]) { s.parentNode.removeChild(s); return; }
+    if (need && !holds(need)) { s.parentNode.removeChild(s); return; }
     kept.push(s);
   });
   if (kept.length) kept[0].classList.add("man-first");   // no page break before page one
@@ -12083,11 +12095,11 @@ function buildManual() {
   Array.prototype.slice.call(doc.querySelectorAll("[data-perm]")).forEach(function (el) {
     if (el.tagName === "SECTION") return;
     var need = el.getAttribute("data-perm");
-    if (need && !p[need]) el.parentNode.removeChild(el);
+    if (need && !holds(need)) el.parentNode.removeChild(el);
   });
   Array.prototype.slice.call(doc.querySelectorAll("[data-noperm]")).forEach(function (el) {
     var no = el.getAttribute("data-noperm");
-    if (no && p[no]) el.parentNode.removeChild(el);
+    if (no && holds(no)) el.parentNode.removeChild(el);
   });
 
   // The screenshots load only now, and only if they are there. A manual with a
