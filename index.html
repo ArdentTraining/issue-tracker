@@ -549,6 +549,21 @@
   .viewas-bar.lifted { bottom: 84px; }
   .viewas-bar select { width: auto; font-size: 12.5px; padding: 3px 6px; }
 
+  /* RCA panel */
+  .rca-panel { position: fixed; inset: 3vh 4vw; z-index: 90; display: none; flex-direction: column; background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius); box-shadow: 0 16px 48px rgba(0,0,0,0.5); overflow: hidden; }
+  .rca-panel.show { display: flex; }
+  .rca-head { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px 8px; border-bottom: 1px solid var(--line); }
+  .rca-sub { padding: 8px 16px; border-bottom: 1px solid var(--line); }
+  .rca-msgs { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .rca-msg { max-width: 88%; border-radius: 10px; padding: 9px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.45; }
+  .rca-msg.user { align-self: flex-end; background: var(--surface); border: 1px solid var(--line); }
+  .rca-msg.assistant { align-self: flex-start; background: var(--surface); border-left: 3px solid var(--accent); }
+  .rca-msg .who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .rca-tool { align-self: flex-start; font-size: 12px; color: var(--muted); }
+  .rca-tool details { cursor: pointer; }
+  .rca-input { border-top: 1px solid var(--line); padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .rca-input textarea { width: 100%; }
+
   /* duplicate confirm modal */
   .modal-bg { position: fixed; inset: 0; background: rgba(5,10,18,0.7); display: none; z-index: 80; align-items: center; justify-content: center; }
   .modal-bg.show { display: flex; }
@@ -2581,6 +2596,57 @@
   </select>
 </div>
 
+<!-- ===================== RCA (Root Cause Analysis) =====================
+     Promote an issue to a private diagnostic record: a persistent chat with
+     Claude wired to read-only support data. Admin/dev only - the Worker
+     enforces that on every request, this panel is just the window. -->
+<div id="rcaPanel" class="rca-panel">
+  <div class="rca-head">
+    <div style="min-width:0;">
+      <div class="small muted">RCA record · <span id="rcaIssueRef"></span></div>
+      <div id="rcaTitle" style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+    </div>
+    <div class="row" style="gap:8px;flex:0 0 auto;align-items:center;">
+      <select id="rcaStatus" onchange="rcaSetStatus(this.value)" title="Cannot reach Verified without a named verification test that has passed.">
+        <option value="gathering">Gathering evidence</option>
+        <option value="hypotheses">Hypotheses open</option>
+        <option value="root_cause">Root cause confirmed</option>
+        <option value="fix_pending">Fix pending</option>
+        <option value="verified">Verified</option>
+      </select>
+      <button class="ghost small" style="padding:5px 10px;" onclick="rcaDraftFindings()" title="Asks the assistant for a structured findings draft, then opens the publish form for approval.">Draft findings</button>
+      <button class="ghost small" style="padding:5px 10px;" onclick="rcaClose()">Close</button>
+    </div>
+  </div>
+  <div class="rca-sub row" style="gap:8px;">
+    <input id="rcaTest" placeholder="Named verification test (required before Verified)" style="flex:1;" onchange="rcaSaveTest()">
+    <label class="small muted" style="display:flex;align-items:center;gap:5px;flex:0 0 auto;"><input type="checkbox" id="rcaTestPassed" onchange="rcaSaveTest()"> test passed</label>
+  </div>
+  <div id="rcaMsgs" class="rca-msgs"></div>
+  <div class="rca-input">
+    <textarea id="rcaText" rows="2" placeholder="Work the problem. The assistant can read Chatwoot, the tracker, and the infra timeline - all read-only."></textarea>
+    <div class="row" style="gap:8px;justify-content:space-between;align-items:center;">
+      <span class="small muted" id="rcaUsage"></span>
+      <div class="row" style="gap:8px;">
+        <button class="ghost small" style="padding:5px 10px;" onclick="rcaAddInfra()" title="Record a deploy or infra change on the shared timeline the deploy_log tool reads.">Log infra event</button>
+        <button class="primary small" id="rcaSendBtn" style="padding:6px 16px;" onclick="rcaSend()">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="rcaPublishModal" class="modal-bg"><div class="modal" style="width:640px;">
+  <h3 style="margin-top:0;">Publish findings to the issue</h3>
+  <p class="small muted">Review and edit - publishing writes these to the issue as its dev ask and an update, under your name. Conversation IDs only in anything that could become public, never student names.</p>
+  <div class="field"><label>Root cause</label><textarea id="rcaPubRoot" rows="3"></textarea></div>
+  <div class="field"><label>Evidence</label><textarea id="rcaPubEvidence" rows="3"></textarea></div>
+  <div class="field"><label>Fix</label><textarea id="rcaPubFix" rows="3"></textarea></div>
+  <div class="field"><label>Verification</label><textarea id="rcaPubVerify" rows="2"></textarea></div>
+  <div class="field"><label>Incident count</label><input id="rcaPubCount"></div>
+  <div class="row" style="justify-content:flex-end;gap:8px;">
+    <button class="ghost small" onclick="$('rcaPublishModal').classList.remove('show')">Cancel</button>
+    <button class="primary small" onclick="rcaPublish()">Publish to the issue</button>
+  </div>
+</div></div>
 <!-- FEEDBACK on the tracker -->
 <button id="fbBtn" class="fab" onclick="openFeedback()">Feedback</button>
 <div class="modal-bg" id="feedbackModal">
@@ -2653,7 +2719,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r113 · 2026-08-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r112 · 2026-08-23";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4507,6 +4573,145 @@ function peekFollowups(rows) {
       state._fuPeeks[id] = p || { ok: false };
       apply(p);
     }).catch(function () {});
+  });
+}
+
+
+// ============================ RCA (Root Cause Analysis) ============================
+// Promote an issue to a private AI diagnostic record on the RCA Worker.
+// Everything here is a thin window: auth, permissions and tools are all
+// enforced server-side on the caller's tracker session.
+var RCA_WORKER_URL = "https://ardent-rca.RCA_SUBDOMAIN.workers.dev"; // set the real workers.dev URL after the first deploy
+
+function rcaConfigured() { return RCA_WORKER_URL.indexOf("RCA_SUBDOMAIN") < 0; }
+function rcaButtonHtml(issue) {
+  var p = state.perms || {};
+  if (!p.users && !p.dev) return "";
+  return '<div style="margin:10px 0;"><button class="ghost small" style="padding:5px 12px;" ' +
+    'title="Opens a private diagnostic record on this issue: a persistent chat with an AI investigator wired to read-only support data. Admin and developer eyes only - it will contain student details." ' +
+    'onclick="rcaOpen(\'' + esc(issue.issue_id) + '\')">Promote to RCA</button></div>';
+}
+function rcaApi(path, payload) {
+  payload = payload || {};
+  payload.token = getToken();
+  return fetch(RCA_WORKER_URL + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+    .then(function (r) { return r.json(); });
+}
+function rcaOpen(issueId) {
+  if (!rcaConfigured()) { toast("RCA isn't deployed yet - the Worker needs its first deploy (see the setup doc).", 9000); return; }
+  busyShow("Opening the RCA record…");
+  rcaApi("/api/promote", { issue_id: issueId }).then(function (res) {
+    if (!res.ok) { busyHide(); toast("RCA: " + (res.error || "failed"), 8000); return; }
+    return rcaApi("/api/record", { rca_id: res.rca_id }).then(function (rec) {
+      busyHide();
+      if (!rec.ok) { toast("RCA: " + (rec.error || "failed"), 8000); return; }
+      state.rca = { rec: rec.record, messages: rec.messages || [] };
+      rcaRender();
+      $("rcaPanel").classList.add("show");
+    });
+  }).catch(function (e) { busyHide(); toast("RCA error - see console."); console.error(e); });
+}
+function rcaClose() { $("rcaPanel").classList.remove("show"); state.rca = null; }
+function rcaRender() {
+  var r = state.rca; if (!r) return;
+  $("rcaIssueRef").textContent = "#" + String(r.rec.issue_id).slice(0, 8).toUpperCase();
+  $("rcaTitle").textContent = r.rec.title;
+  $("rcaStatus").value = r.rec.status;
+  $("rcaTest").value = r.rec.verification_test || "";
+  $("rcaTestPassed").checked = !!r.rec.verification_passed;
+  $("rcaUsage").textContent = Math.round(((r.rec.usage_input_tokens || 0) + (r.rec.usage_output_tokens || 0)) / 1000) + "k tokens used" + (r.rec.published_at ? " · published " + fmtDate(r.rec.published_at) : "");
+  var host = $("rcaMsgs");
+  host.innerHTML = r.messages.map(rcaMsgHtml).join("") || '<p class="muted small">A fresh record, seeded from the issue. Say where to start - "build the incident log" is the usual opening move.</p>';
+  host.scrollTop = host.scrollHeight;
+}
+function rcaMsgHtml(m) {
+  if (m.role === "tool") {
+    var results = (m.content || []).length;
+    return '<div class="rca-tool"><details><summary>tool result' + (results > 1 ? "s (" + results + ")" : "") + '</summary><pre style="white-space:pre-wrap;max-height:300px;overflow:auto;">' +
+      esc((m.content || []).map(function (c) { return (c.content && c.content[0] && c.content[0].text) || ""; }).join("\n---\n").slice(0, 8000)) + '</pre></details></div>';
+  }
+  var parts = [];
+  (m.content || []).forEach(function (c) {
+    if (c.type === "text" && c.text) parts.push(esc(c.text));
+    if (c.type === "tool_use") parts.push('<span class="muted small">→ ' + esc(c.name) + '(' + esc(JSON.stringify(c.input || {}).slice(0, 160)) + ')</span>');
+  });
+  if (!parts.length) return "";
+  var who = m.role === "user" ? (m.author || "you") : "investigator";
+  return '<div class="rca-msg ' + (m.role === "user" ? "user" : "assistant") + '"><div class="who">' + esc(who) + '</div>' + parts.join("<br>") + '</div>';
+}
+function rcaSend(presetText) {
+  var r = state.rca; if (!r) return;
+  var text = presetText || $("rcaText").value.trim();
+  if (!text) return;
+  $("rcaText").value = "";
+  $("rcaSendBtn").disabled = true;
+  state.rca.messages.push({ role: "user", author: (state.user && state.user.name) || "you", content: [{ type: "text", text: text }] });
+  rcaRender();
+  var thinking = document.createElement("div");
+  thinking.className = "rca-tool"; thinking.id = "rcaThinking";
+  thinking.innerHTML = '<span class="spinner"></span> investigating - tool calls can take a minute or two…';
+  $("rcaMsgs").appendChild(thinking); $("rcaMsgs").scrollTop = $("rcaMsgs").scrollHeight;
+  return rcaApi("/api/message", { rca_id: r.rec.id, text: text }).then(function (res) {
+    $("rcaSendBtn").disabled = false;
+    if (!res.ok) { var t = $("rcaThinking"); if (t) t.remove(); toast("RCA: " + (res.error || "failed"), 9000); return; }
+    state.rca.messages = state.rca.messages.concat(res.messages || []);
+    rcaRender();
+    return res;
+  }).catch(function (e) { $("rcaSendBtn").disabled = false; var t = $("rcaThinking"); if (t) t.remove(); toast("RCA error - see console."); console.error(e); });
+}
+function rcaSetStatus(status) {
+  var r = state.rca; if (!r) return;
+  rcaApi("/api/status", { rca_id: r.rec.id, status: status }).then(function (res) {
+    if (!res.ok) { toast(res.error || "failed", 8000); $("rcaStatus").value = r.rec.status; return; }
+    r.rec.status = status; toast("Status: " + status);
+  });
+}
+function rcaSaveTest() {
+  var r = state.rca; if (!r) return;
+  rcaApi("/api/status", { rca_id: r.rec.id, status: r.rec.status, verification_test: $("rcaTest").value, verification_passed: $("rcaTestPassed").checked }).then(function (res) {
+    if (res.ok) { r.rec.verification_test = $("rcaTest").value; r.rec.verification_passed = $("rcaTestPassed").checked ? 1 : 0; }
+    else toast(res.error || "failed", 6000);
+  });
+}
+function rcaAddInfra() {
+  var when = prompt("Change date (YYYY-MM-DD):"); if (!when) return;
+  var title = prompt("What changed? (one line)"); if (!title) return;
+  var detail = prompt("Detail (optional):") || "";
+  rcaApi("/api/infra", { event_date: when, title: title, detail: detail }).then(function (res) {
+    toast(res.ok ? "On the timeline. The deploy_log tool sees it now." : (res.error || "failed"));
+  });
+}
+function rcaDraftFindings() {
+  var r = state.rca; if (!r) return;
+  var instruction = "Draft the structured findings for publication. Reply with ONLY a JSON object, no fences: " +
+    '{"root_cause":"...","evidence":"...","fix":"...","verification":"...","incident_count":"..."}. ' +
+    "Conversation IDs only, never student names or emails. Mark anything unconfirmed as such.";
+  rcaSend(instruction).then(function (res) {
+    if (!res || !res.ok) return;
+    var textBlocks = [];
+    (res.messages || []).forEach(function (m) { if (m.role === "assistant") (m.content || []).forEach(function (c) { if (c.type === "text") textBlocks.push(c.text); }); });
+    var last = textBlocks.join("\n");
+    var jm = last.match(/\{[\s\S]*\}/);
+    var draft = {};
+    if (jm) { try { draft = JSON.parse(jm[0]); } catch (e) {} }
+    $("rcaPubRoot").value = draft.root_cause || "";
+    $("rcaPubEvidence").value = draft.evidence || "";
+    $("rcaPubFix").value = draft.fix || "";
+    $("rcaPubVerify").value = draft.verification || "";
+    $("rcaPubCount").value = draft.incident_count || "";
+    $("rcaPublishModal").classList.add("show");
+  });
+}
+function rcaPublish() {
+  var r = state.rca; if (!r) return;
+  rcaApi("/api/publish", { rca_id: r.rec.id, fields: {
+    root_cause: $("rcaPubRoot").value, evidence: $("rcaPubEvidence").value,
+    fix: $("rcaPubFix").value, verification: $("rcaPubVerify").value, incident_count: $("rcaPubCount").value
+  } }).then(function (res) {
+    if (!res.ok) { toast(res.error || "failed", 9000); return; }
+    $("rcaPublishModal").classList.remove("show");
+    toast("Findings published to the issue under your name.", 8000);
+    loadIssues();
   });
 }
 
@@ -8777,6 +8982,7 @@ function openDetail(issue) {
   }
 
   // Affected students up top for quick reference.
+  html += rcaButtonHtml(issue);
   html += '<h3>Affected students' + (studentArr.length ? ' (' + studentArr.length + ')' : '') + '</h3>';
   if (studentArr.length) {
     html += '<div class="students">' + studentArr.map(function (s) {
@@ -10485,6 +10691,7 @@ function openDevDetail(id) {
   // report to work out what was being asked. The ask goes first now, and the
   // detail stays exactly where it was underneath.
   html += devAskBlock(issue);
+  html += rcaButtonHtml(issue);
 
   // Who's on it. Assign to a person with this queue's access.
   html += '<h3>Assigned to</h3>' +

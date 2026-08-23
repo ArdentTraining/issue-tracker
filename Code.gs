@@ -1200,8 +1200,21 @@ function mirror_(p) {
     }
   }
 
+  // r111 (RCA worker): fetch ONE full record by id, or substring-search. The
+  // RCA issue_lookup tool reads through here; same key, still read-only.
+  if (p.issue_id) {
+    var one = issues.filter(function (i) { return String(i.issue_id) === String(p.issue_id); });
+    return { ok: true, generated_at: new Date().toISOString(), issue_total: total, issue_returned: one.length, issues: one, feedback: [] };
+  }
+  if (p.q) {
+    var needle = String(p.q).toLowerCase();
+    issues = issues.filter(function (i) {
+      return (String(i.summary || '') + ' ' + String(i.student_name || '') + ' ' + String(i.lesson_code || '') + ' ' + String(i.category || '')).toLowerCase().indexOf(needle) > -1;
+    });
+  }
+
   var trimmed = issues.slice(0, limit);
-  var feedback = getFeedback_().feedback || [];
+  var feedback = p.q ? [] : (getFeedback_().feedback || []);
 
   return {
     ok: true,
@@ -5589,7 +5602,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r109.1 · 2026-08-22';
+var CODE_STAMP = 'r111 · 2026-08-23';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
