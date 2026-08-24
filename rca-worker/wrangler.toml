@@ -6,6 +6,9 @@
 name = "ardent-rca"
 main = "index.js"
 compatibility_date = "2026-08-01"
+# Secrets are entered in the dashboard; without this, every wrangler deploy
+# from Workers Builds wipes them (found the hard way on day one).
+keep_vars = true
 
 [[d1_databases]]
 binding = "RCA_DB"
