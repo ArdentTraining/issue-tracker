@@ -18,7 +18,10 @@
 
 const MAX_TOOL_ROUNDS = 8;
 const MODEL = "claude-sonnet-5";
-const MAX_RESPONSE_TOKENS = 3000;
+// r44's lesson from the tracker, relearned here on day one: sonnet-5 THINKS,
+// and the thinking spends from the same max_tokens pot. 3000 produced a
+// response that was all thought and no words. Budget for both.
+const MAX_RESPONSE_TOKENS = 8000;
 const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
 const THREAD_CHAR_CAP = 30000;
 
@@ -298,6 +301,15 @@ async function postMessage(env, user, body) {
     await saveMsg(env, rec.id, "assistant", "", resp.content);
     newMessages.push({ role: "assistant", content: resp.content });
 
+    // Cut off mid-answer (thinking + a long reply can outrun even the bigger
+    // budget): nudge it to land the plane rather than returning silence.
+    if (resp.stop_reason === "max_tokens") {
+      const nudge = [{ type: "text", text: "[system] Your last response hit the length limit. Summarise where the investigation stands so far, briefly, before doing anything else." }];
+      messages.push({ role: "user", content: nudge });
+      await saveMsg(env, rec.id, "tool", "", nudge);
+      newMessages.push({ role: "tool", content: nudge });
+      continue;
+    }
     if (resp.stop_reason !== "tool_use") break;
     const results = [];
     for (const block of resp.content) {
@@ -313,6 +325,20 @@ async function postMessage(env, user, body) {
     messages.push({ role: "user", content: results });
     await saveMsg(env, rec.id, "tool", "", results);
     newMessages.push({ role: "tool", content: results });
+  }
+
+  // If the round budget ran out while the model still had tool calls pending,
+  // the transcript would end with unanswered tool_use blocks and every future
+  // call would be rejected. Answer them with a budget notice instead.
+  const lastA = messages[messages.length - 1];
+  if (lastA && lastA.role === "assistant" && (lastA.content || []).some(c => c.type === "tool_use")) {
+    const closers = (lastA.content || []).filter(c => c.type === "tool_use").map(b => ({
+      type: "tool_result", tool_use_id: b.id,
+      content: [{ type: "text", text: "Tool budget for this message is exhausted. Summarise progress; the humans can send another message to continue." }]
+    }));
+    messages.push({ role: "user", content: closers });
+    await saveMsg(env, rec.id, "tool", "", closers);
+    newMessages.push({ role: "tool", content: closers });
   }
 
   await env.RCA_DB.prepare("UPDATE rca_records SET usage_input_tokens = usage_input_tokens + ?, usage_output_tokens = usage_output_tokens + ?, updated_at = ? WHERE id = ?")
