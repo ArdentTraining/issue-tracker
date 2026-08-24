@@ -550,6 +550,10 @@
   .viewas-bar select { width: auto; font-size: 12.5px; padding: 3px 6px; }
 
   /* RCA panel */
+  /* FB-0281's warning line: bounded like .act-do, or the grid's auto column
+     inflates and crushes the title into one word per line (Edd, 24 Aug). */
+  .act-row .fu-peek { display: block; max-width: 420px; margin-left: auto; text-align: right; }
+
   .rca-panel { position: fixed; inset: 3vh 4vw; z-index: 90; display: none; flex-direction: column; background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius); box-shadow: 0 16px 48px rgba(0,0,0,0.5); overflow: hidden; }
   .rca-panel.show { display: flex; }
   .rca-head { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px 8px; border-bottom: 1px solid var(--line); }
@@ -984,6 +988,10 @@
   <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
     <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
     <span class="ri-word">Dev</span>
+  </button>
+  <button type="button" class="rail-item" id="railRCA" onclick="rcaShowList()" title="RCA - private AI diagnostic records on promoted issues. Admin and developer eyes only.">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+    <span class="ri-word">RCA</span>
   </button>
   <button type="button" class="rail-item" id="railCourse" onclick="railGo('course')" title="Course fixes">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="15" y2="11"/></svg>
@@ -2634,6 +2642,14 @@
     </div>
   </div>
 </div>
+<div id="rcaListModal" class="modal-bg"><div class="modal" style="width:680px;">
+  <h3 style="margin-top:0;">RCA records</h3>
+  <p class="small muted">Private diagnostic investigations on promoted issues. Open one to carry on where anyone left off, or promote a new issue from its detail pane.</p>
+  <div id="rcaListBody" style="max-height:50vh;overflow-y:auto;"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:10px;">
+    <button class="ghost small" onclick="$('rcaListModal').classList.remove('show')">Close</button>
+  </div>
+</div></div>
 <div id="rcaPublishModal" class="modal-bg"><div class="modal" style="width:640px;">
   <h3 style="margin-top:0;">Publish findings to the issue</h3>
   <p class="small muted">Review and edit - publishing writes these to the issue as its dev ask and an update, under your name. Conversation IDs only in anything that could become public, never student names.</p>
@@ -2719,7 +2735,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r114 · 2026-08-23";  // bump this with each round, it lands on every feedback report
+var BUILD = "r115 · 2026-08-24";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3805,7 +3821,7 @@ function applyPerms(user) {
   // were, one line each, so nothing can drift apart.
   applyShell();
   var railGate = [["railNew", p.log], ["railChats", p.log], ["railIssues", p.log || p.manage],
-                  ["railDev", p.dev || p.users], ["railCourse", p.course || p.users],
+                  ["railDev", p.dev || p.users], ["railRCA", p.dev || p.users], ["railCourse", p.course || p.users],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
@@ -4596,6 +4612,26 @@ function rcaApi(path, payload) {
   payload.token = getToken();
   return fetch(RCA_WORKER_URL + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json(); });
+}
+var RCA_STATUS_WORDS = { gathering: "Gathering evidence", hypotheses: "Hypotheses open", root_cause: "Root cause confirmed", fix_pending: "Fix pending", verified: "Verified" };
+function rcaShowList() {
+  if (!rcaConfigured()) { toast("RCA isn't deployed yet - see the setup doc.", 8000); return; }
+  $("rcaListBody").innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
+  $("rcaListModal").classList.add("show");
+  rcaApi("/api/list", {}).then(function (res) {
+    if (!res.ok) { $("rcaListBody").innerHTML = '<p class="muted small">' + esc(res.error || "failed") + '</p>'; return; }
+    if (!res.records.length) {
+      $("rcaListBody").innerHTML = '<p class="muted small">No records yet. Open any issue and press Promote to RCA to start the first investigation.</p>';
+      return;
+    }
+    $("rcaListBody").innerHTML = res.records.map(function (r) {
+      var used = Math.round(((r.usage_input_tokens || 0) + (r.usage_output_tokens || 0)) / 1000);
+      return '<div class="act-row" style="grid-template-columns:1fr auto;" onclick="$(\'rcaListModal\').classList.remove(\'show\');rcaOpen(\'' + esc(r.issue_id) + '\')">' +
+        '<div><div class="act-title">' + esc(r.title) + '</div>' +
+        '<div class="act-sub">#' + esc(String(r.issue_id).slice(0, 8).toUpperCase()) + ' · started by ' + esc(r.created_by) + ' · ' + fmtDate(r.updated_at) + (r.published_at ? ' · published' : '') + ' · ' + used + 'k tokens</div></div>' +
+        '<span class="act-word" style="background:' + (r.status === "verified" ? "var(--low)" : r.status === "root_cause" || r.status === "fix_pending" ? "var(--accent)" : "var(--medium)") + ';color:#02121f;">' + esc(RCA_STATUS_WORDS[r.status] || r.status) + '</span></div>';
+    }).join("");
+  });
 }
 function rcaOpen(issueId) {
   if (!rcaConfigured()) { toast("RCA isn't deployed yet - the Worker needs its first deploy (see the setup doc).", 9000); return; }
