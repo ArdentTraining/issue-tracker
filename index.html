@@ -1733,6 +1733,51 @@
      the manual. Nothing in them is real: every student name, email address and
      report in a screenshot is invented, because this file is served from a
      PUBLIC repo and anyone can read it. Keep it that way. -->
+<!-- ===================== RCA (Root Cause Analysis) =====================
+     Promote an issue to a private diagnostic record: a persistent chat with
+     Claude wired to read-only support data. Admin/dev only - the Worker
+     enforces that on every request, this panel is just the window. -->
+<div id="rcaView" class="wrap hidden">
+  <div id="rcaHome">
+    <h2 style="margin:0 0 4px;">RCA</h2>
+    <p class="small muted" style="margin:0 0 14px;">Root Cause Analysis - private diagnostic investigations on promoted issues. Open cases live here until they reach Verified; confirmed findings are published back to the issue itself. Promote a new issue from its detail pane.</p>
+    <div id="rcaListBody"></div>
+  </div>
+<div id="rcaPanel" class="rca-panel">
+  <div class="rca-head">
+    <div style="min-width:0;">
+      <div class="small muted">RCA record · <span id="rcaIssueRef"></span></div>
+      <div id="rcaTitle" style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+    </div>
+    <div class="row" style="gap:8px;flex:0 0 auto;align-items:center;">
+      <select id="rcaStatus" onchange="rcaSetStatus(this.value)" title="Cannot reach Verified without a named verification test that has passed.">
+        <option value="gathering">Gathering evidence</option>
+        <option value="hypotheses">Hypotheses open</option>
+        <option value="root_cause">Root cause confirmed</option>
+        <option value="fix_pending">Fix pending</option>
+        <option value="verified">Verified</option>
+      </select>
+      <button class="ghost small" style="padding:5px 10px;" onclick="rcaDraftFindings()" title="Asks the assistant for a structured findings draft, then opens the publish form for approval.">Draft findings</button>
+      <button class="ghost small" style="padding:5px 10px;" onclick="rcaClose()">Back to cases</button>
+    </div>
+  </div>
+  <div class="rca-sub row" style="gap:8px;">
+    <input id="rcaTest" placeholder="Named verification test (required before Verified)" style="flex:1;" onchange="rcaSaveTest()">
+    <label class="small muted" style="display:flex;align-items:center;gap:5px;flex:0 0 auto;"><input type="checkbox" id="rcaTestPassed" onchange="rcaSaveTest()"> test passed</label>
+  </div>
+  <div id="rcaMsgs" class="rca-msgs"></div>
+  <div class="rca-input">
+    <textarea id="rcaText" rows="2" placeholder="Work the problem. The assistant can read Chatwoot, the tracker, and the infra timeline - all read-only."></textarea>
+    <div class="row" style="gap:8px;justify-content:space-between;align-items:center;">
+      <span class="small muted" id="rcaUsage"></span>
+      <div class="row" style="gap:8px;">
+        <button class="ghost small" style="padding:5px 10px;" onclick="rcaAddInfra()" title="Record a deploy or infra change on the shared timeline the deploy_log tool reads.">Log infra event</button>
+        <button class="primary small" id="rcaSendBtn" style="padding:6px 16px;" onclick="rcaSend()">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
 <div id="manualView" class="wrap hidden">
   <div class="man-top">
     <h2>User manual</h2>
@@ -2649,51 +2694,6 @@
   </select>
 </div>
 
-<!-- ===================== RCA (Root Cause Analysis) =====================
-     Promote an issue to a private diagnostic record: a persistent chat with
-     Claude wired to read-only support data. Admin/dev only - the Worker
-     enforces that on every request, this panel is just the window. -->
-<div id="rcaView" class="wrap hidden">
-  <div id="rcaHome">
-    <h2 style="margin:0 0 4px;">RCA</h2>
-    <p class="small muted" style="margin:0 0 14px;">Root Cause Analysis - private diagnostic investigations on promoted issues. Open cases live here until they reach Verified; confirmed findings are published back to the issue itself. Promote a new issue from its detail pane.</p>
-    <div id="rcaListBody"></div>
-  </div>
-<div id="rcaPanel" class="rca-panel">
-  <div class="rca-head">
-    <div style="min-width:0;">
-      <div class="small muted">RCA record · <span id="rcaIssueRef"></span></div>
-      <div id="rcaTitle" style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
-    </div>
-    <div class="row" style="gap:8px;flex:0 0 auto;align-items:center;">
-      <select id="rcaStatus" onchange="rcaSetStatus(this.value)" title="Cannot reach Verified without a named verification test that has passed.">
-        <option value="gathering">Gathering evidence</option>
-        <option value="hypotheses">Hypotheses open</option>
-        <option value="root_cause">Root cause confirmed</option>
-        <option value="fix_pending">Fix pending</option>
-        <option value="verified">Verified</option>
-      </select>
-      <button class="ghost small" style="padding:5px 10px;" onclick="rcaDraftFindings()" title="Asks the assistant for a structured findings draft, then opens the publish form for approval.">Draft findings</button>
-      <button class="ghost small" style="padding:5px 10px;" onclick="rcaClose()">Back to cases</button>
-    </div>
-  </div>
-  <div class="rca-sub row" style="gap:8px;">
-    <input id="rcaTest" placeholder="Named verification test (required before Verified)" style="flex:1;" onchange="rcaSaveTest()">
-    <label class="small muted" style="display:flex;align-items:center;gap:5px;flex:0 0 auto;"><input type="checkbox" id="rcaTestPassed" onchange="rcaSaveTest()"> test passed</label>
-  </div>
-  <div id="rcaMsgs" class="rca-msgs"></div>
-  <div class="rca-input">
-    <textarea id="rcaText" rows="2" placeholder="Work the problem. The assistant can read Chatwoot, the tracker, and the infra timeline - all read-only."></textarea>
-    <div class="row" style="gap:8px;justify-content:space-between;align-items:center;">
-      <span class="small muted" id="rcaUsage"></span>
-      <div class="row" style="gap:8px;">
-        <button class="ghost small" style="padding:5px 10px;" onclick="rcaAddInfra()" title="Record a deploy or infra change on the shared timeline the deploy_log tool reads.">Log infra event</button>
-        <button class="primary small" id="rcaSendBtn" style="padding:6px 16px;" onclick="rcaSend()">Send</button>
-      </div>
-    </div>
-  </div>
-</div>
-</div>
 <div id="rcaPublishModal" class="modal-bg"><div class="modal" style="width:640px;">
   <h3 style="margin-top:0;">Publish findings to the issue</h3>
   <p class="small muted">Review and edit - publishing writes these to the issue as its dev ask and an update, under your name. Conversation IDs only in anything that could become public, never student names.</p>
@@ -2779,7 +2779,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r116 · 2026-08-24";  // bump this with each round, it lands on every feedback report
+var BUILD = "r116.1 · 2026-08-24";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
