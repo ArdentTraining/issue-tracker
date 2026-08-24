@@ -554,7 +554,10 @@
      inflates and crushes the title into one word per line (Edd, 24 Aug). */
   .act-row .fu-peek { display: block; max-width: 420px; margin-left: auto; text-align: right; }
 
-  .rca-panel { position: fixed; inset: 3vh 4vw; z-index: 90; display: none; flex-direction: column; background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius); box-shadow: 0 16px 48px rgba(0,0,0,0.5); overflow: hidden; }
+  /* Edd, 24 Aug: RCA is a page of its own - "items get promoted to RCA where
+     they can be opened up for deeper work... its own presence with open cases
+     to come back to". The workspace docks inside the view, list behind it. */
+  .rca-panel { display: none; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; height: calc(100vh - 140px); min-height: 480px; }
   .rca-panel.show { display: flex; }
   .rca-head { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px 8px; border-bottom: 1px solid var(--line); }
   .rca-sub { padding: 8px 16px; border-bottom: 1px solid var(--line); }
@@ -989,7 +992,7 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
     <span class="ri-word">Dev</span>
   </button>
-  <button type="button" class="rail-item" id="railRCA" onclick="rcaShowList()" title="RCA - private AI diagnostic records on promoted issues. Admin and developer eyes only.">
+  <button type="button" class="rail-item" id="railRCA" onclick="railGo('rca')" title="RCA - private AI diagnostic records on promoted issues. Admin and developer eyes only.">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
     <span class="ri-word">RCA</span>
   </button>
@@ -2650,6 +2653,12 @@
      Promote an issue to a private diagnostic record: a persistent chat with
      Claude wired to read-only support data. Admin/dev only - the Worker
      enforces that on every request, this panel is just the window. -->
+<div id="rcaView" class="wrap hidden">
+  <div id="rcaHome">
+    <h2 style="margin:0 0 4px;">RCA</h2>
+    <p class="small muted" style="margin:0 0 14px;">Root Cause Analysis - private diagnostic investigations on promoted issues. Open cases live here until they reach Verified; confirmed findings are published back to the issue itself. Promote a new issue from its detail pane.</p>
+    <div id="rcaListBody"></div>
+  </div>
 <div id="rcaPanel" class="rca-panel">
   <div class="rca-head">
     <div style="min-width:0;">
@@ -2665,7 +2674,7 @@
         <option value="verified">Verified</option>
       </select>
       <button class="ghost small" style="padding:5px 10px;" onclick="rcaDraftFindings()" title="Asks the assistant for a structured findings draft, then opens the publish form for approval.">Draft findings</button>
-      <button class="ghost small" style="padding:5px 10px;" onclick="rcaClose()">Close</button>
+      <button class="ghost small" style="padding:5px 10px;" onclick="rcaClose()">Back to cases</button>
     </div>
   </div>
   <div class="rca-sub row" style="gap:8px;">
@@ -2684,14 +2693,7 @@
     </div>
   </div>
 </div>
-<div id="rcaListModal" class="modal-bg"><div class="modal" style="width:680px;">
-  <h3 style="margin-top:0;">RCA records</h3>
-  <p class="small muted">Private diagnostic investigations on promoted issues. Open one to carry on where anyone left off, or promote a new issue from its detail pane.</p>
-  <div id="rcaListBody" style="max-height:50vh;overflow-y:auto;"></div>
-  <div class="row" style="justify-content:flex-end;margin-top:10px;">
-    <button class="ghost small" onclick="$('rcaListModal').classList.remove('show')">Close</button>
-  </div>
-</div></div>
+</div>
 <div id="rcaPublishModal" class="modal-bg"><div class="modal" style="width:640px;">
   <h3 style="margin-top:0;">Publish findings to the issue</h3>
   <p class="small muted">Review and edit - publishing writes these to the issue as its dev ask and an update, under your name. Conversation IDs only in anything that could become public, never student names.</p>
@@ -4656,27 +4658,33 @@ function rcaApi(path, payload) {
     .then(function (r) { return r.json(); });
 }
 var RCA_STATUS_WORDS = { gathering: "Gathering evidence", hypotheses: "Hypotheses open", root_cause: "Root cause confirmed", fix_pending: "Fix pending", verified: "Verified" };
-function rcaShowList() {
-  if (!rcaConfigured()) { toast("RCA isn't deployed yet - see the setup doc.", 8000); return; }
-  $("rcaListBody").innerHTML = '<p class="muted small"><span class="spinner"></span> loading…</p>';
-  $("rcaListModal").classList.add("show");
+function renderRcaHome() {
+  $("rcaPanel").classList.remove("show");
+  $("rcaHome").style.display = "";
+  if (!rcaConfigured()) { $("rcaListBody").innerHTML = '<p class="muted small">RCA is not deployed yet - see the setup doc.</p>'; return; }
+  $("rcaListBody").innerHTML = '<p class="muted small"><span class="spinner"></span> loading&hellip;</p>';
   rcaApi("/api/list", {}).then(function (res) {
+    if (state.view !== "rca") return;
     if (!res.ok) { $("rcaListBody").innerHTML = '<p class="muted small">' + esc(res.error || "failed") + '</p>'; return; }
-    if (!res.records.length) {
-      $("rcaListBody").innerHTML = '<p class="muted small">No records yet. Open any issue and press Promote to RCA to start the first investigation.</p>';
-      return;
-    }
-    $("rcaListBody").innerHTML = res.records.map(function (r) {
+    var open = res.records.filter(function (r) { return r.status !== "verified"; });
+    var done = res.records.filter(function (r) { return r.status === "verified"; });
+    var row = function (r) {
       var used = Math.round(((r.usage_input_tokens || 0) + (r.usage_output_tokens || 0)) / 1000);
-      return '<div class="act-row" style="grid-template-columns:1fr auto;" onclick="$(\'rcaListModal\').classList.remove(\'show\');rcaOpen(\'' + esc(r.issue_id) + '\')">' +
+      return '<div class="act-row" style="grid-template-columns:1fr auto;" onclick="rcaOpen(\'' + esc(r.issue_id) + '\')">' +
         '<div><div class="act-title">' + esc(r.title) + '</div>' +
-        '<div class="act-sub">#' + esc(String(r.issue_id).slice(0, 8).toUpperCase()) + ' · started by ' + esc(r.created_by) + ' · ' + fmtDate(r.updated_at) + (r.published_at ? ' · published' : '') + ' · ' + used + 'k tokens</div></div>' +
+        '<div class="act-sub">#' + esc(String(r.issue_id).slice(0, 8).toUpperCase()) + ' · started by ' + esc(r.created_by) + ' · ' + fmtDate(r.updated_at) + (r.published_at ? ' · findings published' : '') + ' · ' + used + 'k tokens</div></div>' +
         '<span class="act-word" style="background:' + (r.status === "verified" ? "var(--low)" : r.status === "root_cause" || r.status === "fix_pending" ? "var(--accent)" : "var(--medium)") + ';color:#02121f;">' + esc(RCA_STATUS_WORDS[r.status] || r.status) + '</span></div>';
-    }).join("");
+    };
+    var html = "";
+    html += '<h3 style="margin:4px 0 8px;">Open investigations' + (open.length ? " (" + open.length + ")" : "") + '</h3>';
+    html += open.length ? open.map(row).join("") : '<p class="muted small">Nothing under investigation. Open any issue and press Promote to RCA to start one.</p>';
+    if (done.length) html += '<h3 style="margin:16px 0 8px;">Verified</h3>' + done.map(row).join("");
+    $("rcaListBody").innerHTML = html;
   });
 }
 function rcaOpen(issueId) {
-  if (!rcaConfigured()) { toast("RCA isn't deployed yet - the Worker needs its first deploy (see the setup doc).", 9000); return; }
+  if (!rcaConfigured()) { toast("RCA isn't deployed yet - see the setup doc.", 9000); return; }
+  if (state.view !== "rca") setView("rca");
   busyShow("Opening the RCA record…");
   rcaApi("/api/promote", { issue_id: issueId }).then(function (res) {
     if (!res.ok) { busyHide(); toast("RCA: " + (res.error || "failed"), 8000); return; }
@@ -4685,11 +4693,12 @@ function rcaOpen(issueId) {
       if (!rec.ok) { toast("RCA: " + (rec.error || "failed"), 8000); return; }
       state.rca = { rec: rec.record, messages: rec.messages || [] };
       rcaRender();
+      $("rcaHome").style.display = "none";
       $("rcaPanel").classList.add("show");
     });
   }).catch(function (e) { busyHide(); toast("RCA error - see console."); console.error(e); });
 }
-function rcaClose() { $("rcaPanel").classList.remove("show"); state.rca = null; }
+function rcaClose() { state.rca = null; renderRcaHome(); }
 function rcaRender() {
   var r = state.rca; if (!r) return;
   $("rcaIssueRef").textContent = "#" + String(r.rec.issue_id).slice(0, 8).toUpperCase();
@@ -5669,8 +5678,11 @@ function setView(v) {
   // Round 104: the manual is a view too, so Help behaves like every other
   // rail item rather than throwing a panel over whatever you were reading.
   if ($("manualView")) $("manualView").classList.toggle("hidden", v !== "manual");
+  // 24 Aug: RCA is a page too - open investigations keep their own presence.
+  if ($("rcaView")) $("rcaView").classList.toggle("hidden", v !== "rca");
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
+  if (v === "rca") renderRcaHome();
   if (v === "actions") renderActions();
   if (v === "live") { renderLive(); loadLiveCases(); loadOpenChats(); }
   if (v === "admin") renderAdmin();
@@ -5731,6 +5743,7 @@ function railGo(v) {
   // The rail item is hidden without the permission, but a deep link or a
   // stale bookmark can still ask for the view, so the gate is here as well.
   if (v === "reports" && !(state.perms || {}).analytics) return;
+  if (v === "rca" && !((state.perms || {}).dev || (state.perms || {}).users)) return;
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -5748,7 +5761,8 @@ function updateRail() {
   var pairs = [["railNew", v === "instructor"], ["railChats", v === "live"], ["railIssues", onIssues],
                ["railDev", v === "dev"], ["railCourse", v === "course"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
-               ["railReports", v === "reports"], ["railHelp", v === "manual"]];
+               ["railReports", v === "reports"], ["railHelp", v === "manual"],
+               ["railRCA", v === "rca"]];
   pairs.forEach(function (p) { var el = $(p[0]); if (el) el.classList.toggle("active", !!p[1]); });
   // The segment bar belongs to Issues, so it only shows there.
   var wrap = $("issuesSegWrap");
