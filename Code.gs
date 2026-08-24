@@ -547,6 +547,21 @@ function findUserByField_(field, value) {
 }
 function findUserByEmail_(email) { return findUserByField_('email', email); }
 
+// Edd, 24 Aug 2026: "I get logged out A LOT. I assumed it was down to us
+// updating things regularly on the site." It was not deploys - nothing on that
+// path writes session_token, and a Google error page makes apiPost throw rather
+// than return 'unauthorized', which is the only string that drops a session.
+//
+// It was this: a session was stamped with SESSION_DAYS at login and NOTHING
+// ever extended it. A device used every single day still got thrown out exactly
+// thirty days after signing in on it, and with a phone, a laptop and a desktop
+// signed in on different dates something expired every week or two.
+//
+// The window slides now, but only once a session is within SESSION_REFRESH_DAYS
+// of dying, so it costs about one cell write per device every three weeks
+// rather than one on every API call.
+var SESSION_REFRESH_DAYS = 7;
+
 function userForToken_(token) {
   if (!token) return null;
   var f = findUserBySession_(token);
@@ -554,12 +569,36 @@ function userForToken_(token) {
   if (String(f.user.status).toLowerCase() !== 'active') return null;
   if (f.legacy) {
     // Legacy single-token row: expiry lives in the column, as it always did.
+    // Deliberately NOT slid. The Claude service account is one of these and its
+    // expiry is a hand-minted five years, so "extending" it to thirty days
+    // would be a large step backwards.
     var exp = new Date(f.user.session_expires);
     if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) return null;
   } else {
     if (!f.entry || !isFinite(Number(f.entry.e)) || Number(f.entry.e) < Date.now()) return null;
+    if (Number(f.entry.e) - Date.now() < SESSION_REFRESH_DAYS * 24 * 3600 * 1000) touchSession_(f, token);
   }
   return f.user;
+}
+
+// Push this one device's expiry back out. Every part of this is best-effort on
+// purpose: a session that could not be extended is still a valid session, so a
+// busy lock or a failed write must never turn itself into a logout.
+function touchSession_(f, token) {
+  try {
+    withSessionLock_(function () {
+      var entries = sessionEntries_(readSessionCell_(f));
+      if (!entries || entries === 'legacy') return;
+      var hit = false;
+      for (var i = 0; i < entries.length; i++) {
+        if (String(entries[i].t) === String(token)) {
+          entries[i].e = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
+          hit = true;
+        }
+      }
+      if (hit) writeSessionCell_(f, entries);
+    });
+  } catch (e) {}
 }
 function permsOf_(user) {
   var p = {};
@@ -700,6 +739,31 @@ function tokenExpired_(token) {
 // session_expires column - which is what keeps the Claude service account
 // (a hand-minted 5-year token that never logs in) alive untouched.
 var MAX_SESSIONS = 6;
+
+// The session cell is ONE JSON array holding every device, so anything that
+// changes it is a read-modify-write over shared state. Until now both writers
+// modified a snapshot taken when the row was first read and put the whole array
+// back, so two devices signing in close together, or a sign-in overlapping a
+// sign-out, silently dropped the other's entry and logged that device out on
+// its next call. Every writer goes through here now: take the lock, re-read the
+// cell, and write back the array we just read.
+//
+// A busy lock proceeds rather than fails. Re-reading immediately before writing
+// already narrows the window from "however long the row read took" to a moment,
+// and refusing a login because a lock was held would be a worse fault than the
+// rare race it prevents.
+function withSessionLock_(fn) {
+  var lock = null;
+  try { lock = LockService.getScriptLock(); if (!lock.tryLock(10000)) lock = null; } catch (e) { lock = null; }
+  try { return fn(); } finally { if (lock) { try { lock.releaseLock(); } catch (e) {} } }
+}
+function readSessionCell_(f) {
+  return f.sheet.getRange(f.row, f.idx['session_token'] + 1).getValue();
+}
+function writeSessionCell_(f, entries) {
+  f.sheet.getRange(f.row, f.idx['session_token'] + 1).setValue(entries.length ? JSON.stringify(entries) : '');
+}
+
 function sessionEntries_(cell) {
   var raw = String(cell || '').trim();
   if (!raw) return null;
@@ -730,17 +794,22 @@ function findUserBySession_(token) {
 function startSession_(f) {
   var token = newToken_();
   var expiry = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
-  var cell = f.user.session_token;
-  var entries = sessionEntries_(cell);
-  if (entries === 'legacy') {
-    // Carry the existing single token forward as an entry, so logging in on a
-    // second device no longer kills the first - the whole point.
-    var legacyExp = new Date(f.user.session_expires).getTime();
-    entries = [{ t: String(cell), e: isFinite(legacyExp) ? legacyExp : expiry }];
-  } else if (!entries) entries = [];
-  entries.unshift({ t: token, e: expiry });
-  entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > Date.now(); }).slice(0, MAX_SESSIONS);
-  setCell_(f, 'session_token', JSON.stringify(entries));
+  withSessionLock_(function () {
+    // Read the cell HERE, not from the row snapshot. Between that snapshot and
+    // this write another device may have signed in, and writing the stale array
+    // back is exactly what used to delete their session.
+    var cell = readSessionCell_(f);
+    var entries = sessionEntries_(cell);
+    if (entries === 'legacy') {
+      // Carry the existing single token forward as an entry, so logging in on a
+      // second device no longer kills the first - the whole point.
+      var legacyExp = new Date(f.user.session_expires).getTime();
+      entries = [{ t: String(cell), e: isFinite(legacyExp) ? legacyExp : expiry }];
+    } else if (!entries) entries = [];
+    entries.unshift({ t: token, e: expiry });
+    entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > Date.now(); }).slice(0, MAX_SESSIONS);
+    writeSessionCell_(f, entries);
+  });
   setCell_(f, 'session_expires', new Date(expiry).toISOString());
   return token;
 }
@@ -809,11 +878,17 @@ function logout_(token) {
   if (f.legacy) {
     f.sheet.getRange(f.row, f.idx['session_token'] + 1).setValue('');
     f.sheet.getRange(f.row, f.idx['session_expires'] + 1).setValue('');
-  } else {
-    // Log out THIS device only. The others stay signed in, which is the point.
-    var keep = (f.entries || []).filter(function (x) { return String(x.t) !== String(token); });
-    f.sheet.getRange(f.row, f.idx['session_token'] + 1).setValue(keep.length ? JSON.stringify(keep) : '');
+    return { ok: true };
   }
+  withSessionLock_(function () {
+    // Same rule as startSession_: re-read, then filter what is actually there.
+    // Filtering the snapshot would put back any device that signed in while
+    // this request was in flight, and drop any that signed in after it.
+    var entries = sessionEntries_(readSessionCell_(f));
+    if (!entries || entries === 'legacy') return;
+    // Log out THIS device only. The others stay signed in, which is the point.
+    writeSessionCell_(f, entries.filter(function (x) { return String(x.t) !== String(token); }));
+  });
   return { ok: true };
 }
 
@@ -5602,7 +5677,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r111 · 2026-08-23';
+var CODE_STAMP = 'r118 · 2026-08-24';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
