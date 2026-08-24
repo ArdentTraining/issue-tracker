@@ -1805,6 +1805,7 @@
     <tr data-perm="log"><td><span class="ui">Actions</span></td><td>Things waiting on an instructor, plus the whole log and the board. The number is how many things are waiting.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
     <tr data-perm="dev,users"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
+    <tr data-perm="dev,users"><td><span class="ui">RCA</span></td><td>Private diagnostic records on promoted issues, for a fault that needs investigating rather than just fixing.</td></tr>
     <tr data-perm="course,users"><td><span class="ui">Course</span></td><td>The course-fix queue, which is every course error that has been logged.</td></tr>
     <tr data-perm="analytics"><td><span class="ui">Reports</span></td><td>The telemetry dashboard, showing how students are actually moving through the lessons.</td></tr>
     <tr data-perm="analytics"><td><span class="ui">Stats</span></td><td>What the log itself says: where the issues are, and which lessons keep generating them.</td></tr>
@@ -1814,6 +1815,7 @@
   <p data-perm="log">Both badges count real work and nothing else. A badge counting the size of the log would sit in the hundreds and never move, and we would all stop looking at it inside a week.</p>
   <p data-perm="manage">Press <span class="ui">Actions</span> and a second narrow column appears next to the rail holding three pages, <span class="ui">Waiting on me</span>, <span class="ui">All issues</span>, and <span class="ui">Board</span>. On a phone those three become a row of pills across the top instead, since there is no room for a second column.</p>
   <p data-noperm="manage">Most pages put a second narrow column next to the rail with the sections of that page in it. On a phone there is no room for it, so it either becomes a row of pills across the top or drops away.</p>
+  <p data-perm="dev,users">Every rail item opens a page, with one exception. <span class="ui">RCA</span> opens over the top of whatever you were reading and puts you back there when you close it, so the item never lights up as the one you are on.</p>
   <h4>Why the board is already there when you open it</h4>
   <p>The app draws the board we last saw straight away, then refreshes behind it. While a refresh is in the air there is a small <span class="ui">updating…</span> next to the title. So nothing sits on a spinner, and nothing stays stale for long.</p>
 </section>
@@ -2150,6 +2152,45 @@
   </div>
 </section>
 
+<section id="man-rca" data-perm="dev,users" data-title="RCA records">
+  <h3>RCA records</h3>
+  <p>Some faults are not a fix, they are an investigation. The assessment images that stopped loading in August took days of reading conversations, lining them up against deploys, and working out which change broke what. RCA is that job, made repeatable.</p>
+  <p>Promoting an issue opens a private diagnostic record on it: a running conversation with an investigator that can read our support data, kept on the issue so anyone can pick it up where the last person stopped. It is on the rail as <span class="ui">RCA</span>, under Dev, and only developers and admins have it.</p>
+  <div class="man-note warn">
+    <strong>It holds student details, so treat it as private</strong>
+    The investigator reads real conversations, so a record contains real names and real emails. Nothing in it is student-facing and nothing leaves it unless somebody publishes.
+  </div>
+  <h4>Starting one</h4>
+  <p>Open any issue and press <span class="ui">Promote to RCA</span>. It takes a couple of seconds, because all it does at that point is take a snapshot of the issue and find the Chatwoot conversations named in it. No investigating happens until we ask a question.</p>
+  <p>Pressing it on an issue that already has a record just opens that record, so there is no way to end up with two on the same fault.</p>
+  <p>The snapshot is a starting point rather than the evidence. The promoted issue is assumed to undercount, because it only holds what somebody wrote down, so the usual opening move is to ask it to build the incident log from Chatwoot itself. The empty record says as much.</p>
+  <h4>Working it</h4>
+  <p>Type into the box at the bottom and press <span class="ui">Send</span>. Every tool the investigator has is read-only, so the worst any of them can do is read something. It can go through Chatwoot, the tracker, and the infrastructure timeline.</p>
+  <p>A single message can take a minute or two, because it will often make several rounds of tool calls before it answers, and it says <em>investigating - tool calls can take a minute or two…</em> while it does. There is no cancel, so it is worth asking one clear thing at a time.</p>
+  <p>The conversation is shared and it only ever gets added to. Anyone with access opens the same record and reads the whole thread, which is the point: the reasoning stays with the fault instead of in somebody's head.</p>
+  <h4>Where it has got to</h4>
+  <p>The dropdown at the top runs <span class="ui">Gathering evidence</span>, <span class="ui">Hypotheses open</span>, <span class="ui">Root cause confirmed</span>, <span class="ui">Fix pending</span>, and <span class="ui">Verified</span>.</p>
+  <p><span class="ui">Verified</span> is the one with a condition on it. It needs a named test in the box beside the dropdown, ticked as passed, and it refuses otherwise with <em>Verified needs a named verification test, marked as passed. Name the test first.</em> Anybody can believe a fault is fixed, and the test is what makes that checkable by the next person.</p>
+  <h4>Log infra event</h4>
+  <p>Puts a deploy or an infrastructure change onto the shared timeline the investigator reads, so a fault that started on a Tuesday afternoon can be lined up against what changed that Tuesday afternoon. That is what turned the images fault from a mystery into a bucket permission change.</p>
+  <p>It is typed in by hand rather than fed from anywhere, so a gap in the timeline means nobody recorded a change, not that no change happened. The investigator is told to say so when it is leaning on that timeline.</p>
+  <h4>Publishing the findings</h4>
+  <p><span class="ui">Draft findings</span> asks for a structured summary and opens it in a form with root cause, evidence, fix, verification, and the incident count, all editable before anything is written.</p>
+  <p>Publishing writes them onto the issue itself, as an update and as the developer ask, under the name of whoever pressed the button. So the investigation ends up where the people working the fault will actually see it.</p>
+  <div class="man-note stop">
+    <strong>Two things to know before pressing publish</strong>
+    <p>It replaces the existing developer ask rather than adding to it. If somebody has written a careful ask on that issue, copy it somewhere first.</p>
+    <p>Publishing is admin only. A developer can promote, investigate, set the status, and log infra events, but pressing publish returns <em>publishing findings is admin-only</em>, and it does that after the form has been filled in rather than before. If you are not an admin, draft the findings and pass them to Edd, Charly, or Charlie.</p>
+  </div>
+  <p>Anything that could end up somewhere public should carry conversation IDs rather than student names. The form says so, and nothing stops a person typing a name in anyway, so it is on us.</p>
+  <h4>Worth knowing</h4>
+  <ul>
+    <li>Every message spends real API credit, and a full investigation runs to a few pounds. There is a cap per record, and reaching it says so plainly.</li>
+    <li>Records cannot be deleted or renamed from here. Promote deliberately rather than to have a look.</li>
+    <li><span class="ui">RCA</span> opens over whatever page you were on rather than being a page of its own, so the rail item does not light up and closing it puts you back where you were.</li>
+  </ul>
+</section>
+
 <section id="man-course" data-perm="course,users" data-title="The course-fix queue">
   <h3>The course-fix queue</h3>
   <p>A wrong diagram or a clumsy question is written, not coded, so it goes to the course team and no developer ever sees it. <span class="ui">Course</span> is where those land.</p>
@@ -2302,6 +2343,7 @@
     <li data-perm="log">The issue I just logged, <span class="ui">Actions</span> then <span class="ui">All issues</span>, top of the list.</li>
     <li data-perm="log">A student who is in touch right now, <span class="ui">Chats</span>.</li>
     <li data-perm="dev">A fault waiting on me to fix, <span class="ui">Dev</span> then <span class="ui">To do</span>.</li>
+    <li data-perm="dev,users">An investigation somebody has started, <span class="ui">RCA</span> on the rail.</li>
     <li data-perm="course">A course error waiting to be corrected, <span class="ui">Course</span> then <span class="ui">To do</span>.</li>
     <li data-perm="users">Adding somebody to the team, <span class="ui">Admin</span> then <span class="ui">People</span>.</li>
     <li>Something wrong with this app, the <span class="ui">Feedback</span> pill, bottom right.</li>
@@ -2735,7 +2777,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r115 · 2026-08-24";  // bump this with each round, it lands on every feedback report
+var BUILD = "r116 · 2026-08-24";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
