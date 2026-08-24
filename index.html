@@ -1863,7 +1863,6 @@
   <p data-perm="log">Both badges count real work and nothing else. A badge counting the size of the log would sit in the hundreds and never move, and we would all stop looking at it inside a week.</p>
   <p data-perm="manage">Press <span class="ui">Actions</span> and a second narrow column appears next to the rail holding three pages, <span class="ui">Waiting on me</span>, <span class="ui">All issues</span>, and <span class="ui">Board</span>. On a phone those three become a row of pills across the top instead, since there is no room for a second column.</p>
   <p data-noperm="manage">Most pages put a second narrow column next to the rail with the sections of that page in it. On a phone there is no room for it, so it either becomes a row of pills across the top or drops away.</p>
-  <p data-perm="dev,users">Every rail item opens a page, with one exception. <span class="ui">RCA</span> opens over the top of whatever you were reading and puts you back there when you close it, so the item never lights up as the one you are on.</p>
   <h4>Why the board is already there when you open it</h4>
   <p>The app draws the board we last saw straight away, then refreshes behind it. While a refresh is in the air there is a small <span class="ui">updating…</span> next to the title. So nothing sits on a spinner, and nothing stays stale for long.</p>
 </section>
@@ -2204,12 +2203,14 @@
   <h3>RCA records</h3>
   <p>Some faults are not a fix, they are an investigation. The assessment images that stopped loading in August took days of reading conversations, lining them up against deploys, and working out which change broke what. RCA is that job, made repeatable.</p>
   <p>Promoting an issue opens a private diagnostic record on it: a running conversation with an investigator that can read our support data, kept on the issue so anyone can pick it up where the last person stopped. It is on the rail as <span class="ui">RCA</span>, under Dev, and only developers and admins have it.</p>
+  <p>The page opens on the cases themselves. <span class="ui">Open investigations</span> is anything still being worked, with a count on the heading, and <span class="ui">Verified</span> is the finished ones below it. So a fault under investigation keeps a presence of its own rather than being a thing somebody remembers to go and look at.</p>
+  <p>With nothing on it, it reads <em>Nothing under investigation. Open any issue and press Promote to RCA to start one.</em></p>
   <div class="man-note warn">
     <strong>It holds student details, so treat it as private</strong>
     The investigator reads real conversations, so a record contains real names and real emails. Nothing in it is student-facing and nothing leaves it unless somebody publishes.
   </div>
   <h4>Starting one</h4>
-  <p>Open any issue and press <span class="ui">Promote to RCA</span>. It takes a couple of seconds, because all it does at that point is take a snapshot of the issue and find the Chatwoot conversations named in it. No investigating happens until we ask a question.</p>
+  <p>Open any issue and press <span class="ui">Promote to RCA</span>. That takes us over to the RCA page with the new record open, so it is worth finishing anything else on the issue first. It only takes a couple of seconds, because all it does at that point is snapshot the issue and find the Chatwoot conversations named in it. No investigating happens until we ask a question.</p>
   <p>Pressing it on an issue that already has a record just opens that record, so there is no way to end up with two on the same fault.</p>
   <p>The snapshot is a starting point rather than the evidence. The promoted issue is assumed to undercount, because it only holds what somebody wrote down, so the usual opening move is to ask it to build the incident log from Chatwoot itself. The empty record says as much.</p>
   <h4>Working it</h4>
@@ -2235,7 +2236,7 @@
   <ul>
     <li>Every message spends real API credit, and a full investigation runs to a few pounds. There is a cap per record, and reaching it says so plainly.</li>
     <li>Records cannot be deleted or renamed from here. Promote deliberately rather than to have a look.</li>
-    <li><span class="ui">RCA</span> opens over whatever page you were on rather than being a page of its own, so the rail item does not light up and closing it puts you back where you were.</li>
+    <li><span class="ui">Back to cases</span> at the top of a record returns to the two lists without leaving the page, and the record keeps everything said in it.</li>
   </ul>
 </section>
 
@@ -2779,7 +2780,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r116.1 · 2026-08-24";  // bump this with each round, it lands on every feedback report
+var BUILD = "r117 · 2026-08-24";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
