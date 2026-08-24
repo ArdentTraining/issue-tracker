@@ -1,0 +1,21 @@
+# RCA Worker - deployed via Cloudflare Workers Builds (git-connected).
+# Secrets to set in the dashboard (Settings -> Variables and Secrets):
+#   ANTHROPIC_API_KEY  - the tracker's existing Anthropic key
+#   CHATWOOT_TOKEN     - a Chatwoot agent token (limited-scope agent preferred)
+#   MIRROR_KEY         - the tracker backend's MIRROR_KEY script property
+name = "ardent-rca"
+main = "index.js"
+compatibility_date = "2026-08-01"
+
+[[d1_databases]]
+binding = "RCA_DB"
+database_name = "ardent-rca"
+database_id = "a24050e4-70c3-411b-ab3b-fb32a0a49d01"
+
+[vars]
+TRACKER_URL = "https://script.google.com/macros/s/AKfycbxROZipuieRjz8BBW7tjR5tvbidB_oLwbDup2PHfD0-KUka4u6oQLlUNrjJT21O783qdg/exec"
+CHATWOOT_BASE = "https://app.chatwoot.com"
+CHATWOOT_ACCOUNT = "100142"
+ALLOWED_ORIGIN = "https://ardenttraining.github.io"
+
+# build nudge: first deploy from this directory (23 Aug 2026)

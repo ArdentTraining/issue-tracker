@@ -24,6 +24,12 @@
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
+# The RCA Worker (23 Aug 2026): code and config only, no secrets - the
+# Anthropic key, Chatwoot token and mirror key live in Cloudflare's secret
+# store, never in this folder.
+!rca-worker/
+!rca-worker/index.js
+!rca-worker/wrangler.toml
 
 # Belt and braces: never, under any circumstance, the secrets file.
 mirror-sync-config.json
