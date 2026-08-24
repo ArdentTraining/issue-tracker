@@ -229,10 +229,16 @@ async function trackerPost(env, payload) {
 async function trackerIssue(env, issueId) {
   // The mirror endpoint is key-gated and GET-parameter only (the tracker's
   // key-gated dispatch never sees a POST body).
-  const q = new URLSearchParams({ action: "mirror", key: env.MIRROR_KEY, issue_id: issueId, limit: "1" });
+  const q = new URLSearchParams({ action: "mirror", key: (env.MIRROR_KEY || "").trim(), issue_id: issueId, limit: "1" });
   const res = await fetch(env.TRACKER_URL + "?" + q.toString(), { redirect: "follow" });
-  const data = await res.json().catch(() => null);
-  if (!data || !data.ok) return null;
+  const text = await res.text();
+  let data = null; try { data = JSON.parse(text); } catch (e) {}
+  if (!data || !data.ok) {
+    // A guard that cannot say why it refused is a guard you cannot debug.
+    throw new Error("mirror lookup failed: HTTP " + res.status +
+      ", key " + (env.MIRROR_KEY ? "present(len " + String(env.MIRROR_KEY).length + ")" : "MISSING") +
+      ", body: " + text.slice(0, 160));
+  }
   const list = data.issues || [];
   return list.find(i => i.issue_id === issueId) || list[0] || null;
 }
