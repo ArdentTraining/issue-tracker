@@ -4581,7 +4581,7 @@ function peekFollowups(rows) {
 // Promote an issue to a private AI diagnostic record on the RCA Worker.
 // Everything here is a thin window: auth, permissions and tools are all
 // enforced server-side on the caller's tracker session.
-var RCA_WORKER_URL = "https://ardent-rca.RCA_SUBDOMAIN.workers.dev"; // set the real workers.dev URL after the first deploy
+var RCA_WORKER_URL = "https://ardent-rca.ehewett.workers.dev"; // set the real workers.dev URL after the first deploy
 
 function rcaConfigured() { return RCA_WORKER_URL.indexOf("RCA_SUBDOMAIN") < 0; }
 function rcaButtonHtml(issue) {
