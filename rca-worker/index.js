@@ -50,6 +50,12 @@ export default {
     const user = auth.user;
 
     try {
+      if (route === "/api/envcheck") return json({ ok: true,
+        // names only, never values - which bindings the RUNNING worker can see
+        has_anthropic: !!env.ANTHROPIC_API_KEY, has_chatwoot: !!env.CHATWOOT_TOKEN,
+        has_mirror: !!env.MIRROR_KEY, has_db: !!env.RCA_DB,
+        vars: { tracker: !!env.TRACKER_URL, cw_base: !!env.CHATWOOT_BASE, cw_acct: !!env.CHATWOOT_ACCOUNT }
+      }, 200, cors);
       if (route === "/api/promote") return json(await promote(env, user, body), 200, cors);
       if (route === "/api/list") return json(await listRecords(env), 200, cors);
       if (route === "/api/record") return json(await getRecord(env, body), 200, cors);
