@@ -19,3 +19,4 @@ CHATWOOT_ACCOUNT = "100142"
 ALLOWED_ORIGIN = "https://ardenttraining.github.io"
 
 # build nudge: first deploy from this directory (23 Aug 2026)
+# secrets nudge 23 Aug 17:5x
