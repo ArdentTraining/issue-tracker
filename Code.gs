@@ -389,7 +389,7 @@ function doGet(e) {
     if (action === 'importLegacyBatch') return jsonOut(importLegacyBatch_(p)); // WRITE, DEPLOY_KEY-gated: r102 legacy-form catch-up
 
     var user = userForToken_(p.token);
-    if (!user) return jsonOut({ ok: false, error: 'unauthorized' });
+    if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
 
@@ -603,21 +603,23 @@ function findUserByEmail_(email) { return findUserByField_('email', email); }
 // of dying, so it costs about one cell write per device every three weeks
 // rather than one on every API call.
 var SESSION_REFRESH_DAYS = 7;
+var UNAUTH_WHY_ = '';   // r121: why the last userForToken_ said no
 
 function userForToken_(token) {
-  if (!token) return null;
+  UNAUTH_WHY_ = '';
+  if (!token) { UNAUTH_WHY_ = 'no token sent'; return null; }
   var f = findUserBySession_(token);
-  if (!f) return null;
-  if (String(f.user.status).toLowerCase() !== 'active') return null;
+  if (!f) { UNAUTH_WHY_ = 'token not found on any account'; return null; }
+  if (String(f.user.status).toLowerCase() !== 'active') { UNAUTH_WHY_ = 'account disabled'; return null; }
   if (f.legacy) {
     // Legacy single-token row: expiry lives in the column, as it always did.
     // Deliberately NOT slid. The Claude service account is one of these and its
     // expiry is a hand-minted five years, so "extending" it to thirty days
     // would be a large step backwards.
     var exp = new Date(f.user.session_expires);
-    if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) return null;
+    if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) { UNAUTH_WHY_ = 'legacy session expired'; return null; }
   } else {
-    if (!f.entry || !isFinite(Number(f.entry.e)) || Number(f.entry.e) < Date.now()) return null;
+    if (!f.entry || !isFinite(Number(f.entry.e)) || Number(f.entry.e) < Date.now()) { UNAUTH_WHY_ = 'session expired'; return null; }
     if (Number(f.entry.e) - Date.now() < SESSION_REFRESH_DAYS * 24 * 3600 * 1000) touchSession_(f, token);
   }
   return f.user;
@@ -780,7 +782,12 @@ function tokenExpired_(token) {
 // legacy single token and keeps working exactly as before, read against the
 // session_expires column - which is what keeps the Claude service account
 // (a hand-minted 5-year token that never logs in) alive untouched.
-var MAX_SESSIONS = 6;
+// r121: 6 was a logout carousel - Edd's cell hit the cap (logouts breed
+// logins, logins evict devices still in use, which breeds logouts). 12 gives
+// phone+laptop+desktop+browsers headroom, and eviction now drops the entry
+// NEAREST EXPIRY (least-recently-refreshed) rather than the oldest login,
+// so a device in daily use is the last thing to go, not the first.
+var MAX_SESSIONS = 12;
 
 // The session cell is ONE JSON array holding every device, so anything that
 // changes it is a read-modify-write over shared state. Until now both writers
@@ -849,7 +856,11 @@ function startSession_(f) {
       entries = [{ t: String(cell), e: isFinite(legacyExp) ? legacyExp : expiry }];
     } else if (!entries) entries = [];
     entries.unshift({ t: token, e: expiry });
-    entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > Date.now(); }).slice(0, MAX_SESSIONS);
+    entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > Date.now(); });
+    if (entries.length > MAX_SESSIONS) {
+      entries.sort(function (a, b) { return Number(b.e) - Number(a.e); });  // keep the freshest expiries
+      entries = entries.slice(0, MAX_SESSIONS);
+    }
     writeSessionCell_(f, entries);
   });
   setCell_(f, 'session_expires', new Date(expiry).toISOString());
@@ -5752,7 +5763,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r120 · 2026-08-25';
+var CODE_STAMP = 'r121 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

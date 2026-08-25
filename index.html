@@ -2780,7 +2780,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r118 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r121 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3176,12 +3176,33 @@ var RETRYABLE_READS = {
   getAssignees: 1, chatwootList: 1, chatScanList: 1, listVoiceGuides: 1, listContentSuggestions: 1,
   listLiveCases: 1, chatBackSweepState: 1
 };
-// If the backend rejects the session, drop it and show the login screen.
+// If the backend rejects the session, drop it and show the login screen -
+// but only after a SECOND OPINION (r121, Edd: "I can be halfway through
+// writing something and it logs me out"). One call answering 'unauthorized'
+// used to end the session on the spot, so any transient wobble - a session
+// write racing a read, a mid-deploy moment - cost whatever was on screen.
+// Now a cheap 'me' recheck confirms the session is genuinely dead first; a
+// network failure on the recheck keeps the session (an unreachable backend is
+// not an invalid token).
+var gateRechecking = false;
 function gateCheck(res) {
   if (res && res.ok === false && res.error === "unauthorized") {
-    clearToken();
-    showLogin();
-    toast("Your session expired - sign in again and carry on where you were.");
+    if (res.why) diagApi("session-denied", Date.now(), String(res.why));
+    if (gateRechecking) return res;
+    gateRechecking = true;
+    setTimeout(function () {
+      fetch(APPS_SCRIPT_URL, { method: "POST", headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({ action: "me", token: getToken() }) })
+        .then(function (r) { return r.json(); })
+        .then(function (second) {
+          gateRechecking = false;
+          if (second && second.ok) return;   // a blip, not a logout - carry on
+          clearToken();
+          showLogin();
+          toast("Your session ended" + (second && second.why ? " (" + second.why + ")" : "") + " - sign in again and carry on where you were.");
+        })
+        .catch(function () { gateRechecking = false; });   // can't reach the backend: keep the session
+    }, 1200);
   }
   return res;
 }
