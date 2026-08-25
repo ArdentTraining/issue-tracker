@@ -1887,19 +1887,19 @@
   <p>Get it wrong and it says <em>Wrong email or password</em> without saying which. That is deliberate, because a box that told you the email was right would let anyone work out who has an account here. Eight wrong goes in a row locks that address for ten minutes.</p>
   <p>Forgotten it, press <span class="ui">Forgot your password?</span> and put your email in. A link comes through that lasts an hour. The message you get back reads the same whether or not the address is registered, for the same reason as above, so check the spam folder before assuming it never sent.</p>
   <h4>Staying signed in</h4>
-  <p>Six devices at once, and a session lasts thirty days. Phone, laptop, and the machine at home can all stay signed in together. Signing in on a seventh pushes the oldest one off.</p>
-  <p>It used to be one device, and that meant every phone login quietly knocked the desktop out, which is where "I seem to be asked to log in three times a day" came from. <span class="ui">Log out</span> now signs out the device you are on and leaves the others alone, so logging out of a shared computer costs you nothing on your own phone.</p>
+  <p>Twelve devices at once, and a session lasts thirty days from when it was last used, not from when you signed in - so a device in regular use renews itself and stays signed in indefinitely. Signing in on a thirteenth pushes off whichever session was closest to expiring, which in practice is one you had stopped using anyway.</p>
+  <p>It used to be one device, and that meant every phone login quietly knocked the desktop out, which is where "I seem to be asked to log in three times a day" came from. <span class="ui">Log out</span> signs out the device you are on and leaves the others alone, so logging out of a shared computer costs you nothing on your own phone.</p>
   <h4>Your name at the bottom of the rail</h4>
   <p>Press it and there are three things in there. <span class="ui">Theme</span> cycles through auto, light, and dark, with auto following whatever the device is set to. The menu stays open as you go so you can see each one land. <span class="ui">Change password</span> asks for the current one and then the new one twice. <span class="ui">Log out</span> does what it says.</p>
 </section>
 
 <section id="man-around" data-perm="" data-title="Finding your way around">
   <h3>Finding your way around</h3>
-  <p>Everything hangs off the icon rail down the left. On a phone that same rail becomes a bar across the bottom, same icons, same order.</p>
+  <p>Everything hangs off the icon rail down the left. On a phone it becomes a bar across the bottom holding <span class="ui">Today</span>, <span class="ui">Issues</span>, <span class="ui">New</span>, and your account button, with everything else folded behind <span class="ui">More</span> - the badge on More adds up whatever is tucked inside it.</p>
   <figure class="man-shot" data-img="manual/02-rail.jpg" data-cap="The rail. What appears on it depends on the account, so yours may be shorter or longer than a colleague's."></figure>
   <div class="man-note" data-perm="log">
-    <strong>You land on Actions, not on a blank form</strong>
-    Opening the app puts us on the work that is waiting, because that is the question most of us come in with. Logging something new is one press of <span class="ui">New</span> from anywhere.
+    <strong>You land on Today, not on a blank form</strong>
+    Opening the app puts us on Today - the students in touch right now and the things waiting on us - because that is the question most of us come in with. Logging something new is one press of <span class="ui">New</span> from anywhere.
   </div>
   <div class="man-note" data-noperm="log">
     <strong>You land on your own queue</strong>
@@ -1907,8 +1907,8 @@
   </div>
   <div class="man-scroll"><table class="man-tbl">
     <tr><th>Rail item</th><th>What it holds</th></tr>
-    <tr data-perm="log"><td><span class="ui">Chats</span></td><td>Live conversations pulled in from Chatwoot, with a written brief on each. The number on the icon is how many cases are open.</td></tr>
-    <tr data-perm="log"><td><span class="ui">Actions</span></td><td>Things waiting on an instructor, plus the whole log and the board. The number is how many things are waiting.</td></tr>
+    <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
+    <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
     <tr data-perm="dev,users"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
     <tr data-perm="dev,users"><td><span class="ui">RCA</span></td><td>Private diagnostic records on promoted issues, for a fault that needs investigating rather than just fixing.</td></tr>
@@ -1918,8 +1918,8 @@
     <tr data-perm="users"><td><span class="ui">Admin</span></td><td>People, the feedback on this app, and the troubleshooting playbook.</td></tr>
     <tr><td><span class="ui">Help</span></td><td>This manual, down at the bottom.</td></tr>
   </table></div>
-  <p data-perm="log">Both badges count real work and nothing else. A badge counting the size of the log would sit in the hundreds and never move, and we would all stop looking at it inside a week.</p>
-  <p data-perm="manage">Press <span class="ui">Actions</span> and a second narrow column appears next to the rail holding three pages, <span class="ui">Waiting on me</span>, <span class="ui">All issues</span>, and <span class="ui">Board</span>. On a phone those three become a row of pills across the top instead, since there is no room for a second column.</p>
+  <p data-perm="log">The badge counts real work and nothing else. A badge counting the size of the log would sit in the hundreds and never move, and we would all stop looking at it inside a week.</p>
+  <p data-perm="manage"><span class="ui">Issues</span> holds two pages in the column beside the rail, <span class="ui">All issues</span> and <span class="ui">Board</span>. On a phone the pair become a row of pills across the top instead, since there is no room for a second column.</p>
   <p data-noperm="manage">Most pages put a second narrow column next to the rail with the sections of that page in it. On a phone there is no room for it, so it either becomes a row of pills across the top or drops away.</p>
   <h4>Why the board is already there when you open it</h4>
   <p>The app draws the board we last saw straight away, then refreshes behind it. While a refresh is in the air there is a small <span class="ui">updating…</span> next to the title. So nothing sits on a spinner, and nothing stays stale for long.</p>
@@ -1937,7 +1937,7 @@
   <h4>Getting the words in</h4>
   <p>Three ways, and they all end up in the same box.</p>
   <ol class="man-steps">
-    <li>Paste a Chatwoot link or just the conversation number into <span class="ui">Chatwoot link or number</span> and press <span class="ui">Import</span>. It brings the whole conversation across, plus the name and email off the student's contact record, plus any screenshots they shared. The contact record beats anything read out of the words, because people sign emails with nicknames and type their address wrong, so those two fields are worth trusting.</li>
+    <li>Paste a Chatwoot link or just the conversation number - with or without the #, exactly as Chatwoot shows it - into <span class="ui">Chatwoot link or number</span> and press <span class="ui">Import</span>. It brings the whole conversation across, plus the name and email off the student's contact record, plus any screenshots they shared. The contact record beats anything read out of the words, because people sign emails with nicknames and type their address wrong, so those two fields are worth trusting.</li>
     <li>Press <span class="ui">Browse recent</span> for the same thing with a list to pick from. Handy when the link is not to hand.</li>
     <li>Paste it in yourself. An email, a chat transcript, your own notes, or a mix of all three. It reads scruffy notes perfectly well, so there is no need to tidy them up first.</li>
   </ol>
@@ -1975,7 +1975,7 @@
   </table></div>
 
   <h4>Summary</h4>
-  <p>One line, and worth slowing down for. It shows on the board, on the Actions list, and in the Slack ping, so for most people it is the only part of the report they ever read. Say what is broken and where, rather than how it was reported.</p>
+  <p>One line, and worth slowing down for. It shows on the board, on the Today list, and in the Slack ping, so for most people it is the only part of the report they ever read. Say what is broken and where, rather than how it was reported.</p>
 
   <h4>Severity and priority</h4>
   <p>Severity is how badly this hits one person, ignoring how many people have hit it. Severe means they cannot continue the course, sit the exam, or pay. Moderate means it gets in the way but they can carry on. Low is an annoyance, something cosmetic, or a typo that misleads nobody.</p>
@@ -2070,7 +2070,7 @@
   <div class="man-note">
     <strong>What happens after you press it</strong>
     <p>The form clears completely and comes back blank, ready for the next report. Screenshots upload in the background once the entry is safely saved, which is why the save feels instant even with five pictures attached, and a toast says when they have landed.</p>
-    <p>It does not take you to the issue you just made. To see it, go to <span class="ui">Actions</span> then <span class="ui">All issues</span>, where it will be at the top.</p>
+    <p>It does not take you to the issue you just made. To see it, go to <span class="ui">Issues</span> on the rail, where it will be at the top of <span class="ui">All issues</span>.</p>
   </div>
   <h4>Popups after the save</h4>
   <p><span class="ui">Was that a one-off?</span> appears when it landed as Resolved (TBC). The student has a workaround, but we do not yet know whether the underlying fault hits everybody, and that is the difference between closing it and calling a developer. If there is no time to check right now, the third option puts it on Slack so it comes back to you.</p>
@@ -2079,7 +2079,7 @@
 
 <section id="man-actions" data-perm="log" data-title="Waiting on me">
   <h3>Waiting on me</h3>
-  <p>This is the list that answers "what do I do next". Everything on it needs an instructor rather than a developer, and it is shared, because the team is small and any of us can pick up any of it. The number on the rail is the length of this list, counted by the same code that draws it, so the badge and the page can never disagree.</p>
+  <p>This is the list that answers "what do I do next", and it lives on <span class="ui">Today</span>, underneath the open conversations. Everything on it needs an instructor rather than a developer, and it is shared, because the team is small and any of us can pick up any of it. The Today badge is this list plus the open cases above it, counted by the same code that draws them, so the badge and the page can never disagree.</p>
   <figure class="man-shot" data-img="manual/08-actions.jpg" data-cap="Each row: a coloured word for the kind of job, the issue, then the buttons to deal with it."></figure>
   <p>When there is nothing on it, it reads <em>Nothing waiting on you. Have a cup of tea.</em> It means that.</p>
   <div class="man-scroll"><table class="man-tbl">
@@ -2089,6 +2089,7 @@
     <tr><td><span class="ui">Waiting</span></td><td>We answered and heard nothing for a few days. A nudge, or let it go.</td></tr>
     <tr><td><span class="ui">Chase</span></td><td>A parcel is due a chase today. Poke the courier, then <span class="ui">Chased - remind in 3 days</span> puts it back on the list.</td></tr>
     <tr><td><span class="ui">Question</span></td><td>A developer or the course team has asked us something, and the fix is held up until it is answered.</td></tr>
+    <tr data-perm="users"><td><span class="ui">Dev asks</span></td><td>A developer's question pointed at the admins rather than at an instructor. Answering it here answers it on the issue and back wherever it was asked from.</td></tr>
     <tr><td><span class="ui">Fixed</span></td><td>Either a fix has landed and needs checking, or it is checked and the student needs telling.</td></tr>
     <tr><td><span class="ui">Fix sent</span> / <span class="ui">Workaround</span></td><td>The student was told days ago and has said nothing since. One check-in is worth it. Left alone it resolves itself on schedule, and the row says how many days that is.</td></tr>
   </table></div>
@@ -2128,7 +2129,7 @@
 
 <section id="man-detail" data-perm="log" data-title="Opening an issue">
   <h3>Opening an issue</h3>
-  <p>Click any card or any Actions row. On a wide screen the detail docks beside the list and the divider can be dragged to resize it. On a phone it slides in over the top with a <span class="ui">← Back</span> button, since there is no room to sit two columns side by side.</p>
+  <p>Click any card or any Today row. On a wide screen the detail docks beside the list and the divider can be dragged to resize it. On a phone it slides in over the top with a <span class="ui">← Back</span> button, since there is no room to sit two columns side by side.</p>
   <figure class="man-shot" data-img="manual/11-detail.jpg" data-cap="The detail pane. Everything needed to act sits above the folds, and the reference material is folded away below."></figure>
   <p>It reads top to bottom roughly in the order it is needed.</p>
   <ol class="man-steps">
@@ -2150,7 +2151,7 @@
     <li><span class="ui">Status</span> and <span class="ui">Priority</span> dropdowns. On a course error the handover options read "with the course team" rather than "with developers".</li>
     <li>One box that changes job. Normally it is <span class="ui">Post an update</span>. Set the status to Resolved and it relabels itself to <span class="ui">Resolution note</span>, keeps whatever was already typed, and says it will be saved as the resolution.</li>
     <li><span class="ui">Extract and add update</span> reads a pasted conversation into the issue. <span class="ui">Fetch update</span> goes and looks in Chatwoot for a newer conversation with this student and pulls anything relevant in.</li>
-    <li>Two ticks. <span class="ui">Students notified</span> ticks off the telling job and drops it out of Actions, without resolving the fault. <span class="ui">Student needs no further contact</span> stops us chasing this one person while the fault stays open for whoever is fixing it.</li>
+    <li>Two ticks. <span class="ui">Students notified</span> ticks off the telling job and drops it off the Today list, without resolving the fault. <span class="ui">Student needs no further contact</span> stops us chasing this one person while the fault stays open for whoever is fixing it.</li>
     <li><span class="ui">Save changes</span>. On a long pane a save bar follows you down the screen, so the button is never out of reach.</li>
   </ul>
   <p>Resolving without a note is refused, with <em>Add a resolution note before resolving.</em> That line is what the next person reads when the same fault turns up in six months.</p>
@@ -2172,10 +2173,10 @@
 
 <section id="man-chats" data-perm="log" data-title="Live chats">
   <h3>Live chats</h3>
-  <p>A student is in touch right now and the question is what to say. <span class="ui">Chats</span> pulls a Chatwoot conversation in, reads it, and writes a brief on it, so the report falls out of the conversation instead of being typed up separately afterwards.</p>
+  <p>A student is in touch right now and the question is what to say. The top of <span class="ui">Today</span> is where those live: a Chatwoot conversation is pulled in, read, and given a written brief, so the report falls out of the conversation instead of being typed up separately afterwards.</p>
   <figure class="man-shot" data-img="manual/13-chats.jpg" data-cap="The case list on the left, the brief on the right. Cases are shared, so anyone can pick one up."></figure>
   <h4>Opening a case</h4>
-  <p>Paste a Chatwoot link or number and press <span class="ui">Open a case</span>, or press <span class="ui">Browse recent</span> and pick one. Underneath the list there is an <span class="ui">Open in Chatwoot</span> section showing conversations that are open over there with no case on them yet.</p>
+  <p>Paste a Chatwoot link or number - the # it comes with is fine - and press <span class="ui">Open a case</span>, or press <span class="ui">Browse recent</span> and pick one. The list is headed <span class="ui">Open cases</span> with the count, and a case whose conversation is snoozed or pending in Chatwoot carries a small chip saying so - a snooze means "come back to this", so the case deliberately stays. Underneath there is an <span class="ui">Open in Chatwoot</span> section showing conversations that are open over there with no case on them yet.</p>
   <h4>What the brief tells you</h4>
   <ul>
     <li><span class="ui">Where this stands</span>, in a couple of lines, plus the student's device.</li>
@@ -2199,7 +2200,7 @@
     <strong>There is no Park button here on purpose</strong>
     If it gets filed as resolved but the conversation shows it was only sorted for this one student rather than actually fixed, it parks itself and says why. Working out which of those two happened is not a call anyone should have to make with a student waiting on a reply.
   </div>
-  <p>Once filed, the case closes itself and drops off the Chats page, because the work has moved to the issue. If it merged into a case a colleague is already on, it deliberately stays put, since it is still live for them.</p>
+  <p>Once filed, the case closes itself and drops off Today, because the work has moved to the issue. If it merged into a case a colleague is already on, it deliberately stays put, since it is still live for them.</p>
 </section>
 
 <section id="man-students" data-perm="log" data-title="Messages to students">
@@ -2208,23 +2209,24 @@
   <figure class="man-shot" data-img="manual/14-draft.jpg" data-cap="A draft. Read it through and change anything that is not how you would put it."></figure>
   <p>The line at the top saying it is a suggested draft stays there on purpose. This message goes out under your name, so you should always be able to tell what you are signing.</p>
   <p>Sometimes an amber box says <span class="ui">Before you send, do this:</span> and names something on our side, like a password reset or a course assignment. The draft is written as though it has already been done, so it needs doing before the message goes.</p>
-  <p>There is no send button in here. <span class="ui">Copy</span> takes the text and <span class="ui">Open in Chatwoot</span> takes you to the student, and the message goes from there. Some drafts then carry a marker to say you have sent it, which flips the issue from Scanned to Waiting in Actions so nobody chases the same student twice.</p>
+  <p>There is no send button in here. <span class="ui">Copy</span> takes the text and <span class="ui">Open in Chatwoot</span> takes you to the student, and the message goes from there. Some drafts then carry a marker to say you have sent it, which flips the issue from Scanned to Waiting on the Today list so nobody chases the same student twice.</p>
   <p>For a fix that affected several people, <span class="ui">Draft "it's fixed" messages to all</span> in the issue detail writes one message per student, up to ten at a time. Nothing sends itself there either, so each one gets copied across and tweaked as you like.</p>
 </section>
 
 <section id="man-dev" data-perm="dev,users" data-title="Fixing what comes through">
   <h3>Fixing what comes through</h3>
-  <p>The <span class="ui">Dev</span> queue holds tech faults an admin has looked at and handed over. Nothing lands here on its own, which is the point: by the time it reaches us somebody has confirmed it is real, worked out how many students it is hitting, and written down what has already been ruled out.</p>
+  <p>The <span class="ui">Dev</span> queue holds tech faults that have earned their place. A report only routes here on its own when the instructor has actually worked the troubleshooting checklist and the fault still comes out high priority, or when they deliberately fast-track it - a tick on the form that says "this needs a developer now" and carries their name. Everything else waits for an admin to look and pass it over by hand. Either way, by the time it reaches us somebody has confirmed it is real, worked out how many students it is hitting, and written down what has already been ruled out.</p>
+  <p data-perm="users">One carve-out: a report about something Edd builds himself - the tracker, his internal tools - routes to his own <span class="ui">With Edd</span> queue instead, kept off this one so neither queue carries the other's clutter. The list of what counts as his lives on his page, and <span class="ui">With Edd</span> is in the status dropdown for moving something over (or back) by hand.</p>
   <p data-noperm="log">Signing in opens straight on it, on <span class="ui">To do</span>.</p>
   <p data-perm="log">It is the <span class="ui">Dev</span> item on the rail, opening on <span class="ui">To do</span>.</p>
   <h4>The queue</h4>
-  <p>Four tiles across the top. <span class="ui">Queued</span> is passed over but nobody's name on it, <span class="ui">In progress</span> is assigned, <span class="ui">Completed</span> is anything marked fixed, and <span class="ui">Average time to fix</span> is the gap between handover and fix across all of them. The first three are buttons, so pressing one filters the list.</p>
+  <p>Four tiles across the top. <span class="ui">Queued</span> is passed over but nobody's name on it, <span class="ui">In progress</span> is assigned, <span class="ui">Completed</span> is anything marked fixed, and <span class="ui">Average time to fix</span> is the gap between handover and fix. The first three are buttons, so pressing one filters the list. The completed count and the average start from 25 August 2026 - the day the queue was handed over - so both describe the current team's work rather than the launch-week scramble before it. Older fixes are still there under <span class="ui">Fixed</span>.</p>
   <p>Three pages beside the rail. <span class="ui">To do</span>, <span class="ui">Fixed</span>, and <span class="ui">All</span>.</p>
   <p>Each row opens with its priority and, where more than one person has reported it, the number of reports. The line underneath carries the reference, the lesson code, how many days it has been open, and who it is assigned to. Over on the right it says <span class="ui">Fix it, then say so</span> with a <span class="ui">Mark fixed</span> button.</p>
   <p>Sorting is worth knowing about. Alongside priority there is <span class="ui">Sort: score (severity x reports)</span>, which is the raw arithmetic behind the priority rather than the banded version, so it separates two issues that both came out High.</p>
   <h4>What we need</h4>
   <p>Open a row and the first thing under the facts is <span class="ui">What we need</span>. That is deliberate. It used to be a wall of fields with the actual ask buried somewhere in the report, so every fix started with reading a whole conversation to work out what was being asked for.</p>
-  <p>If nobody has written one, the heading says so and the box falls back to an assembly of the summary and the checklist. There is a button, <span class="ui">Ask an admin to write this</span>, or <span class="ui">Ask for this to be clearer</span> if there is one but it is thin.</p>
+  <p>The pane opens on the summary with a <span class="ui">Check for updates</span> button beside it, which goes and looks in Chatwoot for anything newer from the student. <span class="ui">What we need</span> then shows only what a person actually wrote - if nobody has written an ask yet it says so plainly rather than dressing up an assembly of fields as one. There is a button, <span class="ui">Ask an admin to write this</span>, or <span class="ui">Ask for this to be clearer</span> if there is one but it is thin.</p>
   <h4>Sizing it</h4>
   <p><span class="ui">Estimated size of fix</span> takes Small, Medium, or Large. <span class="ui">Suggest a size</span> reads the issue and proposes one with a reason, and it saves only once you agree, so a suggestion you disagree with costs you nothing but the press.</p>
   <h4>Priority</h4>
@@ -2236,7 +2238,7 @@
   </div>
   <p data-perm="users">You get a dropdown here, because you hold Manage users. Everyone else sees a read-only badge with the severity, the report count, and the score behind it, plus a button to ask you for a change. It arrives as a question on the issue with their reasoning attached.</p>
   <h4>Asking a question</h4>
-  <p><span class="ui">Question about this fix?</span> goes either to <span class="ui">Ask Charlie, Charly or Edd</span> or to the instructor who submitted the report, whichever is likelier to know. It lands in their Actions list and on Slack.</p>
+  <p><span class="ui">Question about this fix?</span> goes either to <span class="ui">Ask Charlie, Charly or Edd</span> or to the instructor who submitted the report, whichever is likelier to know. It lands on their Today list and on Slack.</p>
   <p>The pane stays open after sending, and the question and its answer are kept on the issue under <span class="ui">Questions and answers</span>, so the thread reads back later instead of living in somebody's Slack history.</p>
   <h4>Marking it fixed</h4>
   <p><span class="ui">Mark fixed</span> opens a box asking two things, and both are required at ten characters or more.</p>
@@ -2301,7 +2303,7 @@
 <section id="man-course" data-perm="course,users" data-title="The course-fix queue">
   <h3>The course-fix queue</h3>
   <p>A wrong diagram or a clumsy question is written, not coded, so it goes to the course team and no developer ever sees it. <span class="ui">Course</span> is where those land.</p>
-  <p>It fills differently from the developer queue. A tech fault only appears there once an admin has passed it over, but a course error turns up here the moment it is logged, including the old imported ones that were never routed anywhere. So this queue is everything reported, not everything triaged.</p>
+  <p>It fills differently from the developer queue: a course error turns up here the moment it is logged, including the old imported ones that were never routed anywhere. So this queue is everything reported, not everything triaged. One deliberate redirect adds to it - a student hitting a 404 on lesson content files here rather than with the developers, because a missing page is nearly always the content or its packaging rather than the platform. Fast-tracking a report overrides that when it really is the platform.</p>
   <h4>The queue</h4>
   <p>Three tiles. <span class="ui">In the course-fix queue</span>, <span class="ui">Fixed / done</span>, and <span class="ui">Average time to fix</span>. Three pages beside the rail, <span class="ui">To do</span>, <span class="ui">Fixed / done</span>, and <span class="ui">All</span>.</p>
   <p>These are cards rather than rows, and there is no fix button on the card itself, so opening one is the way in. The card carries the priority, the report count, the lesson, and the summary. It does not say "course error" anywhere, because everything in here is one.</p>
@@ -2369,12 +2371,12 @@
     <li>Hand an issue to the developers or the course team, from the handover fold in the issue.</li>
     <li>See <span class="ui">Possible new issues</span>, the overnight scan's queue of things nobody logged. Instructors deliberately do not see it, to keep their list to work they have to do.</li>
     <li>Write the <span class="ui">What we need</span> line on an issue, which is the first thing a developer reads.</li>
-    <li><span class="ui">Need more info?</span> on someone else's report, which asks the instructor who logged it. It lands in their Actions list and on Slack.</li>
+    <li><span class="ui">Need more info?</span> on someone else's report, which asks the instructor who logged it. It lands on their Today list and on Slack.</li>
     <li>Delete anybody's issue. Everyone else can only delete their own.</li>
   </ul>
   <h4>The scan</h4>
   <p>It runs at five every morning and reads the last day of Chatwoot for problems nobody logged, so the morning list is fresh. Every conversation is read by one model and then re-checked by a different one before a human sees it, because different models fail differently and the second read kills most of the false positives. Only the few things the first read flagged cost a second look.</p>
-  <p>Two buttons sit with the queue in Actions. <span class="ui">Scan now</span> does the same job as the overnight run, for when something has come in this morning. <span class="ui">Look further back</span> reads older conversations the scan has never seen, carrying on from wherever the last press stopped, and everything from before the scan existed has never been read at all.</p>
+  <p>Two buttons sit with the queue on Today. <span class="ui">Scan now</span> does the same job as the overnight run, for when something has come in this morning. <span class="ui">Look further back</span> reads older conversations the scan has never seen, carrying on from wherever the last press stopped, and everything from before the scan existed has never been read at all.</p>
   <p>Both cost API credit and both skip anything already scanned for free. <span class="ui">Look further back</span> asks for confirmation because it reads a batch through two models each time. The line under the buttons says how far back it has reached so far.</p>
   <p>On the queue itself, <span class="ui">Log it</span> pulls the conversation into the log form rather than filing it. It stays in the list until an issue actually saves, so a half-finished one is never lost.</p>
   <h4>The pre-launch archive</h4>
@@ -2382,11 +2384,14 @@
   <p>Admins see them with a <span class="ui">pre-launch</span> badge. Nothing was closed or deleted, and a matching new report brings one back on its own, with a note saying so. There is a <span class="ui">Resurface it now</span> button for doing it by hand.</p>
   <h4>Seeing what somebody else sees</h4>
   <p><span class="ui">View as</span> lives in the account menu, under your own name at the foot of the rail. Pick Instructor, Developer, or Course team and the whole app re-renders with that permission set, including this manual, which cuts itself down to the sections that role gets.</p>
-  <p>A pill appears in the bottom corner while it is on, and it is only there while simulating, so there is no doubt about which mode you are in. <span class="ui">My full access</span> puts it back, and so does reloading the page.</p>
+  <p>While it is on, your account button at the foot of the rail carries the simulated role in amber - <em>Edd · as Developer</em> - so there is no doubt about which mode you are in. <span class="ui">My full access</span> puts it back, and so does reloading the page.</p>
   <div class="man-note warn">
     <strong>It changes the screen, not your account</strong>
     Every action still goes through as you, with your real permissions, so something the simulated role could not do will still work if you can reach it. Use it to check what people can see, not to test what they are blocked from.
   </div>
+  <h4>When the developer queue runs low</h4>
+  <p>When the developers' to-do list drops to three or fewer, a Slack message says so - once, at the moment it crosses the line, not again for every further fix while it sits low. It re-arms once the queue has been refilled past three. The count behind it is exactly what a developer sees, so pre-launch items and Edd's own queue never mask an empty board. It is the nudge to hand more work over while they still have some.</p>
+
   <h4>Feedback on the tracker</h4>
   <p>Everything sent with the <span class="ui">Feedback</span> pill lands here, sorted and filtered by status, kind, and date. A report moves <span class="ui">Needs testing</span>, then <span class="ui">Mark fixed</span>, then <span class="ui">Confirm fixed</span>, and can be reopened at any point.</p>
   <p>Each one arrives with where the person was, the last few errors, the last dozen things they clicked, and a picture of their screen, which is what turns "it didn't save" into something fixable without going back to ask.</p>
@@ -2417,7 +2422,7 @@
     <tr><td>An update flashes on then reverts, with a toast</td><td>The save failed, so it was put back as it was rather than left looking saved. Try again, and send feedback if it keeps happening.</td></tr>
     <tr><td>The <span class="ui">Developers</span> fold says "not passed to the developers yet" with no button</td><td>Handing over is an admin job. Set the priority and leave it, or ask Edd, Charly, or Charlie.</td></tr>
     <tr><td>Something takes ages</td><td>Extract, the brief, the drafts, and the next action all read whole conversations before they answer. The overlay counts the seconds so it is clear it has not died.</td></tr>
-    <tr><td>A colleague is in the same case</td><td>Cases are shared. Press <span class="ui">Refresh</span> at the top of the Chats list, which costs nothing.</td></tr>
+    <tr><td>A colleague is in the same case</td><td>Cases are shared. Press <span class="ui">Refresh</span> at the top of the case list on Today, which costs nothing.</td></tr>
     <tr><td>A popup will not close</td><td>There is no Escape key handler yet. Use the popup's own button.</td></tr>
   </table></div>
 </section>
@@ -2430,6 +2435,7 @@
     <tr><td>Open</td><td>Logged, waiting for triage.</td></tr>
     <tr><td>In progress</td><td>Somebody is on it.</td></tr>
     <tr><td>With developers / with the course team</td><td>Handed over, and nothing needed from us right now.</td></tr>
+    <tr><td>With Edd</td><td>One of the tools Edd builds himself, so the fix is on his plate rather than the developers'.</td></tr>
     <tr><td>Fixed by dev / by the course team</td><td>They say it is done. Somebody needs to check it, then tell the students.</td></tr>
     <tr><td>Resolved - TBC</td><td>The student has an answer, but the underlying fault is not confirmed gone. Auto-resolves after seven quiet days.</td></tr>
     <tr><td>Parked</td><td>Probably a one-off. Wakes itself up if anyone reports the same thing.</td></tr>
@@ -2445,10 +2451,10 @@
   </table></div>
   <h4>Where things live</h4>
   <ul>
-    <li data-perm="log">Something waiting on me, <span class="ui">Actions</span> then <span class="ui">Waiting on me</span>.</li>
-    <li data-perm="manage">Any report ever logged, <span class="ui">Actions</span> then <span class="ui">All issues</span>, then search.</li>
-    <li data-perm="log">The issue I just logged, <span class="ui">Actions</span> then <span class="ui">All issues</span>, top of the list.</li>
-    <li data-perm="log">A student who is in touch right now, <span class="ui">Chats</span>.</li>
+    <li data-perm="log">Something waiting on me, <span class="ui">Today</span>, under the open conversations.</li>
+    <li data-perm="manage">Any report ever logged, <span class="ui">Issues</span> then <span class="ui">All issues</span>, then search.</li>
+    <li data-perm="log">The issue I just logged, <span class="ui">Issues</span> then <span class="ui">All issues</span>, top of the list.</li>
+    <li data-perm="log">A student who is in touch right now, <span class="ui">Today</span>, at the top.</li>
     <li data-perm="dev">A fault waiting on me to fix, <span class="ui">Dev</span> then <span class="ui">To do</span>.</li>
     <li data-perm="dev,users">An investigation somebody has started, <span class="ui">RCA</span> on the rail.</li>
     <li data-perm="course">A course error waiting to be corrected, <span class="ui">Course</span> then <span class="ui">To do</span>.</li>
@@ -2838,7 +2844,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r133 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r134 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
