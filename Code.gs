@@ -50,6 +50,7 @@ var SLACK_NOTICES = {
   notify_student:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
   query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
   query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
+  dev_queue_low:     { on: true,  to: 'SLACK_ADMINS' },              // r129: falls back to the main channel until the private admin channel is wired
   shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
   // Off for good (Edd, 19 Aug 2026). All five still exist in the tracker.
   feedback:          { on: false, to: '' },
@@ -2410,6 +2411,42 @@ function findRow_(id) {
   return null;
 }
 
+// r129 (Edd): "an alert for admins whenever the devs queue drops to 3 or
+// less." Counts what a DEVELOPER actually sees: tech issues with_dev, minus
+// anything behind the launch line. Fires on the downward CROSSING only, and
+// re-arms once the queue refills past the line - each further fix while low
+// stays quiet.
+var DEV_QUEUE_LOW_AT = 3;
+function countDevQueue_() {
+  var sheet = sheetByName_('Tech Issues');
+  if (!sheet) return -1;
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return 0;
+  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  var n = 0;
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][idx['status']]) !== 'with_dev') continue;
+    if (idx['prelaunch'] != null && String(values[r][idx['prelaunch']]) === 'true') continue;
+    n++;
+  }
+  return n;
+}
+function maybeDevQueueAlert_() {
+  try {
+    var n = countDevQueue_();
+    if (n < 0) return;
+    var props = PropertiesService.getScriptProperties();
+    var wasLow = props.getProperty('DEV_QUEUE_LOW') === 'true';
+    if (n <= DEV_QUEUE_LOW_AT && !wasLow) {
+      props.setProperty('DEV_QUEUE_LOW', 'true');
+      slackPost_('dev_queue_low', ':hourglass_flowing_sand: *The developer queue is down to ' + n +
+        (n === 1 ? ' item' : ' items') + '* - time to hand over more work.\n<' + getAppUrl_() + '?view=dev|Open the developer queue>');
+    } else if (n > DEV_QUEUE_LOW_AT && wasLow) {
+      props.setProperty('DEV_QUEUE_LOW', 'false');
+    }
+  } catch (e) {}
+}
+
 function updateIssue_(data) {
   var id = data.issue_id;
   if (!id) return { ok: false, error: 'updateIssue needs an issue_id' };
@@ -2481,6 +2518,7 @@ function updateIssue_(data) {
     try { proposePlaybookUpdate_(record); } catch (e) {}
   }
 
+  maybeDevQueueAlert_();
   return { ok: true, issue_id: id, moved: targetName !== found.sheetName, sheet: targetName };
 }
 
@@ -2764,6 +2802,7 @@ function deleteIssue_(data) {
     String(found.record.instructor_name).trim().toLowerCase() === String(user.name).trim().toLowerCase();
   if (!perms.users && !isOwn) return { ok: false, error: 'You can only delete issues you logged.' };
   found.sheet.deleteRow(found.rowNum);
+  maybeDevQueueAlert_();
   return { ok: true };
 }
 
@@ -2803,6 +2842,7 @@ function linkIssues_(data) {
 
   tgt.sheet.getRange(tgt.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(t)]);
   src.sheet.deleteRow(src.rowNum);
+  maybeDevQueueAlert_();
   return { ok: true, target_id: targetId };
 }
 
@@ -2850,6 +2890,7 @@ function markDevFixed_(data) {
   if (data.notify_student) {
     try { sendNotifyStudentSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
+  maybeDevQueueAlert_();
   return { ok: true };
 }
 
@@ -3342,7 +3383,8 @@ function setSlackChannel_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
   var allowed = { SLACK_INSTRUCTING_DAILY: 1, SLACK_AUREUS_TECH: 1, SLACK_INSTRUCTING_UPDATES: 1,
-                  SLACK_SHIPPING_ISSUES: 1, SLACK_WEBHOOK_URL: 1, SLACK_IMPROVEMENTS_FIXES: 1 };  // r109 + r119
+                  SLACK_SHIPPING_ISSUES: 1, SLACK_WEBHOOK_URL: 1, SLACK_IMPROVEMENTS_FIXES: 1,
+                  SLACK_ADMINS: 1 };  // r109 + r119 + r129 (the admins-only channel, when Edd makes it)
   var name = String(data.channel_key || '').trim();
   if (!allowed[name]) return { ok: false, error: 'channel_key must be one of: ' + Object.keys(allowed).join(', ') };
   // r119: the same endpoint stores the member-ID map (field `member_ids`,
@@ -5877,7 +5919,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r128 · 2026-08-25';
+var CODE_STAMP = 'r129 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
