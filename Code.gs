@@ -3307,11 +3307,13 @@ function setSlackChannel_(data) {
   // r122: the improvements-fixes CHANNEL ID (field `channel_id`, C...), so
   // questions can post via the bot and get a ts back for threading.
   if (data.channel_id) {
-    var cid = String(data.channel_id).trim();
-    if (!/^[CG][A-Z0-9]{6,}$/i.test(cid)) return { ok: false, error: 'channel id should look like C0XXXXXXX' };
-    PropertiesService.getScriptProperties().setProperty('SLACK_QA_CHANNEL_ID', cid);
+    var cid = String(data.channel_id).trim().replace(/^#/, '');
+    // r122.1: a channel NAME works too - the bot resolves it on the first post
+    // and the response carries the real C-id, which is what gets stored.
     var probe = slackBotPost_(cid, ':thread: Thread wiring test from the bug tracker - questions will post here as the bot from now on, and answers will appear as replies in their thread. One-off test.');
-    return { ok: true, set: 'SLACK_QA_CHANNEL_ID', post_test: probe };
+    if (!probe.ok) return { ok: false, error: 'test post failed: ' + (probe.why || 'unknown') + ' (is the bot invited to the channel?)' };
+    PropertiesService.getScriptProperties().setProperty('SLACK_QA_CHANNEL_ID', String(probe.channel));
+    return { ok: true, set: 'SLACK_QA_CHANNEL_ID', channel: probe.channel, post_test: probe };
   }
   if (data.member_ids) {
     try {
@@ -5816,7 +5818,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r122 · 2026-08-25';
+var CODE_STAMP = 'r122.1 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
