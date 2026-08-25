@@ -2780,7 +2780,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r121 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r124 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3705,6 +3705,16 @@ function setViewAs(kind) {
     state.viewAs = null;
     applyPerms(state.realUser);
   }
+  // FB-0304 (Edd): the launch-line filter ran at LOAD time with the real
+  // perms, so view-as-developer showed 22 pre-launch issues no developer can
+  // see. The filter re-derives from the raw list under the simulated perms,
+  // and the current view redraws - view-as now shows the truth.
+  if (state.issuesRaw) {
+    state.issues = (state.perms && state.perms.users)
+      ? state.issuesRaw.slice()
+      : state.issuesRaw.filter(function (i) { return String(i.prelaunch) !== "true"; });
+    if (state.view) setView(state.view);
+  }
 }
 function updateViewAsBar() {
   var bar = $("viewAsBar");
@@ -3997,6 +4007,7 @@ function applyBootstrap(res) {
   // without each one needing its own filter. Admins keep the lot, with a badge.
   // An issue comes back automatically when a matching report merges into it
   // (the backend clears the stamp), or when an admin presses Resurface.
+  state.issuesRaw = state.issues.slice();   // FB-0304: keep the unfiltered list so view-as can re-derive
   if (!(state.perms && state.perms.users)) {
     state.issues = state.issues.filter(function (i) { return String(i.prelaunch) !== "true"; });
   }
@@ -4599,7 +4610,7 @@ function renderActions() {
     else if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 days</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Nothing left to chase: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>';
     else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
-    else if (r.kind === "adminq") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetail(\'' + id + '\')">Answer</button>';
+    else if (r.kind === "adminq") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetailQa(\'' + id + '\')">Answer</button>';
     else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" title="You have checked it yourself and it works: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
@@ -9581,6 +9592,21 @@ function detailResolutionNote() {
 }
 
 function saveDetail() {
+  // FB-0302 (Edd): text sitting in the update box when Save is pressed used
+  // to be silently ignored unless the extract button had been pressed first.
+  // Save now posts it as the update, then carries on saving.
+  var pendingUpdate = $("d_update_mode") && $("d_update_mode").value === "update" &&
+    $("d_update_text") && $("d_update_text").value.trim();
+  if (pendingUpdate && !saveDetail._flushing) {
+    saveDetail._flushing = true;
+    var p = postUpdateFromDetail(state.detailId);
+    (p && p.then ? p : Promise.resolve()).then(function () {
+      saveDetail._flushing = false;
+      if ($("d_update_text")) $("d_update_text").value = "";
+      saveDetail();
+    }).catch(function () { saveDetail._flushing = false; });
+    return;
+  }
   var status = $("d_status").value;
   var note = detailResolutionNote();
   // Make sure we capture how it was fixed when fully resolving.
@@ -9755,7 +9781,7 @@ function postUpdateFromDetail(id) {
   var raw = $("d_update_text") ? $("d_update_text").value.trim() : "";
   if (!raw) { toast("Paste the new conversation first."); return; }
   busyShow("Reading and adding the update…");  // overlay, not just a toast (Edd, FB-0169)
-  apiPost({ action: "extract", raw_text: raw }).then(function (res) {
+  return apiPost({ action: "extract", raw_text: raw }).then(function (res) {
     var f = (res && res.ok && res.fields) ? res.fields : {};
     return apiPost({
       action: "addUpdate", issue_id: id, raw_text: raw,
@@ -10946,11 +10972,25 @@ function openDevDetail(id) {
         '</div>';
       }).join("") + '</div>';
   }
-  html += '<h3>Question about this fix?</h3>';
+  html += '<h3 id="devQaSection">Question about this fix?</h3>';
   if (issue.dev_query_at) {
-    html += '<div class="small muted" style="margin-bottom:6px;">Waiting on a reply from ' +
-      (issue.dev_query_target === 'instructor' ? esc(issue.instructor_name || 'the instructor') : 'Charlie, Charly or Edd') +
-      ', sent ' + fmtDate(issue.dev_query_at) + '.</div>';
+    // FB-0299 (Edd): "how do I reply to the devs? All I can do is ask myself
+    // another question." Whoever the question is FOR gets an answer box right
+    // here; everyone else sees the waiting line as before.
+    var canAnswerHere = !!(state.perms && (state.perms.users ||
+      (issue.dev_query_target === 'instructor' && state.perms.log)));
+    if (canAnswerHere) {
+      html += '<div class="card" style="background:var(--bg);margin-bottom:10px;border-left:3px solid var(--medium);padding:10px;">' +
+        '<div class="small muted" style="margin-bottom:4px;">Open question from ' + esc(issue.dev_query_by || 'a developer') + ' &middot; ' + fmtDate(issue.dev_query_at) + '</div>' +
+        '<div style="font-size:13px;white-space:pre-wrap;margin-bottom:8px;">' + esc(issue.dev_query || '') + '</div>' +
+        '<div class="field"><textarea id="devAnswerText" rows="2" placeholder="Your answer&hellip;"></textarea></div>' +
+        '<button class="primary small" style="padding:5px 14px;" onclick="devSendAnswer(\'' + esc(issue.issue_id) + '\')">Send answer</button>' +
+      '</div>';
+    } else {
+      html += '<div class="small muted" style="margin-bottom:6px;">Waiting on a reply from ' +
+        (issue.dev_query_target === 'instructor' ? esc(issue.instructor_name || 'the instructor') : 'Charlie, Charly or Edd') +
+        ', sent ' + fmtDate(issue.dev_query_at) + '.</div>';
+    }
   }
   html += '<div class="field"><select id="devQueryTarget">' +
       '<option value="admins">Ask Charlie, Charly or Edd</option>' +
@@ -10959,6 +10999,14 @@ function openDevDetail(id) {
     '<div class="field"><textarea id="devQueryText" rows="2" placeholder="Ask something about this issue..."></textarea></div>' +
     '<div class="row" style="margin-bottom:10px;"><button class="ghost" onclick="sendDevQuery(\'' + esc(issue.issue_id) + '\')">' +
     (issue.dev_query_at ? 'Send another question' : 'Send question') + '</button></div>';
+  // FB-0300 (Edd): an admin working the dev queue can put an update on the
+  // issue without hopping to the admin view. Admins only - developers keep
+  // their own notes and the question box.
+  if (state.perms && state.perms.users) {
+    html += '<h3>Post an update</h3>' +
+      '<div class="field"><textarea id="devAdminUpdate" rows="2" placeholder="A note for the trail - what changed, what was decided&hellip;"></textarea></div>' +
+      '<div class="row" style="margin-bottom:10px;"><button class="ghost" onclick="devPostAdminUpdate(\'' + esc(issue.issue_id) + '\')">Add update</button></div>';
+  }
 
   var detStatus = (issue.status || "").toLowerCase();
   var detDone = detStatus === "dev_fixed" || detStatus === "resolved";
@@ -10997,6 +11045,40 @@ function openDevDetail(id) {
 // six months later, and it was an optional textarea further up the pane that
 // most fixes went out without. It is now the thing standing between the press
 // and the save.
+function devSendAnswer(id) {
+  var reply = $("devAnswerText") ? $("devAnswerText").value.trim() : "";
+  if (!reply) { toast("Write the answer first."); return; }
+  busyShow("Sending the answer…");
+  apiPost({ action: "answerQuery", issue_id: id, reply: reply, app_url: APP_URL }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Answered - it's on the issue and back with the asker.");
+    loadIssues().then(function () { openDevDetail(id); });
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+function devPostAdminUpdate(id) {
+  var raw = $("devAdminUpdate") ? $("devAdminUpdate").value.trim() : "";
+  if (!raw) { toast("Write the update first."); return; }
+  busyShow("Adding the update…");
+  apiPost({ action: "addUpdate", issue_id: id, raw_text: raw, keep_status: true, summary: "Admin note from the developer queue", app_url: APP_URL }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Update added.");
+    loadIssues().then(function () { openDevDetail(id); });
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
+// FB-0297/0298: the Actions "Answer" button lands ON the question, not at the
+// top of a long report.
+function openDevDetailQa(id) {
+  openDevDetail(id);
+  var tries = 0;
+  var t = setInterval(function () {
+    var el = $("devQaSection");
+    tries++;
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); clearInterval(t); }
+    else if (tries > 12) clearInterval(t);
+  }, 250);
+}
 function devParkIssue(id) {
   if (!confirm("Park this issue? It leaves the developer queue and wakes itself up if anyone reports the same thing again.")) return;
   busyShow("Parking it…");
