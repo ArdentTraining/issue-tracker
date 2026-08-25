@@ -4459,6 +4459,52 @@ function deployBackend_(data) {
   }
 }
 
+// r129.1 TEMPORARY - run once from the editor, then it can be removed.
+// The project hit Google's 200-version cap because every old deploy left an
+// ACTIVE deployment behind, and a version pinned by a live deployment can
+// never be deleted. This keeps the real production deployment (the /exec URL
+// in index.html) plus the @HEAD one, and deletes the rest. Versions then
+// become orphans, which the Project history bulk-delete can finally see.
+function cleanupDeployments() {
+  var LIVE_URL = 'https://script.google.com/macros/s/AKfycbxROZipuieRjz8BBW7tjR5tvbidB_oLwbDup2PHfD0-KUka4u6oQLlUNrjJT21O783qdg/exec';
+  var scriptId = ScriptApp.getScriptId();
+  var base = 'https://script.googleapis.com/v1/projects/' + scriptId;
+  var auth = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
+  var call = function (url, method) {
+    var res = UrlFetchApp.fetch(url, { method: method || 'get', headers: auth, muteHttpExceptions: true });
+    var code = res.getResponseCode();
+    if (code < 200 || code >= 300) throw new Error((method || 'get') + ' -> HTTP ' + code + ': ' + res.getContentText().slice(0, 200));
+    return JSON.parse(res.getContentText() || '{}');
+  };
+  var deps = [], page = null;
+  do {
+    var d = call(base + '/deployments?pageSize=100' + (page ? '&pageToken=' + encodeURIComponent(page) : ''));
+    deps = deps.concat(d.deployments || []);
+    page = d.nextPageToken;
+  } while (page);
+  Logger.log('Total deployments: ' + deps.length);
+
+  var live = deps.filter(function (d) {
+    return (d.entryPoints || []).some(function (ep) { return ep.webApp && ep.webApp.url === LIVE_URL; });
+  });
+  // Refuse to delete ANYTHING unless the production deployment is positively identified.
+  if (live.length !== 1) {
+    Logger.log('ABORTING - expected exactly 1 deployment matching the live /exec URL, found ' + live.length + '. Nothing deleted.');
+    return;
+  }
+  var liveId = live[0].deploymentId;
+  var kept = [], deleted = 0, failed = 0;
+  deps.forEach(function (d) {
+    var isHead = !(d.deploymentConfig && d.deploymentConfig.versionNumber);
+    if (d.deploymentId === liveId || isHead) { kept.push(d.deploymentId + (d.deploymentId === liveId ? ' (LIVE)' : ' (@HEAD)')); return; }
+    try { call(base + '/deployments/' + d.deploymentId, 'delete'); deleted++; }
+    catch (e) { failed++; Logger.log('could not delete ' + d.deploymentId + ': ' + e); }
+  });
+  Logger.log('Kept: ' + kept.join(', '));
+  Logger.log('Deleted ' + deleted + ' old deployments, ' + failed + ' failed.');
+  Logger.log('NEXT: Project history -> bin icon -> select all -> Delete. Then tell Claude to redeploy.');
+}
+
 // Keep the checklist-review (monthly) trigger in place, and clear out the old
 // daily recheck trigger if one exists (rechecks ping Slack immediately now).
 // Called from setup(), safe to run repeatedly.
