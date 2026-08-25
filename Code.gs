@@ -2904,8 +2904,11 @@ function sendQueryRaisedSlack_(issue, appUrl) {
   var posted = qaChan ? slackBotPost_(qaChan, text) : { ok: false };
   if (posted.ok) {
     try {
+      // findRow_ hands back rowNum (the users-sheet helpers use row - the
+      // r90.1 trap), so write the cell directly rather than via setCell_.
       var fr = findRow_(issue.issue_id);
-      if (fr) setCell_(fr, 'slack_thread', JSON.stringify({ channel: posted.channel, ts: posted.ts }));
+      var col = HEADERS.indexOf('slack_thread') + 1;
+      if (fr && col > 0) fr.sheet.getRange(fr.rowNum, col).setValue(JSON.stringify({ channel: posted.channel, ts: posted.ts }));
     } catch (e) {}
   } else {
     slackPost_('query_raised', text);
@@ -5818,7 +5821,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r122.1 · 2026-08-25';
+var CODE_STAMP = 'r122.2 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
