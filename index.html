@@ -973,15 +973,14 @@
      path changed underneath. Permission-gated items are hidden by applyPerms
      exactly as the tabs were. -->
 <nav class="rail" id="rail" aria-label="Sections">
-  <button type="button" class="rail-item" id="railChats" onclick="railGo('live')" title="Open conversations">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.3-.6L3 21l1.7-5a8.2 8.2 0 0 1-.7-3.4 8.4 8.4 0 0 1 8.5-8.5 8.4 8.4 0 0 1 8.5 8.4z"/></svg>
-    <span class="ri-word">Chats</span>
-    <span class="rail-badge quiet" id="railBadgeChats"></span>
-  </button>
-  <button type="button" class="rail-item" id="railIssues" onclick="railGo('issues')" title="Actions">
+  <button type="button" class="rail-item" id="railIssues" onclick="railGo('issues')" title="Today - open conversations and the things waiting on you">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.6 2.4 17a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
-    <span class="ri-word">Actions</span>
+    <span class="ri-word">Today</span>
     <span class="rail-badge" id="railBadgeIssues"></span>
+  </button>
+  <button type="button" class="rail-item" id="railAllIssues" onclick="railGoAllIssues()" title="All issues and the board">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/></svg>
+    <span class="ri-word">Issues</span>
   </button>
   <button type="button" class="rail-item" id="railNew" onclick="railGo('instructor')" title="Log a new report">
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -1081,7 +1080,7 @@
      Track's two views, all rendered by the functions that already drew them. -->
 <div id="issuesSegWrap">
   <div class="seg" id="issuesSeg">
-    <button type="button" id="iseg_mine" class="active" onclick="setIssuesSeg('mine')">Waiting on me</button>
+    <button type="button" id="iseg_mine" class="active" style="display:none;" onclick="setIssuesSeg('mine')">Waiting on me</button>
     <button type="button" id="iseg_all" onclick="setIssuesSeg('all')">All issues</button>
     <button type="button" id="iseg_board" onclick="setIssuesSeg('board')">Board</button>
   </div>
@@ -1348,8 +1347,9 @@
 
 <!-- ===================== ACTIONS VIEW (instructor to-dos) ===================== -->
 <div id="actionsView" class="wrap hidden">
-  <h2 style="margin-top:0;">Actions</h2>
-  <p class="small muted" style="margin-top:-6px;">The things waiting on an instructor. Everything else lives in Track.</p>
+  <h2 style="margin-top:0;">Today</h2>
+  <p class="small muted" style="margin-top:-6px;">The one place for current things: open conversations first, then everything waiting on an instructor.</p>
+  <div id="todayChats" style="margin:0 0 14px;"></div>
   <div class="split-host" id="actionsSplitHost">
     <div class="list-col" id="actionsList"></div>
     <div class="col-drag" title="Drag to resize the list"></div>
@@ -2780,7 +2780,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r124 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r126 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3903,7 +3903,7 @@ function applyPerms(user) {
   // Round 60: the rail is gated by exactly the same permissions the tabs
   // were, one line each, so nothing can drift apart.
   applyShell();
-  var railGate = [["railNew", p.log], ["railChats", p.log], ["railIssues", p.log || p.manage],
+  var railGate = [["railNew", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railDev", p.dev || p.users], ["railRCA", p.dev || p.users], ["railCourse", p.course || p.users],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
@@ -4582,7 +4582,50 @@ function actionRows() {
   return rows;
 }
 
+function railGoAllIssues() {
+  var p = state.perms || {};
+  if (!p.manage && !p.users) return;
+  setIssuesSeg(state.trackView === "board" ? "board" : "all");
+}
+// FB-0301 (Edd): "one place for instructors to look for current things."
+// The Today page leads with the open conversations - compact rows, click one
+// and the full case workspace opens - then the action list underneath.
+function renderTodayChats() {
+  var el = $("todayChats");
+  if (!el) return;
+  if (!(state.perms && state.perms.log)) { el.innerHTML = ""; return; }
+  var cases = (state.liveCases || []).filter(function (c) { return String(c.status) === "open"; });
+  var unpicked = state._openChats ? unpickedChats().length : 0;
+  if (!cases.length && !unpicked) {
+    el.innerHTML = state.liveLoaded ? "" : '<p class="muted small"><span class="spinner"></span> checking conversations…</p>';
+    return;
+  }
+  var html = '<h3 style="margin:4px 0 8px;">Open conversations' + (cases.length ? " (" + cases.length + ")" : "") + "</h3>";
+  html += cases.map(function (c) {
+    return '<div class="act-row" style="grid-template-columns:76px minmax(0,1fr) auto;" onclick="todayOpenCase(\'' + esc(String(c.conversation_id)) + '\')">' +
+      '<span class="act-word" style="background:var(--accent);color:#02121f;">Chat</span>' +
+      '<div><div class="act-title">' + esc(c.student_name || ("#" + c.conversation_id)) + '</div>' +
+        '<div class="act-sub">' + esc(String(c.summary || "").slice(0, 110)) + '</div></div>' +
+      '<span class="small muted">' + fmtDate(c.last_activity) + '</span></div>';
+  }).join("");
+  if (unpicked) {
+    html += '<div class="act-row" style="grid-template-columns:76px minmax(0,1fr) auto;" onclick="setView(\'live\')">' +
+      '<span class="act-word" style="background:var(--surface);border:1px solid var(--line);color:var(--muted);">More</span>' +
+      '<div><div class="act-sub">' + unpicked + ' open conversation' + (unpicked === 1 ? '' : 's') + ' in Chatwoot with no case yet - pick one up.</div></div>' +
+      '<span class="small muted">&rarr;</span></div>';
+  }
+  el.innerHTML = html;
+}
+function todayOpenCase(convId) {
+  state.liveSelected = String(convId);
+  setView("live");
+}
 function renderActions() {
+  // Load-once triggers, or the loader's own completion re-render would call
+  // straight back here and loop.
+  if (!state.liveLoaded && !state._liveLoading) loadLiveCases();
+  if (!state._openChats && !state._openChatsLoading) loadOpenChats();
+  renderTodayChats();
   // One flat list. Each row carries all three things at once: the status in a
   // word, a few words on the issue, and the action needed with its button.
   // Clicking the row opens the full issue in the right-hand pane, same as
@@ -4925,6 +4968,7 @@ function loadOpenChats(force) {
     state._openChats = (res && res.ok) ? (res.conversations || []) : [];
     state._openChatsError = (res && res.ok) ? "" : ((res && res.error) || "unknown");
     if (state.view === "live") renderLive();
+    else if (state.view === "actions") renderTodayChats();
   }).catch(function (e) {
     state._openChatsLoading = false;
     state._openChats = [];
@@ -5804,7 +5848,7 @@ function updateRail() {
   if (!$("rail")) return;
   var v = state.view;
   var onIssues = (v === "actions" || v === "admin");
-  var pairs = [["railNew", v === "instructor"], ["railChats", v === "live"], ["railIssues", onIssues],
+  var pairs = [["railNew", v === "instructor"], ["railIssues", v === "actions" || v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev"], ["railCourse", v === "course"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual"],
@@ -5812,7 +5856,7 @@ function updateRail() {
   pairs.forEach(function (p) { var el = $(p[0]); if (el) el.classList.toggle("active", !!p[1]); });
   // The segment bar belongs to Issues, so it only shows there.
   var wrap = $("issuesSegWrap");
-  if (wrap) wrap.classList.toggle("on", onIssues && SHELL_ON);
+  if (wrap) wrap.classList.toggle("on", v === "admin" && SHELL_ON);
   var seg = currentIssuesSeg();
   [["iseg_mine", "mine"], ["iseg_all", "all"], ["iseg_board", "board"]].forEach(function (p) {
     var el = $(p[0]); if (el) el.className = seg === p[1] ? "active" : "";
@@ -5825,15 +5869,12 @@ function updateRail() {
 // that only means work is a number worth looking at.
 function updateRailBadges() {
   var p = state.perms || {};
-  var chats = $("railBadgeChats");
-  if (chats) {
-    var n = (state.liveCases || []).length;
-    chats.textContent = n > 99 ? "99+" : String(n);
-    chats.classList.toggle("on", !!(n && p.log));
-  }
+  // FB-0301: one Today badge = the same two numbers the Today page shows,
+  // open cases plus action rows. Same sources as the lists, never a separate
+  // count (the r60 rule).
   var iss = $("railBadgeIssues");
   if (iss) {
-    var m = p.log ? actionRows().length : 0;
+    var m = p.log ? actionRows().length + (state.liveCases || []).length : 0;
     iss.textContent = m > 99 ? "99+" : String(m);
     iss.classList.toggle("on", !!m);
   }
