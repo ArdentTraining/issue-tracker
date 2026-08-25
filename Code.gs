@@ -84,6 +84,26 @@ function slackTag_(nameOrEmail, fallback) {
   return fallback || String(nameOrEmail || '');
 }
 
+// r120 (FB-0296): a direct message from the bot, on top of the channel post.
+// Best-effort by design - a DM that cannot be delivered (no token, unknown
+// email, Slack down) must never block the save or the channel notice.
+function slackDm_(email, text) {
+  try {
+    var tok = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
+    if (!tok || !email || String(email).indexOf('@') < 0) return { ok: false, why: 'no token or email' };
+    var opts = function (payload) { return { method: 'post', contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true,
+      payload: payload ? JSON.stringify(payload) : undefined }; };
+    var u = JSON.parse(UrlFetchApp.fetch('https://slack.com/api/users.lookupByEmail?email=' + encodeURIComponent(email),
+      { headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true }).getContentText());
+    if (!u.ok || !u.user) return { ok: false, why: 'lookup: ' + (u.error || 'failed') };
+    var c = JSON.parse(UrlFetchApp.fetch('https://slack.com/api/conversations.open', opts({ users: u.user.id })).getContentText());
+    if (!c.ok || !c.channel) return { ok: false, why: 'open: ' + (c.error || 'failed') };
+    var m = JSON.parse(UrlFetchApp.fetch('https://slack.com/api/chat.postMessage', opts({ channel: c.channel.id, text: text })).getContentText());
+    return m.ok ? { ok: true } : { ok: false, why: 'post: ' + (m.error || 'failed') };
+  } catch (e) { return { ok: false, why: String(e).slice(0, 120) }; }
+}
+
 function slackUrlFor_(kind) {
   var n = SLACK_NOTICES[kind];
   if (n && n.to) {
@@ -2843,6 +2863,11 @@ function sendQueryRaisedSlack_(issue, appUrl) {
     'Open this issue: ' + issueLink_(issue, appUrl)
   ].join('\n');
   slackPost_('query_raised', text);
+  // FB-0296: the individual gets the question directly too. Channel post is
+  // the record; the DM is what actually reaches someone on a busy day.
+  if (toInstructor && issue.instructor_email) {
+    slackDm_(issue.instructor_email, text);
+  }
 }
 
 // An admin answers a developer's/course team's question. Logs the reply in
@@ -3215,6 +3240,15 @@ function setSlackChannel_(data) {
   if (!allowed[name]) return { ok: false, error: 'channel_key must be one of: ' + Object.keys(allowed).join(', ') };
   // r119: the same endpoint stores the member-ID map (field `member_ids`,
   // JSON of name/email -> U... id). No webhook needed for that write.
+  // r120: store the bot token (field `bot_token`), and prove the whole DM
+  // chain immediately by sending the caller's named test address one.
+  if (data.bot_token) {
+    var bt = String(data.bot_token).trim();
+    if (bt.indexOf('xoxb-') !== 0) return { ok: false, error: 'bot token should start xoxb-' };
+    PropertiesService.getScriptProperties().setProperty('SLACK_BOT_TOKEN', bt);
+    var test = data.test_email ? slackDm_(String(data.test_email), ':wave: DM test from the bug tracker bot - question notices now reach you directly as well as in #improvements-fixes. One-off test.') : { ok: false, why: 'no test_email sent' };
+    return { ok: true, set: 'SLACK_BOT_TOKEN', dm_test: test };
+  }
   if (data.member_ids) {
     try {
       var parsed = JSON.parse(String(data.member_ids));
@@ -5718,7 +5752,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r119 · 2026-08-25';
+var CODE_STAMP = 'r120 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
