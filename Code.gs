@@ -104,6 +104,23 @@ function slackDm_(email, text) {
   } catch (e) { return { ok: false, why: String(e).slice(0, 120) }; }
 }
 
+// r122: post as the BOT rather than a webhook when we need the message ts
+// back (webhooks never return one). thread_ts makes it a threaded reply.
+function slackBotPost_(channelId, text, threadTs) {
+  try {
+    var tok = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
+    if (!tok || !channelId) return { ok: false, why: 'no bot token or channel' };
+    var payload = { channel: channelId, text: text };
+    if (threadTs) payload.thread_ts = String(threadTs);
+    var res = UrlFetchApp.fetch('https://slack.com/api/chat.postMessage', {
+      method: 'post', contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + tok },
+      payload: JSON.stringify(payload), muteHttpExceptions: true });
+    var out = JSON.parse(res.getContentText());
+    return out.ok ? { ok: true, ts: out.ts, channel: out.channel } : { ok: false, why: out.error || 'failed' };
+  } catch (e) { return { ok: false, why: String(e).slice(0, 120) }; }
+}
+
 function slackUrlFor_(kind) {
   var n = SLACK_NOTICES[kind];
   if (n && n.to) {
@@ -316,7 +333,8 @@ var HEADERS = [
   // issue is NOT closed: it keeps its real status, the dedupe still matches
   // against it, and it comes back the moment a new report merges into it or an
   // admin presses Resurface. APPENDED, never inserted.
-  'prelaunch'          // BA 'true' = hidden from non-admins until resurfaced
+  'prelaunch',         // BA 'true' = hidden from non-admins until resurfaced
+  'slack_thread'       // BB r122: JSON {channel, ts} of the bot-posted question, so the answer threads onto it and thread replies find their issue
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -386,7 +404,8 @@ function doGet(e) {
     if (action === 'getInvite') return jsonOut(getInvite_(p.token));   // public: validate an invite link
     if (action === 'mirror') return jsonOut(mirror_(p));               // read-only, key-gated mirror for the local Cowork sync
     if (action === 'readSheet') return jsonOut(readSheet_(p));         // read-only, MIRROR_KEY-gated: read a tab of any spreadsheet Edd can open (legacy-form reconciliation, r101)
-    if (action === 'importLegacyBatch') return jsonOut(importLegacyBatch_(p)); // WRITE, DEPLOY_KEY-gated: r102 legacy-form catch-up
+    if (action === 'importLegacyBatch') return jsonOut(importLegacyBatch_(p));
+    if (action === 'slackThreadReply') return jsonOut(slackThreadReply_(p));   // WRITE, DEPLOY_KEY-gated: r122, a thread reply in Slack answers the question // WRITE, DEPLOY_KEY-gated: r102 legacy-form catch-up
 
     var user = userForToken_(p.token);
     if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
@@ -2850,7 +2869,11 @@ function flagQuery_(data) {
 function issueLink_(issue, appUrl) {
   var url = appUrl || getAppUrl_();
   if (!url) return '(app url not set)';
-  return url + (url.indexOf('?') > -1 ? '&' : '?') + 'issue=' + issue.issue_id;
+  // r122: the caller's page URL can itself carry ?issue=... (an answer sent
+  // from a deep link did), which doubled the parameter. Links build from the
+  // bare page.
+  url = String(url).split('#')[0].split('?')[0];
+  return url + '?issue=' + issue.issue_id;
 }
 
 function sendQueryRaisedSlack_(issue, appUrl) {
@@ -2873,7 +2896,20 @@ function sendQueryRaisedSlack_(issue, appUrl) {
       : ('Reply in the tracker so ' + (isCourse ? 'the course team' : 'the developer') + ' can carry on.'),
     'Open this issue: ' + issueLink_(issue, appUrl)
   ].join('\n');
-  slackPost_('query_raised', text);
+  // r122: with a bot token and the channel id configured, the question posts
+  // as the bot and the message ts is stamped on the issue - the answer will
+  // thread onto it, and a Slack thread reply can find its way back. Without
+  // them, the webhook path carries on exactly as before.
+  var qaChan = PropertiesService.getScriptProperties().getProperty('SLACK_QA_CHANNEL_ID');
+  var posted = qaChan ? slackBotPost_(qaChan, text) : { ok: false };
+  if (posted.ok) {
+    try {
+      var fr = findRow_(issue.issue_id);
+      if (fr) setCell_(fr, 'slack_thread', JSON.stringify({ channel: posted.channel, ts: posted.ts }));
+    } catch (e) {}
+  } else {
+    slackPost_('query_raised', text);
+  }
   // FB-0296: the individual gets the question directly too. Channel post is
   // the record; the DM is what actually reaches someone on a busy day.
   if (toInstructor && issue.instructor_email) {
@@ -2940,6 +2976,14 @@ function sendQueryAnsweredSlack_(issue, question, reply, asker, appUrl) {
     '',
     'Open this issue: ' + issueLink_(issue, appUrl)
   ].join('\n');
+  // r122 (Edd): the answer lands as a REPLY in the question's thread when
+  // the question went out via the bot. Fallback: the channel route as before.
+  var thread = null;
+  try { thread = issue.slack_thread ? JSON.parse(issue.slack_thread) : null; } catch (e) {}
+  if (thread && thread.channel && thread.ts) {
+    var sent = slackBotPost_(thread.channel, text, thread.ts);
+    if (sent.ok) return;
+  }
   slackPost_('query_answered', text);
 }
 
@@ -3259,6 +3303,15 @@ function setSlackChannel_(data) {
     PropertiesService.getScriptProperties().setProperty('SLACK_BOT_TOKEN', bt);
     var test = data.test_email ? slackDm_(String(data.test_email), ':wave: DM test from the bug tracker bot - question notices now reach you directly as well as in #improvements-fixes. One-off test.') : { ok: false, why: 'no test_email sent' };
     return { ok: true, set: 'SLACK_BOT_TOKEN', dm_test: test };
+  }
+  // r122: the improvements-fixes CHANNEL ID (field `channel_id`, C...), so
+  // questions can post via the bot and get a ts back for threading.
+  if (data.channel_id) {
+    var cid = String(data.channel_id).trim();
+    if (!/^[CG][A-Z0-9]{6,}$/i.test(cid)) return { ok: false, error: 'channel id should look like C0XXXXXXX' };
+    PropertiesService.getScriptProperties().setProperty('SLACK_QA_CHANNEL_ID', cid);
+    var probe = slackBotPost_(cid, ':thread: Thread wiring test from the bug tracker - questions will post here as the bot from now on, and answers will appear as replies in their thread. One-off test.');
+    return { ok: true, set: 'SLACK_QA_CHANNEL_ID', post_test: probe };
   }
   if (data.member_ids) {
     try {
@@ -5763,7 +5816,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r121 · 2026-08-25';
+var CODE_STAMP = 'r122 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -8102,6 +8155,48 @@ function legacyGapRows_() {
 
   out.sort(function (a, b) { return a.data._import_date < b.data._import_date ? -1 : 1; });
   return out;
+}
+
+// r122: a reply in the Slack thread under a bot-posted question comes back
+// through the events Worker and lands as the answer, exactly as if typed in
+// the tracker. The author is resolved from SLACK_MEMBER_IDS in reverse; the
+// same permission rules as answerQuery_ apply, so Slack grants nobody
+// anything the tracker would not.
+function slackThreadReply_(p) {
+  var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!mk || !p || p.key !== mk) return { ok: false, error: 'unauthorized' };
+  var channel = String(p.channel || ''), ts = String(p.ts || ''), uid = String(p.uid || ''), text = String(p.text || '').trim();
+  if (!channel || !ts || !text) return { ok: false, error: 'channel, ts and text required' };
+  // Find the issue whose stamped thread this is.
+  var hit = null;
+  ISSUE_SHEETS.forEach(function (name) {
+    if (hit) return;
+    var sheet = sheetByName_(name);
+    if (!sheet) return;
+    var values = sheet.getDataRange().getValues();
+    if (values.length < 2) return;
+    var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+    if (idx['slack_thread'] == null) return;
+    for (var r = 1; r < values.length; r++) {
+      var cell = String(values[r][idx['slack_thread']] || '');
+      if (!cell) continue;
+      try {
+        var t = JSON.parse(cell);
+        if (String(t.ts) === ts && String(t.channel) === channel) { hit = { issue_id: values[r][idx['issue_id']] }; return; }
+      } catch (e) {}
+    }
+  });
+  if (!hit) return { ok: true, matched: false };
+  // Who is this? Reverse the member map to an email, then load their account.
+  var email = '';
+  try {
+    var map = JSON.parse(PropertiesService.getScriptProperties().getProperty('SLACK_MEMBER_IDS') || '{}');
+    for (var k in map) { if (String(map[k]) === uid && k.indexOf('@') > -1) { email = k; break; } }
+  } catch (e) {}
+  var acct = email ? findUserByEmail_(email) : null;
+  if (!acct) return { ok: false, error: 'Slack user ' + uid + ' has no tracker account mapping' };
+  var res = answerQuery_({ issue_id: hit.issue_id, reply: text + '\n\n(answered from Slack)', _user: acct.user });
+  return { ok: !!(res && res.ok), matched: true, error: res && res.error };
 }
 
 function importLegacyBatch_(p) {
