@@ -153,7 +153,9 @@ async function authenticate(env, token) {
   const data = await res.json().catch(() => null);
   if (!data || !data.ok || !data.user) return { ok: false, error: "tracker session invalid - log in to the tracker first" };
   const p = data.user.perms || {};
-  if (!p.users && !p.dev) return { ok: false, error: "RCA records are admin/dev only" };
+  // Dev access is parked while Edd road-tests RCA (25 Aug 2026) - flip this
+  // back to (!p.users && !p.dev) to let the developers in.
+  if (!p.users) return { ok: false, error: "RCA records are admin-only for now" };
   const user = { name: data.user.name || "", email: data.user.email || "", admin: !!p.users, dev: !!p.dev, token: token };
   authCache.set(token, { user: user, at: Date.now() });
   return { ok: true, user: user };

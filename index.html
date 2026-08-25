@@ -1911,7 +1911,7 @@
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
     <tr data-perm="dev,users"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
-    <tr data-perm="dev,users"><td><span class="ui">RCA</span></td><td>Private diagnostic records on promoted issues, for a fault that needs investigating rather than just fixing.</td></tr>
+    <tr data-perm="users"><td><span class="ui">RCA</span></td><td>Private diagnostic records on promoted issues, for a fault that needs investigating rather than just fixing.</td></tr>
     <tr data-perm="course,users"><td><span class="ui">Course</span></td><td>The course-fix queue, which is every course error that has been logged.</td></tr>
     <tr data-perm="analytics"><td><span class="ui">Reports</span></td><td>The telemetry dashboard, showing how students are actually moving through the lessons.</td></tr>
     <tr data-perm="analytics"><td><span class="ui">Stats</span></td><td>What the log itself says: where the issues are, and which lessons keep generating them.</td></tr>
@@ -2259,10 +2259,10 @@
   </div>
 </section>
 
-<section id="man-rca" data-perm="dev,users" data-title="RCA records">
+<section id="man-rca" data-perm="users" data-title="RCA records">
   <h3>RCA records</h3>
   <p>Some faults are not a fix, they are an investigation. The assessment images that stopped loading in August took days of reading conversations, lining them up against deploys, and working out which change broke what. RCA is that job, made repeatable.</p>
-  <p>Promoting an issue opens a private diagnostic record on it: a running conversation with an investigator that can read our support data, kept on the issue so anyone can pick it up where the last person stopped. It is on the rail as <span class="ui">RCA</span>, under Dev, and only developers and admins have it.</p>
+  <p>Promoting an issue opens a private diagnostic record on it: a running conversation with an investigator that can read our support data, kept on the issue so anyone can pick it up where the last person stopped. It is on the rail as <span class="ui">RCA</span>, under Dev. For now only admins have it, while it is put through its paces; the developers get it once it has earned its keep.</p>
   <p>The page opens on the cases themselves. <span class="ui">Open investigations</span> is anything still being worked, with a count on the heading, and <span class="ui">Verified</span> is the finished ones below it. So a fault under investigation keeps a presence of its own rather than being a thing somebody remembers to go and look at.</p>
   <p>With nothing on it, it reads <em>Nothing under investigation. Open any issue and press Promote to RCA to start one.</em></p>
   <div class="man-note warn">
@@ -2456,7 +2456,7 @@
     <li data-perm="log">The issue I just logged, <span class="ui">Issues</span> then <span class="ui">All issues</span>, top of the list.</li>
     <li data-perm="log">A student who is in touch right now, <span class="ui">Today</span>, at the top.</li>
     <li data-perm="dev">A fault waiting on me to fix, <span class="ui">Dev</span> then <span class="ui">To do</span>.</li>
-    <li data-perm="dev,users">An investigation somebody has started, <span class="ui">RCA</span> on the rail.</li>
+    <li data-perm="users">An investigation somebody has started, <span class="ui">RCA</span> on the rail.</li>
     <li data-perm="course">A course error waiting to be corrected, <span class="ui">Course</span> then <span class="ui">To do</span>.</li>
     <li data-perm="users">Adding somebody to the team, <span class="ui">Admin</span> then <span class="ui">People</span>.</li>
     <li>Something wrong with this app, the <span class="ui">Feedback</span> pill, bottom right.</li>
@@ -2844,7 +2844,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r134 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r135 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3971,7 +3971,7 @@ function applyPerms(user) {
   // were, one line each, so nothing can drift apart.
   applyShell();
   var railGate = [["railNew", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
-                  ["railEdd", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.dev || p.users], ["railCourse", p.course || p.users],
+                  ["railEdd", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
@@ -4828,7 +4828,7 @@ var RCA_WORKER_URL = "https://ardent-rca.ehewett.workers.dev"; // set the real w
 function rcaConfigured() { return RCA_WORKER_URL.indexOf("RCA_SUBDOMAIN") < 0; }
 function rcaButtonHtml(issue) {
   var p = state.perms || {};
-  if (!p.users && !p.dev) return "";
+  if (!p.users) return "";   // hidden from devs while RCA is road-tested (Edd, 25 Aug 2026)
   return '<div style="margin:10px 0;"><button class="ghost small" style="padding:5px 12px;" ' +
     'title="Opens a private diagnostic record on this issue: a persistent chat with an AI investigator wired to read-only support data. Admin and developer eyes only - it will contain student details." ' +
     'onclick="rcaOpen(\'' + esc(issue.issue_id) + '\')">Promote to RCA</button></div>';
@@ -5974,7 +5974,7 @@ function railGo(v) {
   // The rail item is hidden without the permission, but a deep link or a
   // stale bookmark can still ask for the view, so the gate is here as well.
   if (v === "reports" && !(state.perms || {}).analytics) return;
-  if (v === "rca" && !((state.perms || {}).dev || (state.perms || {}).users)) return;
+  if (v === "rca" && !(state.perms || {}).users) return;   // dev access returns once Edd has put RCA through its paces
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
