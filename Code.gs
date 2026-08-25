@@ -48,7 +48,7 @@ var SLACK_NOTICES = {
   high_priority:     { on: true,  to: '' },                           // stays put
   shipping_chase:    { on: true,  to: 'SLACK_SHIPPING_ISSUES' },   // r109: shipping got its own channel
   notify_student:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
-  query_raised:      { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
+  query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
   query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
   shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
   // Off for good (Edd, 19 Aug 2026). All five still exist in the tracker.
@@ -62,6 +62,28 @@ function slackOn_(kind) { return !!(SLACK_NOTICES[kind] && SLACK_NOTICES[kind].o
 // The channel this notice belongs in, or the current one until that channel
 // exists. Never throws and never blocks the caller: a Slack failure has never
 // been allowed to stop a save.
+// r119 (FB-0295): the @-tag map. Script property SLACK_MEMBER_IDS holds JSON
+// of { "name or email (lowercased)": "U0XXXXXXX" }. A hit becomes a real
+// <@U...> mention; a miss falls back to the plain name, so a missing entry
+// degrades to exactly what we had before.
+function slackTag_(nameOrEmail, fallback) {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty('SLACK_MEMBER_IDS');
+    if (raw) {
+      var map = JSON.parse(raw);
+      var k = String(nameOrEmail || '').trim().toLowerCase();
+      if (map[k]) return '<@' + map[k] + '>';
+      var kFirst = k.split(/[@\s]/)[0];
+      if (kFirst) {
+        for (var key in map) {
+          if (key.split(/[@\s]/)[0] === kFirst) return '<@' + map[key] + '>';
+        }
+      }
+    }
+  } catch (e) {}
+  return fallback || String(nameOrEmail || '');
+}
+
 function slackUrlFor_(kind) {
   var n = SLACK_NOTICES[kind];
   if (n && n.to) {
@@ -2804,15 +2826,19 @@ function sendQueryRaisedSlack_(issue, appUrl) {
   if (!slackOn_('query_raised')) return;
   var isCourse = String(issue.category).toLowerCase() === 'course_error';
   var toInstructor = issue.dev_query_target === 'instructor';
+  // FB-0295: the person the question is FOR gets a real @-mention when their
+  // member ID is in the map (falls back to the plain name when it is not).
+  var instructorTag = slackTag_(issue.instructor_email || issue.instructor_name, issue.instructor_name || 'the instructor');
+  var bossTags = [slackTag_('charlie', ''), slackTag_('charly', ''), slackTag_('edd', '')].filter(String).join(' ');
   var text = [
     ':grey_question: *' + (issue.dev_query_by || 'Someone') + ' has a question for ' +
-      (toInstructor ? (issue.instructor_name || 'the instructor') : 'the bosses') + '*',
+      (toInstructor ? instructorTag : (bossTags || 'the bosses')) + '*',
     '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
     '*Summary:* ' + slackSummary_(issue),
     '*Question:* ' + (issue.dev_query || '-'),
     '',
     toInstructor
-      ? ((issue.instructor_name || 'The instructor') + ', reply from your Actions tab so the fix can carry on.')
+      ? (instructorTag + ', reply from your Actions tab so the fix can carry on.')
       : ('Reply in the tracker so ' + (isCourse ? 'the course team' : 'the developer') + ' can carry on.'),
     'Open this issue: ' + issueLink_(issue, appUrl)
   ].join('\n');
@@ -3184,9 +3210,24 @@ function setSlackChannel_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
   var allowed = { SLACK_INSTRUCTING_DAILY: 1, SLACK_AUREUS_TECH: 1, SLACK_INSTRUCTING_UPDATES: 1,
-                  SLACK_SHIPPING_ISSUES: 1, SLACK_WEBHOOK_URL: 1 };  // r109: shipping channel + the main channel itself
+                  SLACK_SHIPPING_ISSUES: 1, SLACK_WEBHOOK_URL: 1, SLACK_IMPROVEMENTS_FIXES: 1 };  // r109 + r119
   var name = String(data.channel_key || '').trim();
   if (!allowed[name]) return { ok: false, error: 'channel_key must be one of: ' + Object.keys(allowed).join(', ') };
+  // r119: the same endpoint stores the member-ID map (field `member_ids`,
+  // JSON of name/email -> U... id). No webhook needed for that write.
+  if (data.member_ids) {
+    try {
+      var parsed = JSON.parse(String(data.member_ids));
+      var clean = {};
+      for (var mk in parsed) {
+        var mv = String(parsed[mk]).trim();
+        if (!/^U[A-Z0-9]{6,}$/i.test(mv)) return { ok: false, error: 'member id for "' + mk + '" does not look like a Slack member ID (U...)' };
+        clean[String(mk).trim().toLowerCase()] = mv;
+      }
+      PropertiesService.getScriptProperties().setProperty('SLACK_MEMBER_IDS', JSON.stringify(clean));
+      return { ok: true, set: 'SLACK_MEMBER_IDS', people: Object.keys(clean).length };
+    } catch (e) { return { ok: false, error: 'member_ids must be valid JSON: ' + String(e).slice(0, 80) }; }
+  }
   var url = String(data.webhook || '').trim();
   if (url.indexOf('https://hooks.slack.com/') !== 0) return { ok: false, error: 'webhook must be a hooks.slack.com URL' };
   PropertiesService.getScriptProperties().setProperty(name, url);
@@ -5677,7 +5718,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r118 · 2026-08-24';
+var CODE_STAMP = 'r119 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
