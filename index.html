@@ -973,8 +973,8 @@
      path changed underneath. Permission-gated items are hidden by applyPerms
      exactly as the tabs were. -->
 <nav class="rail" id="rail" aria-label="Sections">
-  <button type="button" class="rail-item" id="railIssues" onclick="railGo('issues')" title="Today - open conversations and the things waiting on you">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.6 2.4 17a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
+  <button type="button" class="rail-item" id="railIssues" onclick="railGo('live')" title="Today - open conversations and the things waiting on you">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.3-.6L3 21l1.7-5a8.2 8.2 0 0 1-.7-3.4 8.4 8.4 0 0 1 8.5-8.5 8.4 8.4 0 0 1 8.5 8.4z"/></svg>
     <span class="ri-word">Today</span>
     <span class="rail-badge" id="railBadgeIssues"></span>
   </button>
@@ -1347,9 +1347,7 @@
 
 <!-- ===================== ACTIONS VIEW (instructor to-dos) ===================== -->
 <div id="actionsView" class="wrap hidden">
-  <h2 style="margin-top:0;">Today</h2>
-  <p class="small muted" style="margin-top:-6px;">The one place for current things: open conversations first, then everything waiting on an instructor.</p>
-  <div id="todayChats" style="margin:0 0 14px;"></div>
+  <h2 style="margin-top:0;">Actions</h2>
   <div class="split-host" id="actionsSplitHost">
     <div class="list-col" id="actionsList"></div>
     <div class="col-drag" title="Drag to resize the list"></div>
@@ -1360,8 +1358,8 @@
 
 <!-- ===================== LIVE CASES (Round 45) ===================== -->
 <div id="liveView" class="wrap hidden">
-  <h2 style="margin-top:0;">Open conversations</h2>
-  <p class="small muted" style="margin-top:-6px;">A student's in touch - what do we say? Pull the chat in, see where it stands, and the bug report falls out of the conversation. Cases are shared: anyone can pick one up and carry on.</p>
+  <h2 style="margin-top:0;">Today</h2>
+  <p class="small muted" style="margin-top:-6px;">Current conversations first - pull a chat in, see where it stands, and the report falls out of it. Everything else waiting on an instructor is underneath. Cases are shared: anyone can pick one up and carry on.</p>
   <div class="row" style="margin-bottom:14px;gap:8px;">
     <input id="liveCwInput" placeholder="Chatwoot link or number" autocomplete="one-time-code" style="flex:1;min-width:0;max-width:340px;" onkeydown="if(event.key==='Enter'){event.preventDefault();openLiveCase();}" />
     <button type="button" class="primary" style="white-space:nowrap;" onclick="openLiveCase()">Open a case</button>
@@ -1379,6 +1377,9 @@
   </div>
   <!-- FB-0243: what is open in Chatwoot but not picked up here yet. -->
   <div id="openChats" style="max-width:1300px;margin:0 auto;"></div>
+  <div id="todayActionsSlot" style="margin-top:26px;">
+    <h3 style="border-top:1px solid var(--line);padding-top:18px;">Waiting on an instructor</h3>
+  </div>
 </div>
 
 <!-- ===================== ADMIN VIEW ===================== -->
@@ -2780,7 +2781,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r126 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r126.1 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4587,45 +4588,7 @@ function railGoAllIssues() {
   if (!p.manage && !p.users) return;
   setIssuesSeg(state.trackView === "board" ? "board" : "all");
 }
-// FB-0301 (Edd): "one place for instructors to look for current things."
-// The Today page leads with the open conversations - compact rows, click one
-// and the full case workspace opens - then the action list underneath.
-function renderTodayChats() {
-  var el = $("todayChats");
-  if (!el) return;
-  if (!(state.perms && state.perms.log)) { el.innerHTML = ""; return; }
-  var cases = (state.liveCases || []).filter(function (c) { return String(c.status) === "open"; });
-  var unpicked = state._openChats ? unpickedChats().length : 0;
-  if (!cases.length && !unpicked) {
-    el.innerHTML = state.liveLoaded ? "" : '<p class="muted small"><span class="spinner"></span> checking conversations…</p>';
-    return;
-  }
-  var html = '<h3 style="margin:4px 0 8px;">Open conversations' + (cases.length ? " (" + cases.length + ")" : "") + "</h3>";
-  html += cases.map(function (c) {
-    return '<div class="act-row" style="grid-template-columns:76px minmax(0,1fr) auto;" onclick="todayOpenCase(\'' + esc(String(c.conversation_id)) + '\')">' +
-      '<span class="act-word" style="background:var(--accent);color:#02121f;">Chat</span>' +
-      '<div><div class="act-title">' + esc(c.student_name || ("#" + c.conversation_id)) + '</div>' +
-        '<div class="act-sub">' + esc(String(c.summary || "").slice(0, 110)) + '</div></div>' +
-      '<span class="small muted">' + fmtDate(c.last_activity) + '</span></div>';
-  }).join("");
-  if (unpicked) {
-    html += '<div class="act-row" style="grid-template-columns:76px minmax(0,1fr) auto;" onclick="setView(\'live\')">' +
-      '<span class="act-word" style="background:var(--surface);border:1px solid var(--line);color:var(--muted);">More</span>' +
-      '<div><div class="act-sub">' + unpicked + ' open conversation' + (unpicked === 1 ? '' : 's') + ' in Chatwoot with no case yet - pick one up.</div></div>' +
-      '<span class="small muted">&rarr;</span></div>';
-  }
-  el.innerHTML = html;
-}
-function todayOpenCase(convId) {
-  state.liveSelected = String(convId);
-  setView("live");
-}
 function renderActions() {
-  // Load-once triggers, or the loader's own completion re-render would call
-  // straight back here and loop.
-  if (!state.liveLoaded && !state._liveLoading) loadLiveCases();
-  if (!state._openChats && !state._openChatsLoading) loadOpenChats();
-  renderTodayChats();
   // One flat list. Each row carries all three things at once: the status in a
   // word, a few words on the issue, and the action needed with its button.
   // Clicking the row opens the full issue in the right-hand pane, same as
@@ -4968,7 +4931,6 @@ function loadOpenChats(force) {
     state._openChats = (res && res.ok) ? (res.conversations || []) : [];
     state._openChatsError = (res && res.ok) ? "" : ((res && res.error) || "unknown");
     if (state.view === "live") renderLive();
-    else if (state.view === "actions") renderTodayChats();
   }).catch(function (e) {
     state._openChatsLoading = false;
     state._openChats = [];
@@ -5743,6 +5705,10 @@ function openDeepLinkedIssue() {
 
 // ============================ VIEW SWITCH ============================
 function setView(v) {
+  // FB-0313: the Actions page folded into Today (the live view). Every old
+  // path that asked for 'actions' lands there; the actions machinery renders
+  // into its relocated nodes.
+  if (v === "actions" && SHELL_ON) v = "live";
   if (state.detailId) closeDetail(); // a docked detail belongs to the old tab
   if (state._ctlNode) ctlClose();    // and a control block belongs to its own view
   state.view = v;
@@ -5774,7 +5740,7 @@ function setView(v) {
   if (v === "manual") renderManual();
   if (v === "rca") renderRcaHome();
   if (v === "actions") renderActions();
-  if (v === "live") { renderLive(); loadLiveCases(); loadOpenChats(); }
+  if (v === "live") { renderLive(); loadLiveCases(); loadOpenChats(); renderActions(); }
   if (v === "admin") renderAdmin();
   if (v === "analytics") renderAnalytics();
   if (v === "dev") renderDev();
@@ -5807,6 +5773,14 @@ function applyShell() {
   // out keep the handlers r48 gave them.
   var foot = $("railFoot"), box = $("userbox");
   if (foot && box && box.parentElement !== foot) foot.appendChild(box);
+  // FB-0313 (Edd): Today is the CHAT page with the actions folded in - the
+  // action list's nodes move into Today's slot, ids intact, so renderActions
+  // and the detail docking never know they moved (the userbox pattern).
+  var slot = $("todayActionsSlot");
+  ["actionsSplitHost", "actionsScan"].forEach(function (id) {
+    var node = $(id);
+    if (slot && node && node.parentElement !== slot) slot.appendChild(node);
+  });
 }
 
 // Which of the three Issues segments is showing. Held here rather than
@@ -5848,7 +5822,7 @@ function updateRail() {
   if (!$("rail")) return;
   var v = state.view;
   var onIssues = (v === "actions" || v === "admin");
-  var pairs = [["railNew", v === "instructor"], ["railIssues", v === "actions" || v === "live"], ["railAllIssues", v === "admin"],
+  var pairs = [["railNew", v === "instructor"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev"], ["railCourse", v === "course"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual"],
