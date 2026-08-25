@@ -1927,6 +1927,28 @@ function addIssue_(data) {
   // would otherwise land on a developer who can't fix a login habit. Course
   // errors still route: there is no student troubleshooting for a wrong diagram.
   var scanLogged = String(data.instructor_name || '') === 'Overnight scan';
+  // r127 (FB-0312): high priority alone no longer walks a tech issue past the
+  // troubleshooting stage (FB-0311's speed check was never run). It reaches
+  // the developers when the instructor has genuinely worked the checklist -
+  // three or more items marked tried or not-applicable - or has deliberately
+  // fast-tracked it. Repeat reports still escalate on their own (volume is
+  // its own evidence, addReportToIssue_).
+  var checklistTried = 0;
+  try {
+    var cm127 = data.checklist_json ? JSON.parse(data.checklist_json) : {};
+    for (var ck127 in cm127) { if (cm127[ck127] === 'done' || cm127[ck127] === 'na') checklistTried++; }
+  } catch (e) {}
+  var fastTrack = data.fast_track === true || data.fast_track === 'true';
+  // FB-0305: a 404 on lesson content is a content/packaging fault before it is
+  // a platform one - the course team sees it first. Fast-track overrides.
+  if (category === 'tech_issue' && audience !== 'internal' && !scanLogged && !fastTrack &&
+      /\b404\b/.test(String(data.raw_text || '') + ' ' + String(data.summary || '')) &&
+      (issue.lesson_code || issue.lesson)) {
+    category = 'course_error';
+    issue.category = 'course_error';
+    issue.priority_reason = (String(issue.priority_reason || '') +
+      ' [Routed to the course team: a 404 on lesson content is usually the content or its packaging (FB-0305). Fast-track a report to send it to the developers instead.]').trim();
+  }
   if (!data.tbc && !data.resolved && !data.parked && issue.request_kind !== 'improvement' && category !== 'shipping' && category !== 'friction') {
     if (category === 'course_error') {
       issue.dev_passed_at = new Date().toISOString();
@@ -1939,13 +1961,15 @@ function addIssue_(data) {
         issue.dev_passed_at = new Date().toISOString();
         issue.status = 'with_dev';
       }
-    } else if (category === 'tech_issue' && !scanLogged && String(issue.priority).toLowerCase() === 'high') {
-      // Edd's rule (21 Jul): tech issues reach the developers automatically
-      // only when HIGH priority, or when a repeat report makes it 3+ reports
-      // (see addReportToIssue_). The old AI "needs a developer" judgement was
-      // routing single medium reports, so it no longer routes on its own.
+    } else if (category === 'tech_issue' && !scanLogged &&
+               (fastTrack || (String(issue.priority).toLowerCase() === 'high' && checklistTried >= 3))) {
+      // r127 (Edd's 21 Jul rule, tightened by FB-0312): HIGH still matters,
+      // but only once the troubleshooting has actually been tried - or the
+      // instructor fast-tracks it, which routes at any priority because it is
+      // a deliberate human judgement.
       issue.dev_passed_at = new Date().toISOString();
       issue.status = 'with_dev';
+      if (fastTrack) issue.dev_notes = ((issue.dev_notes || '') + ' Fast-tracked to the developers by ' + (issue.instructor_name || 'the instructor') + ' at filing.').trim();
     }
   }
 
@@ -5853,7 +5877,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r125 · 2026-08-25';
+var CODE_STAMP = 'r127 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

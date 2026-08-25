@@ -361,7 +361,7 @@
     .detail-main { max-width: 980px; }
     .detail-side { position: sticky; top: 0; border-left: 1px solid var(--line); padding-left: 20px; }
   }
-  .drawer .close { position: absolute; top: 14px; right: 16px; background: transparent; font-size: 20px; color: var(--muted); padding: 4px 8px; }
+  .drawer .close { position: absolute; top: 14px; right: 16px; background: rgba(94,114,235,0.14); border: 1px solid var(--accent); border-radius: 8px; font-size: 20px; color: var(--accent); padding: 4px 10px; }  /* FB-0310: the way out stands out */
 
   /* Split pane (Edd, 21 Jul): opening an issue on Track / Developers / Course
      fixes shrinks the cards into a narrow left column and docks the detail as
@@ -2781,7 +2781,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r126.1 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r127 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3057,7 +3057,10 @@ function renderFormChecklist() {
   var map = state.checklist || {};
   var items = checklistFor(staff);
   var cleared = checklistCleared(map, staff);
-  panel.innerHTML =
+  var fastTrackHtml = '<label style="display:flex;gap:8px;align-items:flex-start;margin:0 0 10px;font-size:13px;color:var(--text);">' +
+    '<input type="checkbox" id="f_fast_track" style="margin-top:2px;"' + (state._fastTrack ? ' checked' : '') + ' onchange="state._fastTrack=this.checked">' +
+    '<span>Fast-track to the developers<br><span class="small muted">Skips the troubleshooting gate - for something clearly platform-side. Otherwise a high-priority issue reaches the developers once the relevant checks below have been tried.</span></span></label>';
+  panel.innerHTML = fastTrackHtml +
     '<div class="h">Before the developers: troubleshooting checklist</div>' +
     '<div class="small muted" style="margin-bottom:2px;">' +
       (staff ? "The account and student steps don't apply here, so this is the short list. Mark anything else that doesn't fit as N/A. "
@@ -8094,6 +8097,8 @@ function submitIssue() {
   }
   if (state.troubleshootSteps && state.troubleshootSteps.length) data.recommended_steps = state.troubleshootSteps;
   if (checklistJson) data.checklist_json = checklistJson;
+  // r127 (FB-0312): the deliberate skip past the troubleshooting gate.
+  if ($("f_fast_track") && $("f_fast_track").checked) data.fast_track = true;
 
   var request;
   if (state.editingId) {
@@ -10740,16 +10745,19 @@ function devAskFallback(issue) {
 }
 function devAskBlock(issue) {
   var written = String(issue.dev_ask || "").trim();
-  var text = written || devAskFallback(issue);
+  // FB-0306/0307 (Edd): the fallback assembly read as a woolly summary in the
+  // wrong place. No written ask now means saying so - the summary above and
+  // the transcript below carry the information until an admin writes one.
+  var text = written;
   // FB-0264 (Edd): "the one or two sentences 'what do we actually need doing?'
   // should be somewhere else, not here. Maybe it can be something the
   // developers can request from the admins." Writing the ask is an admin's job:
   // it is the decision about what the work IS. A developer reads it, and if it
   // is missing or unclear, asks for one.
   var canEdit = !!(state.perms && state.perms.users);
-  return '<h3>What we need' + (written ? '' : ' <span class="small muted" style="font-weight:normal;">(from the report - write it properly below)</span>') + '</h3>' +
+  return '<h3>What we need</h3>' +
     '<div class="card" style="background:var(--bg);margin-bottom:4px;font-size:13.5px;">' +
-      (text ? esc(text) : '<span class="muted">Nothing written yet.</span>') + '</div>' +
+      (text ? esc(text) : '<span class="muted">No written ask yet' + ((state.perms && state.perms.users) ? ' - write one below.' : ' - the summary above is the best guide until an admin writes one.') + '</span>') + '</div>' +
     (canEdit
       ? '<div class="field" style="margin-bottom:12px;">' +
           '<textarea id="d_dev_ask" rows="2" placeholder="One or two sentences: what do we actually need doing?">' + esc(written) + '</textarea>' +
@@ -10860,6 +10868,11 @@ function openDevDetail(id) {
   // a developer opening it met a wall of fields and had to read the whole
   // report to work out what was being asked. The ask goes first now, and the
   // detail stays exactly where it was underneath.
+  // FB-0307: the summary leads, plainly labelled, with a live check for
+  // anything newer in Chatwoot; the ask follows only when one is written.
+  html += '<h3>Summary</h3><div style="font-size:13.5px;margin-bottom:6px;' + (issue.summary ? '' : 'color:var(--muted);') + '">' +
+    (issue.summary ? esc(issue.summary) : 'No summary was written for this one. The report itself is below.') + '</div>' +
+    '<div style="margin-bottom:12px;"><button class="ghost small" style="padding:4px 10px;" onclick="devCheckUpdates(\'' + esc(issue.issue_id) + '\')" title="Looks in Chatwoot for newer messages from the affected students and pulls anything relevant onto the issue.">Check for updates</button></div>';
   html += devAskBlock(issue);
   html += rcaButtonHtml(issue);
 
@@ -10882,28 +10895,31 @@ function openDevDetail(id) {
         return '<option value="' + p + '"' + (p === curPri ? " selected" : "") + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
       }).join("") + '</select></div>';
   } else {
-    html += '<div class="field" style="margin-bottom:6px;">' +
+    // FB-0309: the request sits ON the priority row and names its target.
+    html += '<div class="field" style="margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
       priBadge(issue.priority) + ' <span class="small muted">' +
       esc(SEVERITY_LABEL[severityOf(issue)] || "") + ', ' + reportCount(issue) +
-      (reportCount(issue) === 1 ? ' report' : ' reports') + ' &middot; score ' + issueScore(issue) + '</span></div>' +
-      '<button class="ghost small" style="padding:4px 10px;margin-bottom:10px;" onclick="devRequest(\'' + esc(issue.issue_id) + '\', \'priority\')">Ask for a different priority</button>';
+      (reportCount(issue) === 1 ? ' report' : ' reports') + ' &middot; score ' + issueScore(issue) + '</span>' +
+      '<select id="devPriorityWant" style="width:auto;font-size:12.5px;padding:3px 6px;">' +
+        '<option value="">Change to&hellip;</option>' +
+        ["high", "medium", "low"].filter(function (z) { return z !== curPri; }).map(function (z) {
+          return '<option value="' + z + '">' + z.charAt(0).toUpperCase() + z.slice(1) + '</option>';
+        }).join("") + '</select>' +
+      '<button class="ghost small" style="padding:4px 10px;" onclick="devRequestPriority(\'' + esc(issue.issue_id) + '\')">Ask for it</button></div>';
   }
 
   // How big a job does the fix look? (Edd, FB-0164.) Rough is fine - it's for
   // sorting and filtering the queue, not for holding anyone to an estimate.
   var curSize = String(issue.fix_size || "").toLowerCase();
   html += '<h3>Estimated size of fix</h3>' +
-    '<div class="field"><select id="devSizeSel" onchange="devSetSize(\'' + esc(issue.issue_id) + '\')">' +
+    '<div class="field" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><select id="devSizeSel" style="width:auto;" onchange="devSetSize(\'' + esc(issue.issue_id) + '\')">' +
       '<option value=""' + (curSize ? "" : " selected") + '>Not sized yet</option>' +
       ["small", "medium", "large"].map(function (z) {
         return '<option value="' + z + '"' + (z === curSize ? " selected" : "") + '>' + z.charAt(0).toUpperCase() + z.slice(1) + '</option>';
       }).join("") + '</select>' +
-      // FB-0266 (Edd): "can AI estimate the size as a starting point? Then the
-      // devs can edit it?" On a button rather than automatic, so it costs
-      // nothing unless somebody wants a starting point, and it never overwrites
-      // a size a developer has already chosen without being asked.
-      '<div style="margin-top:6px;"><button class="ghost small" style="padding:4px 10px;" onclick="devEstimateSize(\'' + esc(issue.issue_id) + '\')">Suggest a size</button>' +
-      '<span class="small muted" id="devSizeNote" style="margin-left:10px;"></span></div>' +
+      // FB-0266 + FB-0308: the suggestion button lives on the same row.
+      '<button class="ghost small" style="padding:4px 10px;" onclick="devEstimateSize(\'' + esc(issue.issue_id) + '\')">Suggest a size</button>' +
+      '<span class="small muted" id="devSizeNote"></span>' +
     '</div>';
 
   // Student details, so developers can reproduce account-specific problems and
@@ -10933,11 +10949,6 @@ function openDevDetail(id) {
   // The real summary, in full, now the students are out of the way.
   // Always show the heading. The two pre-guard rows have no summary of their
   // own, and hiding it made them look like there was nothing to read at all.
-  // No point repeating the report back here though, it's in full further down.
-  html += '<h3>Summary</h3><div style="font-size:13.5px;margin-bottom:4px;' +
-    (issue.summary ? '' : 'color:var(--muted);') + '">' +
-    (issue.summary ? esc(issue.summary) : 'No summary was written for this one. The report itself is below.') + '</div>';
-
   // FB-0267/0268 (Edd): "Report should probably be titled Transcript and be
   // collapsable... report/transcript should also be at the bottom." It is the
   // raw material, not the brief: a developer wants it when the summary and the
@@ -11060,6 +11071,29 @@ function openDevDetail(id) {
 // six months later, and it was an optional textarea further up the pane that
 // most fixes went out without. It is now the thing standing between the press
 // and the save.
+function devRequestPriority(id) {
+  var want = $("devPriorityWant") ? $("devPriorityWant").value : "";
+  if (!want) { toast("Pick the priority you are asking for first."); return; }
+  var t = $("devQueryTarget"), q = $("devQueryText");
+  if (t) t.value = "admins";
+  if (q) {
+    q.value = "Requesting a priority change to " + want.toUpperCase() + " because ";
+    q.focus();
+    q.scrollIntoView({ behavior: "smooth", block: "center" });
+    try { q.setSelectionRange(q.value.length, q.value.length); } catch (e) {}
+  }
+  toast("Say why, then press Send question.");
+}
+function devCheckUpdates(id) {
+  busyShow("Checking Chatwoot for anything newer…");
+  apiPost({ action: "fetchStudentUpdate", issue_id: id, app_url: APP_URL }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Check failed: " + ((res && res.error) || "unknown"), 8000); return; }
+    if (res.found === false) { toast(res.message || "Nothing new from the students on this one.", 8000); return; }
+    toast("Pulled an update onto the issue.", 7000);
+    loadIssues().then(function () { openDevDetail(id); });
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
 function devSendAnswer(id) {
   var reply = $("devAnswerText") ? $("devAnswerText").value.trim() : "";
   if (!reply) { toast("Write the answer first."); return; }
