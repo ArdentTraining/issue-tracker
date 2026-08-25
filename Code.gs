@@ -5877,7 +5877,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r127 · 2026-08-25';
+var CODE_STAMP = 'r128 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6862,6 +6862,7 @@ function listLiveCases_(data) {
       var conv = chatwootCall_('/conversations/' + r.conversation_id);
       cwStatus = String((conv && conv.status) || (conv && conv.payload && conv.payload.status) || '');
     } catch (e) { return; }
+    r._cw_status = cwStatus;   // r128: say what Chatwoot thinks on the card
     if (cwStatus === 'resolved') {
       var b2 = r._brief;
       // FB-0290: a deliberate human open holds the case open for 24 hours,
@@ -6890,6 +6891,7 @@ function listLiveCases_(data) {
       draft_count: Number(r.draft_count) || 0,
       unread: isTrueLike_(r.unread),
       chat_still_open: !!r.chat_still_open,
+      cw_status: r._cw_status || '',
       brief: r._brief || {}
     };
   }) };

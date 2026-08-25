@@ -2781,7 +2781,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r127 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r128 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5011,7 +5011,10 @@ function renderLive() {
     el.innerHTML = '<p class="muted small">No open cases yet.' +
       (unpickedChats().length ? ' There are open conversations in Chatwoot below - pick one up to start.' : ' Paste a Chatwoot link above, or Browse recent, to open one.') + '</p>';
   } else {
-    el.innerHTML = cases.map(function (c) {
+    // r128 (Edd: "Why is sara at the top here? seperated out?"): the case list
+    // finally says what it is, and a case whose conversation is snoozed or
+    // pending in Chatwoot says so instead of sitting there unexplained.
+    el.innerHTML = '<h3 style="margin:0 0 8px;">Open cases (' + cases.length + ')</h3>' + cases.map(function (c) {
       // Edd, 22 Aug 2026: "things seem to get 'assigned' to a person. we don't
       // need this feature on this page." The chip read as ownership, and this
       // page is just what is live in Chatwoot that might be a bug - who
@@ -5022,6 +5025,7 @@ function renderLive() {
           '<strong>' + esc(c.student_name || ("Conversation #" + c.conversation_id)) + '</strong>' +
           (c.issue_id ? '<span class="badge type-badge">issue filed</span>' : '') +
           (c.chat_still_open ? '<span class="badge chat-badge" title="The issue is wrapped up, but the conversation is still open in Chatwoot">chat still open in Chatwoot</span>' : '') +
+          (c.cw_status && c.cw_status !== 'open' ? '<span class="badge" style="background:transparent;border:1px solid var(--line);color:var(--muted);" title="The conversation is ' + esc(c.cw_status) + ' in Chatwoot - the case stays open until the issue is settled or the conversation resolves.">' + esc(c.cw_status) + ' in Chatwoot</span>' : '') +
           '<span class="who">' + fmtDate(c.last_activity) + '</span>' +
         '</div>' +
         (c.summary ? '<div class="sum clamp4">' + esc(c.summary) + '</div>' : '') +
