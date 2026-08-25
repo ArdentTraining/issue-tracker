@@ -1419,7 +1419,7 @@
        deliberate, slower, paid-for question (FB-0228) - typing in the search
        box never spends anything. -->
   <div class="ctlbar" id="adminBar">
-    <input id="flt_search" class="ctl-search" placeholder="Search student, lesson, or any word in the report" oninput="renderAdmin()" />
+    <input id="flt_search" name="ait-flt" autocomplete="one-time-code" data-1p-ignore data-lpignore="true" data-form-type="other" class="ctl-search" placeholder="Search student, lesson, or any word in the report" oninput="renderAdmin()" />
     <button type="button" class="ghost" onclick="askOpen('admin')" title="Ask a question about the logged issues. It reads the whole log to answer, so it takes a few seconds.">Ask</button>
     <button type="button" class="ghost" onclick="ctlOpen('Filter issues','adminFilters')">Filter<span class="ctl-count hidden" id="adminFilterCount"></span></button>
     <select id="flt_sort" onchange="renderAdmin()">
@@ -1565,7 +1565,7 @@
        Filter. The search input is static markup on purpose - it used to be
        rebuilt on every keystroke and needed the caret putting back by hand. -->
   <div class="ctlbar" id="devBar">
-    <input id="devSearch" type="search" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setDevSearch(this.value)" />
+    <input id="devSearch" type="search" name="ait-devq" autocomplete="one-time-code" data-1p-ignore data-lpignore="true" data-form-type="other" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setDevSearch(this.value)" />
     <button type="button" class="ghost" onclick="askOpen('dev')" title="Ask a question about the logged issues. It reads the whole log to answer, so it takes a few seconds.">Ask</button>
     <button type="button" class="ghost" onclick="ctlOpen('Filter the developer queue','devFilters')">Filter<span class="ctl-count hidden" id="devFilterCount"></span></button>
     <select id="devSortSel" onchange="setDevSel('devSort', this.value)">
@@ -1596,7 +1596,7 @@
     <div class="stat"><div class="n" id="courseStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
   <div class="ctlbar" id="courseBar">
-    <input id="courseSearch" type="search" name="course-search-q" autocomplete="off" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setCourseSearch(this.value)" />
+    <input id="courseSearch" type="search" name="ait-courseq" autocomplete="one-time-code" data-1p-ignore data-lpignore="true" data-form-type="other" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setCourseSearch(this.value)" />
     <button type="button" class="ghost" onclick="askOpen('course')" title="Ask a question about the logged issues. It reads the whole log to answer, so it takes a few seconds.">Ask</button>
     <button type="button" class="ghost" onclick="ctlOpen('Filter course fixes','courseFilters')">Filter<span class="ctl-count hidden" id="courseFilterCount"></span></button>
     <select id="courseSortSel" onchange="setCourseSel('courseSort', this.value)">
@@ -1793,9 +1793,9 @@
          type=text and nothing else to go on they guess. type=search plus a name
          that does not read as a contact field, and the opt-outs the managers
          actually honour, stop all three of them guessing. -->
-    <input id="manQ" name="manual-search" type="search" autocomplete="off" placeholder="Search the manual, or ask a question"
+    <input id="manQ" name="ait-manq" type="search" autocomplete="one-time-code" placeholder="Search the manual, or ask a question"
            oninput="manualTyped()" onkeydown="manualKey(event)"
-           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+           autocapitalize="off" autocorrect="off" spellcheck="false"
            data-1p-ignore data-lpignore="true" data-form-type="other"
            aria-label="Search the manual, or ask a question">
     <button class="primary" onclick="manualAsk()">Ask</button>
@@ -2781,7 +2781,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r128 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r130 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3943,7 +3943,7 @@ function applyPerms(user) {
   var wantView = null;
   try { wantView = new URLSearchParams(window.location.search).get("view"); } catch (e) {}
   if (wantView === "reports" && p.analytics) { setView("reports"); }
-  else if (SHELL_ON && first === "instructor" && p.log) { setIssuesSeg("mine"); }
+  else if (SHELL_ON && (p.log || p.users)) { setView("live"); }   // FB-0315 (Edd): the tracker opens on Today, not Issues
   else setView(first);
   updateViewAsBar();
 }
