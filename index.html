@@ -987,6 +987,11 @@
     <span class="ri-word">New</span>
   </button>
   <div class="rail-div" id="railDiv"></div>
+  <button type="button" class="rail-item" id="railEdd" onclick="railGo('edd')" title="With Edd - the tools you build yourself">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4.6 4.6 0 0 0-6.1 5.6L3 17.5V21h3.5l5.6-5.6a4.6 4.6 0 0 0 6.1-6.1l-3 3-2.2-.4-.4-2.2 3-3a4.6 4.6 0 0 0-.9-.4z"/></svg>
+    <span class="ri-word">Edd</span>
+    <span class="rail-badge" id="railBadgeEdd"></span>
+  </button>
   <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
     <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
     <span class="ri-word">Dev</span>
@@ -1444,6 +1449,7 @@
       <option value="open">Open (waiting for triage)</option>
       <option value="in_progress">In progress (being worked on)</option>
       <option value="with_dev">With developers</option>
+      <option value="with_edd">With Edd</option>
       <option value="dev_fixed">Fixed by dev</option>
       <option value="parked">Parked (waiting to see if it recurs)</option>
       <option value="resolved_tbc">Resolved - TBC</option>
@@ -1542,6 +1548,24 @@
 </div>
 
 <!-- ===================== DEVELOPER VIEW ===================== -->
+<!-- r132 (FB-0318): Edd's own queue. Things he builds - the tracker, the
+     reminder tool - route here at filing instead of to the developers, so
+     neither queue carries the other's clutter. The page is his alone. -->
+<div id="eddView" class="wrap hidden">
+  <h2 style="margin-top:0;">With Edd</h2>
+  <p class="hint" style="margin-top:-6px;">The tools you build yourself. Reports naming them land here, not with the developers.</p>
+  <div id="eddList"></div>
+  <div class="card" style="margin-top:16px;">
+    <h3 style="margin:0 0 6px;">What routes here</h3>
+    <p class="hint" style="margin:0 0 8px;">A report mentioning any of these comes to you at filing. Comma-separated - edit and save, no deploy needed.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <input id="eddToolsInput" name="ait-eddtools" autocomplete="one-time-code" style="flex:1;min-width:220px;" />
+      <button class="btn" onclick="saveEddTools()">Save</button>
+    </div>
+    <div id="eddToolsStatus" class="hint" style="margin-top:6px;"></div>
+  </div>
+</div>
+
 <div id="devView" class="wrap hidden">
   <div class="summary-row">
     <!-- FB-0248 (Charlie): Queued / In Progress / Completed, the three stages
@@ -2781,7 +2805,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r130 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r132 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3276,7 +3300,7 @@ function priBadge(p) {
 // "parked" is known about and deliberately not being worked on - the "let's
 // leave this unless more people report it" state (Edd, 26 Jul). A fresh report
 // wakes it back up (see addReportToIssue_).
-var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", dev_fixed: "fixed by dev", parked: "parked", resolved_tbc: "resolved - TBC", resolved: "resolved", past: "past" };
+var STATUS_LABEL = { open: "open", in_progress: "in progress", with_dev: "with developers", with_edd: "with Edd", dev_fixed: "fixed by dev", parked: "parked", resolved_tbc: "resolved - TBC", resolved: "resolved", past: "past" };
 // A wrong diagram or a clumsy question is written, not coded, so it goes to the
 // course team and no developer ever sees it. The badge said "with developers"
 // on every one of them, which is half of why Tim's wording tweak read as a
@@ -3908,7 +3932,7 @@ function applyPerms(user) {
   // were, one line each, so nothing can drift apart.
   applyShell();
   var railGate = [["railNew", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
-                  ["railDev", p.dev || p.users], ["railRCA", p.dev || p.users], ["railCourse", p.course || p.users],
+                  ["railEdd", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.dev || p.users], ["railCourse", p.course || p.users],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
@@ -4001,6 +4025,7 @@ function showUpdating(on) {
 }
 
 function applyBootstrap(res) {
+  if (res && res.edd_tools) state.eddTools = res.edd_tools;
   // How long until there was something real on the screen, and how long until
   // it was the live copy. Both land in a feedback report, so "it feels slow"
   // can be answered with a number next time.
@@ -4202,7 +4227,7 @@ function myActionItems() {
   // Everyone with the tab sees every action (Edd, 21 Jul): the team is small
   // and any instructor can pass a fix on. Cards carry who logged each one.
   var now = Date.now(), day = 24 * 60 * 60 * 1000;
-  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [], scanned: [] , adminq: [] };
+  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [], scanned: [] , adminq: [], eddq: [] };
   var canVerify = !!(state.perms && (state.perms.manage || state.perms.users));
   (state.issues || []).forEach(function (i) {
     var st = String(i.status || "open").toLowerCase();
@@ -4211,6 +4236,8 @@ function myActionItems() {
     // on the Dev page, where admins had to go looking. It is work waiting on
     // an admin, so it belongs on the admin's Actions list like everything else.
     if (i.dev_query_at && i.dev_query_target !== "instructor" && state.perms && state.perms.users) out.adminq.push(i);
+    // r132: Edd's own queue rides his Today list too - his tools, his plate.
+    if (st === "with_edd" && isEddUser()) out.eddq.push(i);
     // Auto-logged by the overnight scan and no human has touched it yet: the
     // Slack ping said it exists but Actions never showed it (Edd, 11 Aug).
     // Someone should look in on the student, whatever queue the fix sits in.
@@ -4545,6 +4572,42 @@ function draftTemplateFor(id, kind) {
 // in Round 60 so the rail badge counts exactly what the list shows, from the
 // same function - a badge and a list disagreeing is how you stop trusting the
 // badge.
+// r132 (FB-0318): the With Edd page. Rows open the full issue in the admin
+// pane, the same journey an Actions row takes - one detail surface, not two.
+function isEddUser() {
+  if (state.viewAs) return false;   // simulating someone else hides Edd's own page
+  var u = state.realUser || state.user;
+  return !!(u && String(u.email || "").toLowerCase() === "ehewett@ardent-training.com");
+}
+function renderEdd() {
+  var host = $("eddList");
+  if (!host) return;
+  var mine = (state.issues || []).filter(function (i) { return String(i.status || "").toLowerCase() === "with_edd"; });
+  var rank = { high: 0, medium: 1, low: 2 };
+  mine.sort(function (a, b) {
+    var p = (rank[String(a.priority).toLowerCase()] || 3) - (rank[String(b.priority).toLowerCase()] || 3);
+    return p || String(b.submitted_at || "").localeCompare(String(a.submitted_at || ""));
+  });
+  host.innerHTML = mine.length ? mine.map(function (i) {
+    return '<div class="card" style="cursor:pointer;margin-bottom:8px;" onclick="openIssueById(\'' + i.issue_id + '\', false)">' +
+      '<div style="margin-bottom:4px;">' + priBadge(i.priority) + " " + statusBadge(i.status, i) +
+      ' <span class="hint">' + fmtDate(i.submitted_at) + " · " + esc(i.instructor_name || "") + '</span></div>' +
+      '<div>' + esc(i.summary || "(no summary)") + '</div></div>';
+  }).join("") : '<p class="hint">Nothing on your plate. The list below decides what lands here.</p>';
+  var inp = $("eddToolsInput");
+  if (inp && !inp.dataset.loaded) { inp.value = (state.eddTools || []).join(", "); inp.dataset.loaded = "1"; }
+}
+function saveEddTools() {
+  var inp = $("eddToolsInput");
+  var tools = String(inp.value || "").split(",").map(function (t) { return t.trim(); }).filter(String);
+  if (!tools.length) { $("eddToolsStatus").textContent = "The list cannot be empty."; return; }
+  $("eddToolsStatus").textContent = "Saving…";
+  apiPost({ action: "setEddTools", tools: tools }).then(function (res) {
+    if (res && res.ok) { state.eddTools = res.tools; $("eddToolsStatus").textContent = "Saved. New reports naming these come to you."; }
+    else $("eddToolsStatus").textContent = "Could not save: " + ((res && res.error) || "unknown");
+  }).catch(function () { $("eddToolsStatus").textContent = "Error - try again."; });
+}
+
 function actionRows() {
   var a = myActionItems();
   var rows = []
@@ -4560,6 +4623,7 @@ function actionRows() {
     .concat((a.chase || []).map(function (i) { return { i: i, kind: "chase", word: "Chase", colour: "var(--coral)", act: "Poke the courier" }; }))
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
     .concat((a.adminq || []).map(function (i) { return { i: i, kind: "adminq", word: "Dev asks", colour: "var(--medium)", act: "A developer needs an answer from Charlie, Charly or Edd" }; }))
+    .concat((a.eddq || []).map(function (i) { return { i: i, kind: "eddq", word: "Yours", colour: "var(--accent)", act: "A tool you own - fix when ready" }; }))
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
     .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
     .concat(a.followups.map(function (i) {
@@ -5733,6 +5797,7 @@ function setView(v) {
   $("adminView").classList.toggle("hidden", v !== "admin");
   $("analyticsView").classList.toggle("hidden", v !== "analytics");
   $("devView").classList.toggle("hidden", v !== "dev");
+  if ($("eddView")) $("eddView").classList.toggle("hidden", v !== "edd");
   $("courseView").classList.toggle("hidden", v !== "course");
   $("usersView").classList.toggle("hidden", v !== "users");
   // Round 67: Reports is a view like any other now. It is not in the list
@@ -5751,6 +5816,7 @@ function setView(v) {
   if (v === "admin") renderAdmin();
   if (v === "analytics") renderAnalytics();
   if (v === "dev") renderDev();
+  if (v === "edd") renderEdd();
   if (v === "course") renderCourse();
   if (v === "users") renderUsers();
   updateRail();
@@ -5830,7 +5896,7 @@ function updateRail() {
   var v = state.view;
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
-               ["railDev", v === "dev"], ["railCourse", v === "course"],
+               ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railCourse", v === "course"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual"],
                ["railRCA", v === "rca"]];
@@ -5853,6 +5919,12 @@ function updateRailBadges() {
   // FB-0301: one Today badge = the same two numbers the Today page shows,
   // open cases plus action rows. Same sources as the lists, never a separate
   // count (the r60 rule).
+  var edd = $("railBadgeEdd");
+  if (edd) {
+    var ne = isEddUser() ? (state.issues || []).filter(function (i) { return String(i.status || "").toLowerCase() === "with_edd"; }).length : 0;
+    edd.textContent = ne > 99 ? "99+" : String(ne);
+    edd.classList.toggle("on", !!ne);
+  }
   var iss = $("railBadgeIssues");
   if (iss) {
     var m = p.log ? actionRows().length + (state.liveCases || []).length : 0;

@@ -559,6 +559,7 @@ function doPost(e) {
     if (action === 'nextAction') return jsonOut(nextAction_(body));
     if (action === 'chatwootContactUrl') return jsonOut(chatwootContactUrl_(body));
     if (action === 'setVoiceGuide') return jsonOut(setVoiceGuide_(body));
+    if (action === 'setEddTools') return jsonOut(setEddTools_(body));   // r132 (FB-0318)
     if (action === 'listVoiceGuides') return jsonOut(listVoiceGuides_());
     if (action === 'matchUpdate') return jsonOut(matchUpdate_(body));
     if (action === 'inviteUser') return jsonOut(inviteUser_(body));
@@ -752,7 +753,7 @@ function reqPerm_(action) {
     case 'inviteUser': case 'updateUser': case 'deleteUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion': case 'suggestPlaybook':
     case 'listKnownFixFlags': case 'resolveKnownFixFlag':
-    case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'listVoiceGuides': return 'users';
+    case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'setEddTools': case 'listVoiceGuides': return 'users';
     // Available to any logged-in user: feedback and its screenshots, and
     // changing your own password. These used to ride on the old open default;
     // they are listed here now so the default can shut.
@@ -1680,6 +1681,7 @@ function bootstrap_(user) {
   var t0 = Date.now(), ms = {};
   var list = getIssuesList_();
   out.issues = list.issues || [];
+  out.edd_tools = eddTools_();   // r132: the With Edd routing list, for the page's editor
   out.issues_from_cache = !!list.from_cache;
   ms.issues = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('getInstructors'))) {
@@ -1957,10 +1959,17 @@ function addIssue_(data) {
     } else if (audience === 'internal') {
       // Internal work is logged deliberately by an admin, so no AI judgement
       // needed: genuine defects and infrastructure work go straight to the dev
-      // queue; content, admin, and feature items sit open for triage.
+      // queue; content, admin, and feature items sit open for triage. r132:
+      // unless it names one of Edd's own tools, in which case it is his alone.
       if (issue.issue_type === 'bug' || issue.issue_type === 'infrastructure') {
-        issue.dev_passed_at = new Date().toISOString();
-        issue.status = 'with_dev';
+        var eddHit1 = eddToolMatch_(String(data.raw_text || '') + ' ' + String(issue.summary || ''));
+        if (eddHit1) {
+          issue.status = 'with_edd';
+          issue.dev_notes = ((issue.dev_notes || '') + ' Routed to Edd at filing: mentions "' + eddHit1 + '" (FB-0318).').trim();
+        } else {
+          issue.dev_passed_at = new Date().toISOString();
+          issue.status = 'with_dev';
+        }
       }
     } else if (category === 'tech_issue' && !scanLogged &&
                (fastTrack || (String(issue.priority).toLowerCase() === 'high' && checklistTried >= 3))) {
@@ -1968,9 +1977,15 @@ function addIssue_(data) {
       // but only once the troubleshooting has actually been tried - or the
       // instructor fast-tracks it, which routes at any priority because it is
       // a deliberate human judgement.
-      issue.dev_passed_at = new Date().toISOString();
-      issue.status = 'with_dev';
-      if (fastTrack) issue.dev_notes = ((issue.dev_notes || '') + ' Fast-tracked to the developers by ' + (issue.instructor_name || 'the instructor') + ' at filing.').trim();
+      var eddHit2 = eddToolMatch_(String(data.raw_text || '') + ' ' + String(issue.summary || ''));
+      if (eddHit2) {
+        issue.status = 'with_edd';
+        issue.dev_notes = ((issue.dev_notes || '') + ' Routed to Edd at filing: mentions "' + eddHit2 + '" (FB-0318).').trim();
+      } else {
+        issue.dev_passed_at = new Date().toISOString();
+        issue.status = 'with_dev';
+        if (fastTrack) issue.dev_notes = ((issue.dev_notes || '') + ' Fast-tracked to the developers by ' + (issue.instructor_name || 'the instructor') + ' at filing.').trim();
+      }
     }
   }
 
@@ -2594,7 +2609,7 @@ function courseReview_(data) {
   var pool = getIssues_().issues.filter(function (i) {
     if (String(i.category || '').toLowerCase() !== 'course_error') return false;
     var s = String(i.status || '').toLowerCase();
-    return s === 'open' || s === 'with_dev';
+    return s === 'open' || s === 'with_dev' || s === 'with_edd';
   });
   if (!pool.length) return { ok: true, reviewed: 0, suggestions: [] };
 
@@ -5925,7 +5940,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r131 · 2026-08-25';
+var CODE_STAMP = 'r132 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -5954,6 +5969,34 @@ function voiceGuideFor_(name) {
 }
 
 // Upsert a voice guide (used by Claude to load the team's guides in bulk).
+// r132 (FB-0318, Edd): "somethings I build and work on... fixes for those
+// need to fall on my plate alone." A named list Edd controls decides which
+// tools are his; reports mentioning one route with_edd at filing instead of
+// with_dev, so his projects never clutter the developers' queue (or theirs his).
+var EDD_EMAIL = 'ehewett@ardent-training.com';
+function eddTools_() {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty('EDD_TOOLS');
+    var list = raw ? JSON.parse(raw) : null;
+    if (list && list.length) return list;
+  } catch (e) {}
+  return ['bug tracker', 'bug portal', 'issue tracker', 'bugs platform', 'reminder tool'];
+}
+function eddToolMatch_(text) {
+  var hay = String(text || '').toLowerCase();
+  var hit = null;
+  eddTools_().forEach(function (t) { if (!hit && t && hay.indexOf(String(t).toLowerCase()) > -1) hit = t; });
+  return hit;
+}
+function setEddTools_(data) {
+  var u = data._user || {};
+  if (String(u.email || '').toLowerCase() !== EDD_EMAIL) return { ok: false, error: 'This list is Edd\'s alone.' };
+  var tools = (data.tools || []).map(function (t) { return String(t).trim(); }).filter(String);
+  if (!tools.length) return { ok: false, error: 'The list cannot be empty - it would route nothing.' };
+  PropertiesService.getScriptProperties().setProperty('EDD_TOOLS', JSON.stringify(tools));
+  return { ok: true, tools: tools };
+}
+
 function setVoiceGuide_(data) {
   var name = String(data.name || '').trim();
   var guide = String(data.guide || '');
@@ -7706,7 +7749,7 @@ function confusionReview_() {
   (getIssues_().issues || []).forEach(function (i) {
     if (String(i.issue_type || '') !== 'student_confusion') return;
     var st = String(i.status || 'open').toLowerCase();
-    if (st !== 'open' && st !== 'in_progress' && st !== 'with_dev') return;
+    if (st !== 'open' && st !== 'in_progress' && st !== 'with_dev' && st !== 'with_edd') return;
     var code = String(i.lesson_code || '').trim();
     if (!code) return;
     (byLesson[code] = byLesson[code] || []).push(i);
