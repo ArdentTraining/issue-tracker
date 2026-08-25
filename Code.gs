@@ -106,6 +106,27 @@ function slackDm_(email, text) {
 
 // r122: post as the BOT rather than a webhook when we need the message ts
 // back (webhooks never return one). thread_ts makes it a threaded reply.
+// r123: one issue can own several Slack threads (its high-priority alert,
+// each question). The cell holds an array of {channel, ts, kind}, newest
+// first, bounded; the old single-object form still reads fine.
+function slackThreadsOf_(rec) {
+  try {
+    var v = rec.slack_thread ? JSON.parse(rec.slack_thread) : null;
+    if (!v) return [];
+    return (v.length !== undefined) ? v : [v];
+  } catch (e) { return []; }
+}
+function stampSlackThread_(issueId, channel, ts, kind) {
+  try {
+    var fr = findRow_(issueId);
+    var col = HEADERS.indexOf('slack_thread') + 1;
+    if (!fr || col < 1) return;
+    var cur = slackThreadsOf_(fr.record);
+    cur.unshift({ channel: String(channel), ts: String(ts), kind: kind || '' });
+    fr.sheet.getRange(fr.rowNum, col).setValue(JSON.stringify(cur.slice(0, 5)));
+  } catch (e) {}
+}
+
 function slackBotPost_(channelId, text, threadTs) {
   try {
     var tok = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
@@ -2903,13 +2924,7 @@ function sendQueryRaisedSlack_(issue, appUrl) {
   var qaChan = PropertiesService.getScriptProperties().getProperty('SLACK_QA_CHANNEL_ID');
   var posted = qaChan ? slackBotPost_(qaChan, text) : { ok: false };
   if (posted.ok) {
-    try {
-      // findRow_ hands back rowNum (the users-sheet helpers use row - the
-      // r90.1 trap), so write the cell directly rather than via setCell_.
-      var fr = findRow_(issue.issue_id);
-      var col = HEADERS.indexOf('slack_thread') + 1;
-      if (fr && col > 0) fr.sheet.getRange(fr.rowNum, col).setValue(JSON.stringify({ channel: posted.channel, ts: posted.ts }));
-    } catch (e) {}
+    stampSlackThread_(issue.issue_id, posted.channel, posted.ts, 'question');
   } else {
     slackPost_('query_raised', text);
   }
@@ -2964,7 +2979,9 @@ function answerQuery_(data) {
   rec.updated_at = now;
 
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
-  try { sendQueryAnsweredSlack_(rec, question, reply, asker, data.app_url || getAppUrl_()); } catch (e) {}
+  // r123: an answer typed IN the Slack thread needs no threaded echo - the
+  // room already watched it happen. Answers from the tracker still post.
+  if (!data._from_slack) { try { sendQueryAnsweredSlack_(rec, question, reply, asker, data.app_url || getAppUrl_()); } catch (e) {} }
   return { ok: true };
 }
 
@@ -5787,6 +5804,7 @@ function slackSummary_(issue) {
 
 function sendSlack_(issue, appUrl) {
   if (!slackOn_('high_priority')) return;
+  var SLACK_ALERT_VIA_BOT_ = true;
   var c = String(issue.category).toLowerCase();
   var area = (c === 'tech_issue' ? 'Tech issue' : 'Course error') +
     (String(issue.audience || 'student').toLowerCase() === 'internal' ? ' · internal' : '');
@@ -5804,7 +5822,13 @@ function sendSlack_(issue, appUrl) {
     'View in Bugs: ' + issueLink_(issue, appUrl)
   ].join('\n');
 
-  slackPost_('high_priority', text);
+  // r123 (Edd): a reply under the alert in Slack should land on the issue as
+  // an update, which needs the message ts - so the alert posts as the bot
+  // where configured, and the thread gets stamped. Webhook fallback unchanged.
+  var alertChan = PropertiesService.getScriptProperties().getProperty('SLACK_QA_CHANNEL_ID');
+  var alertPost = alertChan ? slackBotPost_(alertChan, text) : { ok: false };
+  if (alertPost.ok) stampSlackThread_(issue.issue_id, alertPost.channel, alertPost.ts, 'alert');
+  else slackPost_('high_priority', text);
 
   return { ok: true };
 }
@@ -5821,7 +5845,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r122.2 · 2026-08-25';
+var CODE_STAMP = 'r123 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -8187,7 +8211,10 @@ function slackThreadReply_(p) {
       if (!cell) continue;
       try {
         var t = JSON.parse(cell);
-        if (String(t.ts) === ts && String(t.channel) === channel) { hit = { issue_id: values[r][idx['issue_id']] }; return; }
+        var list = (t && t.length !== undefined) ? t : [t];
+        for (var li = 0; li < list.length; li++) {
+          if (String(list[li].ts) === ts && String(list[li].channel) === channel) { hit = { issue_id: values[r][idx['issue_id']] }; return; }
+        }
       } catch (e) {}
     }
   });
@@ -8200,7 +8227,19 @@ function slackThreadReply_(p) {
   } catch (e) {}
   var acct = email ? findUserByEmail_(email) : null;
   if (!acct) return { ok: false, error: 'Slack user ' + uid + ' has no tracker account mapping' };
-  var res = answerQuery_({ issue_id: hit.issue_id, reply: text + '\n\n(answered from Slack)', _user: acct.user });
+  // An OPEN question makes the reply its answer. Anything after that - or a
+  // reply under a plain alert thread - lands as an UPDATE on the issue
+  // (Edd, 25 Aug: "a reply to the thread should add an update automatically").
+  // keep_status: chat commentary must not reopen a resolved-TBC (the r52 rule).
+  var target = findRow_(hit.issue_id);
+  var res;
+  if (target && String(target.record.dev_query || '').trim()) {
+    res = answerQuery_({ issue_id: hit.issue_id, reply: text + '\n\n(answered from Slack)', _user: acct.user, _from_slack: true });
+  } else {
+    res = addUpdate_({ issue_id: hit.issue_id, keep_status: true,
+      summary: 'Update from the Slack thread',
+      raw_text: text + '\n\n(from the Slack thread)', _user: acct.user });
+  }
   return { ok: !!(res && res.ok), matched: true, error: res && res.error };
 }
 
