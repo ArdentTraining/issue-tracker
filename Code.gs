@@ -2831,20 +2831,28 @@ function markDevFixed_(data) {
 
 function sendNotifyStudentSlack_(issue, appUrl) {
   if (!slackOn_('notify_student')) return;
-  var isCourse = String(issue.category).toLowerCase() === 'course_error';
-  var student = (issue.student_name || '') + (issue.student_contact ? ' (' + issue.student_contact + ')' : '');
-  var text = [
-    ':white_check_mark: *' + (isCourse ? 'Course fix done' : 'Fix done') + ' - student to notify*',
-    '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
-    '*Summary:* ' + slackSummary_(issue),
-    '*Fix notes:* ' + (issue.dev_notes || '-'),
-    '*Student:* ' + (student || '-'),
-    '*Logged by:* ' + (issue.instructor_name || '-'),
-    '',
-    'Instructors: please let the student know this is sorted (it\'s also in your Actions tab).',
-    'Open this issue: ' + issueLink_(issue, appUrl)
-  ].join('\n');
-  slackPost_('notify_student', text);
+  // r125 (Edd): the old version was a wall of fields, half of them "-" or NA.
+  // The reader needs three things: WHO to tell, WHAT to say, and the link.
+  var student = (issue.student_name || '').trim();
+  var contact = (issue.student_contact || '').trim();
+  var lines = [
+    ':white_check_mark: *Fixed - tell ' + (student || 'the student') + (contact ? ' (' + contact + ')' : '') + '*',
+    truncateForSlack_(slackSummary_(issue), 180)
+  ];
+  var notes = String(issue.dev_notes || '').trim();
+  // The fix note only earns a line when it says something the instructor can
+  // pass on - "NA" and its cousins do not.
+  if (notes && !/^(na|n\/a|none|-)\b/i.test(notes)) lines.push('_' + truncateForSlack_(notes, 160) + '_');
+  if (issue.lesson_code) lines.push('Lesson ' + issue.lesson_code);
+  lines.push('<' + issueLink_(issue, appUrl) + '|Open the issue>' +
+    (issue.instructor_name ? ' · logged by ' + issue.instructor_name : '') +
+    ' · also in your Actions tab');
+  slackPost_('notify_student', lines.join('\n'));
+}
+
+function truncateForSlack_(text, max) {
+  var t = String(text || '').replace(/\s+/g, ' ').trim();
+  return t.length > max ? t.slice(0, max - 1) + String.fromCharCode(8230) : t;
 }
 
 // A developer or course-team member is stuck and needs something from the
@@ -2908,7 +2916,7 @@ function sendQueryRaisedSlack_(issue, appUrl) {
   var text = [
     ':grey_question: *' + (issue.dev_query_by || 'Someone') + ' has a question for ' +
       (toInstructor ? instructorTag : (bossTags || 'the bosses')) + '*',
-    '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
+    ((issue.lesson || issue.lesson_code) ? '*Lesson:* ' + (issue.lesson || '-') + (issue.lesson_code ? ' (' + issue.lesson_code + ')' : '') : null),
     '*Summary:* ' + slackSummary_(issue),
     '*Question:* ' + (issue.dev_query || '-'),
     '',
@@ -2916,7 +2924,7 @@ function sendQueryRaisedSlack_(issue, appUrl) {
       ? (instructorTag + ', reply from your Actions tab so the fix can carry on.')
       : ('Reply in the tracker so ' + (isCourse ? 'the course team' : 'the developer') + ' can carry on.'),
     'Open this issue: ' + issueLink_(issue, appUrl)
-  ].join('\n');
+  ].filter(function (l) { return l !== null; }).join('\n');
   // r122: with a bot token and the channel id configured, the question posts
   // as the bot and the message ts is stamped on the issue - the answer will
   // thread onto it, and a Slack thread reply can find its way back. Without
@@ -2989,13 +2997,13 @@ function sendQueryAnsweredSlack_(issue, question, reply, asker, appUrl) {
   if (!slackOn_('query_answered')) return;
   var text = [
     ':speech_balloon: *Question answered*' + (asker ? ' - ' + asker + ', this one\'s for you' : ''),
-    '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
+    ((issue.lesson || issue.lesson_code) ? '*Lesson:* ' + (issue.lesson || '-') + (issue.lesson_code ? ' (' + issue.lesson_code + ')' : '') : null),
     '*Summary:* ' + slackSummary_(issue),
     '*Question:* ' + (question || '-'),
     '*Reply:* ' + (reply || '-'),
     '',
     'Open this issue: ' + issueLink_(issue, appUrl)
-  ].join('\n');
+  ].filter(function (l) { return l !== null; }).join('\n');
   // r122 (Edd): the answer lands as a REPLY in the question's thread when
   // the question went out via the bot. Fallback: the channel route as before.
   var thread = null;
@@ -5811,7 +5819,7 @@ function sendSlack_(issue, appUrl) {
   if (issue.section) area += ' · ' + String(issue.section).replace(/_/g, ' ');
   var text = [
     ':red_circle: *High priority issue logged* (' + area + ')',
-    '*Lesson:* ' + (issue.lesson || '-') + ' (' + (issue.lesson_code || '-') + ')',
+    ((issue.lesson || issue.lesson_code) ? '*Lesson:* ' + (issue.lesson || '-') + (issue.lesson_code ? ' (' + issue.lesson_code + ')' : '') : null),
     '*Type:* ' + (issue.issue_type || '-'),
     '*Summary:* ' + slackSummary_(issue),
     '*Student:* ' + (issue.student_name || '-') + ' (' + (issue.student_contact || '-') + ')',
@@ -5820,7 +5828,7 @@ function sendSlack_(issue, appUrl) {
     '*Submitted:* ' + (issue.submitted_at || new Date().toISOString()),
     '',
     'View in Bugs: ' + issueLink_(issue, appUrl)
-  ].join('\n');
+  ].filter(function (l) { return l !== null; }).join('\n');
 
   // r123 (Edd): a reply under the alert in Slack should land on the issue as
   // an update, which needs the message ts - so the alert posts as the bot
@@ -5845,7 +5853,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r123 · 2026-08-25';
+var CODE_STAMP = 'r125 · 2026-08-25';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
