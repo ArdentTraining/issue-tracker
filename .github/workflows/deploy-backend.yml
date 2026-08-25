@@ -71,3 +71,27 @@ jobs:
           else
             echo "::warning::runSetup was submitted (doPost runs server-side, so it lands), but the confirmation could not be read back over curl. Same known limit as the deploy step above."
           fi
+
+      - name: Verify the live stamp matches what we shipped
+        env:
+          EXEC_URL: https://script.google.com/macros/s/AKfycbxROZipuieRjz8BBW7tjR5tvbidB_oLwbDup2PHfD0-KUka4u6oQLlUNrjJT21O783qdg/exec
+        run: |
+          # GET pings read back fine where the POST echo does not. If the ping is
+          # readable and the stamp is stale, the deploy did NOT land (this is how
+          # eleven phantom green deploys hid the 200-version cap on 25 Aug 2026)
+          # - fail loudly. If the ping itself is unreadable, warn and stand down.
+          expected=$(sed -n "s/.*CODE_STAMP = '\([^']*\)'.*/\1/p" Code.gs | head -1)
+          sleep 5
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+          resp=$(curl -sSL -A "$UA" "$EXEC_URL?action=ping" || true)
+          live=$(printf '%s' "$resp" | sed -n 's/.*"stamp":"\([^"]*\)".*/\1/p')
+          if [ -z "$live" ]; then
+            echo "::warning::Could not read the ping back over curl - deploy unverified."
+            exit 0
+          fi
+          echo "Shipped: $expected / Live: $live"
+          if [ "$live" != "$expected" ]; then
+            echo "::error::Live backend still reports '$live' but we shipped '$expected' - the deploy DID NOT land. Check version headroom (the 200-version cap) and deployBackend's response."
+            exit 1
+          fi
+          echo "Verified: the live backend is running what we shipped."
