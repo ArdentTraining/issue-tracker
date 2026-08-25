@@ -574,7 +574,7 @@
   /* duplicate confirm modal */
   .modal-bg { position: fixed; inset: 0; background: rgba(5,10,18,0.7); display: none; z-index: 80; align-items: center; justify-content: center; }
   .modal-bg.show { display: flex; }
-  .modal { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px; width: 460px; max-width: 92vw; }
+  .modal { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px; width: 460px; max-width: 92vw; max-height: 86vh; overflow-y: auto; }  /* FB-0286: tall content scrolls inside, never past the viewport */
   .modal h3 { margin: 0 0 6px; font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--text); }
   .modal .match { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
   .modal .match .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
@@ -1333,10 +1333,10 @@
       </div>
 
       <div class="row submit-row" style="margin-top:6px;">
-        <button class="primary" id="submitBtn" onclick="submitIssue()">Submit issue</button>
-        <button class="ghost" id="submitResolvedBtn" onclick="submitResolved()">Submit and resolve</button>
-        <button class="ghost" id="submitParkedBtn" onclick="submitParked()">Submit and park</button>
-        <button class="ghost" id="resetBtn" onclick="resetForm()">Clear / new</button>
+        <button class="primary" id="submitBtn" onclick="submitIssue()" title="Files it as open - it joins the queue and shows on the board for everyone.">Submit issue</button>
+        <button class="ghost" id="submitResolvedBtn" onclick="submitResolved()" title="It was sorted in the conversation itself. Filed as resolved for the record, and it still counts if others hit the same thing.">Submit and resolve</button>
+        <button class="ghost" id="submitParkedBtn" onclick="submitParked()" title="Probably a one-off and the student has gone quiet. Filed away - it wakes itself up if anyone reports the same thing again.">Submit and park</button>
+        <button class="ghost" id="resetBtn" onclick="resetForm()" title="Empties the form for a fresh report. Nothing is filed.">Clear / new</button>
         <button class="ghost" id="deleteBtn" onclick="deleteFromForm()" style="display:none;color:var(--high);" title="Takes the whole entry off the log for good">Delete this issue</button>
       </div>
       <div id="editingNote" class="small muted hidden" style="margin-top:8px;"></div>
@@ -1595,7 +1595,7 @@
     <div class="stat"><div class="n" id="courseStatAvg">–</div><div class="l">Average time to fix</div></div>
   </div>
   <div class="ctlbar" id="courseBar">
-    <input id="courseSearch" type="search" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setCourseSearch(this.value)" />
+    <input id="courseSearch" type="search" name="course-search-q" autocomplete="off" class="ctl-search" placeholder="Search summary, ref, student, lesson code…" oninput="setCourseSearch(this.value)" />
     <button type="button" class="ghost" onclick="askOpen('course')" title="Ask a question about the logged issues. It reads the whole log to answer, so it takes a few seconds.">Ask</button>
     <button type="button" class="ghost" onclick="ctlOpen('Filter course fixes','courseFilters')">Filter<span class="ctl-count hidden" id="courseFilterCount"></span></button>
     <select id="courseSortSel" onchange="setCourseSel('courseSort', this.value)">
@@ -1792,7 +1792,7 @@
          type=text and nothing else to go on they guess. type=search plus a name
          that does not read as a contact field, and the opt-outs the managers
          actually honour, stop all three of them guessing. -->
-    <input id="manQ" name="manual-search" type="search" placeholder="Search the manual, or ask a question"
+    <input id="manQ" name="manual-search" type="search" autocomplete="off" placeholder="Search the manual, or ask a question"
            oninput="manualTyped()" onkeydown="manualKey(event)"
            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
            data-1p-ignore data-lpignore="true" data-form-type="other"
@@ -2780,7 +2780,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r117 · 2026-08-24";  // bump this with each round, it lands on every feedback report
+var BUILD = "r118 · 2026-08-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3689,9 +3689,10 @@ function updateViewAsBar() {
   var bar = $("viewAsBar");
   if (!bar) return;
   var realPerms = (state.realUser && state.realUser.perms) || {};
-  // FB-0282: the control moved into the account menu; the bar is now purely
-  // the you-are-simulating indicator, so idle it disappears entirely.
-  bar.classList.toggle("show", !!realPerms.users && !!state.viewAs);
+  // FB-0291/0285 (Edd): the floating bar kept popping back. It is gone for
+  // good - the account button at the rail foot carries the simulating state
+  // instead, so the reminder lives exactly where the control lives.
+  bar.classList.remove("show");
   bar.classList.toggle("simulating", !!state.viewAs);
   var sel = $("viewAsSelect");
   if (sel) sel.value = state.viewAs || "";
@@ -3700,7 +3701,13 @@ function updateViewAsBar() {
   var menuSel = $("viewAsMenuSelect");
   if (menuSel) menuSel.value = state.viewAs || "";
   $("viewAsLabel").textContent = state.viewAs ? "Viewing as" : "View as";
-  positionViewAsBar();
+  var who = $("whoami");
+  if (who && state.realUser) {
+    var vaWords = { instructor: "Instructor", dev: "Developer", course: "Course team" };
+    who.textContent = state.viewAs ? state.realUser.name + " · as " + vaWords[state.viewAs] : state.realUser.name;
+    var btn = who.parentElement;
+    if (btn) { btn.style.borderColor = state.viewAs ? "var(--medium)" : ""; btn.style.color = state.viewAs ? "var(--medium)" : ""; }
+  }
 }
 
 // The view-as bar floats in the bottom-left corner, and the instructor form's
@@ -4159,11 +4166,15 @@ function myActionItems() {
   // Everyone with the tab sees every action (Edd, 21 Jul): the team is small
   // and any instructor can pass a fix on. Cards carry who logged each one.
   var now = Date.now(), day = 24 * 60 * 60 * 1000;
-  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [], scanned: [] };
+  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [], scanned: [] , adminq: [] };
   var canVerify = !!(state.perms && (state.perms.manage || state.perms.users));
   (state.issues || []).forEach(function (i) {
     var st = String(i.status || "open").toLowerCase();
     if (i.dev_query_at && i.dev_query_target === "instructor") out.questions.push(i);
+    // FB-0293 (Edd): a developer's question FOR Charlie/Charly/Edd lived only
+    // on the Dev page, where admins had to go looking. It is work waiting on
+    // an admin, so it belongs on the admin's Actions list like everything else.
+    if (i.dev_query_at && i.dev_query_target !== "instructor" && state.perms && state.perms.users) out.adminq.push(i);
     // Auto-logged by the overnight scan and no human has touched it yet: the
     // Slack ping said it exists but Actions never showed it (Edd, 11 Aug).
     // Someone should look in on the student, whatever queue the fix sits in.
@@ -4512,6 +4523,7 @@ function actionRows() {
     }))
     .concat((a.chase || []).map(function (i) { return { i: i, kind: "chase", word: "Chase", colour: "var(--coral)", act: "Poke the courier" }; }))
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
+    .concat((a.adminq || []).map(function (i) { return { i: i, kind: "adminq", word: "Dev asks", colour: "var(--medium)", act: "A developer needs an answer from Charlie, Charly or Edd" }; }))
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
     .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
     .concat(a.followups.map(function (i) {
@@ -4566,6 +4578,7 @@ function renderActions() {
     else if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 days</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Nothing left to chase: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>';
     else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
+    else if (r.kind === "adminq") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetail(\'' + id + '\')">Answer</button>';
     else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" title="You have checked it yourself and it works: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
@@ -4586,7 +4599,7 @@ function renderActions() {
     }
     if (i.student_name) sub.push(String(i.student_name).split(" ")[0]);
     if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
-    if (r.kind === "question" && i.dev_query) sub.push('"' + String(i.dev_query).slice(0, 60) + '"');
+    if ((r.kind === "question" || r.kind === "adminq") && i.dev_query) sub.push('"' + String(i.dev_query).slice(0, 60) + '"');
     if (r.kind === "longopen") sub.push(Math.floor((Date.now() - new Date(i.submitted_at)) / 864e5) + " days open");
     // r65: the one badge that was sitting inside the row title joins the rest of
     // the facts on the sub-line. The coloured action word is the only tag an
@@ -6483,7 +6496,9 @@ function chatwootImport(value) {
   var v = value || ($("cwInput") ? $("cwInput").value.trim() : "");
   if (!v) { $("cwStatus").textContent = "Paste a conversation link or number first."; return; }
   $("cwStatus").innerHTML = '<span class="spinner"></span> fetching the conversation…';
+  busyShow("Fetching the conversation…");   // FB-0283: the little inline spinner was easy to miss
   apiPost({ action: "chatwootImport", conversation: v }).then(function (res) {
+    busyHide();
     if (!res || !res.ok) { $("cwStatus").textContent = "Couldn't fetch it: " + ((res && res.error) || "unknown"); return; }
     if (!res.transcript) { $("cwStatus").textContent = "That conversation has no messages to import."; return; }
     setField("rawText", res.transcript);
@@ -6518,7 +6533,7 @@ function chatwootImport(value) {
       (res.student_name ? ' from ' + esc(res.student_name) : '') + '.' + imgNote + ' Press Extract when you\'re ready.' +
       (res.link ? ' <a href="' + esc(res.link) + '" target="_blank" style="color:var(--accent);">Open in Chatwoot</a>' : '');
     closeChatwootPicker();
-  }).catch(function (e) { $("cwStatus").textContent = "Import error. See console."; console.error(e); });
+  }).catch(function (e) { busyHide(); $("cwStatus").textContent = "Import error. See console."; console.error(e); });
 }
 // The picker serves two homes now: the log form (default) and the Live cases
 // tab, which passes its own handler for the picked conversation id.
@@ -10941,6 +10956,10 @@ function openDevDetail(id) {
       'Notify student? (asks the instructors on Slack to pass the good news on)</label>' +
       '<div class="row">' +
       '<button class="primary" id="markFixedBtn" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
+      // FB-0292 (Edd): admins triaging the dev queue can park an item without
+      // leaving the page. Developers never see it - deciding what is worth
+      // developer time is an admin call, not a developer one.
+      ((state.perms && state.perms.users) ? ' <button class="ghost" style="color:var(--medium);" title="Admin only: probably not worth developer time. Filed away; it wakes up if anyone reports it again." onclick="devParkIssue(\'' + esc(issue.issue_id) + '\')">Park it</button>' : '') +
       '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
   }
 
@@ -10957,7 +10976,26 @@ function openDevDetail(id) {
 // six months later, and it was an optional textarea further up the pane that
 // most fixes went out without. It is now the thing standing between the press
 // and the save.
+function devParkIssue(id) {
+  if (!confirm("Park this issue? It leaves the developer queue and wakes itself up if anyone reports the same thing again.")) return;
+  busyShow("Parking it…");
+  apiPost({ action: "updateIssue", issue_id: id, status: "parked", resolution_note: "Parked from the developer queue by an admin." }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
+    toast("Parked.");
+    closeDetail(); loadIssues();
+  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+}
 function devMarkFixed(id) {
+  // FB-0289 (Edd): the what-caused-it dialog earns its keep on TECH fixes.
+  // A course fix is a slide edit - the summary already says what changed, so
+  // it marks straight off with the queue's notes as the record.
+  var rec = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
+  if (rec && String(rec.category) === "course_error") {
+    var note = ($("dev_notes") ? $("dev_notes").value : "") || "Course content corrected.";
+    devMarkFixedSend(id, note);
+    return;
+  }
   var pre = $("dev_notes") ? $("dev_notes").value : "";
   $("fixNoteCause").value = "";
   $("fixNoteFix").value = pre || "";

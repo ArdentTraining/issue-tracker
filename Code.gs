@@ -6663,8 +6663,12 @@ function listLiveCases_(data) {
       cwStatus = String((conv && conv.status) || (conv && conv.payload && conv.payload.status) || '');
     } catch (e) { return; }
     if (cwStatus === 'resolved') {
+      var b2 = r._brief;
+      // FB-0290: a deliberate human open holds the case open for 24 hours,
+      // whatever Chatwoot says - "I opened it, and it vanished" must not happen.
+      if (b2.deliberate_open_at && (Date.now() - new Date(b2.deliberate_open_at).getTime()) < 24 * 3600 * 1000) return;
       r.status = 'closed';
-      var b2 = r._brief; b2.auto_closed = new Date().toISOString(); b2.auto_close_reason = 'conversation resolved in Chatwoot';
+      b2.auto_closed = new Date().toISOString(); b2.auto_close_reason = 'conversation resolved in Chatwoot';
       r.brief_json = JSON.stringify(b2);
       liveCaseSave_(r);
     }
@@ -6910,6 +6914,13 @@ function caseBrief_(data) {
   if (core.error) return { ok: false, error: core.error };
   var prev = caseBriefJson_(rec);
   core.bj.note_posted = !!prev.note_posted;
+  // FB-0290 (Stuart, via Edd): he opened a RESOLVED conversation from Browse
+  // recent - twice - and the r99 Chatwoot-resolved auto-close shut the case
+  // before it ever rendered, which read as a timeout. A human deliberately
+  // opening a case outranks the auto-close for a day; after that, resolved in
+  // Chatwoot closes it as usual.
+  if (isNew || data.reopen === true || data.reopen === 'true') core.bj.deliberate_open_at = now;
+  else if (prev.deliberate_open_at) core.bj.deliberate_open_at = prev.deliberate_open_at;
 
   rec.student_name = imp.student_name || rec.student_name || '';
   rec.student_contact = imp.student_contact || rec.student_contact || '';
