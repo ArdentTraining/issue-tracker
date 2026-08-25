@@ -443,7 +443,7 @@ function doPost(e) {
     if (action === 'requestPasswordReset') return jsonOut(requestPasswordReset_(body));
 
     var user = userForToken_(body.token);
-    if (!user) return jsonOut({ ok: false, error: 'unauthorized' });
+    if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
     if (action === 'logout') return jsonOut(logout_(body.token));
     if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
     body._user = user;
