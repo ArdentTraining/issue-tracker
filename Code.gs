@@ -5897,22 +5897,32 @@ function slackSummary_(issue) {
   return (raw.length > 300 ? raw.slice(0, 300) + '…' : raw) + ' (no summary - report submitted without Extract)';
 }
 
+// One student line, however scruffy the fields are. The contact box sometimes
+// carries a whole pasted note rather than an address (it is free text), so the
+// email is pulled out of it where there is one, and the line is dropped
+// entirely when there is no student - an alert that says "Student: -" has
+// spent a line telling us nothing.
+function slackWho_(issue) {
+  var name = String(issue.student_name || '').trim();
+  if (name === '-' || name === 'n/a') name = '';
+  var raw = String(issue.student_contact || '').trim();
+  var m = raw.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  var contact = m ? m[0] : (raw.length > 60 || raw === '-' ? '' : raw);
+  if (!name && !contact) return null;
+  return '*Student:* ' + (name && contact ? name + ' (' + contact + ')' : (name || contact));
+}
+
 function sendSlack_(issue, appUrl) {
   if (!slackOn_('high_priority')) return;
   var SLACK_ALERT_VIA_BOT_ = true;
-  var c = String(issue.category).toLowerCase();
-  var area = (c === 'tech_issue' ? 'Tech issue' : 'Course error') +
-    (String(issue.audience || 'student').toLowerCase() === 'internal' ? ' · internal' : '');
-  if (issue.section) area += ' · ' + String(issue.section).replace(/_/g, ' ');
+  // r136 (Edd, 26 Aug 2026): the alert was eight lines and people had to hunt
+  // the summary. Three lines and a link. Lesson, type, device, who logged it
+  // and when are all one click away on the issue itself, so pushing them into
+  // Slack only buried the sentence that decides whether anyone moves.
   var text = [
-    ':red_circle: *High priority issue logged* (' + area + ')',
-    ((issue.lesson || issue.lesson_code) ? '*Lesson:* ' + (issue.lesson || '-') + (issue.lesson_code ? ' (' + issue.lesson_code + ')' : '') : null),
-    '*Type:* ' + (issue.issue_type || '-'),
+    ':red_circle: *High priority issue logged*',
     '*Summary:* ' + slackSummary_(issue),
-    '*Student:* ' + (issue.student_name || '-') + ' (' + (issue.student_contact || '-') + ')',
-    '*Device:* ' + (issue.device_info || '-'),
-    '*Logged by:* ' + (issue.instructor_name || '-'),
-    '*Submitted:* ' + (issue.submitted_at || new Date().toISOString()),
+    slackWho_(issue),
     '',
     'View in Bugs: ' + issueLink_(issue, appUrl)
   ].filter(function (l) { return l !== null; }).join('\n');
@@ -5940,7 +5950,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r132 · 2026-08-25';
+var CODE_STAMP = 'r136 · 2026-08-26';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
