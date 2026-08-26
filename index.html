@@ -166,6 +166,10 @@
   .card {
     background: var(--surface); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 16px;
+    /* FB-0325: a pasted Chatwoot link is one unbreakable "word" and ran
+       straight out of the card on a phone. Break inside it when there is
+       nowhere else to break. */
+    overflow-wrap: anywhere; word-break: break-word; min-width: 0;
   }
   .card h2 { margin: 0 0 14px; font-size: 16px; }
   .card h3 { margin: 18px 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -2844,7 +2848,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r135 · 2026-08-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r137 · 2026-08-26";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5332,7 +5336,7 @@ function kfFlagSubmit() {
     toast(res.stamped
       ? "Sent to Edd, and noted against that entry so it comes with your caveat in the meantime."
       : "Sent to Edd. The suggestion didn't name which entry it came from, so it can't caveat itself until he's looked.");
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 function openLiveCase(convInput) {
@@ -5346,7 +5350,7 @@ function openLiveCase(convInput) {
     state.liveSelected = String(res.conversation_id);
     liveMarkSeen(res.conversation_id);
     loadLiveCasesThenRender();
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 function openLiveCaseFromPicker(id) {
   if (state.view !== "live") setView("live");
@@ -5377,7 +5381,7 @@ function liveRefreshList() {
     toast(state.liveCases.length + (state.liveCases.length === 1 ? " open conversation." : " open conversations."));
   }).catch(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = was || "Refresh"; }
-    toast("Error. See console."); console.error(e);
+    toastErr("That", e);
   });
 }
 // FB-0238/FB-0239. Two ways in. Pressed by hand it takes the screen, because
@@ -5414,7 +5418,7 @@ function liveRefreshBrief(opts) {
     });
   }).catch(function (e) {
     if (background) { state.liveBriefBusy = null; renderLiveDetail(); } else busyHide();
-    toast("Error. See console."); console.error(e);
+    toastErr("That", e);
   });
 }
 function liveCheckReply() {
@@ -5436,7 +5440,7 @@ function liveCheckReply() {
       // wasn't. It re-reads itself now, in the background.
       liveRefreshBrief({ background: true, conversation_id: c.conversation_id });
     }
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 function liveDraftReply() {
   var c = liveCaseById(state.liveSelected);
@@ -5446,7 +5450,7 @@ function liveDraftReply() {
     busyHide();
     if (!res || !res.ok || !res.text) { toast("Draft failed: " + ((res && res.error) || "unknown")); return; }
     openLiveDraftModal(res.text, !!res.voiced, c.student_contact, res.action_note || "");
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 // The same editable popup the issue drafts use, fed by a case instead.
 function openLiveDraftModal(text, voiced, contact, actionNote) {
@@ -5516,7 +5520,7 @@ function liveCheckpoint(decision) {
         loadLiveCasesThenRender();
         loadIssues();
       });
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 
 // FB-0232. Ask for the note before anything is filed. Pre-filled from the
@@ -5642,7 +5646,7 @@ function liveCloseCase() {
     hideLiveDetail();
     toast("Case closed.");
     loadLiveCasesThenRender();
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 
 // ---- batch "tell the students" (Round 45) ----------------------------------
@@ -5655,7 +5659,7 @@ function batchDraftsRun(issueId) {
     if (!res || !res.ok) { toast("Drafting failed: " + ((res && res.error) || "unknown")); return; }
     state.batchDrafts = res;
     showBatchDrafts();
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 function showBatchDrafts() {
   var r = state.batchDrafts;
@@ -5714,7 +5718,7 @@ function runConfusionReview() {
       : res.hotspots
         ? "Looked at " + res.hotspots + " hotspot" + (res.hotspots === 1 ? "" : "s") + " - nothing new to suggest."
         : "No lesson has 3 or more open confusion reports right now.");
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 function renderContentSuggestions() {
   var el = $("contentSuggPanel");
@@ -5741,7 +5745,7 @@ function contentSuggResolve(id, accept) {
     renderContentSuggestions();
     if (accept) { toast("Queued as a course improvement on that lesson."); loadIssues(); }
     else toast("Dismissed - it only comes back if more students hit it.");
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 // Status change straight from a detail drawer banner, no scrolling to the
@@ -5795,7 +5799,7 @@ function actionsAnswer(id) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Reply sent.");
     loadIssues();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 function actionsMarkNotified(id) {
   toast("Marked as told.");
@@ -5811,7 +5815,7 @@ function actionsSentUpdate(id) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Noted - it'll pop back up if it goes quiet again.");
     loadIssues();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 function actionsResolveTbc(id, good) {
   toast(good ? "Resolved for good." : "Reopened for a proper fix.");
@@ -9970,7 +9974,7 @@ function fetchUpdateFromDetail(id) {
       reopenDetailById(id);
       say("Update added at " + when + " - " + res.message + " See Last update above.");
     });
-  }).catch(function (e) { busyHide(); say("Fetch failed at " + when + ": " + String(e), true); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); say("Fetch failed at " + when + ": " + String(e), true); toastErr("That", e); });
 }
 function reopenDetailById(id) {
   var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
@@ -10739,7 +10743,7 @@ function courseBulkAssign() {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Assigned " + res.assigned + " to " + who + ".");
     loadIssues();
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 
 // Run the AI priority review over the open course-fix queue. Suggestions only:
@@ -10801,7 +10805,7 @@ function courseReviewApply(n) {
     r.suggestions.splice(n, 1);
     toast("Priority set to " + s.suggest + ".");
     renderCourse();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 function courseReviewDismiss(n) {
@@ -10898,7 +10902,7 @@ function sendDevQuery(id) {
     loadIssues().then(function () {
       if (state.detailId === id && state.detailKind === "dev") openDevDetail(id);
     });
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 // FB-0249/0250. Whoever hands an issue over can write the ask in their own
@@ -11279,7 +11283,7 @@ function devCheckUpdates(id) {
     if (res.found === false) { toast(res.message || "Nothing new from the students on this one.", 8000); return; }
     toast("Pulled an update onto the issue.", 7000);
     loadIssues().then(function () { openDevDetail(id); });
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 function devSendAnswer(id) {
   var reply = $("devAnswerText") ? $("devAnswerText").value.trim() : "";
@@ -11290,7 +11294,7 @@ function devSendAnswer(id) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Answered - it's on the issue and back with the asker.");
     loadIssues().then(function () { openDevDetail(id); });
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 function devPostAdminUpdate(id) {
   var raw = $("devAdminUpdate") ? $("devAdminUpdate").value.trim() : "";
@@ -11301,7 +11305,7 @@ function devPostAdminUpdate(id) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Update added.");
     loadIssues().then(function () { openDevDetail(id); });
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 // FB-0297/0298: the Actions "Answer" button lands ON the question, not at the
 // top of a long report.
@@ -11323,7 +11327,7 @@ function devParkIssue(id) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Parked.");
     closeDetail(); loadIssues();
-  }).catch(function (e) { busyHide(); toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 function devMarkFixed(id) {
   // FB-0289 (Edd): the what-caused-it dialog earns its keep on TECH fixes.
@@ -11374,7 +11378,7 @@ function devMarkFixedSend(id, notes) {
     closeDetail(); loadIssues();
   }).catch(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = "Mark fixed"; }
-    toast("Error. See console."); console.error(e);
+    toastErr("That", e);
   });
 }
 
@@ -11390,7 +11394,7 @@ function devSetSize(id) {
     toast(v ? "Sized as " + v + "." : "Size cleared.");
     if (state.view === "dev") renderDev();
     else if (state.view === "course") renderCourse();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 function devSetPriority(id) {
@@ -11405,7 +11409,7 @@ function devSetPriority(id) {
     if (state.view === "dev") renderDev();
     else if (state.view === "course") renderCourse();
     else if (state.view === "admin") renderAdmin();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 function devSaveNotes(id) {
@@ -11424,7 +11428,7 @@ function askLoggerFromTrack(id) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Sent - it's in their Actions tab and on Slack.");
     closeDetail(); loadIssues();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 function adminPassToDev(id) {
@@ -11432,7 +11436,7 @@ function adminPassToDev(id) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Passed to developers.");
     closeDetail(); loadIssues();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 // Admin replies to a developer's/course team's question (see openDetail).
@@ -11444,7 +11448,7 @@ function answerDevQuery(id) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast("Reply sent.");
     closeDetail(); loadIssues();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 // ============================ AUTH ============================
@@ -11929,7 +11933,7 @@ function chatScanUpdate(convId, issueId, action) {
         loadIssues();
       });
     });
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 
 function chatScanDismiss(convId) {
@@ -12114,12 +12118,27 @@ function resolveSuggestion(id, approve, editedText) {
     if (approve) loadPlaybook();
   }).catch(function (e) { toast("Error."); console.error(e); });
 }
+// FB-0327 (Edd): "'error see console' ... is not a very helpful error message."
+// The browser knows what broke; there is no reason to make somebody open the
+// console to find out. Still logs the full object for the diagnostics buffer.
+function toastErr(what, e) {
+  var msg = (e && (e.message || e.error || e.statusText)) || String(e || "");
+  if (msg.length > 140) msg = msg.slice(0, 140) + "…";
+  console.error(what, e);
+  toast(what + " failed: " + (msg || "unknown error") + ". Send feedback if it keeps happening.", 9000);
+}
+
 function userRowHtml(u) {
   return '<div class="card" style="margin-bottom:10px;">' +
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">' +
       '<strong>' + esc(u.name || "(no name)") + '</strong>' +
       '<span class="muted small">' + esc(u.email) + '</span>' +
       '<span class="badge st">' + esc(u.status || "") + '</span>' +
+      // FB-0328: has this person actually finished setting up, or is the invite
+      // still sitting in their inbox? A password is the only proof.
+      (u.accepted ? '<span class="badge" style="border-color:var(--low);color:var(--low);">signed up</span>'
+        : (u.invite_pending ? '<span class="badge" style="border-color:var(--medium);color:var(--medium);" title="They have an invite but have not set a password yet.">invite not accepted</span>'
+        : '<span class="badge" style="border-color:var(--muted);color:var(--muted);" title="No password and no outstanding invite - send one.">no invite sent</span>')) +
     '</div>' +
     '<div class="permrow">' + PERM_LABELS.map(function (p) {
       return '<label class="small"><input type="checkbox" data-email="' + esc(u.email) + '" data-perm="' + p.k + '"' +
@@ -12177,15 +12196,17 @@ function resurfaceIssue(id) {
     loadIssues().then(function () {
       if (state.detailId === id) { var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0]; if (i) openDetail(i); }
     });
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+  }).catch(function (e) { toastErr("That", e); });
 }
 function deleteUser(email, name) {
   if (!confirm('Delete ' + name + ' completely?\n\nThis removes the account rather than disabling it, and cannot be undone. If they have logged, fixed or been assigned anything, use Disable instead so the record still makes sense.')) return;
   apiPost({ action: "deleteUser", email: email }).then(function (res) {
     if (!res || !res.ok) { toast((res && res.error) || "Could not delete that account.", 9000); return; }
     toast(name + " deleted.");
-    loadUsers();
-  }).catch(function (e) { toast("Error. See console."); console.error(e); });
+    renderUsers();   // FB-0327: this said loadUsers(), which does not exist - the
+                     // delete worked and then the refresh threw, so a successful
+                     // delete reported itself as an error.
+  }).catch(function (e) { toastErr("Deleting that account", e); });
 }
 function setUserDisabled(email, dis) {
   var payload = { action: "updateUser", email: email };

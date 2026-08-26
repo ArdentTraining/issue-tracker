@@ -128,6 +128,41 @@ function stampSlackThread_(issueId, channel, ts, kind) {
   } catch (e) {}
 }
 
+// r137 (Edd, 26 Aug 2026): "it was later parked... is it possible to then have
+// the slack message deleted as it is no longer an open case?" The alert exists
+// to make somebody move; once the issue is parked or resolved there is nothing
+// to move on, and a channel of stale red circles is one nobody reads. Deletes
+// only the alerts this app posted (their ts is stamped on the issue) and only
+// when the issue actually leaves the open states.
+function slackDeleteAlerts_(issueId) {
+  try {
+    var tok = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
+    if (!tok) return;
+    var fr = findRow_(issueId);
+    if (!fr) return;
+    var threads = slackThreadsOf_(fr.record);
+    if (!threads.length) return;
+    var kept = [];
+    threads.forEach(function (t) {
+      if (String(t.kind) !== 'alert') { kept.push(t); return; }
+      var res = UrlFetchApp.fetch('https://slack.com/api/chat.delete', {
+        method: 'post', contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + tok },
+        payload: JSON.stringify({ channel: t.channel, ts: t.ts }), muteHttpExceptions: true
+      });
+      var out = {};
+      try { out = JSON.parse(res.getContentText()); } catch (e) {}
+      // Anything we could not delete stays on the record, so a failure is
+      // visible rather than silently forgotten (message_not_found means it has
+      // already gone, which is the same end state, so that one is dropped).
+      if (!out.ok && String(out.error) !== 'message_not_found') kept.push(t);
+    });
+    var col = HEADERS.indexOf('slack_thread') + 1;
+    if (col > 0) fr.sheet.getRange(fr.rowNum, col).setValue(kept.length ? JSON.stringify(kept) : '');
+  } catch (e) {}
+}
+var SLACK_ALERT_CLOSED_ = { resolved: 1, resolved_tbc: 1, parked: 1, past: 1 };
+
 function slackBotPost_(channelId, text, threadTs) {
   try {
     var tok = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
@@ -1103,7 +1138,15 @@ function listUsers_() {
   for (var r = 1; r < values.length; r++) {
     if (!values[r][idx['email']]) continue;
     var u = rowToUser_(values[r], idx);
-    out.push({ email: u.email, name: u.name, status: u.status, perms: permsOf_(u) });
+    // FB-0328 (Edd): "good to be able to see when people have accepted the
+    // invite and made a password." A password hash is the only proof they
+    // finished; an outstanding invite token means the email is still sitting
+    // unopened somewhere.
+    var accepted = !!String(values[r][idx['pass_hash']] || '').trim();
+    var invitePending = !accepted && !!String(values[r][idx['invite_token']] || '').trim();
+    out.push({ email: u.email, name: u.name, status: u.status, perms: permsOf_(u),
+               accepted: accepted, invite_pending: invitePending,
+               created_at: String(values[r][idx['created_at']] || '') });
   }
   return { ok: true, users: out };
 }
@@ -1873,11 +1916,13 @@ function addIssue_(data) {
     // If the instructor has already given the student the suggested fix, this
     // lands as "Resolved - TBC" with that fix saved, and will auto-resolve
     // after a quiet spell unless it comes back.
-    status: data.resolved ? 'resolved' : (data.parked ? 'parked' : (data.tbc ? 'resolved_tbc' : (data.status || 'open'))),
+    status: data.resolved ? (refreshFixOnly ? 'parked' : 'resolved') : (data.parked ? 'parked' : (data.tbc ? 'resolved_tbc' : (data.status || 'open'))),
     resolved_at: data.resolved ? (data.resolved_at || now) : '',
     // Parked keeps its reason here too: a parked issue with no note is just an
     // open one nobody looks at.
-    resolution_note: (data.resolved || data.tbc || data.parked) ? (data.resolution_note || '') : '',
+    resolution_note: (data.resolved || data.tbc || data.parked)
+      ? ((data.resolution_note || '') + (refreshFixOnly ? ' [Parked rather than resolved: a refresh sorted this student, but the cause is unconfirmed. It reopens itself if anyone reports the same thing (FB-0326).]' : '')).trim()
+      : '',
     // Resolved in the pasted chat itself: the student was part of that
     // conversation, so there's nobody left to notify (keeps it out of the
     // instructor's Actions list).
@@ -1941,7 +1986,25 @@ function addIssue_(data) {
     var cm127 = data.checklist_json ? JSON.parse(data.checklist_json) : {};
     for (var ck127 in cm127) { if (cm127[ck127] === 'done' || cm127[ck127] === 'na') checklistTried++; }
   } catch (e) {}
+  // FB-0326 (Edd): "something that gets fixed by a refresh is not always
+  // 'resolved'. It is resolved for now but the cause has not been identified.
+  // So parked makes more sense as if more people report the same we need to
+  // figure out the cause." A resolve on a refresh/cache/relog fix files as
+  // parked instead - parked wakes itself up on the next matching report, and a
+  // resolved row never does, which is exactly how a widespread fault hides.
+  var refreshFixOnly = false;
+  if (data.resolved && !data.parked) {
+    var outcome = String(data.resolution_note || '') + ' ' + String(data.outcome || '');
+    refreshFixOnly = /\b(hard )?refresh(ed|ing)?\b|\bcache\b|\bclear(ed|ing)? (the )?(cache|cookies)\b|\blog(ged)? ?(out|in|back in)\b|\bre-?log\b|\bincognito\b/i.test(outcome) &&
+                     !/\broot cause\b|\bcaused by\b|\bwe (found|fixed|changed|re-?uploaded)\b|\bfix (was|has been) (shipped|deployed|applied)\b/i.test(outcome);
+  }
   var fastTrack = data.fast_track === true || data.fast_track === 'true';
+  // FB-0329 (Edd): "a 'NoSuchKey The specified key does not exist' error on a
+  // lesson should be directed to me. The lesson just needs reuploaded." The
+  // asset is missing from storage, so it is neither a code fix nor a content
+  // rewrite - it is a re-upload, and only Edd does those.
+  var missingAsset = /nosuchkey|specified key does not exist/i.test(String(data.raw_text || '') + ' ' + String(data.summary || '')) &&
+                     !!(issue.lesson_code || issue.lesson || category === 'course_error');
   // FB-0305: a 404 on lesson content is a content/packaging fault before it is
   // a platform one - the course team sees it first. Fast-track overrides.
   if (category === 'tech_issue' && audience !== 'internal' && !scanLogged && !fastTrack &&
@@ -1953,7 +2016,10 @@ function addIssue_(data) {
       ' [Routed to the course team: a 404 on lesson content is usually the content or its packaging (FB-0305). Fast-track a report to send it to the developers instead.]').trim();
   }
   if (!data.tbc && !data.resolved && !data.parked && issue.request_kind !== 'improvement' && category !== 'shipping' && category !== 'friction') {
-    if (category === 'course_error') {
+    if (missingAsset && !fastTrack) {
+      issue.status = 'with_edd';
+      issue.dev_notes = ((issue.dev_notes || '') + ' Routed to Edd at filing: a missing lesson asset (NoSuchKey) needs the lesson re-uploading (FB-0329).').trim();
+    } else if (category === 'course_error') {
       issue.dev_passed_at = new Date().toISOString();
       issue.status = 'with_dev';
     } else if (audience === 'internal') {
@@ -2533,6 +2599,8 @@ function updateIssue_(data) {
     try { proposePlaybookUpdate_(record); } catch (e) {}
   }
 
+  // r137: the alert has done its job once the issue is off the open list.
+  if (SLACK_ALERT_CLOSED_[String(record.status || '').toLowerCase()]) slackDeleteAlerts_(id);
   maybeDevQueueAlert_();
   return { ok: true, issue_id: id, moved: targetName !== found.sheetName, sheet: targetName };
 }
@@ -5950,7 +6018,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r136 · 2026-08-26';
+var CODE_STAMP = 'r137 · 2026-08-26';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
