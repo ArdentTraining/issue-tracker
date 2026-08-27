@@ -51,7 +51,7 @@ var SLACK_NOTICES = {
   query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
   query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
   dev_queue_low:     { on: true,  to: 'SLACK_ADMINS' },              // r129: falls back to the main channel until the private admin channel is wired
-  unrouted_digest:   { on: true,  to: 'SLACK_ADMINS' },              // r140 (Edd): Tuesday 09:00, what nobody has picked up
+  unrouted_digest:   { on: true,  to: 'SLACK_BUSINESS_MGMT' },       // r140 (Edd): Tuesday 09:00, what nobody has picked up -> Business Management
   shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
   // Off for good (Edd, 19 Aug 2026). All five still exist in the tracker.
   feedback:          { on: false, to: '' },
@@ -3517,7 +3517,7 @@ function setSlackChannel_(data) {
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
   var allowed = { SLACK_INSTRUCTING_DAILY: 1, SLACK_AUREUS_TECH: 1, SLACK_INSTRUCTING_UPDATES: 1,
                   SLACK_SHIPPING_ISSUES: 1, SLACK_WEBHOOK_URL: 1, SLACK_IMPROVEMENTS_FIXES: 1,
-                  SLACK_ADMINS: 1 };  // r109 + r119 + r129 (the admins-only channel, when Edd makes it)
+                  SLACK_ADMINS: 1, SLACK_BUSINESS_MGMT: 1 };  // r109 + r119 + r129 + r141
   var name = String(data.channel_key || '').trim();
   if (!allowed[name]) return { ok: false, error: 'channel_key must be one of: ' + Object.keys(allowed).join(', ') };
   // r119: the same endpoint stores the member-ID map (field `member_ids`,
@@ -4721,21 +4721,23 @@ function unroutedDigest() {
     slackPost_('unrouted_digest', ':white_check_mark: *Nothing waiting to be picked up.* Every open issue is with somebody.');
     return;
   }
-  // The list is the RECENT arrivals, because those are the ones that can still
-  // slip. The pre-tracker course backlog (imported rows going back well over a
-  // year) is real work but it is not this week's, and putting a 442-day-old row
-  // at the top is how a digest gets ignored by the second week. It gets one
-  // honest line at the bottom instead.
-  var RECENT_DAYS = 14;
+  // The list is the LAST WEEK's arrivals (Edd, r141: "anything newly unrouted,
+  // which were reported in the last week"). It runs weekly, so a week's window
+  // means each issue is offered exactly once while it is still fresh. The
+  // pre-tracker course backlog - imported rows going back over a year - is real
+  // work but it is not this week's, and putting a 442-day-old row at the top is
+  // how a digest gets ignored by its second week. It gets one honest line at
+  // the bottom instead.
+  var RECENT_DAYS = 7;
   var recent = stuck.filter(function (i) { return now - new Date(i.submitted_at) < RECENT_DAYS * day; });
   var older = stuck.length - recent.length;
 
   var lines;
   if (!recent.length) {
-    lines = [':white_check_mark: *Nothing new waiting to be picked up.* Everything logged in the last fortnight is with somebody.'];
+    lines = [':white_check_mark: *Nothing new waiting to be picked up.* Everything reported this week is with somebody.'];
   } else {
     lines = [':clipboard: *' + recent.length + ' issue' + (recent.length === 1 ? '' : 's') +
-      ' from the last fortnight that nobody has picked up*'];
+      ' reported this week that nobody has picked up*'];
     lines.push('');
     recent.slice(0, 12).forEach(function (i) {
       var days = Math.floor((now - new Date(i.submitted_at)) / day);
@@ -4743,7 +4745,7 @@ function unroutedDigest() {
       lines.push('• *' + String(i.priority || '?').toUpperCase() + '* (' + who + ', ' + (days === 0 ? 'today' : days + 'd') + ') ' +
         String(i.summary || '(no summary)').slice(0, 120) + '  <' + issueLink_(i, appUrl) + '|open>');
     });
-    if (recent.length > 12) lines.push('…and ' + (recent.length - 12) + ' more from the fortnight.');
+    if (recent.length > 12) lines.push('…and ' + (recent.length - 12) + ' more from this week.');
     lines.push('');
     lines.push('Each one needs passing to the developers or the course team, or closing.');
   }
@@ -6148,7 +6150,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r140.2 · 2026-08-26';
+var CODE_STAMP = 'r141 · 2026-08-27';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
