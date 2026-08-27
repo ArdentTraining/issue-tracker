@@ -1590,7 +1590,11 @@
 <div id="eddView" class="wrap hidden">
   <h2 style="margin-top:0;">With Edd</h2>
   <p class="hint" style="margin-top:-6px;">The tools you build yourself. Reports naming them land here, not with the developers.</p>
-  <div id="eddList"></div>
+  <div class="split-host" id="eddSplitHost">
+    <div class="list-col" id="eddList"></div>
+    <div class="col-drag" title="Drag to resize the list"></div>
+    <div class="split-dock" id="eddDock" style="display:none;"></div>
+  </div>
   <div class="card" style="margin-top:16px;">
     <h3 style="margin:0 0 6px;">What routes here</h3>
     <p class="hint" style="margin:0 0 8px;">A report mentioning any of these comes to you at filing. Comma-separated - edit and save, no deploy needed.</p>
@@ -2848,7 +2852,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r137 · 2026-08-26";  // bump this with each round, it lands on every feedback report
+var BUILD = "r138 · 2026-08-26";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9237,6 +9241,24 @@ function nextActionHtml(issue) {
 // to snap every <details> fold shut (and lose the scroll position) each time.
 // Remember the open folds by their summary text, put them back after the
 // rebuild. General fix: any same-issue re-render keeps its folds now.
+// FB-0334 (Edd): "I am pressing details reports and screenshots but it isn't
+// opening." It was opening - 400-odd pixels of it - directly BELOW the bottom
+// of the pane, because that fold sits last in a pane taller than the screen.
+// Nothing visibly changed, so it read as a dead control. Now an opening fold
+// brings its own heading to the top of the pane and the content is right there.
+document.addEventListener("toggle", function (e) {
+  var el = e.target;
+  if (!el || !el.matches || !el.matches("details.acc") || !el.open) return;
+  var pane = el.closest("#drawer");
+  if (!pane) return;
+  setTimeout(function () {
+    var top = el.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+    if (top < pane.scrollTop || el.getBoundingClientRect().bottom > pane.getBoundingClientRect().bottom) {
+      pane.scrollTo({ top: Math.max(0, top - 8), behavior: "smooth" });
+    }
+  }, 40);
+}, true);
+
 function drawerFoldState() {
   var d = $("drawer"), out = { folds: {}, scroll: d ? d.scrollTop : 0 };
   if (d) Array.prototype.forEach.call(d.querySelectorAll("details.acc"), function (el) {
@@ -9604,6 +9626,12 @@ function openDetail(issue) {
   }
   sideCol += '<div class="row" style="margin-top:10px;">' +
     '<button class="primary savebar-btn" onclick="saveDetail()">Save changes</button>' +
+    // FB-0331 (Edd): "could do with a mark resolved and park it button at the
+    // bottom like on the dev page." Both set the status and save in one press
+    // where the note is already written; where it is not, they put the cursor
+    // in the note box rather than saving something with nothing to read later.
+    (isOpen(issue) ? '<button class="ghost" style="color:var(--low);" onclick="closeFromDetail(\'resolved\')">Mark resolved</button>' +
+      '<button class="ghost" style="color:var(--medium);" title="Probably a one-off. It wakes itself up if anyone reports the same thing again." onclick="closeFromDetail(\'parked\')">Park it</button>' : '') +
     '<button class="ghost" title="Open this report back in the log form, where the text, the course and lesson, the category and the screenshots can be corrected. Saving there updates this issue, it does not make a new one." onclick="editInForm(\'' + esc(issue.issue_id) + '\')">Edit the report</button>' +
     (canDelete(issue) ? '<button class="ghost" style="color:var(--high);" title="Takes the whole entry off the log for good" onclick="deleteIssueAction(\'' + esc(issue.issue_id) + '\')">Delete this issue</button>' : '') +
   '</div>';
@@ -9641,6 +9669,9 @@ function splitTargetFor(kind) {
   if (kind === "admin" && state.view === "actions") return { host: $("actionsSplitHost"), dock: $("actionsDock") };
   if (kind === "dev" && state.view === "dev") return { host: $("devSplitHost"), dock: $("devDock") };
   if (kind === "dev" && state.view === "course") return { host: $("courseSplitHost"), dock: $("courseDock") };
+  // FB-0336 (Edd): the With Edd page threw the old overlay over the top while
+  // every other queue docks its detail beside the list. Same pane, same place.
+  if (state.view === "edd") return { host: $("eddSplitHost"), dock: $("eddDock") };
   return null;
 }
 function presentDetail(kind) {
@@ -9661,7 +9692,7 @@ function presentDetail(kind) {
   scheduleSaveBar();
 }
 function closeSplit() {
-  ["adminSplitHost", "devSplitHost", "courseSplitHost", "actionsSplitHost"].forEach(function (id) {
+  ["adminSplitHost", "devSplitHost", "courseSplitHost", "actionsSplitHost", "eddSplitHost"].forEach(function (id) {
     var h = $(id);
     if (!h) return;
     h.classList.remove("split-on");
@@ -9795,6 +9826,26 @@ function detailResolutionNote() {
   return ($("d_resnote_saved") ? $("d_resnote_saved").value : "").trim();
 }
 
+// One press for the common ending. The note is the whole point of resolving -
+// it is what the next person reads when the fault comes back - so a resolve
+// with an empty box parks the cursor there instead of saving a blank.
+function closeFromDetail(status) {
+  var sel = $("d_status");
+  if (!sel) return;
+  sel.value = status;
+  onStatusChange();
+  var box = $("d_update_text");
+  var typed = box && String(box.value || "").trim();
+  if (!typed) {
+    if (box) { box.focus(); box.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    toast(status === "parked"
+      ? "Say why it is being parked, then press Save changes."
+      : "Add a resolution note, then press Save changes.", 6000);
+    return;
+  }
+  saveDetail();
+}
+
 function saveDetail() {
   // FB-0302 (Edd): text sitting in the update box when Save is pressed used
   // to be silently ignored unless the extract button had been pressed first.
@@ -9916,13 +9967,32 @@ function openLinkPicker(id) {
   var others = state.issues.filter(function (i) { return i.issue_id !== id && isOpen(i) && catOf(i) === cat; })
     .sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
   if (!others.length) { toast("No other open issues in this area to link to."); return; }
-  var opts = others.map(function (o) {
+  // FB-0330 (Edd): "we could do with a search option to help find the other
+  // report". A dropdown of every open issue in the area is fine at ten and
+  // useless at eighty, so the box filters the list as you type - across the
+  // same fields the board search uses, not just the title.
+  state._linkPool = others;
+  $("linkPicker").innerHTML = '<div class="small muted" style="margin-bottom:4px;">Merge this report into:</div>' +
+    '<input id="linkSearch" name="ait-linkq" autocomplete="one-time-code" placeholder="Search summary, ref, student, lesson code…" ' +
+      'oninput="renderLinkOptions()" style="margin-bottom:6px;" />' +
+    '<div class="row"><select id="linkTarget" size="6" style="min-height:120px;"></select>' +
+    '<button class="primary small" onclick="doLink(\'' + esc(id) + '\')">Link</button></div>' +
+    '<div class="small muted" id="linkCount" style="margin-top:4px;"></div>';
+  $("linkPicker").classList.remove("hidden");
+  renderLinkOptions();
+  if ($("linkSearch")) $("linkSearch").focus();
+}
+function renderLinkOptions() {
+  var q = String(($("linkSearch") || {}).value || "").trim().toLowerCase();
+  var pool = (state._linkPool || []).filter(function (o) { return !q || searchHay(o).indexOf(q) > -1; });
+  var sel = $("linkTarget");
+  if (!sel) return;
+  sel.innerHTML = pool.map(function (o) {
     return '<option value="' + esc(o.issue_id) + '">' + esc((o.lesson_code ? o.lesson_code + " · " : "") + cardTitle(o)) + '</option>';
   }).join("");
-  $("linkPicker").innerHTML = '<div class="small muted" style="margin-bottom:4px;">Merge this report into:</div>' +
-    '<div class="row"><select id="linkTarget">' + opts + '</select>' +
-    '<button class="primary small" onclick="doLink(\'' + esc(id) + '\')">Link</button></div>';
-  $("linkPicker").classList.remove("hidden");
+  if (pool.length) sel.value = pool[0].issue_id;
+  var c = $("linkCount");
+  if (c) c.textContent = pool.length ? pool.length + " to choose from" + (q ? " matching \u201c" + q + "\u201d" : "") : "Nothing matches \u201c" + q + "\u201d.";
 }
 function doLink(sourceId) {
   var targetId = $("linkTarget") ? $("linkTarget").value : "";

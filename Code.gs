@@ -6018,7 +6018,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r137 · 2026-08-26';
+var CODE_STAMP = 'r138 · 2026-08-26';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -7118,7 +7118,14 @@ function briefAi_(transcript, issueId) {
     'mark an exam manually from photos of their answers, post an answer in the course live chat, re-send an ebook, or raise an invoice. ' +
     'When one of those would resolve it, the next step IS that action, phrased as a thing the instructor does ' +
     '("Reset the password for them in the students tab of the instructor portal"), not another question or step routed through the student. ' +
-    'Keep everything in plain English an untechnical instructor can act on.\n\n' +
+    'Keep everything in plain English an untechnical instructor can act on. ' +
+    // FB-0335 (Edd): a brief confidently told an instructor to sidestep "the
+    // phone verification step" with a placeholder number. We have no phone
+    // verification. Inventing a mechanism sends somebody hunting for a screen
+    // that does not exist, and it is worse than saying "I do not know".
+    'NEVER describe how our platform, signup, portal or emails work unless the conversation or the playbook above actually says so. ' +
+    'Do not invent screens, settings, verification steps, fields or workarounds. If the fix depends on how something of ours behaves and you have not been told, ' +
+    'say plainly what needs checking and by whom ("check with Edd whether the signup can be completed without that code") rather than describing a mechanism you are guessing at.\n\n' +
     'One more thing (Edd, FB-0179): screenshots a student shares are often their own COURSEWORK - chartwork photos, ' +
     'exam answers, assessment pages sent for marking - not pictures of a fault. Read the conversation for which it is.\n\n' +
     'Return ONLY JSON, no prose, no fences:\n' +
