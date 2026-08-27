@@ -578,6 +578,7 @@ function doPost(e) {
     if (action === 'caseCheckpoint') return jsonOut(caseCheckpoint_(body));
     if (action === 'caseClose') return jsonOut(caseClose_(body));
     if (action === 'caseTouch') return jsonOut(caseTouch_(body));
+    if (action === 'caseIgnoreLog') return jsonOut(caseIgnoreLog_(body));   // r139 (FB-0337)
     if (action === 'batchStudentDrafts') return jsonOut(batchStudentDrafts_(body));
     if (action === 'listContentSuggestions') return jsonOut(listContentSuggestions_());
     if (action === 'resolveContentSuggestion') return jsonOut(resolveContentSuggestion_(body));
@@ -595,6 +596,7 @@ function doPost(e) {
     if (action === 'chatwootContactUrl') return jsonOut(chatwootContactUrl_(body));
     if (action === 'setVoiceGuide') return jsonOut(setVoiceGuide_(body));
     if (action === 'setEddTools') return jsonOut(setEddTools_(body));   // r132 (FB-0318)
+    if (action === 'studentToldCheck') return jsonOut(studentToldCheck_(body));   // r139 (FB-0333)
     if (action === 'listVoiceGuides') return jsonOut(listVoiceGuides_());
     if (action === 'matchUpdate') return jsonOut(matchUpdate_(body));
     if (action === 'inviteUser') return jsonOut(inviteUser_(body));
@@ -767,7 +769,7 @@ function reqPerm_(action) {
     // lesson traffic. Same permission as Reports itself, and it returns counts
     // only - no summaries, no students, nothing about any one report.
     case 'lessonIssueCounts': return 'analytics';
-    case 'saveChecklist': case 'assignIssue': case 'getAssignees': return 'work';
+    case 'saveChecklist': case 'assignIssue': case 'getAssignees': case 'studentToldCheck': return 'work';
     // The queue tools (Edd, FB-0165): reviewing and bulk-assigning are for
     // anyone who works a fix queue. Fetching a Chatwoot update sits with the
     // other update paths.
@@ -777,7 +779,7 @@ function reqPerm_(action) {
     // The Live Case workspace (Round 45): visible to every instructor-level
     // user, and cases are shared - anyone can pick one up and carry on.
     case 'listLiveCases': case 'caseBrief': case 'caseCheckReply': case 'caseDraftReply':
-    case 'caseCheckpoint': case 'caseClose': case 'caseTouch': case 'batchStudentDrafts': return 'log';
+    case 'caseCheckpoint': case 'caseClose': case 'caseTouch': case 'caseIgnoreLog': case 'batchStudentDrafts': return 'log';
     // Saying "this suggestion was wrong here" belongs to whoever was shown it,
     // so it sits at the same tier as the case. Approving the correction, and
     // therefore changing a corpus row, is Edd's alone (FB-0231).
@@ -2954,18 +2956,18 @@ function markDevFixed_(data) {
   var rec = found.record;
   rec.dev_fixed_at = new Date().toISOString();
   if (!rec.dev_passed_at) rec.dev_passed_at = rec.dev_fixed_at;
-  // A course error marked fixed IS fixed (Edd, FB-0195): the course team just
-  // changed the slide themselves, so asking an instructor to go and check it
-  // again is make-work. Straight to resolved; notified_students stays as it
-  // was, so the "tell the student" lane still fires where students are
-  // affected. Tech issues keep the dev_fixed stop - a code fix genuinely
-  // needs someone to see it work before the student's told.
-  if (String(rec.category || '').toLowerCase() === 'course_error') {
-    rec.status = 'resolved';
-    rec.resolved_at = rec.dev_fixed_at;
-    if (!rec.resolution_note) rec.resolution_note = 'Fixed by the course team' + (data.dev_notes ? ': ' + data.dev_notes : '.');
-  } else {
-    rec.status = 'dev_fixed';
+  // FB-0332 (Edd, 26 Aug 2026): "I want to remove the stage asking an
+  // instructor to check something is fixed. The Dev or Course Dev should do
+  // that automatically." Course errors have resolved straight off since
+  // FB-0195; tech fixes now do the same. Whoever fixed it tests it - a second
+  // person clicking Verified was ceremony, and it left real fixes sitting in
+  // a lane for days. The "tell the student" lane is untouched, so nobody is
+  // forgotten, and Not fixed - reopen is still one press if it comes back.
+  var isCourse = String(rec.category || '').toLowerCase() === 'course_error';
+  rec.status = 'resolved';
+  rec.resolved_at = rec.dev_fixed_at;
+  if (!rec.resolution_note) {
+    rec.resolution_note = (isCourse ? 'Fixed by the course team' : 'Fixed by the developers') + (data.dev_notes ? ': ' + data.dev_notes : '.');
   }
   if (data.dev_notes != null) rec.dev_notes = data.dev_notes;
   rec.updated_at = new Date().toISOString();
@@ -2975,6 +2977,49 @@ function markDevFixed_(data) {
   }
   maybeDevQueueAlert_();
   return { ok: true };
+}
+
+// FB-0333 (Edd): "auto check if any of the 'fixed' issues have already had
+// the student told... We need to check the chat history to see if the student
+// has been informed." So it reads the conversation rather than guessing: only
+// a message from US, after the fix landed, that actually tells them it is
+// sorted, counts. Anything less and the app would be claiming a student was
+// told when nobody knows that, which is the one mistake worth avoiding here.
+function studentToldCheck_(data) {
+  var found = findRow_(data.issue_id);
+  if (!found) return { ok: false, error: 'No issue found with id ' + data.issue_id };
+  var rec = found.record;
+  var convId = String(rec.chatwoot_conversation_id || '').trim();
+  if (!convId) return { ok: true, told: false, why: 'no Chatwoot conversation on this issue' };
+  var since = rec.dev_fixed_at || rec.resolved_at || rec.updated_at;
+  var msgs = [];
+  try {
+    // chatwootTurns_ already cleans signatures, quoted chains and image blobs,
+    // and labels who said what - no second reader of the same endpoint.
+    var thread = chatwootTurns_(convId);
+    (thread.turns || []).forEach(function (t) {
+      if (t.who !== 'agent' || !t.body) return;
+      if (since && t.at && t.at < String(since)) return;
+      msgs.push({ at: t.at, text: String(t.body).slice(0, 600) });
+    });
+  } catch (e) { return { ok: false, error: 'could not read the conversation: ' + e }; }
+  if (!msgs.length) return { ok: true, told: false, why: 'nothing sent to them since the fix' };
+
+  var prompt = 'An issue a student reported has been fixed. Below are the messages WE sent that student after the fix. ' +
+    'Decide one thing only: have we actually told them the problem is fixed or working again? ' +
+    'A message that only asks a question, chases something else, or talks about a different matter does NOT count. ' +
+    'Do not infer it from politeness or from us being in touch. If in doubt, say no.\n\n' +
+    'OUR MESSAGES SINCE THE FIX:\n"""\n' + msgs.map(function (m) { return '[' + m.at + '] ' + m.text; }).join('\n---\n').slice(0, 6000) + '\n"""\n\n' +
+    'Return ONLY JSON: {"told": true|false, "quote": "<the few words that say so, or empty>"}';
+  var out = anthropicJson_(ANTHROPIC_MODEL, prompt, 300);
+  if (!out || typeof out.told === 'undefined') return { ok: false, error: 'could not read a verdict' };
+  if (out.told) {
+    rec.notified_students = 'true';
+    rec.updated_at = new Date().toISOString();
+    found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+    addUpdate_({ issue_id: rec.issue_id, text: 'Student already told, found in the chat: "' + String(out.quote || '').slice(0, 200) + '" (checked automatically, FB-0333)', keep_status: true, _system: true });
+  }
+  return { ok: true, told: !!out.told, quote: out.quote || '', checked: msgs.length };
 }
 
 function sendNotifyStudentSlack_(issue, appUrl) {
@@ -6018,7 +6063,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r138 · 2026-08-26';
+var CODE_STAMP = 'r139 · 2026-08-26';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -7058,6 +7103,7 @@ function listLiveCases_(data) {
       issue_status: r.issue_status || '',
       summary: r.summary || '',
       draft_count: Number(r.draft_count) || 0,
+      log_nudge_ignored: (r._brief && r._brief.log_nudge_ignored) || '',
       unread: isTrueLike_(r.unread),
       chat_still_open: !!r.chat_still_open,
       cw_status: r._cw_status || '',
@@ -7738,6 +7784,21 @@ function caseClose_(data) {
 
 // Opening a case clears the sheet-level unread flag (the per-person dot is
 // handled in the browser). Deliberately does NOT count as touching the case.
+// FB-0337 (Edd): "to stop things getting resolved in Chatwoot and never
+// logged" a case somebody has drafted a reply in, with no issue filed, turns
+// into an action asking them to log it or ignore it. Ignore is remembered on
+// the case, so a deliberate "no, this one is nothing" stays dismissed.
+function caseIgnoreLog_(data) {
+  var rec = liveCaseFind_(chatwootConvId_(data.conversation_id || data.conversation));
+  if (!rec) return { ok: false, error: 'no case on that conversation' };
+  var b = caseBriefJson_(rec);
+  b.log_nudge_ignored = new Date().toISOString();
+  b.log_nudge_ignored_by = (data._user && data._user.name) || '';
+  rec.brief_json = JSON.stringify(b);
+  liveCaseSave_(rec);
+  return { ok: true };
+}
+
 function caseTouch_(data) {
   var rec = liveCaseFind_(chatwootConvId_(data.conversation_id || data.conversation));
   if (!rec) return { ok: true };

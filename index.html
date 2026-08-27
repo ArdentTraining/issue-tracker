@@ -2852,7 +2852,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r138 · 2026-08-26";  // bump this with each round, it lands on every feedback report
+var BUILD = "r139 · 2026-08-26";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4678,6 +4678,53 @@ function removeEddTool(n) {
   pushEddTools(tools, "Removed.");
 }
 
+// A case worked on but never filed. draft_count is the honest signal: somebody
+// asked for a reply, so somebody was dealing with it.
+function checkAlreadyTold(id) {
+  busyShow("Reading the conversation for what we told them…");
+  apiPost({ action: "studentToldCheck", issue_id: id }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("Could not check: " + ((res && res.error) || "unknown"), 8000); return; }
+    if (res.told) {
+      toast('Already told - "' + String(res.quote || "").slice(0, 90) + '". Ticked off.', 9000);
+      loadIssues();
+    } else {
+      toast(res.why || "Nothing in the chat says we have told them yet.", 8000);
+    }
+  }).catch(function (e) { busyHide(); toastErr("Checking the conversation", e); });
+}
+
+function unloggedCases() {
+  return (state.liveCases || []).filter(function (c) {
+    return Number(c.draft_count) > 0 && !c.issue_id && !c.log_nudge_ignored;
+  });
+}
+function logFromCase(conv) {
+  // "If they log, it should first check for updates" (Edd) - the conversation
+  // has usually moved on since the draft, and filing yesterday's version of it
+  // is how a stale report gets written.
+  busyShow("Checking for anything new before we log it…");
+  apiPost({ action: "caseCheckReply", conversation_id: String(conv) }).catch(function () {}).then(function () {
+    return loadLiveCases();
+  }).then(function () {
+    busyHide();
+    state.liveSelected = String(conv);
+    setView("live");
+    renderLiveDetail();
+    var host = $("liveSplitHost");
+    if (host) host.scrollIntoView({ behavior: "smooth", block: "start" });
+    toast("Up to date. Press Log issue in the case to file it.", 7000);
+  }).catch(function (e) { busyHide(); toastErr("Checking that conversation", e); });
+}
+function ignoreLogNudge(conv) {
+  apiPost({ action: "caseIgnoreLog", conversation_id: String(conv) }).then(function (res) {
+    if (!res || !res.ok) { toast("Could not set that aside: " + ((res && res.error) || "unknown")); return; }
+    (state.liveCases || []).forEach(function (c) { if (String(c.conversation_id) === String(conv)) c.log_nudge_ignored = "now"; });
+    renderActions(); updateRailBadges();
+    toast("Left alone. It will not ask again.");
+  }).catch(function (e) { toastErr("Setting that aside", e); });
+}
+
 function actionRows() {
   var a = myActionItems();
   var rows = []
@@ -4694,6 +4741,13 @@ function actionRows() {
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
     .concat((a.adminq || []).map(function (i) { return { i: i, kind: "adminq", word: "Dev asks", colour: "var(--medium)", act: "A developer needs an answer from Charlie, Charly or Edd" }; }))
     .concat((a.eddq || []).map(function (i) { return { i: i, kind: "eddq", word: "Yours", colour: "var(--accent)", act: "A tool you own - fix when ready" }; }))
+    // FB-0337 (Edd): somebody worked this conversation - drafted a reply in it -
+    // and no issue was ever logged. That is exactly how a fault gets sorted in
+    // Chatwoot and never counted, so it asks once and remembers a no.
+    .concat(unloggedCases().map(function (c) {
+      return { c: c, kind: "logit", word: "Logged?", colour: "var(--medium)",
+        act: "A reply was drafted here but nothing was logged. Log it, or leave it." };
+    }))
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
     .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
     .concat(a.followups.map(function (i) {
@@ -4741,8 +4795,26 @@ function renderActions() {
   }
 
   $("actionsList").innerHTML = rows.map(function (r) {
-    var i = r.i, id = esc(i.issue_id);
     var stop = 'event.stopPropagation();';
+    // FB-0337: this one row is about a CONVERSATION rather than an issue -
+    // there is no issue yet, that is the whole point of it - so it builds its
+    // own card and leaves the issue machinery below alone.
+    if (r.kind === "logit") {
+      var conv = esc(String(r.c.conversation_id));
+      var sub2 = ["#" + conv];
+      if (r.c.student_name) sub2.push(String(r.c.student_name).split(" ")[0]);
+      if (r.c.last_activity) sub2.push(fmtDate(r.c.last_activity));
+      return '<div class="act-row" onclick="selectLiveCase(\'' + conv + '\')">' +
+          '<span class="act-word" style="background:' + r.colour + ';color:#02121f;">' + esc(r.word) + '</span>' +
+          '<div><div class="act-title">' + esc(r.c.summary || r.c.student_name || ("Conversation #" + conv)) + '</div>' +
+            '<div class="act-sub">' + esc(sub2.join(" · ")) + '</div></div>' +
+          '<div><span class="act-do">' + esc(r.act) + '</span>' +
+            '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'logFromCase(\'' + conv + '\')">Log it</button>' +
+            ' <button class="ghost small" style="padding:5px 12px;" title="Nothing to log here. It will not ask again." onclick="' + stop + 'ignoreLogNudge(\'' + conv + '\')">Nothing to log</button>' +
+          '</div>' +
+        '</div>';
+    }
+    var i = r.i, id = esc(i.issue_id);
     // The one button that matches the action phrase. Everything else is in
     // the issue itself, one click away.
     var btn = "";
@@ -4758,7 +4830,11 @@ function renderActions() {
     else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" title="You have checked it yourself and it works: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
-      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'fixed\')">Draft email</button>';
+      ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'fixed\')">Draft email</button>' +
+      // FB-0333 (Edd): "check the chat history to see if the student has been
+      // informed." Reads what we actually sent them after the fix; only a
+      // message that really says it is sorted counts, and it ticks itself off.
+      (i.chatwoot_conversation_id ? ' <button class="ghost small" style="padding:5px 12px;" title="Reads the Chatwoot conversation for a message from us, after the fix, telling them it is sorted." onclick="' + stop + 'checkAlreadyTold(\'' + id + '\')">Already told?</button>' : '');
     else if (r.kind === "followup") btn = (r.nudged ? '' :
       '<button class="primary small fu-nudge" style="padding:5px 12px;" title="Opens a ready-written check-in asking if the fix worked. Send it, press the sent marker, and the 7-day clock keeps running." onclick="' + stop + 'nudgeStudent(\'' + id + '\')">Nudge the student</button> ') +
       '<button class="' + (r.nudged ? 'primary' : 'ghost') + ' small" style="padding:5px 12px;" title="The workaround held, or the fix has since landed. Closes it for good - same as Resolved everywhere else." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>' +
@@ -4804,7 +4880,7 @@ function renderActions() {
 // nudge button.
 function peekFollowups(rows) {
   if (!state._fuPeeks) state._fuPeeks = {};
-  rows.filter(function (r) { return r.kind === "followup"; }).forEach(function (r) {
+  rows.filter(function (r) { return r.kind === "followup" && r.i; }).forEach(function (r) {
     var id = r.i.issue_id, key = String(id).slice(0, 8);
     var apply = function (p) {
       if (!p || !p.ok || !p.fresh) return;
@@ -5097,9 +5173,13 @@ function unpickedChats() {
     return !!(c.last_at && new Date(c.last_at) > new Date(since));
   });
 }
+// FB-0337: the second list is gone - its rows joined the one above. This now
+// only carries the loading and error states, so a Chatwoot outage still says
+// so rather than looking like an empty inbox.
 function renderOpenChats() {
   var el = $("openChats");
   if (!el) return;
+  if (!state._openChatsLoading && !state._openChatsError) { el.innerHTML = ""; return; }
   if (state._openChatsLoading && !state._openChats) {
     el.innerHTML = '<p class="muted small"><span class="spinner"></span> checking Chatwoot…</p>';
     return;
@@ -5142,14 +5222,18 @@ function renderLive() {
     el.innerHTML = '<p class="muted small"><span class="spinner"></span> loading the case list…</p>';
     return;
   }
-  if (!cases.length) {
-    el.innerHTML = '<p class="muted small">No open cases yet.' +
-      (unpickedChats().length ? ' There are open conversations in Chatwoot below - pick one up to start.' : ' Paste a Chatwoot link above, or Browse recent, to open one.') + '</p>';
+  // FB-0337 (Edd): "'open cases' and 'open in chatwoot' could all just be
+  // combined as 'open in chatwoot'." They were two lists of the same thing
+  // split by an internal distinction - whether somebody had pressed Open a
+  // case - which is ours to worry about, not a reason to read two lists.
+  var unpicked = unpickedChats();
+  if (!cases.length && !unpicked.length) {
+    el.innerHTML = '<p class="muted small">Nothing open in Chatwoot. Paste a link above, or Browse recent, to open one.</p>';
   } else {
     // r128 (Edd: "Why is sara at the top here? seperated out?"): the case list
     // finally says what it is, and a case whose conversation is snoozed or
     // pending in Chatwoot says so instead of sitting there unexplained.
-    el.innerHTML = '<h3 style="margin:0 0 8px;">Open cases (' + cases.length + ')</h3>' + cases.map(function (c) {
+    el.innerHTML = '<h3 style="margin:0 0 8px;">Open in Chatwoot (' + (cases.length + unpicked.length) + ')</h3>' + cases.map(function (c) {
       // Edd, 22 Aug 2026: "things seem to get 'assigned' to a person. we don't
       // need this feature on this page." The chip read as ownership, and this
       // page is just what is live in Chatwoot that might be a bug - who
@@ -5165,9 +5249,20 @@ function renderLive() {
         '</div>' +
         (c.summary ? '<div class="sum clamp4">' + esc(c.summary) + '</div>' : '') +
       '</div>';
+    }).join("") + unpicked.map(function (c) {
+      // Not picked up yet: same list, one press to read it here. The chip is
+      // the only difference, because to the person reading it is the same job.
+      return '<div class="issue-card" onclick="openLiveCaseFromPicker(\'' + esc(String(c.id)) + '\')">' +
+        '<div class="top">' +
+          '<span class="code">#' + esc(String(c.id)) + '</span>' +
+          (c.student_name ? '<strong>' + esc(c.student_name) + '</strong>' : '') +
+          '<span class="badge" style="background:transparent;border:1px solid var(--line);color:var(--muted);" title="Nobody has opened this one here yet. Click to read it with a brief.">not picked up</span>' +
+          '<span class="who">' + fmtDate(c.last_at) + '</span>' +
+        '</div>' +
+        (c.snippet ? '<div class="sum clamp4">' + esc(c.snippet) + '</div>' : '') +
+      '</div>';
     }).join("");
   }
-  renderOpenChats();
   markLiveActive();
   if (state.liveSelected) {
     if (liveCaseById(state.liveSelected)) renderLiveDetail();
