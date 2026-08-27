@@ -505,6 +505,10 @@ function doPost(e) {
     if (action === 'setSlackChannel') return jsonOut(setSlackChannel_(body));   // r107: per-channel webhook, DEPLOY_KEY-gated
     if (action === 'chatwootProbe') return jsonOut(chatwootProbe_(body));
     if (action === 'runSetup') return jsonOut(runSetup_(body));
+    // r140.1: fire a scheduled job by hand, key-gated, so a digest or a sweep
+    // can be PROVEN rather than simulated. Only the harmless read-and-post
+    // jobs are listed; nothing here changes an issue.
+    if (action === 'runJob') return jsonOut(runJob_(body));
     if (action === 'runMigrateAudience') {
       var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
       if (!mk || String(body.key || '') !== mk) return jsonOut({ ok: false, error: 'bad deploy key' });
@@ -4830,6 +4834,16 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
+var RUNNABLE_JOBS_ = { unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1 };
+function runJob_(data) {
+  var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  var name = String(data.job || '');
+  if (!RUNNABLE_JOBS_[name]) return { ok: false, error: 'not a runnable job: ' + name };
+  try { this[name] ? this[name]() : eval(name + '()'); } catch (e) { return { ok: false, error: String(e) }; }
+  return { ok: true, ran: name };
+}
+
 function runSetup_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
@@ -6134,7 +6148,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r140.1 · 2026-08-26';
+var CODE_STAMP = 'r140.2 · 2026-08-26';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
