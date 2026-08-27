@@ -51,6 +51,7 @@ var SLACK_NOTICES = {
   query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
   query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
   dev_queue_low:     { on: true,  to: 'SLACK_ADMINS' },              // r129: falls back to the main channel until the private admin channel is wired
+  unrouted_digest:   { on: true,  to: 'SLACK_ADMINS' },              // r140 (Edd): Tuesday 09:00, what nobody has picked up
   shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
   // Off for good (Edd, 19 Aug 2026). All five still exist in the tracker.
   feedback:          { on: false, to: '' },
@@ -4598,6 +4599,7 @@ function deployBackend_(data) {
 // Called from setup(), safe to run repeatedly.
 function ensureTriggers_() {
   var haveMonthly = false, haveTbc = false, haveBackup = false, haveDigest = false, haveScan = false, haveChase = false;
+  var haveUnrouted = false;   // r140
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -4606,6 +4608,7 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'weeklyDigest') haveDigest = true;
     if (t.getHandlerFunction() === 'scanChatwoot') haveScan = true;
     if (t.getHandlerFunction() === 'chaseShipping') haveChase = true;
+    if (t.getHandlerFunction() === 'unroutedDigest') haveUnrouted = true;
   });
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
@@ -4620,6 +4623,12 @@ function ensureTriggers_() {
   }
   if (!haveDigest) {
     ScriptApp.newTrigger('weeklyDigest').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).create();
+  }
+  // r140 (Edd): Tuesday 09:00. Monday already carries the backup and the old
+  // digest's slot, and a Tuesday list is one somebody can actually act on
+  // rather than one that lands in the Monday pile-up.
+  if (!haveUnrouted) {
+    ScriptApp.newTrigger('unroutedDigest').timeBased().onWeekDay(ScriptApp.WeekDay.TUESDAY).atHour(9).create();
   }
   if (!haveScan) {
     ScriptApp.newTrigger('scanChatwoot').timeBased().everyDays(1).atHour(5).create();
@@ -4677,6 +4686,53 @@ function weeklyDigest() {
   lines.push('');
   lines.push('Open the tracker: ' + (appUrl || '(app url not set)'));
   slackPost_('weekly_digest', lines.join('\n'));
+}
+
+// r140 (Edd, 26 Aug 2026): "a weekly digest of new bugs reported which
+// haven't been passed onto devs, so things don't slip through the cracks."
+//
+// Deliberately NOT the old weekly_digest (muted for good): that one reported
+// the state of everything, which is a thing to read rather than a thing to do.
+// This one lists only what NOBODY has picked up - still Open, no queue, no
+// assignee - because that is the pile things actually slip through.
+function unroutedDigest() {
+  if (!slackOn_('unrouted_digest')) return;
+  var issues = getIssues_().issues || [];
+  var day = 24 * 3600 * 1000, now = Date.now();
+  var stuck = issues.filter(function (i) {
+    var st = String(i.status || 'open').toLowerCase();
+    if (st !== 'open' && st !== 'in_progress') return false;   // with_dev/with_edd/course/resolved/tbc/parked are all somebody's
+    if (String(i.prelaunch) === 'true') return false;          // the archive is not this week's work
+    if (String(i.request_kind || '').toLowerCase() === 'improvement') return false;  // backlog, not a crack to slip through
+    return true;
+  }).sort(function (a, b) {
+    var pr = { high: 0, medium: 1, low: 2 };
+    var p = (pr[String(a.priority).toLowerCase()] == null ? 3 : pr[String(a.priority).toLowerCase()]) -
+            (pr[String(b.priority).toLowerCase()] == null ? 3 : pr[String(b.priority).toLowerCase()]);
+    return p || (new Date(a.submitted_at) - new Date(b.submitted_at));   // then oldest first
+  });
+
+  var appUrl = getAppUrl_();
+  if (!stuck.length) {
+    slackPost_('unrouted_digest', ':white_check_mark: *Nothing waiting to be picked up.* Every open issue is with somebody.');
+    return;
+  }
+  var newThisWeek = stuck.filter(function (i) { return now - new Date(i.submitted_at) < 7 * day; }).length;
+  var week = stuck.filter(function (i) { return now - new Date(i.submitted_at) >= 7 * day; });
+
+  var lines = [':clipboard: *' + stuck.length + ' issue' + (stuck.length === 1 ? '' : 's') + ' nobody has picked up yet*',
+    '' + newThisWeek + ' logged this week, ' + week.length + ' older.'];
+  lines.push('');
+  stuck.slice(0, 12).forEach(function (i) {
+    var days = Math.floor((now - new Date(i.submitted_at)) / day);
+    var who = String(i.category || '').toLowerCase() === 'course_error' ? 'course' : 'tech';
+    lines.push('• *' + String(i.priority || '?').toUpperCase() + '* (' + who + ', ' + days + 'd) ' +
+      String(i.summary || '(no summary)').slice(0, 120) + '  <' + issueLink_(i, appUrl) + '|open>');
+  });
+  if (stuck.length > 12) lines.push('…and ' + (stuck.length - 12) + ' more.');
+  lines.push('');
+  lines.push('Each one needs passing to the developers or the course team, or closing.');
+  slackPost_('unrouted_digest', lines.join('\n'));
 }
 
 // One tap of feedback on each AI extraction ("Spot on" / "Needed fixing"),
@@ -6063,7 +6119,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r139 · 2026-08-26';
+var CODE_STAMP = 'r140 · 2026-08-26';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
