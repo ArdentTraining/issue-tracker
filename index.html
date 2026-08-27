@@ -2852,7 +2852,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r139 · 2026-08-26";  // bump this with each round, it lands on every feedback report
+var BUILD = "r139.1 · 2026-08-26";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6124,7 +6124,9 @@ function updateRailBadges() {
   }
   var iss = $("railBadgeIssues");
   if (iss) {
-    var m = p.log ? actionRows().length + (state.liveCases || []).length : 0;
+    // A "Logged?" row IS one of the open conversations counted below it, so it
+    // must not be counted twice (the r60 rule: one number, one source).
+    var m = p.log ? actionRows().filter(function (r) { return r.kind !== "logit"; }).length + (state.liveCases || []).length : 0;
     iss.textContent = m > 99 ? "99+" : String(m);
     iss.classList.toggle("on", !!m);
   }
