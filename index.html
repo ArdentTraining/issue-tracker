@@ -1647,6 +1647,7 @@
   </div>
   <div class="fchips" id="devChips"></div>
   <div id="devAskHost"></div>
+  <div id="devReplies"></div>
   <!-- One row (Edd, FB-0202): without display:flex here the global
        "select { width:100% }" rule stacked the five dropdowns full-width. -->
   <div id="devFiltersHome"><div class="area-toggle ctl-stow" id="devFilters" data-home="devFiltersHome" style="display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div></div>
@@ -1679,6 +1680,7 @@
   </div>
   <div class="fchips" id="courseChips"></div>
   <div id="courseAskHost"></div>
+  <div id="courseReplies"></div>
   <div id="courseFiltersHome"><div class="area-toggle ctl-stow" id="courseFilters" data-home="courseFiltersHome" style="flex-wrap:wrap;gap:8px 10px;align-items:flex-end;"></div></div>
   <div class="area-toggle" id="courseTools" style="flex-wrap:wrap;gap:8px 10px;align-items:center;"></div>
   <!-- The r62 condition builder, unchanged, living in the Assign all popup. -->
@@ -2871,7 +2873,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r144 · 2026-09-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r145 · 2026-09-05";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -10474,7 +10476,66 @@ function devQueue(cats) {
 // sub-line, and the one button that matters - with the full issue one click
 // away in the split pane. The old badge-heavy cards made every row shout;
 // these rows keep the noise in the sub-line where it can be skimmed.
+// r145 (Edd, 5 Sep 2026): "until we connect Aureus slack can we have a new
+// replies/messages section at the top of the dev page?" Answers to questions
+// THIS person asked, newest first, until they press Got it. The asker rides
+// on each answer entry from r145; older answers fall back to the question
+// entry just before them.
+function myNewReplies() {
+  var me = String((state.user && state.user.name) || "").trim();
+  if (!me) return [];
+  var seen = (state.prefs && state.prefs.replies_seen) || {};
+  var out = [];
+  (state.issues || []).forEach(function (i) {
+    var reps = [];
+    try { reps = i.reports_json ? JSON.parse(i.reports_json) : []; } catch (e) { return; }
+    var lastQ = null;
+    reps.forEach(function (r) {
+      var k = String(r.kind || "").toLowerCase();
+      if (k === "question") { lastQ = r; return; }
+      if (k !== "answer") return;
+      var to = r.to || (lastQ && lastQ.instructor_name) || "";
+      if (String(to).trim() !== me) return;
+      if (seen[i.issue_id] && String(seen[i.issue_id]) >= String(r.date || "")) return;
+      out.push({ i: i, q: lastQ ? lastQ.raw_text : "", a: r.raw_text || "", by: r.instructor_name || "", date: r.date || "" });
+    });
+  });
+  out.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  // One card per issue, the newest reply on it.
+  var seenIssue = {}, dedup = [];
+  out.forEach(function (x) { if (seenIssue[x.i.issue_id]) return; seenIssue[x.i.issue_id] = 1; dedup.push(x); });
+  return dedup;
+}
+function renderNewReplies(hostId, openFn) {
+  var host = $(hostId); if (!host) return;
+  var list = myNewReplies();
+  if (!list.length) { host.innerHTML = ""; return; }
+  host.innerHTML = '<div class="card" style="margin-bottom:12px;border-color:var(--accent);">' +
+    '<div style="font-weight:600;margin-bottom:6px;">New replies (' + list.length + ')</div>' +
+    list.map(function (x) {
+      var id = esc(x.i.issue_id);
+      return '<div style="padding:8px 0;border-top:1px solid var(--line);">' +
+        '<div class="small muted">' + esc(shortId(x.i)) + ' · ' + esc(x.by) + ' replied ' + esc(fmtDate(x.date)) + '</div>' +
+        '<div style="margin:4px 0;">' + esc(cardTitle(x.i)) + '</div>' +
+        (x.q ? '<div class="small muted">You asked: ' + esc(String(x.q).slice(0, 240)) + '</div>' : '') +
+        '<div style="margin:4px 0;white-space:pre-wrap;">' + esc(x.a) + '</div>' +
+        '<div style="margin-top:6px;"><button class="primary small" style="padding:5px 12px;" onclick="' + openFn + '(\'' + id + '\')">Open</button> ' +
+        '<button class="ghost small" style="padding:5px 12px;" onclick="replySeen(\'' + id + '\', \'' + esc(x.date) + '\')">Got it</button></div>' +
+      '</div>';
+    }).join("") + '</div>';
+}
+function replySeen(id, date) {
+  var seen = Object.assign({}, (state.prefs && state.prefs.replies_seen) || {});
+  seen[id] = date;
+  state.prefs = Object.assign({}, state.prefs || {}, { replies_seen: seen });
+  renderCurrentView();
+  apiPost({ action: "setPrefs", prefs: { replies_seen: seen } }).then(function (res) {
+    if (res && res.ok && res.prefs) state.prefs = res.prefs;
+  }).catch(function () {});
+}
+
 function renderDev() {
+  renderNewReplies("devReplies", "openDevDetail");
   // Internal work is tech_issue now, so one category covers both halves of
   // the dev queue (student-facing bugs and our own systems).
   var all = devQueue(["tech_issue"]);
@@ -10737,6 +10798,7 @@ function courseUniq(pool, fn) {
 }
 
 function renderCourse() {
+  renderNewReplies("courseReplies", "openDevDetail");
   var pool = courseQueueAll();
 
   // Stats. "To do" is what still needs doing; "Fixed / done" is everything

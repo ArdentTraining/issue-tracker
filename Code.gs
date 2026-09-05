@@ -866,6 +866,10 @@ function prefsOf_(user) {
 // Merge the caller's own preferences. Only known keys, only booleans, only
 // their own row: there is nothing here worth a permission beyond being logged in.
 var PREF_KEYS = ['open_after_log'];
+// r145: replies_seen = { issue_id: answer date } - the dev/course page's
+// "New replies" hides a reply once its reader presses Got it. Capped so a
+// busy account cannot grow the cell without limit.
+var PREF_MAP_KEYS = ['replies_seen'];
 function setPrefs_(body) {
   var user = body._user || {};
   var f = findUserByEmail_(user.email);
@@ -874,6 +878,12 @@ function setPrefs_(body) {
   var cur = prefsOf_(f.user);
   var inc = (body.prefs && typeof body.prefs === 'object') ? body.prefs : {};
   PREF_KEYS.forEach(function (k) { if (inc.hasOwnProperty(k)) cur[k] = (inc[k] === true || inc[k] === 'true'); });
+  PREF_MAP_KEYS.forEach(function (k) {
+    if (!inc.hasOwnProperty(k) || !inc[k] || typeof inc[k] !== 'object') return;
+    var m = {}, keys = Object.keys(inc[k]).slice(-200);
+    keys.forEach(function (id) { m[String(id).slice(0, 40)] = String(inc[k][id]).slice(0, 30); });
+    cur[k] = m;
+  });
   setCell_(f, 'prefs_json', JSON.stringify(cur));
   return { ok: true, prefs: cur };
 }
@@ -3271,7 +3281,9 @@ function answerQuery_(data) {
 
   var reps = [];
   try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
-  reps.push({ kind: 'answer', instructor_name: who, summary: 'Reply to question', raw_text: reply, date: now });
+  // r145: `to` names the asker, so the dev/course page can show each person
+  // their own new replies without pairing entries up by hand.
+  reps.push({ kind: 'answer', instructor_name: who, summary: 'Reply to question', raw_text: reply, date: now, to: rec.dev_query_by || '' });
   rec.reports_json = capReports_(reps);
   rec.report_count = realReportCount_(reps);
 
@@ -3289,6 +3301,13 @@ function answerQuery_(data) {
   return { ok: true };
 }
 
+// r145 (Edd, 5 Sep 2026): "This one could have been DM'd straight to Stuart
+// ... replies to Devs like Aman should not be posted on Ardent Slack. Until we
+// set up Aureus slack they should not go anywhere." So an answer goes to the
+// asker as a DM when they are one of ours (name -> Users sheet -> email), and
+// otherwise ONLY to the Aureus channel once that property exists. No channel
+// post, no thread echo, no fallback to the main room: the reply is on the
+// issue, and the dev/course page shows it under New replies.
 function sendQueryAnsweredSlack_(issue, question, reply, asker, appUrl) {
   if (!slackOn_('query_answered')) return;
   var text = [
@@ -3300,15 +3319,19 @@ function sendQueryAnsweredSlack_(issue, question, reply, asker, appUrl) {
     '',
     'Open this issue: ' + issueLink_(issue, appUrl)
   ].filter(function (l) { return l !== null; }).join('\n');
-  // r122 (Edd): the answer lands as a REPLY in the question's thread when
-  // the question went out via the bot. Fallback: the channel route as before.
-  var thread = null;
-  try { thread = issue.slack_thread ? JSON.parse(issue.slack_thread) : null; } catch (e) {}
-  if (thread && thread.channel && thread.ts) {
-    var sent = slackBotPost_(thread.channel, text, thread.ts);
-    if (sent.ok) return;
+  var f = asker ? findUserByField_('name', asker) : null;
+  if (f && f.user && f.user.email) {
+    var dm = slackDm_(f.user.email, text);
+    if (dm.ok) return;
   }
-  slackPost_('query_answered', text);
+  // An external developer, or no DM route: only a channel that actually
+  // exists for them. Deliberately not slackPost_, which would fall back to
+  // the main channel.
+  var url = PropertiesService.getScriptProperties().getProperty('SLACK_AUREUS_TECH');
+  if (!url) return;
+  try {
+    UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true, payload: JSON.stringify({ text: text }) });
+  } catch (e) {}
 }
 
 // The instructor gave the student a workaround and marked it Resolved-TBC, but
@@ -6277,7 +6300,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r144 · 2026-09-05';
+var CODE_STAMP = 'r145 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
