@@ -2873,7 +2873,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r145 · 2026-09-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r146 · 2026-09-05";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7942,10 +7942,11 @@ function findOpenIssuesByEmail(email) {
   if (!email) return [];
   return state.issues.filter(function (i) {
     if (!isOpen(i)) return false;
-    if ((i.student_contact || "").trim().toLowerCase() === email) return true;
+    // FB-0347: a phone number arrives as a Number from the sheet; String() first.
+    if (String(i.student_contact || "").trim().toLowerCase() === email) return true;
     var reps = parseReports(i);
     for (var r = 0; r < reps.length; r++) {
-      if ((reps[r].student_contact || "").trim().toLowerCase() === email) return true;
+      if (String(reps[r].student_contact || "").trim().toLowerCase() === email) return true;
     }
     return false;
   }).sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
@@ -9874,6 +9875,10 @@ function splitTargetFor(kind) {
   if (window.innerWidth < 900) return null;
   if (kind === "admin" && state.view === "admin" && state.trackView !== "board") return { host: $("adminSplitHost"), dock: $("adminDock") };
   if (kind === "admin" && state.view === "actions") return { host: $("actionsSplitHost"), dock: $("actionsDock") };
+  // FB-0347 (Edd): Today (the live view) threw the overlay over the top while
+  // every other page docks. The actions list and its dock moved INTO Today
+  // (FB-0313) with their ids intact, so the same dock serves here.
+  if (kind === "admin" && state.view === "live") return { host: $("actionsSplitHost"), dock: $("actionsDock") };
   if (kind === "dev" && state.view === "dev") return { host: $("devSplitHost"), dock: $("devDock") };
   if (kind === "dev" && state.view === "course") return { host: $("courseSplitHost"), dock: $("courseDock") };
   // FB-0336 (Edd): the With Edd page threw the old overlay over the top while
@@ -9891,6 +9896,8 @@ function presentDetail(kind) {
     target.dock.style.display = "";
     $("overlay").classList.remove("show");
     state._splitOpen = true;
+    // On Today the actions list sits below the chats, so bring the pane up.
+    if (state.view === "live") { try { target.host.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {} }
   } else {
     if (drawer.parentElement !== $("overlay")) $("overlay").appendChild(drawer);
     $("overlay").classList.add("show");

@@ -413,7 +413,12 @@ var HEADERS = [
   // business days until resolved". The date the tracking was last looked at,
   // so the Today page can ask once per working day and no more.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'track_checked_at'   // BC yyyy-mm-dd of the last tracking check
+  'track_checked_at',  // BC yyyy-mm-dd of the last tracking check
+  // r146 (FB-0349): the Chatwoot conversation this issue came from. The form
+  // and the scan both KNEW it and only ever used it to leave a note, so the
+  // "Already told?" check (FB-0333) had nothing to read and never showed.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'chatwoot_conversation_id'   // BD
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -1737,6 +1742,10 @@ function getIssuesList_() {
       }
       if (obj.chase_at) obj.chase_at = dayStr_(obj.chase_at);
       if (obj.tracking_number) obj.tracking_number = normaliseTracking_(obj.tracking_number);
+      // FB-0346/0347: a phone number lands in the sheet as a NUMBER and came
+      // back as one, and the front end's .trim() on it threw mid-render.
+      if (obj.student_contact != null) obj.student_contact = String(obj.student_contact);
+      if (obj.chatwoot_conversation_id != null) obj.chatwoot_conversation_id = String(obj.chatwoot_conversation_id);
       out.push(issueListRow_(obj));
     }
   });
@@ -1774,6 +1783,8 @@ function getIssueFull_(data) {
     var row = sheet.getRange(rowNum, 1, 1, HEADERS.length).getValues()[0];
     var obj = {};
     for (var c = 0; c < HEADERS.length; c++) obj[HEADERS[c]] = row[c] === '' ? null : row[c];
+    if (obj.student_contact != null) obj.student_contact = String(obj.student_contact);   // FB-0346: a phone number is a Number in the sheet
+    if (obj.chatwoot_conversation_id != null) obj.chatwoot_conversation_id = String(obj.chatwoot_conversation_id);
     if (obj.chase_at) obj.chase_at = dayStr_(obj.chase_at);
     if (obj.tracking_number) obj.tracking_number = normaliseTracking_(obj.tracking_number);
     return { ok: true, issue: obj };
@@ -1968,6 +1979,7 @@ function addIssue_(data) {
     student_name: data.student_name || '',
     student_contact: data.student_contact || '',
     chatwoot_contact_id: String(data.chatwoot_contact_id || '').trim(),
+    chatwoot_conversation_id: String(data.chatwoot_conversation_id || '').trim(),
     device_info: data.device_info || '',
     course: data.course || '',
     module: data.module || '',
@@ -2931,6 +2943,25 @@ function addUpdate_(data) {
 
   if (data.priority) rec.priority = String(data.priority).toLowerCase();
   if (data.priority_reason) rec.priority_reason = data.priority_reason;
+  // FB-0346 (Edd): "How can the last update say 'She has cleared her browser
+  // cache with no success' but the troubleshooting checklist does not reflect
+  // this?" The checklist was only ever read off the FIRST report. An update
+  // on a tech issue is read for what has been tried since, and only ever
+  // ticks boxes - never unticks one somebody set by hand.
+  if (!isNudge && !data._system && String(rec.category || '').toLowerCase() === 'tech_issue' && String(note).length > 30) {
+    try {
+      var ts146 = troubleshoot_({ raw_text: String(note) });
+      if (ts146 && ts146.ok && ts146.checklist) {
+        var ck146 = {};
+        try { ck146 = rec.checklist_json ? JSON.parse(rec.checklist_json) : {}; } catch (e) { ck146 = {}; }
+        for (var k146 in ts146.checklist) {
+          var v146 = ts146.checklist[k146];
+          if ((v146 === 'done' || v146 === 'na') && (!ck146[k146] || ck146[k146] === 'todo')) ck146[k146] = v146;
+        }
+        rec.checklist_json = JSON.stringify(ck146);
+      }
+    } catch (e) {}
+  }
   if (data.device_info) rec.device_info = data.device_info;
 
   if (data.image_urls) {
@@ -3105,24 +3136,29 @@ function studentToldCheck_(data) {
   var convId = String(rec.chatwoot_conversation_id || '').trim();
   if (!convId) return { ok: true, told: false, why: 'no Chatwoot conversation on this issue' };
   var since = rec.dev_fixed_at || rec.resolved_at || rec.updated_at;
-  var msgs = [];
+  var msgs = [], convStatus = '';
   try {
     // chatwootTurns_ already cleans signatures, quoted chains and image blobs,
     // and labels who said what - no second reader of the same endpoint.
     var thread = chatwootTurns_(convId);
+    convStatus = String(thread.status || '').toLowerCase();
+    // r146 (FB-0349, Edd: "a quick check of chatwoot shows the student has
+    // already confirmed it is all fixed"): the student's own words count as
+    // much as ours, so both sides of the thread since the fix are read.
     (thread.turns || []).forEach(function (t) {
-      if (t.who !== 'agent' || !t.body) return;
+      if (!t.body) return;
       if (since && t.at && t.at < String(since)) return;
-      msgs.push({ at: t.at, text: String(t.body).slice(0, 600) });
+      msgs.push({ at: t.at, who: t.who === 'agent' ? 'US' : 'STUDENT', text: String(t.body).slice(0, 600) });
     });
   } catch (e) { return { ok: false, error: 'could not read the conversation: ' + e }; }
-  if (!msgs.length) return { ok: true, told: false, why: 'nothing sent to them since the fix' };
+  if (!msgs.length) return { ok: true, told: false, why: 'nothing said either way since the fix' };
 
-  var prompt = 'An issue a student reported has been fixed. Below are the messages WE sent that student after the fix. ' +
-    'Decide one thing only: have we actually told them the problem is fixed or working again? ' +
+  var prompt = 'An issue a student reported has been fixed. Below is the conversation with that student AFTER the fix, each line marked US or STUDENT. ' +
+    'Decide one thing only: does the student now know it is fixed? YES if we told them it is fixed or working again, OR if the student themselves says it is now working / sorted / thanks it works. ' +
     'A message that only asks a question, chases something else, or talks about a different matter does NOT count. ' +
-    'Do not infer it from politeness or from us being in touch. If in doubt, say no.\n\n' +
-    'OUR MESSAGES SINCE THE FIX:\n"""\n' + msgs.map(function (m) { return '[' + m.at + '] ' + m.text; }).join('\n---\n').slice(0, 6000) + '\n"""\n\n' +
+    'Do not infer it from politeness or from us being in touch. If in doubt, say no.\n' +
+    (convStatus === 'resolved' ? 'Note: the conversation has since been marked resolved by an agent, which is supporting evidence but not proof on its own.\n' : '') + '\n' +
+    'THE CONVERSATION SINCE THE FIX:\n"""\n' + msgs.map(function (m) { return '[' + m.at + '] ' + m.who + ': ' + m.text; }).join('\n---\n').slice(0, 6000) + '\n"""\n\n' +
     'Return ONLY JSON: {"told": true|false, "quote": "<the few words that say so, or empty>"}';
   var out = anthropicJson_(ANTHROPIC_MODEL, prompt, 300);
   if (!out || typeof out.told === 'undefined') return { ok: false, error: 'could not read a verdict' };
@@ -4404,6 +4440,7 @@ function scanChatwoot(opts) {
               one.student_contact = one.student_contact || c.contact;
               one.summary = one.summary || c.summary;
               one.raw_text = transcript;
+              one.chatwoot_conversation_id = String(c.id || '');
               if (imp.images && imp.images.length) one.image_urls = imp.images.join(',');
               one.instructor_name = 'Overnight scan';
               // Attach the things-to-try up front (Edd, FB-0185), so whoever
@@ -4735,6 +4772,7 @@ function deployBackend_(data) {
 function ensureTriggers_() {
   var haveMonthly = false, haveTbc = false, haveBackup = false, haveDigest = false, haveScan = false, haveChase = false;
   var haveUnrouted = false;   // r140
+  var haveTold = false;       // r146
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -4744,7 +4782,9 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'scanChatwoot') haveScan = true;
     if (t.getHandlerFunction() === 'chaseShipping') haveChase = true;
     if (t.getHandlerFunction() === 'unroutedDigest') haveUnrouted = true;
+    if (t.getHandlerFunction() === 'studentToldSweep') haveTold = true;
   });
+  if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
   }
@@ -4967,7 +5007,57 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1 };
+var RUNNABLE_JOBS_ = { unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1 };
+
+// r146 (FB-0349, Edd): "Peter says he already marked this as resolved... a
+// quick check of chatwoot shows the student has already confirmed it is all
+// fixed" - and the tracker was still asking someone to tell him. So the
+// "Already told?" check runs by itself, once a night, over everything in the
+// tell-the-student lane that has a conversation to read. One small AI call
+// per issue, capped, so a bad night cannot run up a bill.
+var STUDENT_TOLD_SWEEP_MAX = 15;
+function studentToldSweep() {
+  var done = 0, told = 0;
+  getIssues_().issues.forEach(function (i) {
+    if (done >= STUDENT_TOLD_SWEEP_MAX) return;
+    var st = String(i.status || '').toLowerCase();
+    if (st !== 'resolved' && st !== 'dev_fixed') return;
+    if (String(i.notified_students) === 'true' || String(i.student_sorted) === 'true') return;
+    if (!String(i.chatwoot_conversation_id || '').trim()) return;
+    if (!(String(i.student_contact || '').trim() || String(i.student_name || '').trim())) return;
+    done++;
+    try { var r = studentToldCheck_({ issue_id: i.issue_id }); if (r && r.told) told++; } catch (e) {}
+  });
+  Logger.log('studentToldSweep: checked ' + done + ', told ' + told);
+}
+
+// r146, one-off but re-runnable: issues logged before the conversation id was
+// stored. Two sources: the scan queue (conversation -> issue it logged) and
+// the Chatwoot email subject "[#123456]" sitting in the raw text.
+function backfillConversationIds() {
+  var byIssue = {};
+  try { scanRows_().forEach(function (r) { if (r.issue_id) byIssue[String(r.issue_id)] = String(r.conversation_id); }); } catch (e) {}
+  var n = 0;
+  ISSUE_SHEETS.forEach(function (name) {
+    var sheet = sheetByName_(name);
+    if (!sheet) return;
+    var values = sheet.getDataRange().getValues();
+    var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
+    if (idx.chatwoot_conversation_id == null) return;
+    for (var r = 1; r < values.length; r++) {
+      if (!values[r][idx.issue_id] || String(values[r][idx.chatwoot_conversation_id] || '').trim()) continue;
+      var id = String(values[r][idx.issue_id]);
+      var conv = byIssue[id] || '';
+      if (!conv) { var m = String(values[r][idx.raw_text] || '').match(/\[#(\d{4,8})\]/); if (m) conv = m[1]; }
+      if (!conv) continue;
+      sheet.getRange(r + 1, idx.chatwoot_conversation_id + 1).setValue(conv);
+      n++;
+    }
+  });
+  try { invalidateIssueCache_(); } catch (e) {}
+  Logger.log('backfillConversationIds: filled ' + n);
+  return n;
+}
 function runJob_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
@@ -6300,7 +6390,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r145 · 2026-09-05';
+var CODE_STAMP = 'r146 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -6518,7 +6608,7 @@ var NEXT_ACTION_CAP = 24000;   // characters of thread the reasoner reads
 // still be sitting there. The revision rides in the fingerprint, so changing it
 // retires every stored answer in one go and each issue recomputes when it is
 // next opened. Cheap because it is still one call per issue, only once.
-var NEXT_ACTION_REV = 'r66';   // Round 66 added rule 4a (test the password you just set, FB-0240), so every stored answer retires
+var NEXT_ACTION_REV = 'r146';   // Round 66 added rule 4a (test the password you just set, FB-0240), so every stored answer retires
 var NEXT_ACTION_MODEL = ANTHROPIC_MODEL;   // sonnet: this runs often, and it is plenty for the job
 
 // The whole conversation, oldest first, attributed and dated, because who said
@@ -6573,6 +6663,11 @@ function issueTranscript_(rec) {
 // A fingerprint of everything that could sensibly change the answer. Note what
 // is NOT in it: updated_at. Any edit at all moves updated_at, and re-reading a
 // thread because somebody retitled a lesson is money for nothing.
+function activityAgeBucket_(rec) {
+  var t = new Date(rec.updated_at || rec.submitted_at || 0).getTime();
+  var h = (Date.now() - t) / 3600000;
+  return h < 12 ? 'h' : h < 72 ? 'd' : h < 24 * 14 ? 'w' : 'm';
+}
 function nextActionSignature_(rec) {
   var reps = [];
   try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
@@ -6595,7 +6690,12 @@ function nextActionSignature_(rec) {
     'a' + String(rec.assignee || ''),
     'z' + (String(rec.student_sorted) === 'true' ? 1 : 0),
     'n' + (String(rec.notified_students) === 'true' ? 1 : 0),
-    'i' + (issueHasStudent_(rec) ? 1 : 0)
+    'i' + (issueHasStudent_(rec) ? 1 : 0),
+    // FB-0348 (Edd): a cached answer written two hours after the last message
+    // still said "only a couple of hours ago" thirteen days later. The age of
+    // the latest activity rides in the signature in coarse steps, so the
+    // answer retires as the wait grows (at most three re-reads per issue).
+    'g' + activityAgeBucket_(rec)
   ].join('|');
 }
 
@@ -6765,6 +6865,9 @@ function nextActionAi_(rec) {
 
   var prompt = 'You are the most experienced person on the support desk at Ardent Training, an online RYA sailing school. ' +
     'An instructor has this issue open in front of them and wants ONE genuinely useful next action.\n\n' +
+    // FB-0348: the answer is cached and read back days later, so a relative
+    // time inside it ("a couple of hours ago") rots. Absolute dates only.
+    'TODAY IS ' + new Date().toISOString().slice(0, 10) + '. When you mention when something happened, give the date (e.g. "on 23 Aug"), never a relative time like "two hours ago" or "yesterday": this answer is read again days later.\n\n' +
     'THE HARD RULES, in order of importance:\n' +
     (hasStudent ? '' :
       '0. THERE IS NO STUDENT ON THIS ONE. It was logged by one of the team about something they hit themselves, and a_student_is_involved is false. So there is nobody to ask, nobody to relay a step to, and nobody waiting on an update. Do NOT return an action that asks the student anything, tells us to contact or update a student, or waits on a student reply, and do NOT ask for information only a student could give. student_ask must be an empty string and instructor_side must be true. The useful action here is one WE take: reproduce it ourselves and pin down exactly when it happens, check whether anyone else on the team sees it, or hand it to the developers with what we already know.\n') +
