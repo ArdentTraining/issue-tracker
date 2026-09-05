@@ -1795,6 +1795,27 @@ function addIssue_(data) {
   var audience = data.audience === 'internal' || category === 'internal' ? 'internal' : 'student';
   if (category === 'internal') category = 'tech_issue';
 
+  // r142 (Edd, 5 Sep 2026): the overnight scan hands the extraction straight
+  // to this function, and the extraction reports a closed thread in
+  // resolution_status ("resolved" / "tbc"), while this function only ever read
+  // the form's resolved / tbc flags. So every scan-logged issue arrived OPEN,
+  // including one the chat itself had closed, and open + severe is a Slack
+  // alert (issue 9d38e552: "the refresh worked", posted red anyway). Map the
+  // field here, so any caller that skips the form gets the answer the form
+  // would have given.
+  if (!data.resolved && !data.tbc && !data.parked && !data.status) {
+    var rs142 = String(data.resolution_status || '').toLowerCase();
+    if (rs142 === 'resolved') {
+      data.resolved = true;
+      var ra142 = new Date(data.resolved_at || '');
+      data.resolved_at = isNaN(ra142.getTime()) ? '' : ra142.toISOString();
+    } else if (rs142 === 'tbc') {
+      data.tbc = true;
+    }
+  }
+  var sorted142 = !!(data.resolved || data.tbc ||
+    data.student_sorted === true || data.student_sorted === 'true');
+
   // One entry describing this particular report (who hit it, who logged it).
   // We keep its own priority and raw text too, so a wrongly merged report can
   // be split back out cleanly later.
@@ -1890,11 +1911,23 @@ function addIssue_(data) {
     summary: data.summary || '',
     severity: (function () {
       var sv = String(data.severity || '').toLowerCase();
-      if (sv === 'severe' || sv === 'moderate' || sv === 'low') return sv;
-      // Nothing sent one: read it out of the priority, so a form or a caller
-      // that predates FB-0261 still lands somewhere sensible.
-      var p = String(data.priority || '').toLowerCase();
-      return p === 'high' ? 'severe' : (p === 'medium' ? 'moderate' : 'low');
+      if (!(sv === 'severe' || sv === 'moderate' || sv === 'low')) {
+        // Nothing sent one: read it out of the priority, so a form or a caller
+        // that predates FB-0261 still lands somewhere sensible.
+        var p = String(data.priority || '').toLowerCase();
+        sv = p === 'high' ? 'severe' : (p === 'medium' ? 'moderate' : 'low');
+      }
+      // r142 (Edd): "Log out and in again worked. So the guy is sorted. Not
+      // high priority." Severe is always high because it means somebody is
+      // stuck right now. When the thread ends with the student through (a
+      // workaround, a fix, or the instructor sorting it by hand), nobody is
+      // stuck, so a tech issue arrives moderate at most. Volume still counts:
+      // a second student inside the week takes two moderates to high, and
+      // THAT is the alert worth reading. Course errors keep their severity: a
+      // wrong answer in a lesson is still wrong for the next student whatever
+      // this one was told.
+      if (sv === 'severe' && sorted142 && category === 'tech_issue') sv = 'moderate';
+      return sv;
     })(),
     priority: (function () {
       var p = String(data.priority || '').toLowerCase();
@@ -5946,7 +5979,7 @@ function extractionStaticPrompt_() {
     '- lesson: the FULL slide/question code exactly as written when one appears in the text (e.g. "EN.06.03.09" or "DS.10.19.09.2.M", one long string, not broken down), otherwise the lesson title if known, or null',
     '- lesson_code: lesson code string (e.g. DS.09.04) or null',
     '- issue_type: one of ["bug", "content_error", "student_confusion", "access_problem", "other"]. For a SHIPPING category report use one of ["not_arrived", "damaged", "wrong_item", "not_dispatched", "customs", "returned", "wrong_address", "other"] instead.',
-      '- severity: how badly this hits ONE person, ignoring how many people have hit it. "severe" = it stops them continuing the course or buying one: they cannot log in, cannot open a lesson, cannot sit an exam, cannot pay, or an error would make them fail an assessment. "moderate" = it gets in the way but they can carry on, with a workaround or by skipping past it. "low" = an annoyance, a cosmetic fault, or a typo that misleads nobody. Judge the FAULT, not how upset the message sounds.',
+      '- severity: how badly this hits ONE person, ignoring how many people have hit it. "severe" = it stops them continuing the course or buying one: they cannot log in, cannot open a lesson, cannot sit an exam, cannot pay, or an error would make them fail an assessment. "moderate" = it gets in the way but they can carry on, with a workaround or by skipping past it. "low" = an annoyance, a cosmetic fault, or a typo that misleads nobody. Judge the FAULT, not how upset the message sounds, and judge it as the thread ENDS: if the student is already through (a workaround worked, or they were sorted by hand), nobody is stopped any more, so a tech fault is "moderate" at most.',
       '- category: use "friction" when NOTHING is broken but the design cost the student money or time - they paid without spotting a discount code box, missed a deadline because a date was buried, bought the wrong thing because two options read the same. A friction report has a working system and an avoidable loss. If something actually failed, it is not friction.',
       '- request_kind: "improvement" if the report is asking for a NEW feature, an enhancement, or an "it would be nice if" change rather than reporting something broken or wrong (this applies to both course content and the platform, for example "could we add a glossary" or "the player should remember playback speed"); otherwise "fix" for a bug, an error, or something not working or incorrect as it stands. When in doubt, choose "fix". Most reports are "fix".',
     '- media_kind: for a course_error only, which part of the lesson it concerns: "video" if it is about a video or animation, "text" if it is about written text, a diagram, or quiz wording, otherwise "other". Return null for tech_issue.',
@@ -6150,7 +6183,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r141 · 2026-08-27';
+var CODE_STAMP = 'r142 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
