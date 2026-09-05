@@ -3134,6 +3134,17 @@ function studentToldCheck_(data) {
   if (!found) return { ok: false, error: 'No issue found with id ' + data.issue_id };
   var rec = found.record;
   var convId = String(rec.chatwoot_conversation_id || '').trim();
+  // r146.1: issues logged from a chat IMPORT before the id was stored carry
+  // the contact id but no conversation. Ask Chatwoot for that contact's
+  // conversations and take the one nearest the report; keep it once found.
+  if (!convId && String(rec.chatwoot_contact_id || '').trim()) {
+    convId = conversationForContact_(String(rec.chatwoot_contact_id).trim(), rec.submitted_at);
+    if (convId) {
+      rec.chatwoot_conversation_id = convId;
+      var col146 = HEADERS.indexOf('chatwoot_conversation_id') + 1;
+      if (col146 > 0) found.sheet.getRange(found.rowNum, col146).setValue(convId);
+    }
+  }
   if (!convId) return { ok: true, told: false, why: 'no Chatwoot conversation on this issue' };
   var since = rec.dev_fixed_at || rec.resolved_at || rec.updated_at;
   var msgs = [], convStatus = '';
@@ -3169,6 +3180,25 @@ function studentToldCheck_(data) {
     addUpdate_({ issue_id: rec.issue_id, text: 'Student already told, found in the chat: "' + String(out.quote || '').slice(0, 200) + '" (checked automatically, FB-0333)', keep_status: true, _system: true });
   }
   return { ok: true, told: !!out.told, quote: out.quote || '', checked: msgs.length };
+}
+
+// The contact's conversation whose life overlaps the report date (last
+// activity after it, created before or up to two days after); newest first.
+function conversationForContact_(contactId, aroundIso) {
+  try {
+    var out = chatwootCall_('/contacts/' + encodeURIComponent(contactId) + '/conversations');
+    var list = (out && (out.payload || out.data || out)) || [];
+    if (!list.length) return '';
+    var t = new Date(aroundIso || 0).getTime() / 1000;
+    var best = null;
+    list.forEach(function (c) {
+      var created = Number(c.created_at || 0), last = Number(c.last_activity_at || c.timestamp || created);
+      if (created > t + 2 * 86400) return;
+      if (last < t - 86400) return;
+      if (!best || created > Number(best.created_at || 0)) best = c;
+    });
+    return best ? String(best.id) : '';
+  } catch (e) { return ''; }
 }
 
 function sendNotifyStudentSlack_(issue, appUrl) {
@@ -5023,7 +5053,7 @@ function studentToldSweep() {
     var st = String(i.status || '').toLowerCase();
     if (st !== 'resolved' && st !== 'dev_fixed') return;
     if (String(i.notified_students) === 'true' || String(i.student_sorted) === 'true') return;
-    if (!String(i.chatwoot_conversation_id || '').trim()) return;
+    if (!String(i.chatwoot_conversation_id || '').trim() && !String(i.chatwoot_contact_id || '').trim()) return;
     if (!(String(i.student_contact || '').trim() || String(i.student_name || '').trim())) return;
     done++;
     try { var r = studentToldCheck_({ issue_id: i.issue_id }); if (r && r.told) told++; } catch (e) {}
@@ -6390,7 +6420,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r146 · 2026-09-05';
+var CODE_STAMP = 'r146.1 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
