@@ -779,7 +779,10 @@ function reqPerm_(action) {
     // anyone who works a fix queue. Fetching a Chatwoot update sits with the
     // other update paths.
     case 'bulkAssign': case 'courseReview': return 'work';
-    case 'fetchStudentUpdate': return 'log';
+    // FB-0344 (Aman): the dev drawer's "Check for updates" calls this, and a
+    // dev-only account has no 'log', so it 403'd. Read-only pull of newer
+    // messages onto an issue the caller can already see: queue tier.
+    case 'fetchStudentUpdate': return 'work';
     case 'peekStudentActivity': return 'log';
     // The Live Case workspace (Round 45): visible to every instructor-level
     // user, and cases are shared - anyone can pick one up and carry on.
@@ -6187,7 +6190,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r142.1 · 2026-09-05';
+var CODE_STAMP = 'r143 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

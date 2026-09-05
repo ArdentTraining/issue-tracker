@@ -210,6 +210,9 @@
   .pri-medium { background: var(--medium); color: #1a1300; }
   .pri-low { background: var(--low); color: #06210f; }
   .st { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  /* FB-0338: fix or improvement, said outright on the dev/course queues */
+  .kind { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  .kind-improvement { color: var(--accent); border-color: var(--accent); }
   .st-open { color: #cdd9e6; }
   .st-in_progress { color: var(--accent); border-color: var(--accent); }
   .st-with_dev { color: var(--tech); border-color: var(--tech); }
@@ -2852,7 +2855,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r142.1 · 2026-09-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r143 · 2026-09-05";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3375,6 +3378,12 @@ function prelaunchBadge(i) {
 function catBadge(c) {
   c = (c || "course_error").toLowerCase();
   return '<span class="badge cat cat-' + c + '">' + (CATEGORY_LABEL[c] || c) + "</span>";
+}
+// The developer's part is done: fixed and handed back, or fixed and since
+// confirmed and resolved by an admin (dev_fixed_at survives that move).
+function devIsCompleted(i) {
+  var st = String((i && i.status) || "").toLowerCase();
+  return st === "dev_fixed" || ((st === "resolved" || st === "resolved_tbc") && !!i.dev_fixed_at);
 }
 function kindOf(issue) {
   return String((issue && issue.request_kind) || "fix").toLowerCase() === "improvement" ? "improvement" : "fix";
@@ -10385,8 +10394,7 @@ function renderDev() {
   // browsable in the Fixed filter; only the two stat boxes take the baseline.
   var DEV_STATS_SINCE = "2026-08-25T18:00:00Z";
   $("devStatFixed").textContent = all.filter(function (i) {
-    var st = (i.status || "").toLowerCase();
-    if (!(st === "dev_fixed" || ((st === "resolved" || st === "resolved_tbc") && i.dev_fixed_at))) return false;
+    if (!devIsCompleted(i)) return false;
     return i.dev_fixed_at && String(i.dev_fixed_at) >= DEV_STATS_SINCE;
   }).length;
 
@@ -10398,9 +10406,13 @@ function renderDev() {
 
   var statusPool = all.filter(function (i) {
     var s = (i.status || "").toLowerCase();
+    // FB-0339 / FB-0343 (Charlie, Aman): the count above and this list used
+    // different tests, so a fix an admin had since resolved counted as
+    // Completed yet showed in no filter - "shows 1, but says nothing here".
+    // One predicate for both.
     if (state.devFilter === "todo") return s === "with_dev";
-    if (state.devFilter === "fixed") return s === "dev_fixed";
-    return s === "with_dev" || s === "dev_fixed";
+    if (state.devFilter === "fixed") return devIsCompleted(i);
+    return s === "with_dev" || devIsCompleted(i);
   });
 
   renderDevFilters(statusPool);
@@ -10465,7 +10477,6 @@ function renderDev() {
       var sub = [];
       sub.push(shortId(i));
       if (i.section) sub.push(SECTION_LABEL[i.section] || i.section);
-      if (kindOf(i) === "improvement") sub.push("improvement");
       if (i.fix_size) sub.push(String(i.fix_size).toLowerCase() + " fix");
       if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
       var days = Math.floor((Date.now() - new Date(i.dev_passed_at || i.submitted_at)) / 864e5);
@@ -10494,7 +10505,7 @@ function renderDev() {
           '<span class="act-word" style="background:' + colour + ';color:#02121f;">' + esc(word) +
             (reports > 1 ? ' &middot; ' + reports : '') + '</span>' +
           '<div><div class="act-title">' + esc(cardTitle(i)) + '</div>' +
-            (sub.length ? '<div class="act-sub">' + esc(sub.join(" · ")) + '</div>' : '') + '</div>' +
+            '<div class="act-sub">' + reqBadge(kindOf(i)) + (sub.length ? ' ' + esc(sub.join(" · ")) : '') + '</div></div>' +
           '<div><span class="act-do">' + esc(act) + '</span>' + btn + '</div>' +
         '</div>';
     }).join("");
@@ -11205,7 +11216,7 @@ function openDevDetail(id) {
     '<div style="margin-bottom:12px;">' +
       '<span class="code" title="Report reference - click to copy" style="cursor:pointer;margin-right:6px;" onclick="copyText(\'' + esc(shortId(issue)) + '\')">' + esc(shortId(issue)) + '</span>' +
       // r65: two badges, then the filing as a line. Same rule as the main pane.
-      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) + " " + prelaunchBadge(issue) +
+      priBadge(issue.priority) + " " + statusBadge(issue.status, issue) + " " + reqBadge(kindOf(issue)) + " " + prelaunchBadge(issue) +
       (issue.lesson_code ? ' <span class="code">' + esc(issue.lesson_code) + '</span>' : '') + '</div>' +
     detailFilingLine(issue) +
     '<div class="kv">' +
@@ -11408,7 +11419,7 @@ function openDevDetail(id) {
       '<input type="checkbox" id="notifyStudentTick" style="width:auto;margin-right:6px;vertical-align:-1px;"' + (state._copyContacts ? ' checked' : '') + '>' +
       'Notify student? (asks the instructors on Slack to pass the good news on)</label>' +
       '<div class="row">' +
-      '<button class="primary" id="markFixedBtn" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
+      '<button class="primary" id="markFixedBtn" data-issue="' + esc(issue.issue_id) + '" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
       // FB-0292 (Edd): admins triaging the dev queue can park an item without
       // leaving the page. Developers never see it - deciding what is worth
       // developer time is an admin call, not a developer one.
@@ -11534,17 +11545,21 @@ function devMarkFixedSend(id, notes) {
   var notify = !!($("notifyStudentTick") && $("notifyStudentTick").checked);
   // The round-trip takes a few seconds, so say so immediately instead of
   // leaving a dead-looking button (Edd, 21 Jul).
+  // FB-0342 (Aman): the button stayed disabled after a success and the closed
+  // drawer kept it in the DOM, so the next Mark fixed from the list found the
+  // stale button and returned here without a word. The guard is now per
+  // issue, and the button is always put back.
   var btn = $("markFixedBtn");
+  if (btn && btn.getAttribute("data-issue") !== id) btn = null;
   if (btn) { if (btn.disabled) return; btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> marking…'; }
+  var restore = function () { if (btn) { btn.disabled = false; btn.textContent = "Mark fixed"; } };
   apiPost({ action: "markDevFixed", issue_id: id, dev_notes: notes, notify_student: notify, app_url: APP_URL }).then(function (res) {
-    if (!res || !res.ok) {
-      if (btn) { btn.disabled = false; btn.textContent = "Mark fixed"; }
-      toast("Failed: " + ((res && res.error) || "unknown")); return;
-    }
+    restore();
+    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
     toast(notify ? "Marked fixed. Instructors asked to tell the student." : "Marked fixed.");
     closeDetail(); loadIssues();
   }).catch(function (e) {
-    if (btn) { btn.disabled = false; btn.textContent = "Mark fixed"; }
+    restore();
     toastErr("That", e);
   });
 }
