@@ -3146,7 +3146,11 @@ function studentToldCheck_(data) {
     }
   }
   if (!convId) return { ok: true, told: false, why: 'no Chatwoot conversation on this issue' };
-  var since = rec.dev_fixed_at || rec.resolved_at || rec.updated_at;
+  // r146.2: read from the REPORT, not the fix. Terry (FB-0349) confirmed
+  // "logging out and in worked" in the chat and the developer then marked it
+  // fixed on the strength of that, so everything that mattered was said
+  // BEFORE dev_fixed_at and a since-the-fix window saw nothing.
+  var since = rec.submitted_at || rec.updated_at;
   var msgs = [], convStatus = '';
   try {
     // chatwootTurns_ already cleans signatures, quoted chains and image blobs,
@@ -3162,14 +3166,14 @@ function studentToldCheck_(data) {
       msgs.push({ at: t.at, who: t.who === 'agent' ? 'US' : 'STUDENT', text: String(t.body).slice(0, 600) });
     });
   } catch (e) { return { ok: false, error: 'could not read the conversation: ' + e }; }
-  if (!msgs.length) return { ok: true, told: false, why: 'nothing said either way since the fix' };
+  if (!msgs.length) return { ok: true, told: false, why: 'nothing said either way since the report' };
 
-  var prompt = 'An issue a student reported has been fixed. Below is the conversation with that student AFTER the fix, each line marked US or STUDENT. ' +
+  var prompt = 'An issue a student reported has been fixed. Below is the conversation with that student from the report onwards, each line marked US or STUDENT. ' +
     'Decide one thing only: does the student now know it is fixed? YES if we told them it is fixed or working again, OR if the student themselves says it is now working / sorted / thanks it works. ' +
     'A message that only asks a question, chases something else, or talks about a different matter does NOT count. ' +
     'Do not infer it from politeness or from us being in touch. If in doubt, say no.\n' +
     (convStatus === 'resolved' ? 'Note: the conversation has since been marked resolved by an agent, which is supporting evidence but not proof on its own.\n' : '') + '\n' +
-    'THE CONVERSATION SINCE THE FIX:\n"""\n' + msgs.map(function (m) { return '[' + m.at + '] ' + m.who + ': ' + m.text; }).join('\n---\n').slice(0, 6000) + '\n"""\n\n' +
+    'THE CONVERSATION SINCE THE REPORT:\n"""\n' + msgs.map(function (m) { return '[' + m.at + '] ' + m.who + ': ' + m.text; }).join('\n---\n').slice(0, 6000) + '\n"""\n\n' +
     'Return ONLY JSON: {"told": true|false, "quote": "<the few words that say so, or empty>"}';
   var out = anthropicJson_(ANTHROPIC_MODEL, prompt, 300);
   if (!out || typeof out.told === 'undefined') return { ok: false, error: 'could not read a verdict' };
@@ -6420,7 +6424,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r146.1 · 2026-09-05';
+var CODE_STAMP = 'r146.2 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
