@@ -2099,7 +2099,8 @@
     <tr><td><span class="ui">Scanned</span></td><td>The overnight scan found this in Chatwoot and nobody has looked in on the student yet. Draft them a message, or mark that no more contact is needed.</td></tr>
     <tr><td><span class="ui">Replied</span></td><td>We answered and the student has come back. Worth reading.</td></tr>
     <tr><td><span class="ui">Waiting</span></td><td>We answered and heard nothing for a few days. A nudge, or let it go.</td></tr>
-    <tr><td><span class="ui">Chase</span></td><td>A parcel is due a chase today. Poke the courier, then <span class="ui">Chased - remind in 3 days</span> puts it back on the list.</td></tr>
+    <tr><td><span class="ui">Tracking</span></td><td>A parcel still on its way, on a working day you have not looked at it yet. <span class="ui">Open tracking</span> takes you to the courier's page, <span class="ui">Checked - still moving</span> hides it until the next working day, and <span class="ui">Delivered</span> resolves it. Resolved - TBC parcels stay on this list too, because hopefully sorted is not the same as arrived.</td></tr>
+    <tr><td><span class="ui">Chase</span></td><td>A parcel is due a chase today: it has had three working days since it was logged or last chased. Poke the courier, then <span class="ui">Chased - remind in 3 working days</span> puts it back on the list.</td></tr>
     <tr><td><span class="ui">Question</span></td><td>A developer or the course team has asked us something, and the fix is held up until it is answered.</td></tr>
     <tr data-perm="users"><td><span class="ui">Dev asks</span></td><td>A developer's question pointed at the admins rather than at an instructor. Answering it here answers it on the issue and back wherever it was asked from.</td></tr>
     <tr><td><span class="ui">Fixed</span></td><td>Either a fix has landed and needs checking, or it is checked and the student needs telling.</td></tr>
@@ -2870,7 +2871,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r143 · 2026-09-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r144 · 2026-09-05";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4300,7 +4301,7 @@ function myActionItems() {
   // Everyone with the tab sees every action (Edd, 21 Jul): the team is small
   // and any instructor can pass a fix on. Cards carry who logged each one.
   var now = Date.now(), day = 24 * 60 * 60 * 1000;
-  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [], scanned: [] , adminq: [], eddq: [] };
+  var out = { questions: [], verify: [], notify: [], followups: [], longOpen: [], chase: [], track: [], scanned: [] , adminq: [], eddq: [] };
   var canVerify = !!(state.perms && (state.perms.manage || state.perms.users));
   (state.issues || []).forEach(function (i) {
     var st = String(i.status || "open").toLowerCase();
@@ -4351,8 +4352,16 @@ function myActionItems() {
     if (st === "resolved_tbc" && (now - new Date(i.updated_at || i.submitted_at)) > ACTIONS_TBC_FOLLOWUP_DAYS * day) out.followups.push(i);
     // Parcels due a chase. The date is the whole point of a shipping issue, so
     // it belongs in Actions on the day rather than only in Slack.
-    if (catOf(i) === "shipping" && isOpen(i) && i.chase_at &&
-        String(i.chase_at).slice(0, 10) <= todayStr()) out.chase.push(i);
+    // r144 (Edd, 5 Sep 2026): a parcel "should be checked daily on business
+    // days until resolved, with a 'chase DHL' reminder after a suitable length
+    // of time." Two lanes, one row per parcel: Chase when the chase date has
+    // arrived, otherwise Tracking on any working day it has not been looked at
+    // yet. Resolved - TBC counts as still moving: "hopefully sorted" is not
+    // delivered.
+    var parcelLive = catOf(i) === "shipping" && (isOpen(i) || st === "resolved_tbc");
+    var chaseDue = parcelLive && i.chase_at && String(i.chase_at).slice(0, 10) <= todayStr();
+    if (chaseDue) out.chase.push(i);
+    else if (parcelLive && isBusinessDay() && String(i.track_checked_at || "").slice(0, 10) !== todayStr()) out.track.push(i);
     // Long-open: HIGH priority only (Edd, 24 Jul) - if the student can carry
     // on unbothered (a wording tweak, a cosmetic niggle), no update is needed
     // until it's fixed. Blocked students are the ones who deserve a "still on
@@ -4763,7 +4772,8 @@ function actionRows() {
         act: "The student came back - look in" };
       return { i: i, kind: "scanned", word: "Scanned", colour: "var(--accent)", act: "Look in on the student" };
     }))
-    .concat((a.chase || []).map(function (i) { return { i: i, kind: "chase", word: "Chase", colour: "var(--coral)", act: "Poke the courier" }; }))
+    .concat((a.chase || []).map(function (i) { return { i: i, kind: "chase", word: "Chase", colour: "var(--coral)", act: "Chase " + (i.courier || "the courier") + " - it has had long enough" }; }))
+    .concat((a.track || []).map(function (i) { return { i: i, kind: "track", word: "Tracking", colour: "var(--tech)", act: "Check where the parcel is today" }; }))
     .concat(a.questions.map(function (i) { return { i: i, kind: "question", word: "Question", colour: "var(--medium)", act: "Answer the team" }; }))
     .concat((a.adminq || []).map(function (i) { return { i: i, kind: "adminq", word: "Dev asks", colour: "var(--medium)", act: "A developer needs an answer from Charlie, Charly or Edd" }; }))
     .concat((a.eddq || []).map(function (i) { return { i: i, kind: "eddq", word: "Yours", colour: "var(--accent)", act: "A tool you own - fix when ready" }; }))
@@ -4849,8 +4859,11 @@ function renderActions() {
         ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft another message</button>'
       : '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'longopen\')">Draft message to student</button>' +
         ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'scannedSorted(\'' + id + '\')">No more contact needed</button>';
-    else if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 days</button>' +
-      ' <button class="ghost small" style="padding:5px 12px;" title="Nothing left to chase: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>';
+    else if (r.kind === "chase") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'chaseAgain(\'' + id + '\', 3)">Chased - remind in 3 working days</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" title="It arrived. Closes it as resolved." onclick="' + stop + 'parcelDelivered(\'' + id + '\')">Delivered</button>';
+    else if (r.kind === "track") btn = (i.tracking_number && trackingUrl(i) ? '<a class="ghost small" style="padding:5px 12px;text-decoration:none;" target="_blank" rel="noopener" href="' + esc(trackingUrl(i)) + '" onclick="event.stopPropagation()">Open tracking</a> ' : '') +
+      '<button class="primary small" style="padding:5px 12px;" title="Looked, still on its way. Asks again next working day." onclick="' + stop + 'parcelChecked(\'' + id + '\')">Checked - still moving</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" title="It arrived. Closes it as resolved." onclick="' + stop + 'parcelDelivered(\'' + id + '\')">Delivered</button>';
     else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
     else if (r.kind === "adminq") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetailQa(\'' + id + '\')">Answer</button>';
     else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" title="You have checked it yourself and it works: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
@@ -4870,7 +4883,7 @@ function renderActions() {
 
     // A few words on the issue: what it is, who it's about, where it lives.
     var sub = [shortId(i)];
-    if (r.kind === "chase") {
+    if (r.kind === "chase" || r.kind === "track") {
       if (i.courier) sub.push(i.courier);
       if (i.tracking_number) sub.push(i.tracking_number);
       sub.push(reportCount(i) > 1 ? reportCount(i) + " threads" : "1 thread");
@@ -5893,15 +5906,48 @@ function detailSetStatus(id, status) {
     { failMsg: "That status change didn't save" });
 }
 
+// r144: the daily look at the tracking page. Stamps today, so the row hides
+// until the next working day; a chase due today still shows as Chase.
+function isBusinessDay() { var d = new Date().getDay(); return d !== 0 && d !== 6; }
+function addBusinessDays(n) {
+  var d = new Date(), left = Number(n) || 0;
+  while (left > 0) { d.setDate(d.getDate() + 1); var wd = d.getDay(); if (wd !== 0 && wd !== 6) left--; }
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function trackingUrl(i) {
+  var n = normTracking(i.tracking_number || ""); if (!n) return "";
+  var c = String(i.courier || "").toLowerCase();
+  if (c.indexOf("dhl") > -1) return "https://www.dhl.com/gb-en/home/tracking.html?tracking-id=" + encodeURIComponent(n);
+  if (c.indexOf("royal") > -1) return "https://www.royalmail.com/track-your-item#/tracking-results/" + encodeURIComponent(n);
+  if (c.indexOf("ups") > -1) return "https://www.ups.com/track?tracknum=" + encodeURIComponent(n);
+  if (c.indexOf("fedex") > -1) return "https://www.fedex.com/fedextrack/?trknbr=" + encodeURIComponent(n);
+  if (c.indexOf("parcelforce") > -1) return "https://www.parcelforce.com/track-trace?trackNumber=" + encodeURIComponent(n);
+  if (c.indexOf("evri") > -1) return "https://www.evri.com/track/parcel/" + encodeURIComponent(n);
+  if (c.indexOf("dpd") > -1) return "https://track.dpd.co.uk/parcels/" + encodeURIComponent(n);
+  return "";
+}
+function parcelChecked(id) {
+  toast("Noted - it'll ask again next working day.");
+  optimistic(id, { track_checked_at: todayStr() }, { action: "updateIssue", issue_id: id, track_checked_at: todayStr() },
+    { failMsg: "That check didn't save", noRefresh: true });
+}
+function parcelDelivered(id) {
+  toast("Delivered - resolved.");
+  optimistic(id, { status: "resolved", chase_at: "" },
+    { action: "updateIssue", issue_id: id, status: "resolved", chase_at: "", resolution_note: "Delivered (marked from Today, " + todayStr() + ")." },
+    { failMsg: "That didn't save" });
+}
+
 // Chased the courier: log that it happened and re-arm the reminder, so a
 // parcel can't quietly go a fortnight without anyone poking it.
+// r144: working days, and a chase counts as today's tracking check.
 function chaseAgain(id, days) {
-  var when = new Date(Date.now() + (Number(days) || 3) * 864e5).toISOString().slice(0, 10);
+  var when = addBusinessDays(Number(days) || 3);
   apiPost({ action: "addUpdate", issue_id: id, summary: "Chased the courier",
     raw_text: "Chased on " + new Date().toISOString().slice(0, 10) + " by " + (state.selectedInstructor || "an instructor") + ". Next chase " + when + "." })
     .then(function (res) {
       if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-      return apiPost({ action: "updateIssue", issue_id: id, chase_at: when });
+      return apiPost({ action: "updateIssue", issue_id: id, chase_at: when, track_checked_at: todayStr() });
     }).then(function () {
       toast("Logged the chase - back on your list " + when + ".");
       loadIssues();

@@ -46,6 +46,7 @@ var SLACK_NOTICES = {
   //      notice keeps working from the day it is switched on and moves the day
   //      the property is filled in. No code change and no deploy to move one.
   high_priority:     { on: true,  to: '' },                           // stays put
+  high_priority_shipping: { on: true, to: 'SLACK_SHIPPING_ISSUES' }, // r144 (Edd): a parcel alert belongs in the shipping channel, not the tech one
   shipping_chase:    { on: true,  to: 'SLACK_SHIPPING_ISSUES' },   // r109: shipping got its own channel
   notify_student:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
   query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
@@ -407,7 +408,12 @@ var HEADERS = [
   // against it, and it comes back the moment a new report merges into it or an
   // admin presses Resurface. APPENDED, never inserted.
   'prelaunch',         // BA 'true' = hidden from non-admins until resurfaced
-  'slack_thread'       // BB r122: JSON {channel, ts} of the bot-posted question, so the answer threads onto it and thread replies find their issue
+  'slack_thread',      // BB r122: JSON {channel, ts} of the bot-posted question, so the answer threads onto it and thread replies find their issue
+  // r144 (Edd, 5 Sep 2026): a parcel problem "should be checked daily on
+  // business days until resolved". The date the tracking was last looked at,
+  // so the Today page can ask once per working day and no more.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'track_checked_at'   // BC yyyy-mm-dd of the last tracking check
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -1344,6 +1350,12 @@ function sheetByName_(name) { return ss_().getSheetByName(name); }
 // course_error -> Course Errors; anything else (incl tech_issue) decided here.
 // Couriers write tracking numbers with spaces, dashes and mixed case, and the
 // same consignment can arrive looking different in each email.
+// yyyy-mm-dd, n working days (Mon-Fri) on from `from`.
+function addBusinessDays_(from, n) {
+  var d = new Date(from.getTime()), left = Number(n) || 0;
+  while (left > 0) { d.setDate(d.getDate() + 1); var wd = d.getDay(); if (wd !== 0 && wd !== 6) left--; }
+  return d.toISOString().slice(0, 10);
+}
 function normaliseTracking_(v) {
   var s = String(v || '');
   // A long all-digit reference (Evri, Yodel) comes back from the sheet as a
@@ -2042,8 +2054,10 @@ function addIssue_(data) {
         : (String(data.student_name || '').trim() || String(data.student_contact || '').trim()) ? 'yes' : 'no'),
     // Default to chasing in three working-ish days if nobody said otherwise:
     // an unchased parcel problem is the one that goes quiet for a fortnight.
+    // r144: three BUSINESS days. A parcel logged on a Friday is not due a
+    // chase on the Monday; the courier has not had three working days yet.
     chase_at: category === 'shipping'
-      ? (data.chase_at || new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10))
+      ? (data.chase_at || addBusinessDays_(new Date(), 3))
       : ''
   };
 
@@ -3625,6 +3639,15 @@ function setSlackChannel_(data) {
     if (!probe.ok) return { ok: false, error: 'test post failed: ' + (probe.why || 'unknown') + ' (is the bot invited to the channel?)' };
     PropertiesService.getScriptProperties().setProperty('SLACK_QA_CHANNEL_ID', String(probe.channel));
     return { ok: true, set: 'SLACK_QA_CHANNEL_ID', channel: probe.channel, post_test: probe };
+  }
+  // r144: the shipping CHANNEL ID (field `shipping_channel_id`, C... or a
+  // name), so parcel alerts post via the bot there and can be tidied on close.
+  if (data.shipping_channel_id) {
+    var sid = String(data.shipping_channel_id).trim().replace(/^#/, '');
+    var sprobe = slackBotPost_(sid, ':package: Shipping wiring test from the bug tracker - parcel alerts will post here as the bot from now on, and are removed when the issue closes. One-off test.');
+    if (!sprobe.ok) return { ok: false, error: 'test post failed: ' + (sprobe.why || 'unknown') + ' (is the bot invited to the channel?)' };
+    PropertiesService.getScriptProperties().setProperty('SLACK_SHIPPING_CHANNEL_ID', String(sprobe.channel));
+    return { ok: true, set: 'SLACK_SHIPPING_CHANNEL_ID', channel: sprobe.channel, post_test: sprobe };
   }
   if (data.member_ids) {
     try {
@@ -6211,14 +6234,20 @@ function slackWho_(issue) {
 }
 
 function sendSlack_(issue, appUrl) {
-  if (!slackOn_('high_priority')) return;
+  // r144 (Edd, 5 Sep 2026): "this one should be in the shipping issues channel
+  // on slack as it is a shipping issue". Same alert, different room: the bot
+  // posts there when SLACK_SHIPPING_CHANNEL_ID is set (so it can be tidied
+  // away on close like the others), else the shipping webhook carries it.
+  var isShipping = String(issue.category || '').toLowerCase() === 'shipping';
+  if (!slackOn_(isShipping ? 'high_priority_shipping' : 'high_priority')) return;
   var SLACK_ALERT_VIA_BOT_ = true;
   // r136 (Edd, 26 Aug 2026): the alert was eight lines and people had to hunt
   // the summary. Three lines and a link. Lesson, type, device, who logged it
   // and when are all one click away on the issue itself, so pushing them into
   // Slack only buried the sentence that decides whether anyone moves.
   var text = [
-    ':red_circle: *High priority issue logged*',
+    (isShipping ? ':package: *Shipping issue logged*' : ':red_circle: *High priority issue logged*'),
+    (isShipping ? '*Parcel:* ' + (issue.courier || '-') + ' ' + (normaliseTracking_(issue.tracking_number) || '(no tracking number)') + (issue.chase_at ? ' · chase on ' + String(issue.chase_at).slice(0, 10) : '') : null),
     '*Summary:* ' + slackSummary_(issue),
     slackWho_(issue),
     '',
@@ -6228,10 +6257,10 @@ function sendSlack_(issue, appUrl) {
   // r123 (Edd): a reply under the alert in Slack should land on the issue as
   // an update, which needs the message ts - so the alert posts as the bot
   // where configured, and the thread gets stamped. Webhook fallback unchanged.
-  var alertChan = PropertiesService.getScriptProperties().getProperty('SLACK_QA_CHANNEL_ID');
+  var alertChan = PropertiesService.getScriptProperties().getProperty(isShipping ? 'SLACK_SHIPPING_CHANNEL_ID' : 'SLACK_QA_CHANNEL_ID');
   var alertPost = alertChan ? slackBotPost_(alertChan, text) : { ok: false };
   if (alertPost.ok) stampSlackThread_(issue.issue_id, alertPost.channel, alertPost.ts, 'alert');
-  else slackPost_('high_priority', text);
+  else slackPost_(isShipping ? 'high_priority_shipping' : 'high_priority', text);
 
   return { ok: true };
 }
@@ -6248,7 +6277,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r143 · 2026-09-05';
+var CODE_STAMP = 'r144 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
