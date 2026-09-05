@@ -1935,7 +1935,11 @@ function addIssue_(data) {
         // FB-0261: priority is worked out from severity and how many people
         // have hit it, not typed in. A brand new issue has one report, so this
         // is severity on its own until a second person turns up.
+        // r142: read the severity the issue is actually landing with (after
+        // the sorted-student cap above), not the one the caller sent, or a
+        // capped severe would still arrive high and page the channel.
         var sv0 = String(data.severity || '').toLowerCase();
+        if (sv0 === 'severe' && sorted142 && category === 'tech_issue') sv0 = 'moderate';
         if (sv0 === 'severe' || sv0 === 'moderate' || sv0 === 'low') {
           return priorityFromScore_({ severity: sv0, report_count: 1 });
         }
@@ -6183,7 +6187,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r142 · 2026-09-05';
+var CODE_STAMP = 'r142.1 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
