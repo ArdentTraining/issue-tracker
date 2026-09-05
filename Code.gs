@@ -233,7 +233,10 @@ var ISSUE_SHEETS = [COURSE_SHEET, TECH_SHEET, SHIPPING_SHEET];
 var FEEDBACK_SHEET = 'Feedback';
 // New columns go on the END of this list, never inserted, so existing rows keep
 // their data where the sheet already has it.
-var FEEDBACK_HEADERS = ['id', 'created_at', 'user_email', 'user_name', 'message', 'image_urls', 'status', 'context', 'ref', 'kind', 'urgency'];
+// r147: 'reply' APPENDED - a line back to the person who sent the feedback
+// ("built in r146, see the Today page"), shown in their bell. Blank until
+// somebody writes one; the status change alone still lights the bell.
+var FEEDBACK_HEADERS = ['id', 'created_at', 'user_email', 'user_name', 'message', 'image_urls', 'status', 'context', 'ref', 'kind', 'urgency', 'reply'];
 // context = JSON snapshot of where the Feedback button was pressed (view, open
 // issue, filters, viewport, browser, recent JS errors, recent API calls, and
 // the last few clicks), so a report carries its own crime scene.
@@ -641,6 +644,7 @@ function doPost(e) {
     if (action === 'flagKnownFix') return jsonOut(flagKnownFix_(body));
     if (action === 'resolveKnownFixFlag') return jsonOut(resolveKnownFixFlag_(body));
     if (action === 'addFeedback') return jsonOut(addFeedback_(body));
+    if (action === 'myFeedback') return jsonOut(myFeedback_(body));
     if (action === 'updateFeedback') return jsonOut(updateFeedback_(body));
     if (action === 'deleteFeedback') return jsonOut(deleteFeedback_(body));
     return jsonOut({ ok: false, error: 'Unknown POST action: ' + action });
@@ -834,7 +838,7 @@ function reqPerm_(action) {
     // Available to any logged-in user: feedback and its screenshots, and
     // changing your own password. These used to ride on the old open default;
     // they are listed here now so the default can shut.
-    case 'uploadImage': case 'addFeedback': case 'changePassword': return 'any';
+    case 'uploadImage': case 'addFeedback': case 'changePassword': case 'myFeedback': return 'any';
     // Asking the manual a question. 'any' because everybody gets a manual,
     // and the text it answers from is sent up by the browser, which has
     // already cut it down to the sections this account is allowed to read.
@@ -874,7 +878,7 @@ var PREF_KEYS = ['open_after_log'];
 // r145: replies_seen = { issue_id: answer date } - the dev/course page's
 // "New replies" hides a reply once its reader presses Got it. Capped so a
 // busy account cannot grow the cell without limit.
-var PREF_MAP_KEYS = ['replies_seen'];
+var PREF_MAP_KEYS = ['replies_seen', 'feedback_seen'];
 function setPrefs_(body) {
   var user = body._user || {};
   var f = findUserByEmail_(user.email);
@@ -6143,6 +6147,33 @@ function getFeedback_() {
   return { ok: true, feedback: out };
 }
 
+// r147 (Edd): "a notifications menu to show people when the feedback they
+// submitted has been fixed/acted on". Only the caller's own rows, and only
+// the columns the bell needs - the context snapshot stays on the server.
+function myFeedback_(data) {
+  var email = String((data._user && data._user.email) || '').toLowerCase();
+  if (!email) return { ok: true, feedback: [] };
+  var sheet = sheetByName_(FEEDBACK_SHEET);
+  if (!sheet) return { ok: true, feedback: [] };
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return { ok: true, feedback: [] };
+  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  var out = [];
+  for (var r = 1; r < values.length; r++) {
+    if (!values[r][idx['id']]) continue;
+    if (String(values[r][idx['user_email']] || '').toLowerCase() !== email) continue;
+    out.push({
+      id: values[r][idx['id']], ref: idx['ref'] != null ? values[r][idx['ref']] : '',
+      created_at: values[r][idx['created_at']], status: values[r][idx['status']],
+      kind: idx['kind'] != null ? values[r][idx['kind']] : '',
+      message: String(values[r][idx['message']] || '').slice(0, 300),
+      reply: idx['reply'] != null ? String(values[r][idx['reply']] || '') : ''
+    });
+  }
+  out.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+  return { ok: true, feedback: out.slice(0, 100) };
+}
+
 function deleteFeedback_(data) {
   var sheet = sheetByName_(FEEDBACK_SHEET);
   if (!sheet) return { ok: false, error: 'Feedback sheet missing.' };
@@ -6166,6 +6197,7 @@ function updateFeedback_(data) {
   for (var r = 1; r < values.length; r++) {
     if (values[r][idx['id']] === data.id) {
       if (data.status) sheet.getRange(r + 1, idx['status'] + 1).setValue(data.status);
+      if (data.reply != null && idx['reply'] != null) sheet.getRange(r + 1, idx['reply'] + 1).setValue(String(data.reply).slice(0, 600));
       return { ok: true };
     }
   }
@@ -6424,7 +6456,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r146.2 · 2026-09-05';
+var CODE_STAMP = 'r147 · 2026-09-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

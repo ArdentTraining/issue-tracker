@@ -679,11 +679,18 @@
   .rail-badge.on { display: block; }
   .rail-badge.quiet { background: var(--accent); color: #fff; }
   .rail-div { height: 1px; background: var(--line); margin: 7px 4px; flex-shrink: 0; }
+  /* r147: the bell's panel */
+  #bellPanel { position: fixed; z-index: 61; width: min(420px, calc(100vw - 24px)); max-height: 70vh; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.35); }
+  #bellPanel .bell-item { padding: 8px 0; border-top: 1px solid var(--line); }
+  #bellPanel .bell-item:first-of-type { border-top: none; }
+  #bellPanel .bell-kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--accent); }
   /* Round 104: Help sits at the BOTTOM of the rail, under every section and
      above the user menu, so it is in the same corner whatever page you are
      on. The auto margin that pushes things down moves off .rail-foot and
      onto Help, so the two of them travel together. */
-  #railHelp { margin-top: auto; }
+  #railBell { margin-top: auto; }   /* r147: the bell takes the foot slot, Help sits under it */
+  #railHelp { margin-top: 0; }
   .rail-foot { padding-top: 8px; }
   body.shell .rail-foot #userbox { position: relative; display: block; text-align: center; }
   body.shell .rail-foot #userbox > button { width: 100%; padding: 8px 4px; white-space: normal; word-break: break-word; }
@@ -824,6 +831,7 @@
     #railMoreSheet .rail-item.active::before { display: none; }
     #railMoreSheet .rail-badge { position: static; margin-left: auto; }
     #railMoreSheet #railHelp { margin-top: 0; }
+    #railMoreSheet #railBell { margin-top: 0; }
     /* Every item shares the width rather than scrolling sideways: a bar you
        have to scroll to reach Admin is a bar that hides half the app. Seven
        items and the user menu fit across 411px at about 50px each, which is
@@ -842,6 +850,7 @@
     .rail-item.active::before { left: 6px; right: 6px; top: -4px; bottom: auto; width: auto; height: 3px; border-radius: 0 0 3px 3px; }
     .rail-div { display: none; }
     #railHelp { margin-top: 0; }
+    #railBell { margin-top: 0; }
     .rail-foot { margin-top: 0; padding-top: 0; flex: 1 1 0; min-width: 0; align-self: center; }
     body.shell .rail-foot #userbox > button { padding: 6px 1px; font-size: 10.5px; overflow: hidden; }
     /* The feedback pill and the view-as bar sit above the bar, not under it. */
@@ -1062,6 +1071,14 @@
        it just gets shorter the fewer permissions the account holds. It is
        pushed to the foot of the rail by #railHelp's auto margin, so it sits
        above the user menu in the bottom-left corner of every page. -->
+  <!-- r147 (Edd): the bell. Replies to your questions, and feedback you sent
+       that has been acted on. Everybody gets one; it only lights up when
+       there is something of yours to read. -->
+  <button type="button" class="rail-item" id="railBell" onclick="toggleBell(event)" title="Notifications">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+    <span class="ri-word">Alerts</span>
+    <span class="rail-badge quiet" id="railBadgeBell">0</span>
+  </button>
   <button type="button" class="rail-item" id="railHelp" onclick="railGo('manual')" title="User manual">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.35 9.2a2.7 2.7 0 0 1 5.25.9c0 1.8-2.6 2.15-2.6 3.9"/><line x1="12" y1="17.3" x2="12" y2="17.3"/></svg>
     <span class="ri-word">Help</span>
@@ -1903,6 +1920,8 @@
   <h4>Staying signed in</h4>
   <p>Twelve devices at once, and a session lasts thirty days from when it was last used, not from when you signed in - so a device in regular use renews itself and stays signed in indefinitely. Signing in on a thirteenth pushes off whichever session was closest to expiring, which in practice is one you had stopped using anyway.</p>
   <p>It used to be one device, and that meant every phone login quietly knocked the desktop out, which is where "I seem to be asked to log in three times a day" came from. <span class="ui">Log out</span> signs out the device you are on and leaves the others alone, so logging out of a shared computer costs you nothing on your own phone.</p>
+  <h4>The bell</h4>
+  <p>Just above Help. It lights up with a number when there is something of yours to read: a reply to a question you asked on an issue, or a piece of feedback you sent through the Feedback button that has since been built or acted on. Press it to see them, <span class="ui">Open</span> takes you to the issue, and <span class="ui">Got it</span> clears one. Nothing in there is for anyone else, so an empty bell means nobody is waiting on you.</p>
   <h4>Your name at the bottom of the rail</h4>
   <p>Press it and there are four things in there. <span class="ui">Theme</span> cycles through auto, light, and dark, with auto following whatever the device is set to. The menu stays open as you go so you can see each one land. <span class="ui">Preferences</span> holds the small how-it-behaves-for-me settings, and they follow your login rather than the device. The first one is "after logging an issue, open it so I can check it over": off, you land back on the list; on, the issue you just logged opens straight away so you can read it back or add to it while it is fresh. <span class="ui">Change password</span> asks for the current one and then the new one twice. <span class="ui">Log out</span> does what it says.</p>
 </section>
@@ -2535,6 +2554,8 @@
   </div>
 </div>
 
+<div id="bellPanel" class="hidden"></div>
+
 <!-- PREFERENCES (FB-0340) - the small how-it-behaves-for-me things -->
 <div class="modal-bg" id="prefsModal">
   <div class="modal">
@@ -2873,7 +2894,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r146 · 2026-09-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r147 · 2026-09-05";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4184,6 +4205,7 @@ function loadIssues(isRetry) {
     saveBootCache(res);
     openDeepLinkedIssue();
     openJustLogged();
+    if (!state._myFeedbackLoaded) { state._myFeedbackLoaded = true; loadMyFeedback(); }
   }).catch(function (e) { showUpdating(false); console.error(e); });
 }
 
@@ -6148,7 +6170,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railEdd", "railDev", "railRCA", "railCourse", "railReports", "railStats", "railUsers", "railHelp"];
+var RAIL_MORE_IDS = ["railEdd", "railDev", "railRCA", "railCourse", "railReports", "railStats", "railUsers", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -6215,8 +6237,99 @@ function updateRail() {
 // Two badges, and only two. Chats counts the open conversations. Issues
 // counts the things waiting on somebody, NOT the size of the log - a number
 // that only means work is a number worth looking at.
+// ===================== r147: THE BELL =====================
+// What is waiting for THIS person: answers to their questions (the same list
+// the dev/course pages show) and their own feedback that has moved on from
+// "new". One list, one count (the r60 rule), cleared item by item.
+var FEEDBACK_ACTED_ = { needs_testing: "Built - please try it", done: "Done", fixed: "Fixed", closed: "Closed" };
+function bellItems() {
+  var out = [];
+  myNewReplies().forEach(function (x) {
+    out.push({ kind: "reply", key: "r:" + x.i.issue_id, date: x.date, title: cardTitle(x.i),
+      body: x.a, sub: x.by + " replied" + (x.q ? ' to "' + String(x.q).slice(0, 120) + '"' : ""), issue_id: x.i.issue_id, date_seen: x.date });
+  });
+  var seen = (state.prefs && state.prefs.feedback_seen) || {};
+  (state.myFeedback || []).forEach(function (f) {
+    var st = String(f.status || "").toLowerCase();
+    if (!FEEDBACK_ACTED_[st]) return;
+    if (seen[f.id] === st) return;
+    out.push({ kind: "feedback", key: "f:" + f.id, date: f.created_at, title: (f.ref ? f.ref + " · " : "") + FEEDBACK_ACTED_[st],
+      body: f.reply || "", sub: 'You sent: "' + String(f.message || "").slice(0, 160) + '"', fb_id: f.id, fb_status: st });
+  });
+  out.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  return out;
+}
+function loadMyFeedback() {
+  if (!state.user) return Promise.resolve();
+  return apiPost({ action: "myFeedback" }).then(function (res) {
+    if (res && res.ok) { state.myFeedback = res.feedback || []; updateRailBadges(); }
+  }).catch(function () {});
+}
+function toggleBell(e) {
+  if (e) e.stopPropagation();
+  var p = $("bellPanel");
+  if (!p.classList.contains("hidden")) { closeBell(); return; }
+  renderBell();
+  p.classList.remove("hidden");
+  var b = $("railBell");
+  if (b) {
+    var r = b.getBoundingClientRect();
+    var left = Math.min(r.right + 8, window.innerWidth - p.offsetWidth - 12);
+    if (window.innerWidth < 700) left = 12;
+    p.style.left = left + "px";
+    p.style.top = Math.max(12, Math.min(r.top - 12, window.innerHeight - p.offsetHeight - 12)) + "px";
+  }
+  loadMyFeedback().then(function () { if (!$("bellPanel").classList.contains("hidden")) renderBell(); });
+}
+function closeBell() { $("bellPanel").classList.add("hidden"); }
+document.addEventListener("click", function (e) {
+  var p = $("bellPanel");
+  if (p && !p.classList.contains("hidden") && !p.contains(e.target) && !(e.target.closest && e.target.closest("#railBell"))) closeBell();
+});
+function renderBell() {
+  var items = bellItems();
+  var p = $("bellPanel");
+  if (!items.length) { p.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">Nothing waiting</div><div class="small muted">Replies to your questions, and feedback you sent that has been acted on, show up here.</div>'; return; }
+  p.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">For you (' + items.length + ')</div>' + items.map(function (x) {
+    var open = x.issue_id ? '<button class="primary small" style="padding:4px 10px;" onclick="closeBell();openIssueFromBell(\'' + esc(x.issue_id) + '\')">Open</button> ' : '';
+    var got = x.kind === "reply"
+      ? 'replySeen(\'' + esc(x.issue_id) + '\', \'' + esc(x.date_seen) + '\')'
+      : 'feedbackSeen(\'' + esc(x.fb_id) + '\', \'' + esc(x.fb_status) + '\')';
+    return '<div class="bell-item">' +
+      '<div class="bell-kind">' + (x.kind === "reply" ? "Reply" : "Your feedback") + ' · ' + esc(fmtDate(x.date)) + '</div>' +
+      '<div style="margin:2px 0;">' + esc(x.title) + '</div>' +
+      (x.sub ? '<div class="small muted">' + esc(x.sub) + '</div>' : '') +
+      (x.body ? '<div style="margin:4px 0;white-space:pre-wrap;">' + esc(x.body) + '</div>' : '') +
+      '<div style="margin-top:6px;">' + open + '<button class="ghost small" style="padding:4px 10px;" onclick="' + got + ';renderBell()">Got it</button></div>' +
+    '</div>';
+  }).join("");
+}
+function openIssueFromBell(id) {
+  var p = state.perms || {};
+  var i = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
+  if (!i) return;
+  if (p.manage || p.users) { setView("admin"); state.trackView = "list"; openIssueById(id, false); }
+  else if (p.dev || p.course) { setView(p.dev ? "dev" : "course"); openDevDetail(id); }
+  else { setView("live"); openIssueById(id, false); }
+}
+function feedbackSeen(id, status) {
+  var seen = Object.assign({}, (state.prefs && state.prefs.feedback_seen) || {});
+  seen[id] = status;
+  state.prefs = Object.assign({}, state.prefs || {}, { feedback_seen: seen });
+  updateRailBadges();
+  apiPost({ action: "setPrefs", prefs: { feedback_seen: seen } }).then(function (res) {
+    if (res && res.ok && res.prefs) state.prefs = res.prefs;
+  }).catch(function () {});
+}
+
 function updateRailBadges() {
   var p = state.perms || {};
+  var bell = $("railBadgeBell");
+  if (bell) {
+    var nb = state.user ? bellItems().length : 0;
+    bell.textContent = nb > 99 ? "99+" : String(nb);
+    bell.classList.toggle("on", !!nb);
+  }
   // FB-0301: one Today badge = the same two numbers the Today page shows,
   // open cases plus action rows. Same sources as the lists, never a separate
   // count (the r60 rule).
@@ -10536,6 +10649,7 @@ function replySeen(id, date) {
   seen[id] = date;
   state.prefs = Object.assign({}, state.prefs || {}, { replies_seen: seen });
   renderCurrentView();
+  updateRailBadges();
   apiPost({ action: "setPrefs", prefs: { replies_seen: seen } }).then(function (res) {
     if (res && res.ok && res.prefs) state.prefs = res.prefs;
   }).catch(function () {});
