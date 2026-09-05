@@ -1111,6 +1111,7 @@
           </select>
         </div>
         <button class="ghost small" id="themeBtn" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="event.stopPropagation();cycleTheme()">Theme</button>
+        <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();openPrefs()">Preferences</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();openChangePassword()">Change password</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();doLogout()">Log out</button>
       </div>
@@ -1901,7 +1902,7 @@
   <p>Twelve devices at once, and a session lasts thirty days from when it was last used, not from when you signed in - so a device in regular use renews itself and stays signed in indefinitely. Signing in on a thirteenth pushes off whichever session was closest to expiring, which in practice is one you had stopped using anyway.</p>
   <p>It used to be one device, and that meant every phone login quietly knocked the desktop out, which is where "I seem to be asked to log in three times a day" came from. <span class="ui">Log out</span> signs out the device you are on and leaves the others alone, so logging out of a shared computer costs you nothing on your own phone.</p>
   <h4>Your name at the bottom of the rail</h4>
-  <p>Press it and there are three things in there. <span class="ui">Theme</span> cycles through auto, light, and dark, with auto following whatever the device is set to. The menu stays open as you go so you can see each one land. <span class="ui">Change password</span> asks for the current one and then the new one twice. <span class="ui">Log out</span> does what it says.</p>
+  <p>Press it and there are four things in there. <span class="ui">Theme</span> cycles through auto, light, and dark, with auto following whatever the device is set to. The menu stays open as you go so you can see each one land. <span class="ui">Preferences</span> holds the small how-it-behaves-for-me settings, and they follow your login rather than the device. The first one is "after logging an issue, open it so I can check it over": off, you land back on the list; on, the issue you just logged opens straight away so you can read it back or add to it while it is fresh. <span class="ui">Change password</span> asks for the current one and then the new one twice. <span class="ui">Log out</span> does what it says.</p>
 </section>
 
 <section id="man-around" data-perm="" data-title="Finding your way around">
@@ -2528,6 +2529,20 @@
     <div class="field"><label>Confirm new password</label><input id="cpNew2" type="password" onkeydown="if(event.key==='Enter')doChangePassword()"></div>
     <div class="btns"><button class="primary" onclick="doChangePassword()">Update password</button><button class="ghost" onclick="closeChangePassword()">Cancel</button></div>
     <div id="cpMsg" class="small muted" style="margin-top:6px;"></div>
+  </div>
+</div>
+
+<!-- PREFERENCES (FB-0340) - the small how-it-behaves-for-me things -->
+<div class="modal-bg" id="prefsModal">
+  <div class="modal">
+    <h3>Preferences</h3>
+    <p class="small muted">Just for you. They follow your login, so they hold on your phone too.</p>
+    <label style="display:block;font-size:13px;color:var(--text);margin:10px 0;">
+      <input type="checkbox" id="pref_open_after_log" style="width:auto;margin-right:6px;vertical-align:-1px;">
+      After logging an issue, open it so I can check it over
+    </label>
+    <div class="btns"><button class="primary" onclick="savePrefs()">Save</button><button class="ghost" onclick="closePrefs()">Cancel</button></div>
+    <div id="prefsMsg" class="small muted" style="margin-top:6px;"></div>
   </div>
 </div>
 
@@ -3975,6 +3990,7 @@ function applyPerms(user) {
   if (!state.viewAs) state.realUser = user;
   state.user = user;
   state.perms = (user && user.perms) || {};
+  state.prefs = (user && user.prefs) || {};
   var p = state.perms;
   $("tabInstructor").style.display = p.log ? "" : "none";
   $("tabActions").style.display = p.log ? "" : "none";
@@ -4158,12 +4174,13 @@ function loadIssues(isRetry) {
       // On every later refresh it must NOT, or a background reload would
       // throw the person back to their default tab mid-job.
       if (!state._permsApplied) { applyPerms(res.user); state._permsApplied = true; }
-      else if (!state.viewAs) { state.user = res.user; state.perms = res.user.perms || {}; }
+      else if (!state.viewAs) { state.user = res.user; state.perms = res.user.perms || {}; state.prefs = res.user.prefs || {}; }
     }
     state._fromCache = false;
     applyBootstrap(res);
     saveBootCache(res);
     openDeepLinkedIssue();
+    openJustLogged();
   }).catch(function (e) { showUpdating(false); console.error(e); });
 }
 
@@ -5949,6 +5966,36 @@ function openDeepLinkedIssue() {
   else if (p.log) { setView("actions"); }
 }
 
+// FB-0340 (Holly): "It would be ideal to stay on the review page of the thing
+// that has just been logged." A preference, not the default (Edd): most people
+// log and move on. The id is parked at submit and picked up once the fresh
+// list has the issue in it.
+function openJustLogged() {
+  var id = state._openAfterLog;
+  if (!id) return;
+  var issue = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (!issue) return;   // not in this load yet; the next one will have it
+  state._openAfterLog = null;
+  openIssueById(id, false);
+}
+function openPrefs() {
+  var p = state.prefs || {};
+  $("pref_open_after_log").checked = !!p.open_after_log;
+  $("prefsMsg").textContent = "";
+  $("prefsModal").classList.add("show");
+}
+function closePrefs() { $("prefsModal").classList.remove("show"); }
+function savePrefs() {
+  var prefs = { open_after_log: $("pref_open_after_log").checked };
+  $("prefsMsg").textContent = "Saving…";
+  apiPost({ action: "setPrefs", prefs: prefs }).then(function (res) {
+    if (!res || !res.ok) { $("prefsMsg").textContent = "Could not save: " + ((res && res.error) || "unknown"); return; }
+    state.prefs = res.prefs || prefs;
+    if (state.user) state.user.prefs = state.prefs;
+    closePrefs(); toast("Preferences saved.");
+  }).catch(function (e) { $("prefsMsg").textContent = "Could not save."; console.error(e); });
+}
+
 // ============================ VIEW SWITCH ============================
 function setView(v) {
   // FB-0313: the Actions page folded into Today (the live view). Every old
@@ -6772,10 +6819,14 @@ function runExtract() {
     // The section only arrives with the extraction, and it is what decides
     // whether any of the student-troubleshooting machinery applies.
     renderFormChecklist();
-    setField("f_course", f.course || "");
-    setField("f_module", f.module);
-    setField("f_lesson", f.lesson);
-    setField("f_lesson_code", f.lesson_code);
+    // FB-0341 (Stuart): "I deff entered the right slide question number."
+    // Extract wiped it - a null from the AI cleared whatever the instructor
+    // had already typed. What they typed beats a blank; a code the AI DID
+    // find still wins, and can be edited after.
+    if (f.course || !getField("f_course")) setField("f_course", f.course || "");
+    if (f.module || !getField("f_module")) setField("f_module", f.module);
+    if (f.lesson || !getField("f_lesson")) setField("f_lesson", f.lesson);
+    if (f.lesson_code || !getField("f_lesson_code")) setField("f_lesson_code", f.lesson_code);
     if (f.issue_type) setField("f_issue_type", f.issue_type);
     setField("f_summary", f.summary);
     if (f.priority) setField("f_priority", String(f.priority).toLowerCase());
@@ -8582,6 +8633,8 @@ function submitIssue() {
       : res.issue_ids ? res.issue_ids
       : (res.issue && res.issue.issue_id) ? [res.issue.issue_id] : [];
     uploadImagesInBackground(targetIds);
+    // FB-0340: only a single fresh log, and only when they asked for it.
+    if ((state.prefs || {}).open_after_log && !wasUpdate && !state.editingId && targetIds.length === 1) state._openAfterLog = targetIds[0];
     // A suggestion from the chat scan is only spent once something saved.
     if (targetIds.length) markScanLogged(targetIds[0]);
     // A workaround was handed over and this landed as Resolved - TBC: check

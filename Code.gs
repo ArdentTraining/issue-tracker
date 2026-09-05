@@ -135,6 +135,13 @@ function stampSlackThread_(issueId, channel, ts, kind) {
 // to move on, and a channel of stale red circles is one nobody reads. Deletes
 // only the alerts this app posted (their ts is stamped on the issue) and only
 // when the issue actually leaves the open states.
+// r143 (Edd, 5 Sep 2026): "when an issue is resolved, can any past posts
+// about it on slack be deleted to keep the slack channel tidy?" So every
+// bot-posted message stamped on the issue goes now, questions included, not
+// only the red alert. The question and its answer are on the issue's own
+// trail, so nothing is lost. Webhook posts (notify-student, shared
+// workaround, shipping chase) carry no message id back and cannot be deleted
+// by anyone but a person - that is a Slack limit, not a choice.
 function slackDeleteAlerts_(issueId) {
   try {
     var tok = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
@@ -145,7 +152,6 @@ function slackDeleteAlerts_(issueId) {
     if (!threads.length) return;
     var kept = [];
     threads.forEach(function (t) {
-      if (String(t.kind) !== 'alert') { kept.push(t); return; }
       var res = UrlFetchApp.fetch('https://slack.com/api/chat.delete', {
         method: 'post', contentType: 'application/json',
         headers: { Authorization: 'Bearer ' + tok },
@@ -163,6 +169,15 @@ function slackDeleteAlerts_(issueId) {
   } catch (e) {}
 }
 var SLACK_ALERT_CLOSED_ = { resolved: 1, resolved_tbc: 1, parked: 1, past: 1 };
+// r143: every path that can close an issue calls this after its write, so the
+// tidy-up does not depend on which button did the closing (updateIssue_ was
+// the only caller; a dev's Mark fixed, an update closing on a workaround, and
+// a repeat report landing as TBC all left their alert standing).
+function slackTidyIfClosed_(rec) {
+  try {
+    if (rec && SLACK_ALERT_CLOSED_[String(rec.status || '').toLowerCase()] && slackThreadsOf_(rec).length) slackDeleteAlerts_(rec.issue_id);
+  } catch (e) {}
+}
 
 function slackBotPost_(channelId, text, threadTs) {
   try {
@@ -607,6 +622,7 @@ function doPost(e) {
     if (action === 'inviteUser') return jsonOut(inviteUser_(body));
     if (action === 'updateUser') return jsonOut(updateUser_(body));
     if (action === 'changePassword') return jsonOut(changePassword_(body));
+    if (action === 'setPrefs') return jsonOut(setPrefs_(body));
     if (action === 'adminResetLink') return jsonOut(adminResetLink_(body));
     if (action === 'savePlaybook') return jsonOut(savePlaybook_(body));
     if (action === 'resolvePlaybookSuggestion') return jsonOut(resolvePlaybookSuggestion_(body));
@@ -629,7 +645,12 @@ function doPost(e) {
 // decide which pages they see. Requests carry a session token, not a passcode.
 
 var USERS_SHEET = 'Users';
-var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_salt', 'invite_token', 'session_token', 'session_expires', 'created_at'];
+// r143: prefs_json APPENDED (never inserted - the Users tab is read by header
+// name, but appending keeps every existing row's cells where they are).
+// Personal preferences, the small how-the-app-behaves-for-me things (FB-0340,
+// Holly: stay on the issue after logging it). Owned by the account, so they
+// follow the person between devices.
+var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_salt', 'invite_token', 'session_token', 'session_expires', 'created_at', 'prefs_json'];
 var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users'];
 var SESSION_DAYS = 30;
 var HASH_ROUNDS = 2000;
@@ -813,7 +834,7 @@ function reqPerm_(action) {
     // is the outer gate only: you have to be someone who works issues at all.
     case 'deleteIssue': return 'work';
     case 'getIssues': case 'getIssuesList': case 'getIssue': case 'bootstrap':
-    case 'getInstructors': case 'me': return 'any';
+    case 'getInstructors': case 'me': case 'setPrefs': return 'any';
     // Ardent Reports vouching ticket. Reuses 'analytics' rather than adding a
     // permission key: it is already held by exactly the accounts that should
     // see Reports, and PERM_KEYS/the admin screen stay untouched.
@@ -828,7 +849,27 @@ function reqPerm_(action) {
   }
 }
 function publicUser_(user) {
-  return { email: user.email, name: user.name, perms: permsOf_(user) };
+  // {email, name, perms} is an embedding contract with Reports (r67) - only
+  // ever ADD to this shape.
+  return { email: user.email, name: user.name, perms: permsOf_(user), prefs: prefsOf_(user) };
+}
+function prefsOf_(user) {
+  try { var p = JSON.parse(String((user && user.prefs_json) || '') || '{}'); return (p && typeof p === 'object') ? p : {}; }
+  catch (e) { return {}; }
+}
+// Merge the caller's own preferences. Only known keys, only booleans, only
+// their own row: there is nothing here worth a permission beyond being logged in.
+var PREF_KEYS = ['open_after_log'];
+function setPrefs_(body) {
+  var user = body._user || {};
+  var f = findUserByEmail_(user.email);
+  if (!f) return { ok: false, error: 'Account not found.' };
+  if (f.idx.prefs_json == null) return { ok: false, error: 'prefs column missing - run setup' };
+  var cur = prefsOf_(f.user);
+  var inc = (body.prefs && typeof body.prefs === 'object') ? body.prefs : {};
+  PREF_KEYS.forEach(function (k) { if (inc.hasOwnProperty(k)) cur[k] = (inc[k] === true || inc[k] === 'true'); });
+  setCell_(f, 'prefs_json', JSON.stringify(cur));
+  return { ok: true, prefs: cur };
 }
 function setCell_(f, key, value) { f.sheet.getRange(f.row, f.idx[key] + 1).setValue(value); }
 
@@ -2257,6 +2298,7 @@ function addReportToIssue_(id, data, report) {
 
   rec.updated_at = new Date().toISOString();
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  slackTidyIfClosed_(rec);
 
   // If the bump just pushed it to high, let Slack know once, but never ping for
   // something that has landed resolved or Resolved - TBC, and never for one that
@@ -2908,6 +2950,7 @@ function addUpdate_(data) {
 
   if (!isNudge) rec.updated_at = new Date().toISOString();
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  slackTidyIfClosed_(rec);
 
   if (String(rec.priority).toLowerCase() === 'high' && priorityBefore !== 'high' &&
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
@@ -3017,6 +3060,7 @@ function markDevFixed_(data) {
   if (data.dev_notes != null) rec.dev_notes = data.dev_notes;
   rec.updated_at = new Date().toISOString();
   found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  slackTidyIfClosed_(rec);
   if (data.notify_student) {
     try { sendNotifyStudentSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
@@ -4302,7 +4346,8 @@ function scanChatwoot(opts) {
           var imp = chatwootImport_({ conversation: c.id });
           var transcript = (imp && imp.ok && imp.transcript) ? String(imp.transcript) : '';
           if (transcript) {
-            var ex = extract_({ raw_text: transcript });
+            // FB-0345: hold the re-read to the problem the scan verified.
+            var ex = extract_({ raw_text: transcript, focus: c.summary || '' });
             var f = ex && ex.ok ? ex.fields : null;
             var list = f ? (f.issues && f.issues.length ? f.issues : [f]) : [];
             if (list.length === 1) {
@@ -5134,7 +5179,20 @@ function extract_(data) {
   // multi-topic threads (exactly the ones this splitting is for) and the parse
   // then failed. A 16-message live-chat import still hit that ceiling on 27 Jul.
   var t0 = Date.now();
-  var call = anthropicCachedFetch_(EXTRACTION_MODEL, extractionStaticPrompt_(), rawText + '\n"""', 8192);
+  // r143 (FB-0345, Stuart): the overnight scan had already decided WHICH
+  // problem in a thread to log (a typo on DS.07.03.02), then re-read the whole
+  // thread here and put a different topic on top (a student asking why he lost
+  // marks - a question, not a fault). The filed issue was that question with
+  // the typo's lesson code stuck on it. A caller that already knows the issue
+  // says so, and the read is held to it. Rides after the raw text so the
+  // cached static block is untouched.
+  var focus = String(data.focus || '').trim();
+  var tail = focus
+    ? '\n\nFOCUS: this thread has already been read once and the issue to log is: "' + focus.replace(/"/g, "'") + '". ' +
+      'Extract ONLY that issue into the top-level fields and return sub_issues as null. ' +
+      'Every other topic in the thread is background, not an issue: do not summarise it, and do not let it set the category, lesson, or resolution.'
+    : '';
+  var call = anthropicCachedFetch_(EXTRACTION_MODEL, extractionStaticPrompt_(), rawText + '\n"""' + tail, 8192);
   if (!call.res) return { ok: false, error: 'Anthropic call failed: ' + (call.why || 'unknown') };
   var res = call.res;
 
