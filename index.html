@@ -1949,6 +1949,7 @@
     <tr data-perm="analytics"><td><span class="ui">Reports</span></td><td>The telemetry dashboard, showing how students are actually moving through the lessons.</td></tr>
     <tr data-perm="analytics"><td><span class="ui">Stats</span></td><td>What the log itself says: where the issues are, and which lessons keep generating them.</td></tr>
     <tr data-perm="users"><td><span class="ui">Admin</span></td><td>People, the feedback on this app, and the troubleshooting playbook.</td></tr>
+    <tr><td><span class="ui">Notifications</span></td><td>The bell, just above Help. It lights up when somebody replies to a question of ours, or acts on feedback we sent.</td></tr>
     <tr><td><span class="ui">Help</span></td><td>This manual, down at the bottom.</td></tr>
   </table></div>
   <p data-perm="log">The badge counts real work and nothing else. A badge counting the size of the log would sit in the hundreds and never move, and we would all stop looking at it inside a week.</p>
@@ -2124,7 +2125,7 @@
     <tr><td><span class="ui">Chase</span></td><td>A parcel is due a chase today: it has had three working days since it was logged or last chased. Poke the courier, then <span class="ui">Chased - remind in 3 working days</span> puts it back on the list.</td></tr>
     <tr><td><span class="ui">Question</span></td><td>A developer or the course team has asked us something, and the fix is held up until it is answered.</td></tr>
     <tr data-perm="users"><td><span class="ui">Dev asks</span></td><td>A developer's question pointed at the admins rather than at an instructor. Answering it here answers it on the issue and back wherever it was asked from.</td></tr>
-    <tr><td><span class="ui">Fixed</span></td><td>Either a fix has landed and needs checking, or it is checked and the student needs telling.</td></tr>
+    <tr><td><span class="ui">Fixed</span></td><td>A fix has landed and the student needs telling. An older issue may still be sitting in the check lane instead, waiting on somebody to confirm it.</td></tr>
     <tr><td><span class="ui">Fix sent</span> / <span class="ui">Workaround</span></td><td>The student was told days ago and has said nothing since. One check-in is worth it. Left alone it resolves itself on schedule, and the row says how many days that is.</td></tr>
   </table></div>
   <p>Under each title there is a line with the reference, the student's first name, the lesson, and <span class="ui">chat open</span> where there is a live conversation on it.</p>
@@ -2188,10 +2189,13 @@
     <li>Two ticks. <span class="ui">Students notified</span> ticks off the telling job and drops it off the Today list, without resolving the fault. <span class="ui">Student needs no further contact</span> stops us chasing this one person while the fault stays open for whoever is fixing it.</li>
     <li><span class="ui">Save changes</span>. On a long pane a save bar follows you down the screen, so the button is never out of reach.</li>
   </ul>
+  <p>At the very foot of the pane there are two more ways out, <span class="ui">Mark resolved</span> and <span class="ui">Park it</span>, for when the issue is done and there is nothing to change in the card above.</p>
   <p>Resolving without a note is refused, with <em>Add a resolution note before resolving.</em> That line is what the next person reads when the same fault turns up in six months.</p>
 
   <h4>When a fix comes back</h4>
-  <p>A green box says the developer or the course team believes it is fixed, and offers three ways out. <span class="ui">Verified - resolve</span> once you have checked it, <span class="ui">Park it</span> if it is not really fixed and not worth chasing, or <span class="ui">Not fixed - reopen</span> if it is wrong.</p>
+  <p>A fix now resolves the issue on its own. Whoever fixed it tests it, so there is no second person clicking to confirm: that step was ceremony, and it left real fixes sitting in a lane for days waiting on somebody who had not seen the fault in the first place.</p>
+  <p>The job it leaves behind is telling the student, which still lands in <span class="ui">Waiting on me</span> as it always did. And if it comes back, <span class="ui">Not fixed - reopen</span> is one press.</p>
+  <p>An issue logged before that change can still be sitting in the old check lane, so a green box saying the developer or the course team believes it is fixed, with <span class="ui">Verified - resolve</span> on it, is an older one rather than something new.</p>
 
   <h4>Questions from the team</h4>
   <p>A pending question shows in an amber box with a reply box under it. Answering there answers it wherever it was asked from, so there is no need to go and find the person who asked.</p>
@@ -2265,12 +2269,16 @@
   <p><span class="ui">Estimated size of fix</span> takes Small, Medium, or Large. <span class="ui">Suggest a size</span> reads the issue and proposes one with a reason, and it saves only once you agree, so a suggestion you disagree with costs you nothing but the press.</p>
   <h4>Priority</h4>
   <p data-noperm="users">The priority shows as a badge with the severity, the report count, and the score behind it, and there is no dropdown. It is worked out from how badly the fault hits one person and how many people have hit it, so it belongs with whoever can see the whole board.</p>
-  <p data-noperm="users"><span class="ui">Ask for a different priority</span> does not send anything. It writes an opening line into the question box further down, points it at the admins, and puts the cursor at the end for us to say why. The toast says as much: <em>Add a line on why, then press Send question.</em></p>
+  <p data-noperm="users">The request sits on the priority row itself. Pick what it ought to be from <span class="ui">Change to…</span> and press <span class="ui">Ask for it</span>. Nothing sends at that point: it writes an opening line into the question box further down, aimed at the admins, and leaves the cursor at the end for the reason. The toast says as much, <em>Say why, then press Send question.</em> Pressing it without choosing a priority first gets <em>Pick the priority you are asking for first.</em></p>
   <div class="man-note warn" data-noperm="users">
     <strong>If you edit priority some other way, the save is refused</strong>
     The message reads <em>Only the fix size can be edited from this queue. Ask an admin for a priority change.</em> The rule used to be in the screen only, so the button was gone but the save still went through. It is enforced properly now.
   </div>
   <p data-perm="users">You get a dropdown here, because you hold Manage users. Everyone else sees a read-only badge with the severity, the report count, and the score behind it, plus a button to ask you for a change. It arrives as a question on the issue with their reasoning attached.</p>
+  <h4>When somebody answers</h4>
+  <p>An answer to one of our questions comes back as <span class="ui">New replies</span> at the top of the queue page, with what we asked, what came back, and who wrote it. <span class="ui">Open</span> goes to the issue and <span class="ui">Got it</span> clears the line.</p>
+  <p>It is cleared per person, so marking one read takes it off our own page and leaves it on everybody else's until they have seen it too.</p>
+
   <h4>Asking a question</h4>
   <p><span class="ui">Question about this fix?</span> goes either to <span class="ui">Ask Charlie, Charly or Edd</span> or to the instructor who submitted the report, whichever is likelier to know. It lands on their Today list and on Slack.</p>
   <p>The pane stays open after sending, and the question and its answer are kept on the issue under <span class="ui">Questions and answers</span>, so the thread reads back later instead of living in somebody's Slack history.</p>
@@ -2323,7 +2331,7 @@
   <div class="man-note stop">
     <strong>Two things to know before pressing publish</strong>
     <p>It replaces the existing developer ask rather than adding to it. If somebody has written a careful ask on that issue, copy it somewhere first.</p>
-    <p>Publishing is admin only. A developer can promote, investigate, set the status, and log infra events, but pressing publish returns <em>publishing findings is admin-only</em>, and it does that after the form has been filled in rather than before. If you are not an admin, draft the findings and pass them to Edd, Charly, or Charlie.</p>
+    <p>Publishing stays with the admins even once the developers are let in. They will be able to promote, investigate, set the status, and log infra events, and pressing publish will return <em>publishing findings is admin-only</em> after the form has been filled in rather than before, so it is worth telling them to draft the findings and pass them over rather than discovering it at the end.</p>
   </div>
   <p>Anything that could end up somewhere public should carry conversation IDs rather than student names. The form says so, and nothing stops a person typing a name in anyway, so it is on us.</p>
   <h4>Worth knowing</h4>
@@ -2348,7 +2356,7 @@
   </div>
   <h4>Inside a card</h4>
   <p>It is the same pane the developers use, with the course wording swapped in, so <span class="ui">What we need</span> comes first, then the facts, the assignee, the size, the checklist, notes, and the questions.</p>
-  <p data-noperm="users">Priority is a badge rather than a dropdown, the same as for the developers, and <span class="ui">Ask for a different priority</span> writes an opening line into the question box for us to finish. Marking it fixed asks what was causing it and what changed, both required.</p>
+  <p data-noperm="users">Priority is a badge rather than a dropdown, the same as for the developers. Pick what it ought to be from <span class="ui">Change to…</span>, press <span class="ui">Ask for it</span>, and it writes the opening line of a question to the admins for us to finish. Marking it fixed asks what was causing it and what changed, both required.</p>
   <p data-perm="users">Priority is a dropdown here, because you hold Manage users. Marking it fixed asks what was causing it and what changed, both required.</p>
   <h4>Check the priorities</h4>
   <p>This one reads the whole open queue and comes back with a list of suggested changes, each with a reason and a before-and-after, and applies none of them until we press <span class="ui">Apply</span> on that row. It takes about a minute.</p>
@@ -2894,7 +2902,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r147 · 2026-09-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r148 · 2026-09-06";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
