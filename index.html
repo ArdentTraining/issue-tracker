@@ -2437,6 +2437,7 @@
   <h4>Feedback on the tracker</h4>
   <p>Everything sent with the <span class="ui">Feedback</span> pill lands here, sorted and filtered by status, kind, and date. A report moves <span class="ui">Needs testing</span>, then <span class="ui">Mark fixed</span>, then <span class="ui">Confirm fixed</span>, and can be reopened at any point.</p>
   <p>Each one arrives with where the person was, the last few errors, the last dozen things they clicked, and a picture of their screen, which is what turns "it didn't save" into something fixable without going back to ask.</p>
+  <p>Separately, the tracker counts which pages are opened and which buttons get pressed, by role only: instructor, developer, course team, admin. No names, no issue text, nothing typed. It feeds a section in Reports so we can see which controls earn their place and which never get touched, and trim the interface from evidence rather than guesswork.</p>
   <h4>The playbook</h4>
   <p>The rulebook behind the troubleshooting steps instructors get offered. It can be edited directly, and as tech issues get resolved new additions are proposed above it for approval, so it grows out of what actually worked rather than out of somebody's memory.</p>
   <p><span class="ui">Corrections to the known fixes</span> sits alongside it. When a suggested fix turns out not to apply, whoever was shown it can say so, and it waits here. A correction can narrow an entry to one course or a stated condition, or retire it. Nothing changes in the memory until it is approved here, which is what stops one wrong suggestion spreading itself to everybody.</p>
@@ -2902,7 +2903,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r149 · 2026-09-06";  // bump this with each round, it lands on every feedback report
+var BUILD = "r150 · 2026-09-06";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -2971,6 +2972,69 @@ document.addEventListener("click", function (ev) {
       if (tag === "button" || tag === "a" || el.getAttribute("onclick") || el.classList.contains("tab") || el.classList.contains("card")) {
         var label = diagClip(el.getAttribute("aria-label") || el.textContent || el.id || tag, 60);
         diagPush("clicks", { what: label + (el.id ? " #" + el.id : "") });
+        return;
+      }
+      el = el.parentElement;
+    }
+  } catch (e) {}
+}, true);
+
+// ===================== r150: ANONYMOUS USAGE (Edd, 6 Sep 2026) =====================
+// "Track what things our instructors actually click on... to improve and
+// streamline the interface" - and "keep it anonymous for now". So this
+// records the ROLE, the view, and the control's label, tagged with a random
+// id that lives only as long as this page load. No name, no email, no issue
+// id, and never the text of a card (a card click is recorded as "card", not
+// its summary). Batched every 30 seconds and on pagehide; a failed send is
+// dropped, never retried, never allowed to slow the page.
+var USAGE_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-usage";
+var usage = { tab: Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4), q: [], lastView: "", paneOpenedAt: 0, paneClicks: 0 };
+function usageRole() {
+  var p = state.perms || {};
+  if (!state.user) return "";
+  if (p.users || p.manage) return "admin";
+  if (p.dev) return "dev";
+  if (p.course) return "course";
+  if (p.log) return "instructor";
+  return "other";
+}
+function usageEvent(kind, label, ms) {
+  try {
+    if (!usageRole()) return;
+    var lab = String(label == null ? "" : label).replace(/\s+/g, " ").trim().slice(0, 60);
+    if (/@|\d{5,}/.test(lab)) lab = "(text)";   // never an email or a long number
+    usage.q.push({ t: Date.now(), view: String(state.view || ""), kind: kind, label: lab, ms: ms == null ? undefined : Math.round(ms) });
+    if (usage.q.length >= 40) usageFlush();
+  } catch (e) {}
+}
+function usageFlush(beacon) {
+  if (!usage.q.length) return;
+  var payload = JSON.stringify({ build: BUILD, role: usageRole() || "other", tab: usage.tab, events: usage.q.splice(0, 50) });
+  try {
+    if (beacon && navigator.sendBeacon) { navigator.sendBeacon(USAGE_URL, new Blob([payload], { type: "application/json" })); return; }
+    fetch(USAGE_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true }).catch(function () {});
+  } catch (e) {}
+}
+setInterval(function () { usageFlush(false); }, 30000);
+window.addEventListener("pagehide", function () { usageFlush(true); });
+document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") usageFlush(true); });
+// Clicks: the same walk as the diagnostics buffer above, but cards are
+// recorded by kind rather than by their text.
+document.addEventListener("click", function (ev) {
+  try {
+    var el = ev.target;
+    while (el && el !== document.body) {
+      var tag = (el.tagName || "").toLowerCase();
+      var cls = el.classList || { contains: function () { return false; } };
+      if (cls.contains("issue-card") || cls.contains("act-row") || cls.contains("kcard") || cls.contains("card") || cls.contains("exrow")) {
+        if (el.closest && el.closest("#drawer")) usage.paneClicks++;
+        usageEvent("click", "card:" + (cls.contains("act-row") ? "action" : cls.contains("kcard") ? "board" : cls.contains("issue-card") ? "issue" : "card"));
+        return;
+      }
+      if (tag === "button" || tag === "a" || tag === "summary" || cls.contains("tab") || cls.contains("rail-item") || (tag === "select")) {
+        if (el.closest && el.closest("#drawer")) usage.paneClicks++;
+        var label = el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || el.id || tag;
+        usageEvent("click", (el.closest && el.closest("#drawer") ? "pane:" : "") + label);
         return;
       }
       el = el.parentElement;
@@ -6080,6 +6144,7 @@ function savePrefs() {
 
 // ============================ VIEW SWITCH ============================
 function setView(v) {
+  try { if (v !== usage.lastView) { usage.lastView = v; usageEvent("view", v === "actions" && SHELL_ON ? "live" : v); } } catch (e) {}
   // FB-0313: the Actions page folded into Today (the live view). Every old
   // path that asked for 'actions' lands there; the actions machinery renders
   // into its relocated nodes.
@@ -8791,6 +8856,7 @@ function submitIssue() {
     if (wasUpdate && checklistJson && updateTarget) {
       apiPost({ action: "saveChecklist", issue_id: updateTarget, checklist_json: checklistJson }).catch(function () {});
     }
+    try { usageEvent("log", wasUpdate ? "update" : (res.split ? "split" : (res.merged ? "merged" : "new"))); } catch (e) {}
     if (wasUpdate) toast(wasResolvedUpdate === "resolved" ? "Update added and the issue marked resolved."
       : wasResolvedUpdate === "tbc" ? "Update added; issue set to Resolved - TBC."
       : wasParked ? "Update added and the issue parked."
@@ -9611,6 +9677,7 @@ function drawerFoldRestore(saved) {
 }
 
 function openDetail(issue) {
+  try { if (state.detailId !== issue.issue_id) { usage.paneOpenedAt = Date.now(); usage.paneClicks = 0; usageEvent("open", "admin"); } } catch (e) {}
   // Round 54: the list only carries a preview of the long texts. Draw the
   // pane now from what we have (instant), and redraw it once the full report
   // and its update history land - a fraction of a second later.
@@ -10145,6 +10212,16 @@ function bindStatusSelect() {
   } catch (e) {}
 }
 function closeDetail() {
+  try {
+    if (state.detailId && usage.paneOpenedAt) {
+      var openMs = Date.now() - usage.paneOpenedAt;
+      // A dead end: opened, nothing pressed inside it, shut again within ten
+      // seconds. The pane either answered the question at a glance or wasted
+      // the click; either way it is the number that says what to trim.
+      usageEvent(usage.paneClicks === 0 && openMs < 10000 ? "deadend" : "close", state.detailKind || "", openMs);
+      usage.paneOpenedAt = 0;
+    }
+  } catch (e) {}
   $("overlay").classList.remove("show");
   closeSplit();
   state.detailId = null;
@@ -11481,6 +11558,7 @@ function saveDevAsk(id) {
   });
 }
 function openDevDetail(id) {
+  try { if (state.detailId !== id) { usage.paneOpenedAt = Date.now(); usage.paneClicks = 0; usageEvent("open", "dev"); } } catch (e) {}
   (function () {
     var pre = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
     if (pre && pre.clipped) hydrateIssue(id, function (full) {

@@ -354,6 +354,13 @@
       <div id="activity" class="loading">Loading…</div>
     </details>
 
+    <!-- r150 (Edd, 6 Sep 2026): how the tracker itself is used, by role only. -->
+    <details class="acc" id="sec_usage" data-sec="usage">
+      <summary><span class="acc-h">How the tracker is used</span><span class="acc-sum" id="sum_usage">…</span></summary>
+      <p class="hint">Anonymous counts from the bug tracker's own interface over the last 30 days: which pages are opened, which controls are pressed, and how issue panes end. By role (instructor, developer, course team, admin), never by person. A dead end is a pane opened, nothing pressed in it, and shut within ten seconds. The point is to find controls nobody uses and paths that take too many steps, and trim from evidence.</p>
+      <div id="usage" class="loading">Loading…</div>
+    </details>
+
     <details class="acc" id="sec_health" data-sec="health">
       <summary><span class="acc-h">Collection health</span><span class="acc-sum" id="sum_health">…</span></summary>
       <p class="hint">Every registered lesson and whether it is reporting. "Quiz package" is expected for QuizMaker content and a problem for teaching lessons.</p>
@@ -612,7 +619,7 @@ function setGrain(g){
 /* ------------------------------------------------------------------ load */
 function applyPayload(j, stale){
   showApp();
-  DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null };
+  DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null, usage:j.usage || null };
   renderLive();
   document.getElementById('lockReason').textContent = j.identity.reason;
   document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
@@ -660,8 +667,8 @@ async function loadAll(){
 
    The numbers and the tables themselves are exactly what they were. */
 const OPEN_KEY = 'ardr_open_v1';
-const SECTIONS = ['howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','activity','health'];
-const DIRTY    = { lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, activity:true, health:true };
+const SECTIONS = ['howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','activity','usage','health'];
+const DIRTY    = { lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, activity:true, usage:true, health:true };
 
 function readOpen(){
   try{ return JSON.parse(localStorage.getItem(OPEN_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -686,7 +693,7 @@ function isOpen(k){ const el = document.getElementById('sec_' + k); return !!(el
 const RENDERERS = { firstslide: renderFirstSlide, reported: renderReported,
                     coverage: renderCoverage, confusion: renderConfusion,
                     lessons: renderLessons, engagement: renderEngagement,
-                    dropoff: renderDropoff, activity: renderActivity, health: renderHealth };
+                    dropoff: renderDropoff, activity: renderActivity, usage: renderUsage, health: renderHealth };
 function renderSection(k){
   if(!RENDERERS[k] || !DIRTY[k] || !isOpen(k)) return;
   RENDERERS[k]();
@@ -743,6 +750,7 @@ function renderCards(){
 function renderSummaries(){
   const stats = VIEW.stats, put = (id, t) => { const el = document.getElementById(id); if(el) el.textContent = t; };
   put('sum_activity', activitySummary());
+  put('sum_usage', usageSummary());
 
   /* The four sections added 19 Aug. Same rule as the rest: the fold says what
      is inside it, so nobody has to open all nine to find the one that matters. */
@@ -1116,6 +1124,48 @@ function renderActivity(){
     '<h3 style="margin:18px 0 8px">Week by week</h3>' + roll(a.weekly, 'week_start') +
     '<h3 style="margin:18px 0 8px">Month by month</h3>' + roll(a.monthly, 'month_start');
   host.classList.remove('loading');
+}
+
+/* ---------------------------------------------------------------- usage */
+const ROLE_LABEL = { instructor:'Instructors', dev:'Developers', course:'Course team', admin:'Admins', other:'Other' };
+function usageSummary(){
+  const u = DATA.usage; if (!u || u.error || !u.daily) return 'nothing yet';
+  const tabs = u.daily.reduce((a,r) => a + Number(r.tabs), 0), clicks = u.daily.reduce((a,r) => a + Number(r.clicks), 0);
+  if (!tabs) return 'nothing yet';
+  const days = new Set(u.daily.map(r => r.day)).size;
+  return tabs + ' sessions, ' + clicks + ' presses over ' + days + ' day' + (days === 1 ? '' : 's');
+}
+function renderUsage(){
+  const host = document.getElementById('usage'); host.classList.remove('loading');
+  const u = DATA.usage;
+  if (!u || u.error) { host.innerHTML = '<div class="note">' + (u && u.error ? 'Could not read usage: ' + esc(u.error) : 'No usage data in this build.') + '</div>'; return; }
+  if (!u.daily.length) { host.innerHTML = '<div class="note">Nothing recorded yet. Counting starts with build r150 of the tracker; give it a week.</div>'; return; }
+  const roles = [...new Set(u.daily.map(r => r.role))].sort();
+  /* Pages by role */
+  const viewsByRole = {}; u.views.forEach(r => { (viewsByRole[r.role] = viewsByRole[r.role] || []).push(r); });
+  let pages = '<table><thead><tr><th>Role</th><th>Pages opened (last 30 days)</th></tr></thead><tbody>' + roles.map(role =>
+    '<tr><td>' + esc(ROLE_LABEL[role] || role) + '</td><td>' + (viewsByRole[role] || []).sort((a,b) => b.opens - a.opens).map(r => esc(r.view) + ' <span style="color:var(--muted)">' + r.opens + '</span>').join(' · ') + '</td></tr>').join('') + '</tbody></table>';
+  /* Controls: top 25 per role, plus the ones pressed once or never seen */
+  const ctlByRole = {}; u.controls.forEach(r => { (ctlByRole[r.role] = ctlByRole[r.role] || []).push(r); });
+  let controls = roles.map(role => {
+    const rows = (ctlByRole[role] || []).sort((a,b) => b.clicks - a.clicks);
+    const top = rows.slice(0, 25), rare = rows.filter(r => Number(r.clicks) <= 1).length;
+    const max = top.length ? Number(top[0].clicks) : 1;
+    return '<h4 style="margin:12px 0 6px">' + esc(ROLE_LABEL[role] || role) + '</h4>' +
+      '<table><thead><tr><th>Control</th><th>Where</th><th>Presses</th><th></th><th>Sessions</th></tr></thead><tbody>' +
+      top.map(r => '<tr><td>' + esc(r.label || '?') + '</td><td style="color:var(--muted)">' + esc(r.view || '') + '</td><td>' + r.clicks + '</td>' +
+        '<td><div class="barwrap"><div style="height:8px;background:var(--accent);width:' + Math.round(100 * r.clicks / max) + '%"></div></div></td><td style="color:var(--muted)">' + r.tabs + '</td></tr>').join('') +
+      '</tbody></table>' + (rare ? '<p class="hint">' + rare + ' other control' + (rare === 1 ? '' : 's') + ' pressed once or less in 30 days.</p>' : '');
+  }).join('');
+  /* Panes */
+  let panes = '<table><thead><tr><th>Role</th><th>Where</th><th>Panes opened</th><th>Dead ends</th><th>Typical time open</th></tr></thead><tbody>' +
+    u.panes.map(r => '<tr><td>' + esc(ROLE_LABEL[r.role] || r.role) + '</td><td style="color:var(--muted)">' + esc(r.view || '') + '</td><td>' + r.opened + '</td><td>' + r.dead_ends + (r.opened ? ' <span style="color:var(--muted)">(' + Math.round(100 * r.dead_ends / r.opened) + '%)</span>' : '') + '</td><td>' + (r.avg_open_seconds == null ? '—' : r.avg_open_seconds + 's') + '</td></tr>').join('') + '</tbody></table>';
+  /* Daily */
+  const days = [...new Set(u.daily.map(r => r.day))].sort().reverse().slice(0, 21);
+  let daily = '<table><thead><tr><th>Day</th>' + roles.map(r => '<th>' + esc(ROLE_LABEL[r] || r) + '</th>').join('') + '<th>Logged</th></tr></thead><tbody>' +
+    days.map(d => { const rs = u.daily.filter(r => r.day === d); return '<tr><td>' + esc(d) + '</td>' + roles.map(role => { const r = rs.find(x => x.role === role); return '<td>' + (r ? r.tabs + ' <span style="color:var(--muted)">/ ' + r.clicks + '</span>' : '—') + '</td>'; }).join('') + '<td>' + rs.reduce((a,r) => a + Number(r.logged), 0) + '</td></tr>'; }).join('') + '</tbody></table><p class="hint">Sessions / presses per role per day, and issues logged.</p>';
+  host.innerHTML = '<h3 style="margin:6px 0 8px">Pages</h3>' + pages + '<h3 style="margin:18px 0 4px">Controls</h3>' + controls +
+    '<h3 style="margin:18px 0 8px">Issue panes</h3>' + panes + '<h3 style="margin:18px 0 8px">Day by day</h3>' + daily;
 }
 
 function renderLive(){
