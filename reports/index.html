@@ -441,6 +441,32 @@ async function loadIssueCounts(){
    useful instead of showing a stack trace. `kind` drives the wording. */
 function AuthProblem(kind, detail){ this.kind = kind; this.detail = detail || ''; }
 
+/* 6 Sep 2026 (Edd: "what can we do to speed this up?"). Two of the slow
+   parts were ours to remove. The ticket lives for ~25 minutes but was minted
+   again on every reload, which is a 3-4 second Apps Script round trip; it is
+   kept in sessionStorage now, keyed to the session it was minted from, so a
+   reload inside its life costs nothing. And the last payload is kept in
+   localStorage, so the page paints the previous figures at once and swaps in
+   fresh ones when they land, instead of a blank wait. */
+const TICKET_KEY = 'ait_reports_ticket';
+const CACHE_KEY  = 'ait_reports_cache';
+function readTicketCache(session){
+  try{
+    const c = JSON.parse(sessionStorage.getItem(TICKET_KEY) || 'null');
+    if(c && c.session === session && c.exp > Math.floor(Date.now()/1000) + 60){ TICKET = c.ticket; TICKET_EXP = c.exp; VIEWER = c.viewer || null; return true; }
+  }catch(e){}
+  return false;
+}
+function writeTicketCache(session){
+  try{ sessionStorage.setItem(TICKET_KEY, JSON.stringify({ session, ticket: TICKET, exp: TICKET_EXP, viewer: VIEWER })); }catch(e){}
+}
+function readDataCache(){
+  try{ const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); return (c && c.j && c.at) ? c : null; }catch(e){ return null; }
+}
+function writeDataCache(j){
+  try{ localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), j })); }catch(e){}
+}
+
 async function getTicket(force){
   const now = Math.floor(Date.now()/1000);
   /* Re-mint a minute early rather than on expiry, so a slow request cannot
@@ -450,6 +476,7 @@ async function getTicket(force){
   let session = null;
   try{ session = localStorage.getItem(SESSION_KEY); }catch(e){}
   if(!session) throw new AuthProblem('signin');
+  if(!force && readTicketCache(session)) return TICKET;
 
   let res;
   try{
@@ -485,6 +512,7 @@ async function getTicket(force){
   TICKET     = body.ticket;
   TICKET_EXP = Number(body.expires_at) || (now + 1500);
   VIEWER     = { email: body.email || null, name: body.name || null };
+  writeTicketCache(session);
   return TICKET;
 }
 
@@ -582,29 +610,35 @@ function setGrain(g){
 }
 
 /* ------------------------------------------------------------------ load */
+function applyPayload(j, stale){
+  showApp();
+  DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null };
+  renderLive();
+  document.getElementById('lockReason').textContent = j.identity.reason;
+  document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
+  const courses=[...new Set(j.stats.map(s=>s.course_code))].sort();
+  const sel=document.getElementById('courseFilter');
+  if(sel.options.length!==courses.length+1){
+    sel.innerHTML='<option value="">All courses</option>'+courses.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
+  }
+  document.getElementById('stamp').textContent = stale ? ('showing figures from ' + stale + ', refreshing…') : ('updated ' + new Date().toLocaleTimeString('en-GB'));
+  render();
+}
+let PAINTED_FROM_CACHE = false;
 async function loadAll(){
   document.getElementById('error').innerHTML='';
+  if(!PAINTED_FROM_CACHE){
+    PAINTED_FROM_CACHE = true;
+    const c = readDataCache();
+    if(c){ try{ applyPayload(c.j, new Date(c.at).toLocaleTimeString('en-GB')); }catch(e){} }
+  }
   try{
     const j = await fetchData();
-    showApp();
-    DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null };
-    renderLive();
-    document.getElementById('lockReason').textContent = j.identity.reason;
-    document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
-
-    const courses=[...new Set(j.stats.map(s=>s.course_code))].sort();
-    const sel=document.getElementById('courseFilter');
-    if(sel.options.length!==courses.length+1){
-      sel.innerHTML='<option value="">All courses</option>'+courses.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
-    }
-    document.getElementById('stamp').textContent='updated '+new Date().toLocaleTimeString('en-GB');
-    render();
+    writeDataCache(j);
+    applyPayload(j, null);
     loadIssueCounts();
   }catch(e){
     if(e instanceof AuthProblem){ showGate(e.kind, e.detail); return; }
-    /* The error panel lives inside #app, so on a first-load failure the shell
-       has to be revealed or the message is written somewhere still hidden and
-       the page just sits there blank. (Reports project, 18 Aug.) */
     showApp();
     document.getElementById('error').innerHTML='<div class="err"><b>Could not load data.</b><br>'+esc(e.message)+'</div>';
   }
