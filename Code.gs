@@ -6456,7 +6456,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r147 · 2026-09-05';
+var CODE_STAMP = 'r149 · 2026-09-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -8132,7 +8132,12 @@ function caseCheckpoint_(data) {
         return { ok: true, needs_confirm: true, match: {
           issue_id: matchId, summary: m.record.summary || '', status: m.record.status || '',
           lesson_code: m.record.lesson_code || '', priority: m.record.priority || '',
-          report_count: Number(m.record.report_count) || 1
+          report_count: Number(m.record.report_count) || 1,
+          // r149 (Edd): "add a date to these popups" - when it was logged, by
+          // whom, and when it last moved, so "already on" reads as a fact
+          // with a date rather than a claim.
+          submitted_at: m.record.submitted_at || '', updated_at: m.record.updated_at || '',
+          instructor_name: m.record.instructor_name || ''
         }, fields: { summary: payload.summary, priority: payload.priority }, timings: TT };
       }
     }

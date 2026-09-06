@@ -2902,7 +2902,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r148 · 2026-09-06";  // bump this with each round, it lands on every feedback report
+var BUILD = "r149 · 2026-09-06";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5782,7 +5782,11 @@ function showLiveMergeConfirm(m, decision) {
     '<div style="font-size:13.5px;margin-bottom:4px;">' + esc(m.summary || "(no summary)") + '</div>' +
     '<div class="small muted" style="margin-bottom:10px;">' +
       (m.lesson_code ? esc(m.lesson_code) + ' · ' : '') + esc(m.status || 'open') +
-      (m.report_count > 1 ? ' · ×' + m.report_count + ' reports' : '') + '</div>' + carry +
+      (m.report_count > 1 ? ' · ×' + m.report_count + ' reports' : '') +
+      // r149 (Edd): the date of the other report, and who logged it.
+      (fmtDate(m.submitted_at) ? '<br>Logged ' + esc(fmtDate(m.submitted_at)) + (m.instructor_name ? ' by ' + esc(m.instructor_name) : '') : '') +
+      (fmtDate(m.updated_at) && fmtDate(m.updated_at) !== fmtDate(m.submitted_at) ? ' · last activity ' + esc(fmtDate(m.updated_at)) : '') +
+      '</div>' + carry +
     '<div class="btns">' +
       '<button class="primary" onclick="closeLiveMerge();liveMergeAnswer({merge_into:\'' + esc(m.issue_id) + '\'})">Yes - add this student to it</button>' +
       '<button class="ghost" onclick="closeLiveMerge();liveMergeAnswer({no_merge:true})">No - log it as new</button>' +
