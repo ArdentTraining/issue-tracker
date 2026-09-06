@@ -344,6 +344,16 @@
       <div id="confusion" class="loading">Loading…</div>
     </details>
 
+    <!-- 5 Sep 2026 (Edd): "record this info over time... predict busy periods
+         ... average weather, national holidays, school holidays". Fed by the
+         activity ledger (records.activity_hourly, refreshed hourly) with the
+         calendar and Open-Meteo weather joined per day. Visit grain, as ever. -->
+    <details class="acc" id="sec_activity" data-sec="activity">
+      <summary><span class="acc-h">When people study</span><span class="acc-sum" id="sum_activity">…</span></summary>
+      <p class="hint">Lesson visits by hour and day, UK time, from the activity ledger. Each hour counts the visits that sent anything in it, so a student on a lesson for two hours counts in both. Bank holidays and school holidays are marked; weather is the daily mean of five UK regions (London, Manchester, Bristol, Glasgow, Belfast) from Open-Meteo, and the school-holiday bands are a typical council calendar rather than every council's. Correlations need a year of data to mean much; the ledger has been keeping it since telemetry started.</p>
+      <div id="activity" class="loading">Loading…</div>
+    </details>
+
     <details class="acc" id="sec_health" data-sec="health">
       <summary><span class="acc-h">Collection health</span><span class="acc-sum" id="sum_health">…</span></summary>
       <p class="hint">Every registered lesson and whether it is reporting. "Quiz package" is expected for QuizMaker content and a problem for teaching lessons.</p>
@@ -577,7 +587,7 @@ async function loadAll(){
   try{
     const j = await fetchData();
     showApp();
-    DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null };
+    DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null };
     renderLive();
     document.getElementById('lockReason').textContent = j.identity.reason;
     document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
@@ -616,8 +626,8 @@ async function loadAll(){
 
    The numbers and the tables themselves are exactly what they were. */
 const OPEN_KEY = 'ardr_open_v1';
-const SECTIONS = ['howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','health'];
-const DIRTY    = { lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, health:true };
+const SECTIONS = ['howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','activity','health'];
+const DIRTY    = { lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, activity:true, health:true };
 
 function readOpen(){
   try{ return JSON.parse(localStorage.getItem(OPEN_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -642,7 +652,7 @@ function isOpen(k){ const el = document.getElementById('sec_' + k); return !!(el
 const RENDERERS = { firstslide: renderFirstSlide, reported: renderReported,
                     coverage: renderCoverage, confusion: renderConfusion,
                     lessons: renderLessons, engagement: renderEngagement,
-                    dropoff: renderDropoff, health: renderHealth };
+                    dropoff: renderDropoff, activity: renderActivity, health: renderHealth };
 function renderSection(k){
   if(!RENDERERS[k] || !DIRTY[k] || !isOpen(k)) return;
   RENDERERS[k]();
@@ -698,6 +708,7 @@ function renderCards(){
    whether or not the section is open. */
 function renderSummaries(){
   const stats = VIEW.stats, put = (id, t) => { const el = document.getElementById(id); if(el) el.textContent = t; };
+  put('sum_activity', activitySummary());
 
   /* The four sections added 19 Aug. Same rule as the rest: the fold says what
      is inside it, so nobody has to open all nine to find the one that matters. */
@@ -989,6 +1000,90 @@ function renderConfusion(){
    The whole strip stays hidden until the Edge Function returns `live`, which
    needs a hand deploy - so this ships harmlessly ahead of that and lights up
    on its own once the function catches up. */
+/* ---------------------------------------------------------------- activity */
+const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function actSlice(){
+  const a = DATA.activity; if (!a) return null;
+  const course = document.getElementById('courseFilter').value;
+  const f = r => !course || r.course === course;
+  return { hourly: a.hourly.filter(f), daily: a.daily.filter(f), weekly: a.weekly.filter(f), monthly: a.monthly.filter(f) };
+}
+function activitySummary(){
+  const a = actSlice(); if (!a || !a.hourly.length) return 'no ledger yet';
+  const byHour = {}; a.hourly.forEach(r => { byHour[r.hour_of_day] = (byHour[r.hour_of_day]||0) + Number(r.sessions); });
+  const peakH = Object.keys(byHour).sort((x,y) => byHour[y]-byHour[x])[0];
+  const byDow = {}; a.daily.forEach(r => { byDow[r.weekday] = (byDow[r.weekday]||0) + Number(r.sessions); });
+  const peakD = Object.keys(byDow).sort((x,y) => byDow[y]-byDow[x])[0];
+  return 'busiest around ' + String(peakH).padStart(2,'0') + ':00, busiest day ' + DAYN[peakD];
+}
+function heatColour(v, max){
+  const t = max ? Math.min(1, v / max) : 0;
+  return 'rgba(91,105,225,' + (0.08 + 0.85 * t).toFixed(2) + ')';
+}
+function renderActivity(){
+  const host = document.getElementById('activity');
+  const a = actSlice();
+  if (!a || !a.hourly.length) { host.innerHTML = '<div class="note">The activity ledger has nothing for this course yet.</div>'; host.classList.remove('loading'); return; }
+
+  /* 1. Hour-of-week heatmap: average visits per hour for each weekday slot. */
+  const cell = {}, cnt = {};
+  a.hourly.forEach(r => { const k = r.weekday + ':' + r.hour_of_day; cell[k] = (cell[k]||0) + Number(r.sessions); });
+  const days = {}; a.hourly.forEach(r => { days[String(r.hour_local).slice(0,10)] = r.weekday; });
+  Object.values(days).forEach(d => { cnt[d] = (cnt[d]||0) + 1; });
+  let max = 0; const avg = {};
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) { const k = d+':'+h; avg[k] = cnt[d] ? (cell[k]||0) / cnt[d] : 0; if (avg[k] > max) max = avg[k]; }
+  const order = [1,2,3,4,5,6,0];
+  let heat = '<div style="overflow-x:auto"><table style="font-size:11px;border-collapse:separate;border-spacing:2px"><thead><tr><th></th>' +
+    Array.from({length:24}, (_,h) => '<th style="padding:2px;text-align:center;font-size:10px">' + (h % 3 === 0 ? String(h).padStart(2,'0') : '') + '</th>').join('') + '</tr></thead><tbody>' +
+    order.map(d => '<tr><td style="padding:2px 8px 2px 0;border:none;font-weight:700">' + DAYN[d] + '</td>' +
+      Array.from({length:24}, (_,h) => { const v = avg[d+':'+h]; return '<td title="' + DAYN[d] + ' ' + String(h).padStart(2,'0') + ':00 - ' + v.toFixed(1) + ' visits/hour on average" style="padding:0;border:none;width:22px;height:18px;border-radius:3px;background:' + heatColour(v, max) + '"></td>'; }).join('') + '</tr>').join('') +
+    '</tbody></table></div><p class="hint">Average lesson visits in each hour of the week, UK time, over the last 120 days. Darker is busier; the busiest slot averages ' + max.toFixed(0) + '.</p>';
+
+  /* 2. Daily strip: last 8 weeks, with the calendar and weather beside it. */
+  const byDay = {};
+  a.daily.forEach(r => { const d = byDay[r.day] = byDay[r.day] || { day:r.day, sessions:0, mins:0, r }; d.sessions += Number(r.sessions); d.mins += Number(r.active_minutes||0); });
+  const dl = Object.values(byDay).sort((x,y) => x.day < y.day ? 1 : -1).slice(0, 56);
+  const dmax = Math.max(1, ...dl.map(d => d.sessions));
+  let daily = '<table><thead><tr><th>Day</th><th>Visits</th><th></th><th>Active hrs</th><th>Calendar</th><th>Weather (UK mean)</th></tr></thead><tbody>' +
+    dl.map(d => {
+      const r = d.r, tags = [];
+      if (r.bank_holiday_ew) tags.push('Bank hol: ' + r.bank_holiday_ew); else if (r.bank_holiday_sct) tags.push('Scot bank hol');
+      if (r.school_hol_eng) tags.push('Eng school ' + String(r.school_hol_eng).replace(/_/g,' '));
+      if (r.school_hol_sct && !r.school_hol_eng) tags.push('Scot school ' + String(r.school_hol_sct).replace(/_/g,' '));
+      const wx = r.tmax_c == null ? '—' : r.tmax_c + '°C · ' + r.rain_mm + 'mm · ' + r.sunshine_h + 'h sun';
+      const wk = r.weekday === 0 || r.weekday === 6;
+      return '<tr' + (wk ? ' style="opacity:.85"' : '') + '><td>' + esc(String(d.day)) + ' <span style="color:var(--muted)">' + DAYN[r.weekday] + '</span></td><td>' + d.sessions + '</td>' +
+        '<td><div class="barwrap"><div style="height:8px;background:var(--accent);width:' + Math.round(100 * d.sessions / dmax) + '%"></div></div></td>' +
+        '<td>' + (d.mins/60).toFixed(0) + '</td><td style="color:var(--muted)">' + esc(tags.join(' · ')) + '</td><td style="color:var(--muted)">' + esc(wx) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+
+  /* 3. Weeks and months per course. */
+  const courses = [...new Set(a.weekly.map(r => r.course))].sort();
+  const roll = (rows, key) => {
+    const ks = [...new Set(rows.map(r => r[key]))].sort().reverse();
+    return '<table><thead><tr><th>' + (key === 'week_start' ? 'Week starting' : 'Month') + '</th>' + courses.map(c => '<th>' + esc(c) + '</th>').join('') + '<th>All</th><th>Days</th></tr></thead><tbody>' +
+      ks.map(k => { const rs = rows.filter(r => r[key] === k); const tot = rs.reduce((x,r) => x + Number(r.sessions), 0); const dd = Math.max(...rs.map(r => Number(r.days_with_data)));
+        return '<tr><td>' + esc(String(k)) + '</td>' + courses.map(c => { const r = rs.find(x => x.course === c); return '<td>' + (r ? Number(r.sessions) : '—') + '</td>'; }).join('') + '<td><b>' + tot + '</b></td><td style="color:var(--muted)">' + dd + '</td></tr>'; }).join('') + '</tbody></table>';
+  };
+
+  /* 4. A first read on the correlations, honest about how little there is. */
+  const wkdays = dl.filter(d => d.r.weekday > 0 && d.r.weekday < 6 && !d.r.bank_holiday_ew), wkends = dl.filter(d => d.r.weekday === 0 || d.r.weekday === 6);
+  const mean = xs => xs.length ? xs.reduce((x,y) => x+y, 0) / xs.length : 0;
+  const wet = dl.filter(d => d.r.rain_mm != null && Number(d.r.rain_mm) >= 3), dry = dl.filter(d => d.r.rain_mm != null && Number(d.r.rain_mm) < 1);
+  const hols = dl.filter(d => d.r.bank_holiday_ew);
+  const reads = [];
+  reads.push('Weekdays average ' + mean(wkdays.map(d=>d.sessions)).toFixed(0) + ' visits, weekends ' + mean(wkends.map(d=>d.sessions)).toFixed(0) + '.');
+  if (wet.length >= 3 && dry.length >= 3) reads.push('Wet days (3mm+) average ' + mean(wet.map(d=>d.sessions)).toFixed(0) + ' visits, dry days (under 1mm) ' + mean(dry.map(d=>d.sessions)).toFixed(0) + ' (' + wet.length + ' vs ' + dry.length + ' days).');
+  if (hols.length) reads.push('Bank holiday' + (hols.length > 1 ? 's' : '') + ': ' + hols.map(d => esc(String(d.day)) + ' ' + d.sessions).join(', ') + '.');
+  reads.push(dl.length + ' days in the ledger so far; a fair comparison of holidays and seasons needs a full year.');
+
+  host.innerHTML = '<h3 style="margin:6px 0 8px">Hour of the week</h3>' + heat +
+    '<h3 style="margin:18px 0 8px">Day by day</h3><div class="note">' + reads.join(' ') + '</div>' + daily +
+    '<h3 style="margin:18px 0 8px">Week by week</h3>' + roll(a.weekly, 'week_start') +
+    '<h3 style="margin:18px 0 8px">Month by month</h3>' + roll(a.monthly, 'month_start');
+  host.classList.remove('loading');
+}
+
 function renderLive(){
   const el = document.getElementById('liveStrip');
   if (!el) return;
