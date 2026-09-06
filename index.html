@@ -3033,7 +3033,9 @@ document.addEventListener("click", function (ev) {
       }
       if (tag === "button" || tag === "a" || tag === "summary" || cls.contains("tab") || cls.contains("rail-item") || (tag === "select")) {
         if (el.closest && el.closest("#drawer")) usage.paneClicks++;
-        var label = el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || el.id || tag;
+        // Short labels: a rail item's word, not its long title tooltip.
+        var label = cls.contains("rail-item") ? ((el.querySelector(".ri-word") || {}).textContent || el.id)
+          : (el.getAttribute("aria-label") || el.textContent || el.getAttribute("title") || el.id || tag);
         usageEvent("click", (el.closest && el.closest("#drawer") ? "pane:" : "") + label);
         return;
       }
@@ -6144,7 +6146,7 @@ function savePrefs() {
 
 // ============================ VIEW SWITCH ============================
 function setView(v) {
-  try { if (v !== usage.lastView) { usage.lastView = v; usageEvent("view", v === "actions" && SHELL_ON ? "live" : v); } } catch (e) {}
+  try { if (v !== usage.lastView) { usage.lastView = v; var uv = (v === "actions" && SHELL_ON) ? "live" : v; var was = state.view; state.view = uv; usageEvent("view", uv); state.view = was; } } catch (e) {}
   // FB-0313: the Actions page folded into Today (the live view). Every old
   // path that asked for 'actions' lands there; the actions machinery renders
   // into its relocated nodes.
