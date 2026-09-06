@@ -854,7 +854,10 @@
     .rail-foot { margin-top: 0; padding-top: 0; flex: 1 1 0; min-width: 0; align-self: center; }
     body.shell .rail-foot #userbox > button { padding: 6px 1px; font-size: 10.5px; overflow: hidden; }
     /* The feedback pill and the view-as bar sit above the bar, not under it. */
-    body.shell .fab { bottom: 70px; }
+    /* r151 (Edd): the sticky submit row on the Log page sat on top of the
+       pill. On a phone it lives at the top right instead, clear of both the
+       bottom bar and any sticky row. */
+    body.shell .fab { bottom: auto; top: 9px; right: 12px; z-index: 70; padding: 7px 12px; font-size: 12px; }
     body.shell .viewas-bar { bottom: 70px; }
     /* Tapping a row slides the detail in over the list, with a back arrow
        instead of a close cross. It is the same drawer the app always used;
@@ -2253,7 +2256,7 @@
 
 <section id="man-dev" data-perm="dev,users" data-title="Fixing what comes through">
   <h3>Fixing what comes through</h3>
-  <p>The <span class="ui">Dev</span> queue holds tech faults that have earned their place. A report only routes here on its own when the instructor has actually worked the troubleshooting checklist and the fault still comes out high priority, or when they deliberately fast-track it - a tick on the form that says "this needs a developer now" and carries their name. Everything else waits for an admin to look and pass it over by hand. Either way, by the time it reaches us somebody has confirmed it is real, worked out how many students it is hitting, and written down what has already been ruled out.</p>
+  <p>The <span class="ui">Dev</span> queue holds tech faults that have earned their place. A report only routes here on its own when the instructor has actually worked the troubleshooting checklist and the fault still comes out high priority, or when an admin deliberately fast-tracks it - a tick on the form that says "this needs a developer now" and carries their name. Instructors see the same tick as <span class="ui">Ask an admin to fast-track this</span>: the report files as normal, the admins get a Slack nudge, and the issue carries a "Fast-track requested" note until one of them passes it over or leaves it to the checklist. Everything else waits for an admin to look and pass it over by hand. Either way, by the time it reaches us somebody has confirmed it is real, worked out how many students it is hitting, and written down what has already been ruled out.</p>
   <p data-perm="users">One carve-out: a report about something Edd builds himself - the tracker, his internal tools - routes to his own <span class="ui">With Edd</span> queue instead, kept off this one so neither queue carries the other's clutter. The list of what counts as his lives on his page, and <span class="ui">With Edd</span> is in the status dropdown for moving something over (or back) by hand.</p>
   <p data-noperm="log">Signing in opens straight on it, on <span class="ui">To do</span>.</p>
   <p data-perm="log">It is the <span class="ui">Dev</span> item on the rail, opening on <span class="ui">To do</span>.</p>
@@ -2903,7 +2906,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r150 · 2026-09-06";  // bump this with each round, it lands on every feedback report
+var BUILD = "r151 · 2026-09-06";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3244,9 +3247,16 @@ function renderFormChecklist() {
   var map = state.checklist || {};
   var items = checklistFor(staff);
   var cleared = checklistCleared(map, staff);
+  // r151 (Edd): fast-track is an admin call. Everyone else can ask, and the
+  // admins are told on Slack; the backend makes the same distinction, so a
+  // hand-built request cannot route itself.
+  var canFastTrack = !!(state.perms && state.perms.users);
   var fastTrackHtml = '<label style="display:flex;gap:8px;align-items:flex-start;margin:0 0 10px;font-size:13px;color:var(--text);">' +
     '<input type="checkbox" id="f_fast_track" style="margin-top:2px;"' + (state._fastTrack ? ' checked' : '') + ' onchange="state._fastTrack=this.checked">' +
-    '<span>Fast-track to the developers<br><span class="small muted">Skips the troubleshooting gate - for something clearly platform-side. Otherwise a high-priority issue reaches the developers once the relevant checks below have been tried.</span></span></label>';
+    (canFastTrack
+      ? '<span>Fast-track to the developers<br><span class="small muted">Skips the troubleshooting gate - for something clearly platform-side. Otherwise a high-priority issue reaches the developers once the relevant checks below have been tried.</span></span>'
+      : '<span>Ask an admin to fast-track this<br><span class="small muted">For something clearly platform-side that should skip the troubleshooting gate. An admin is told on Slack and decides; until then the checks below still apply.</span></span>') +
+    '</label>';
   panel.innerHTML = fastTrackHtml +
     '<div class="h">Before the developers: troubleshooting checklist</div>' +
     '<div class="small muted" style="margin-bottom:2px;">' +
@@ -3619,6 +3629,7 @@ function cardMetaBits(i) {
   if (CATEGORY_LABEL[c]) bits.push(CATEGORY_LABEL[c]);
   if (audienceOf(i) === "internal") bits.push("Internal");
   if (kindOf(i) === "improvement") bits.push("Improvement");
+  if (i.fast_track_request && !i.dev_passed_at) bits.push("Fast-track requested");
   if (i.section && SECTION_LABEL[i.section]) bits.push(SECTION_LABEL[i.section]);
   var rt = refType(i);
   if (rt === "kc") bits.push("Knowledge check");
@@ -7555,7 +7566,18 @@ function faultWords(issue) {
 // only when a candidate is already close (see DUP_MAYBE).
 function askDupMatcher() {
   var c = dupCandidates();
-  if (c.score >= DUP_SURE || c.score < DUP_MAYBE) return;
+  if (c.score >= DUP_SURE) return;
+  // r151 (Edd): "this is the second report of the same bug in the last 30
+  // mins or so but I haven't been asked to link it." The words were too
+  // different for the overlap score, so the matcher was never asked and the
+  // backend merged on submit without a word. A recent open issue in the same
+  // part of the platform is reason enough to ask.
+  var mySection = String(getField("f_section") || "").trim().toLowerCase();
+  var recentSame = mySection && (state.issues || []).some(function (i) {
+    return isOpen(i) && catOf(i) === state.category && String(i.section || "").toLowerCase() === mySection &&
+      (Date.now() - new Date(i.submitted_at || 0).getTime()) < 3 * 24 * 3600 * 1000;
+  });
+  if (c.score < DUP_MAYBE && !recentSame) return;
   var raw = String(getField("rawText") || "");
   if (!raw) return;
   apiPost({
@@ -9830,6 +9852,11 @@ function openDetail(issue) {
     var whoTeam = isCourseIssue ? "course team" : "developers";
     var devActionable = !!(issue.dev_query_at || String(issue.status || "").toLowerCase() === "dev_fixed");
     devHtml += '<details class="acc"' + (devActionable ? ' open' : '') + '><summary>' + (isCourseIssue ? "Course fixes" : "Developers") + '</summary>';
+    if (issue.fast_track_request && !issue.dev_passed_at) {
+      var ftr = String(issue.fast_track_request).split(' · ');
+      devHtml += '<div class="batch" style="margin-bottom:8px;"><strong>Fast-track requested</strong> by ' + esc(ftr[0] || 'an instructor') + (fmtDate(ftr[1]) ? ' on ' + esc(fmtDate(ftr[1])) : '') + '. ' +
+        ((state.perms && state.perms.users) ? 'Pass it to the ' + whoTeam + ' below if you agree, or leave it to reach them through the checklist.' : 'Waiting on an admin.') + '</div>';
+    }
     if (!issue.dev_passed_at) {
       devHtml += '<div class="small muted" style="margin-bottom:6px;">Not passed to the ' + whoTeam + ' yet.</div>' +
         ((state.perms && state.perms.users) ? '<button class="ghost small" style="padding:5px 12px;" onclick="adminPassToDev(\'' + esc(issue.issue_id) + '\')">Pass to ' + whoTeam + '</button>' : '');

@@ -47,6 +47,7 @@ var SLACK_NOTICES = {
   //      the property is filled in. No code change and no deploy to move one.
   high_priority:     { on: true,  to: '' },                           // stays put
   high_priority_shipping: { on: true, to: 'SLACK_SHIPPING_ISSUES' }, // r144 (Edd): a parcel alert belongs in the shipping channel, not the tech one
+  fasttrack_request: { on: true,  to: 'SLACK_ADMINS' },              // r151 (Edd): an instructor asked for a fast-track; admins decide
   shipping_chase:    { on: true,  to: 'SLACK_SHIPPING_ISSUES' },   // r109: shipping got its own channel
   notify_student:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
   query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
@@ -421,7 +422,11 @@ var HEADERS = [
   // and the scan both KNEW it and only ever used it to leave a note, so the
   // "Already told?" check (FB-0333) had nothing to read and never showed.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'chatwoot_conversation_id'   // BD
+  'chatwoot_conversation_id',  // BD
+  // r151 (Edd): fast-track is an admin call. An instructor can ASK, and the
+  // ask lives here as "Name · ISO time" until an admin passes it or clears it.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'fast_track_request'         // BE
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -2072,6 +2077,7 @@ function addIssue_(data) {
     courier: category === 'shipping' ? (data.courier || '') : '',
     tracking_number: category === 'shipping' ? normaliseTracking_(data.tracking_number) : '',
     student_sorted: (data.student_sorted === true || data.student_sorted === 'true') ? true : '',
+    fast_track_request: fastTrackRequested ? ((data.instructor_name || 'an instructor') + ' · ' + now) : '',
     // Whether anyone is on the other end. The form answers this; we only fall
     // back to reading it off the report when an older caller says nothing.
     student_involved: data.student_involved === 'no' || data.student_involved === false ? 'no'
@@ -2127,6 +2133,12 @@ function addIssue_(data) {
                      !/\broot cause\b|\bcaused by\b|\bwe (found|fixed|changed|re-?uploaded)\b|\bfix (was|has been) (shipped|deployed|applied)\b/i.test(outcome);
   }
   var fastTrack = data.fast_track === true || data.fast_track === 'true';
+  // r151 (Edd, 6 Sep 2026): "It should only be open to admins not
+  // instructors. Instructors should be able to request a bug is fast tracked
+  // and the admins should be notified in that case on slack." So a tick from
+  // anyone without the users permission becomes a request, not a route.
+  var fastTrackRequested = false;
+  if (fastTrack && !(data._user && hasPerm_(data._user, 'users'))) { fastTrack = false; fastTrackRequested = true; }
   // FB-0329 (Edd): "a 'NoSuchKey The specified key does not exist' error on a
   // lesson should be directed to me. The lesson just needs reuploaded." The
   // asset is missing from storage, so it is neither a code fix nor a content
@@ -2185,6 +2197,7 @@ function addIssue_(data) {
 
   var sheet = sheetByName_(targetSheetName_(category));
   sheet.appendRow(recordToRow_(issue));
+  if (fastTrackRequested) { try { sendFastTrackRequestSlack_(issue, data.app_url || getAppUrl_()); } catch (e) {} }
 
   // Slack only for a high-priority fix; never let a Slack failure block the save.
   // Improvements never fire an alert, they are backlog, not something to jump on.
@@ -3084,6 +3097,7 @@ function linkIssues_(data) {
 function passToDev_(data) {
   var found = findRow_(data.issue_id);
   if (!found) return { ok: false, error: 'No issue found with id ' + data.issue_id };
+  if (found.record.fast_track_request) found.record.fast_track_request = '';   // r151: the ask is answered
   var rec = found.record;
   if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
   rec.dev_fixed_at = '';            // if it was previously fixed and is going back
@@ -6444,6 +6458,20 @@ function sendSlack_(issue, appUrl) {
   return { ok: true };
 }
 
+// r151: an instructor asked for a fast-track. Admins decide, so it goes to
+// the admins' channel (falls back to improvements-fixes until that is wired).
+function sendFastTrackRequestSlack_(issue, appUrl) {
+  if (!slackOn_('fasttrack_request')) return;
+  var text = [
+    ':fast_forward: *Fast-track requested* by ' + (issue.instructor_name || 'an instructor'),
+    '*Summary:* ' + slackSummary_(issue),
+    (issue.priority ? '*Priority:* ' + issue.priority : null),
+    '',
+    'Open it and press Pass to the developers if you agree: ' + issueLink_(issue, appUrl)
+  ].filter(function (l) { return l !== null; }).join('\n');
+  slackPost_('fasttrack_request', text);
+}
+
 function getAppUrl_() {
   return PropertiesService.getScriptProperties().getProperty('APP_URL') || '';
 }
@@ -6456,7 +6484,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r150 · 2026-09-06';
+var CODE_STAMP = 'r151 · 2026-09-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
