@@ -1203,6 +1203,9 @@
       </div>
 
       <div id="existingPanel" class="existing hidden"></div>
+      <!-- FB-0351 (Edd): the automatic offers only fire when the tracker spots
+           the link itself. This is the manual way in, always available. -->
+      <div class="small" style="margin:-2px 0 8px;"><a href="#" onclick="openManualLink();return false;" style="color:var(--muted);">Same as a report already on the log?</a></div>
       <!-- The suggested-fix and multi-issue boxes open as popups now (a mini
            wizard after extraction, so they can't be scrolled past). These two
            lines are the persistent reminder of what was chosen. -->
@@ -2062,6 +2065,8 @@
   <h4>This student already has an open issue</h4>
   <p>Check whether it is the same problem. If it is, <span class="ui">Confirm same issue - add as update</span> keeps everything in one entry, and the Submit button relabels itself to <span class="ui">Add update</span> so there is no doubt about what is about to happen. If it is not, log it as new.</p>
 
+  <p>The tracker only offers that when it spots the link itself. When you already know a report belongs on an existing entry, <span class="ui">Same as a report already on the log?</span> under the Extract button opens a search of everything open: pick one and this becomes an update on it, exactly as if the tracker had suggested it.</p>
+
   <h4>Suggested fix from a past issue</h4>
   <p>Somebody has hit this before and we know what sorted it. There is a tick to mark it <span class="ui">Resolved (TBC)</span> if the fix has been passed on. Please still submit it, so the count of how many people are hitting the same thing keeps climbing and the fault keeps its place in the queue.</p>
   <p>If the suggestion is wrong here, press <span class="ui">This doesn't apply here</span> and say why. It goes to Edd to approve, and nothing in the memory changes until he has looked, so one wrong suggestion cannot quietly spread itself to everyone else.</p>
@@ -2748,6 +2753,17 @@
   </div>
 </div>
 
+<!-- FB-0351: pick an existing report by hand and add this one to it as an update. -->
+<div class="modal-bg" id="manualLinkModal">
+  <div class="modal" style="max-width:640px;">
+    <h3>Add this to a report already on the log</h3>
+    <p class="small muted">Search the open reports, pick the one this belongs to, and this becomes an update on it rather than a new entry. Nothing is merged until you press Submit.</p>
+    <input id="mlSearch" placeholder="Search summary, ref, student, lesson code…" oninput="renderManualLink()" autocomplete="off" style="width:100%;margin-bottom:8px;">
+    <div id="mlList" style="max-height:46vh;overflow-y:auto;"></div>
+    <div class="btns" style="margin-top:10px;"><button class="ghost" onclick="closeManualLink()">Cancel</button></div>
+  </div>
+</div>
+
 <!-- CHATWOOT CONVERSATION PICKER -->
 <div class="modal-bg" id="cwModal">
   <div class="modal" style="max-width:620px;">
@@ -2906,7 +2922,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r152 · 2026-09-06";  // bump this with each round, it lands on every feedback report
+var BUILD = "r153 · 2026-09-07";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8234,6 +8250,52 @@ function existingSettledHtml() {
 // Drawing and popping are two different jobs, kept apart on purpose: a redraw
 // after a decision must never make the popup jump back up at somebody who has
 // just answered it.
+// FB-0351 (Edd, 6 Sep 2026): "I could do with a manual option to link to
+// another report." The student-match and duplicate offers only appear when the
+// tracker spots the link itself; this is the way in when it does not. It sets
+// the same update target those offers set, so submit behaves identically.
+function openManualLink() {
+  if (state.editingId) { toast("You are editing an existing report already."); return; }
+  if ($("mlSearch")) $("mlSearch").value = "";
+  renderManualLink();
+  wizardShow("manualLinkModal");
+  setTimeout(function () { if ($("mlSearch")) $("mlSearch").focus(); }, 60);
+}
+function closeManualLink() { $("manualLinkModal").classList.remove("show"); wizardClosed(); }
+function renderManualLink() {
+  var host = $("mlList"); if (!host) return;
+  var q = String(($("mlSearch") || {}).value || "").trim().toLowerCase();
+  var pool = (state.issues || []).filter(function (i) { return isOpen(i) || String(i.status || "").toLowerCase() === "resolved_tbc"; });
+  if (q) pool = pool.filter(function (i) { return searchHay(i).indexOf(q) > -1; });
+  pool.sort(function (a, b) { return String(b.updated_at || b.submitted_at).localeCompare(String(a.updated_at || a.submitted_at)); });
+  var show = pool.slice(0, 40);
+  host.innerHTML = show.length ? show.map(function (i) {
+    return '<div class="exrow" onclick="pickManualLink(\'' + esc(i.issue_id) + '\')">' +
+      '<div>' + priBadge(i.priority) + " " + statusBadge(i.status, i) +
+        (i.lesson_code ? ' <span class="code">' + esc(i.lesson_code) + '</span>' : '') + '</div>' +
+      '<div style="margin-top:4px;">' + esc(cardTitle(i)) + '</div>' +
+      '<div class="small muted" style="margin-top:2px;">' + esc(shortId(i)) + ' · logged ' + esc(fmtDate(i.submitted_at)) +
+        (i.instructor_name ? ' by ' + esc(i.instructor_name) : '') +
+        (reportCount(i) > 1 ? ' · ×' + reportCount(i) + ' reports' : '') + '</div>' +
+    '</div>';
+  }).join("") + (pool.length > show.length ? '<div class="small muted" style="margin-top:6px;">' + (pool.length - show.length) + ' more - narrow the search.</div>' : '')
+    : '<div class="small muted">Nothing open matches that.</div>';
+}
+function pickManualLink(id) {
+  var hit = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (!hit) return;
+  // Reuse the same machinery the automatic offer uses, so the submit path,
+  // the button labels and the "add update" wording are all already right.
+  state.existingMatches = [hit];
+  state.existingChoice = "update";
+  state.updateTargetId = id;
+  if (state.splitMode) hideSplitSuggestion();
+  hideDupSuggestion();
+  closeManualLink();
+  renderExisting();
+  toast("Linked - this will be added to " + shortId(hit) + " as an update.");
+}
+
 function renderExisting() {
   if (!state.existingMatches || !state.existingMatches.length) return;
   var settled = !!state.existingChoice;

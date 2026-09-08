@@ -5865,7 +5865,15 @@ function troubleshoot_(data) {
     'Be helpful and thorough: even if a lot has been tried, there are almost always remaining steps, so list every relevant playbook step that has not been explicitly done rather than concluding nothing is left. ' +
     'Pay attention to the pattern: if it works on some of the student\'s devices or networks but not others (for example fine on a phone but failing on tablets, or a "check network connection" message while other things work), that points to a setting on the failing device or network rather than a bug in our app, so suggest ruling those out first (a different network, and turning off any VPN, ad blocker or content filter). ' +
     'Keep the list short, distinct and non-overlapping: aim for 2 to 4 genuinely different next steps and never repeat the same step in different words. Treat mobile data, a phone hotspot and a different wifi as ONE step (trying a different network); if any different network has already been tried, do NOT suggest another network step. ' +
-    'Do NOT tell them to escalate to Edd, Charlie, Stu or anyone, or to message Slack; that happens automatically when an issue is high priority. Once the relevant steps have genuinely all been tried, just say to submit it so it reaches the team. ' +
+    // FB-0352 (Charly, 7 Sep 2026): "Step 1: ... where are we making a note and
+    // what is the log? Step 2: Submit what where, to what team, and what notes
+    // are we attaching where?" The steps had turned into instructions for
+    // operating this form, which the instructor is already looking at, and
+    // which name no actual place. Every step must be something done OUTSIDE
+    // the tracker.
+    'Do NOT tell them to escalate to Edd, Charlie, Stu or anyone, or to message Slack; that happens automatically when an issue is high priority. ' +
+    'NEVER return a step about using this tracker: not "submit it", "log it", "make a note", "attach the screenshot", "raise it with the team", or "gather it for the log". The instructor is already on the form, the Submit button is on the same screen, and a step that names no real place is worse than no step. Every step is something done in the world: a thing the student tries, or a thing the instructor does in Chatwoot, the instructor portal, the LMS or by email. ' +
+    'SOME FAULTS HAVE NOTHING STUDENT-SIDE. A wrong or missing option in a form (a city not in a dropdown), wrong text or a wrong answer in a lesson, a wrong price, a broken link in our own content: no browser, network or device step can fix any of those, and offering one wastes the student\'s time and ours. When that is the case, return at most the actions that genuinely help THIS student now (for example: take the correct address from them in the chat and set it by hand in the order before it is posted, then tell them it is done), and if there is nothing even for that, return found:false with a one-line note saying it is a fault on our side with nothing for the student to try. Never pad the list to reach two steps. ' +
     'Point out any step that seems to have been missed or done out of order. If it matches one of the known account issues, name it and give that specific fix first. ' +
     'Remember the instructor can DO things, not only relay steps: reset the student\'s password from the students tab of the instructor portal, assign a course to their account, mark an exam manually from photos of their answers, post an answer in the course live chat, re-send an ebook, or raise an invoice. When one of those resolves it faster than another student-side step, make THAT the step, phrased as an action the instructor takes ("reset the password for them"), not a request routed through the student. ' +
     'Decide from the conversation whether it is a browser/web issue or a mobile app issue and use the matching list. ' +
@@ -5883,7 +5891,7 @@ function troubleshoot_(data) {
     'NEW CONVERSATION / NOTES:\n"""\n' + raw + '\n"""\n\n' +
     'Return ONLY JSON: {"found": true or false, "steps": ["short next step", ...], "escalate": true or false, "note": "<one short line such as an escalation note, or empty string>", "checklist": {"<item id>": "done | na | todo", ...}}. ' +
     'Include every checklist item id in the checklist object. ' +
-    'Set found false only if there is genuinely nothing useful to suggest. No prose, no markdown fences.';
+    'Set found false only if there is genuinely nothing useful to suggest, which includes a fault on our side with nothing the student or the instructor can do beyond what is already in the conversation. No prose, no markdown fences.';
 
   // Anything longer than a couple of thousand characters of transcript was
   // silently failing and dropping into the generic fallback, which is how an
@@ -6637,7 +6645,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r152.5 · 2026-09-06';
+var CODE_STAMP = 'r153 · 2026-09-07';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
