@@ -2195,6 +2195,22 @@ function addIssue_(data) {
     }
   }
 
+  // r152: fill the email at filing when the transcript lacked it but Chatwoot
+  // has it. One or two quick calls, only on the path that needs them.
+  if (!hasEmail_(issue.student_contact) && issue.student_involved === 'yes' && audience !== 'internal' &&
+      (issue.chatwoot_contact_id || issue.chatwoot_conversation_id || String(issue.student_contact || '').replace(/[^0-9]/g, '').length >= 8)) {
+    try {
+      var got152 = chatwootEmailFor_(issue);
+      if (got152) {
+        var was152 = String(issue.student_contact || '').trim();
+        issue.student_contact = got152.email;
+        if (!issue.chatwoot_contact_id && got152.contact_id) issue.chatwoot_contact_id = got152.contact_id;
+        report.student_contact = got152.email;
+        if (was152) issue.raw_text = capAppend_(issue.raw_text, '\n\n[Student email found in Chatwoot at filing: ' + got152.email + ' (report gave ' + was152 + ')]');
+        issue.reports_json = JSON.stringify([report]);
+      }
+    } catch (e) {}
+  }
   var sheet = sheetByName_(targetSheetName_(category));
   sheet.appendRow(recordToRow_(issue));
   if (fastTrackRequested) { try { sendFastTrackRequestSlack_(issue, data.app_url || getAppUrl_()); } catch (e) {} }
@@ -4825,6 +4841,7 @@ function ensureTriggers_() {
   var haveMonthly = false, haveTbc = false, haveBackup = false, haveDigest = false, haveScan = false, haveChase = false;
   var haveUnrouted = false;   // r140
   var haveTold = false;       // r146
+  var haveEnrich = false;     // r152
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -4835,8 +4852,10 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'chaseShipping') haveChase = true;
     if (t.getHandlerFunction() === 'unroutedDigest') haveUnrouted = true;
     if (t.getHandlerFunction() === 'studentToldSweep') haveTold = true;
+    if (t.getHandlerFunction() === 'enrichContacts') haveEnrich = true;
   });
   if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
+  if (!haveEnrich) ScriptApp.newTrigger('enrichContacts').timeBased().everyDays(1).atHour(19).create();   // r152: end of the working day
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
   }
@@ -5059,7 +5078,107 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1 };
+var RUNNABLE_JOBS_ = { unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1 };
+
+// r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
+// user email address. we need to get this whenever possible. if it isn't in
+// the transcript can we get it from chatwoot? ... automatically retrospectively
+// at the end of the day." Three routes, tried in order: the contact record the
+// issue already points at, the conversation's sender, and finally a Chatwoot
+// contact search by phone number or exact name (accepted only when it is the
+// one match). A phone number that was standing in for the email is kept on
+// the trail so nothing is lost.
+var EMAIL_RX_ = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function hasEmail_(v) { return EMAIL_RX_.test(String(v || '').trim()); }
+function chatwootEmailFor_(rec) {
+  var cfg = chatwootCfg_();
+  if (!cfg.token || !cfg.account) return null;
+  var found = null, contactId = String(rec.chatwoot_contact_id || '').trim();
+  var readContact = function (id) {
+    try {
+      var c = chatwootCall_('/contacts/' + encodeURIComponent(id));
+      var pl = (c && (c.payload || c)) || {};
+      var extra = pl.additional_attributes || {};
+      var em = pl.email || extra.email || '';
+      if (hasEmail_(em) && !isAutomatedNotice_(pl.name, em)) return { email: String(em).trim(), contact_id: String(pl.id || id), name: pl.name || '' };
+    } catch (e) {}
+    return null;
+  };
+  if (contactId) found = readContact(contactId);
+  if (!found && String(rec.chatwoot_conversation_id || '').trim()) {
+    try {
+      var conv = chatwootCall_('/conversations/' + encodeURIComponent(String(rec.chatwoot_conversation_id).trim()));
+      var sender = (conv && conv.meta && conv.meta.sender) || {};
+      if (hasEmail_(sender.email) && !isAutomatedNotice_(sender.name, sender.email)) found = { email: String(sender.email).trim(), contact_id: String(sender.id || ''), name: sender.name || '' };
+      else if (sender.id) found = readContact(sender.id);
+    } catch (e) {}
+  }
+  if (!found) {
+    var phone = String(rec.student_contact || '').replace(/[^0-9+]/g, '');
+    var name = String(rec.student_name || '').trim();
+    var q = phone.length >= 8 ? phone : (name.length >= 5 && name.indexOf(' ') > 0 ? name : '');
+    if (q) {
+      try {
+        var res = chatwootCall_('/contacts/search?q=' + encodeURIComponent(q));
+        var list = (res && res.payload) || [];
+        var hits = list.filter(function (c) {
+          if (!hasEmail_(c.email) || isAutomatedNotice_(c.name, c.email)) return false;
+          if (phone.length >= 8) return String(c.phone_number || '').replace(/[^0-9+]/g, '').slice(-9) === phone.slice(-9);
+          return String(c.name || '').trim().toLowerCase() === name.toLowerCase();
+        });
+        if (hits.length === 1) found = { email: String(hits[0].email).trim(), contact_id: String(hits[0].id || ''), name: hits[0].name || '' };
+      } catch (e) {}
+    }
+  }
+  return found;
+}
+// Fill the email on one issue if it is missing and Chatwoot knows it.
+// Returns true when something was written.
+function enrichContactOn_(found) {
+  var rec = found.record;
+  if (hasEmail_(rec.student_contact)) return false;
+  if (String(rec.student_involved || '') === 'no' || String(rec.audience || '') === 'internal') return false;
+  var got = chatwootEmailFor_(rec);
+  if (!got) return false;
+  var before = String(rec.student_contact || '').trim();
+  rec.student_contact = got.email;
+  if (!String(rec.chatwoot_contact_id || '').trim() && got.contact_id) rec.chatwoot_contact_id = got.contact_id;
+  if (!String(rec.student_name || '').trim() && got.name) rec.student_name = got.name;
+  // The same student on the report entries, so the affected-students list agrees.
+  try {
+    var reps = rec.reports_json ? JSON.parse(rec.reports_json) : [];
+    var touched = false;
+    reps.forEach(function (r) {
+      if (String(r.kind || 'report') !== 'report') return;
+      var sameName = String(r.student_name || '').trim().toLowerCase() === String(rec.student_name || '').trim().toLowerCase();
+      var samePhone = before && String(r.student_contact || '').trim() === before;
+      if (!hasEmail_(r.student_contact) && (sameName || samePhone)) { r.student_contact = got.email; touched = true; }
+    });
+    if (touched) rec.reports_json = JSON.stringify(reps);
+  } catch (e) {}
+  rec.updated_at = new Date().toISOString();
+  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  try {
+    addUpdate_({ issue_id: rec.issue_id, text: 'Student email found in Chatwoot: ' + got.email + (before ? ' (was ' + before + ')' : '') + ' (filled automatically)', keep_status: true, _system: true });
+  } catch (e) {}
+  return true;
+}
+// Nightly: the last 45 days of student-facing issues with no email.
+var ENRICH_CONTACTS_MAX = 40;
+function enrichContacts() {
+  var cutoff = Date.now() - 45 * 864e5, done = 0, filled = 0;
+  getIssues_().issues.forEach(function (i) {
+    if (done >= ENRICH_CONTACTS_MAX) return;
+    if (new Date(i.submitted_at || 0).getTime() < cutoff) return;
+    if (hasEmail_(i.student_contact)) return;
+    if (String(i.student_involved || '') === 'no' || String(i.audience || '') === 'internal') return;
+    if (!(String(i.student_name || '').trim() || String(i.student_contact || '').trim() || i.chatwoot_contact_id || i.chatwoot_conversation_id)) return;
+    done++;
+    try { var f = findRow_(i.issue_id); if (f && enrichContactOn_(f)) filled++; } catch (e) {}
+  });
+  Logger.log('enrichContacts: looked at ' + done + ', filled ' + filled);
+  return { ok: true, looked: done, filled: filled };
+}
 
 // r146 (FB-0349, Edd): "Peter says he already marked this as resolved... a
 // quick check of chatwoot shows the student has already confirmed it is all
@@ -6484,7 +6603,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r151 · 2026-09-06';
+var CODE_STAMP = 'r152 · 2026-09-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
