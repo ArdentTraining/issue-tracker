@@ -3701,6 +3701,20 @@ function chatwootProbe_(data) {
   // lived in conversations the contact walk never returned.
   // r152: what a contact search or a contact record actually holds (email
   // present or not), so the nightly email fill can be checked without guessing.
+  // r152.3: dry-run the email fill on one issue, reporting the route taken.
+  if (data.enrich_issue) {
+    try {
+      var fr = findRow_(String(data.enrich_issue));
+      if (!fr) out.enrich = 'issue not found';
+      else {
+        var r0 = fr.record;
+        var got = chatwootEmailFor_(r0);
+        out.enrich = { student: r0.student_name, contact: r0.student_contact, involved: r0.student_involved, audience: r0.audience,
+          has_email_already: hasEmail_(r0.student_contact), found: got ? { domain: String(got.email).split('@')[1], contact_id: got.contact_id, name: got.name } : null };
+        if (got && data.write === true) out.enrich.written = enrichContactOn_(fr);
+      }
+    } catch (e) { out.enrich = 'error ' + String(e).slice(0, 200); }
+  }
   if (data.contact_q) {
     try {
       var cs = chatwootCall_('/contacts/search?q=' + encodeURIComponent(String(data.contact_q)));
@@ -6617,7 +6631,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r152.2 · 2026-09-06';
+var CODE_STAMP = 'r152.3 · 2026-09-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
