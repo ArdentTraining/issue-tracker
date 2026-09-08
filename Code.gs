@@ -3707,8 +3707,9 @@ function chatwootProbe_(data) {
       var fr = findRow_(String(data.enrich_issue));
       if (!fr) out.enrich = 'issue not found';
       else {
-        var r0 = fr.record;
+        var r0 = fr.record; r0._trace = [];
         var got = chatwootEmailFor_(r0);
+        out.trace = r0._trace; delete r0._trace;
         out.enrich = { student: r0.student_name, contact: r0.student_contact, involved: r0.student_involved, audience: r0.audience,
           has_email_already: hasEmail_(r0.student_contact), found: got ? { domain: String(got.email).split('@')[1], contact_id: got.contact_id, name: got.name } : null };
         if (got && data.write === true) out.enrich.written = enrichContactOn_(fr);
@@ -5147,8 +5148,9 @@ function chatwootEmailFor_(rec) {
           if (byPhone) return String(c.phone_number || '').replace(/[^0-9+]/g, '').slice(-9) === phone.slice(-9);
           return String(c.name || '').trim().toLowerCase() === name.toLowerCase();
         });
+        if (rec._trace) rec._trace.push((byPhone ? 'phone ' : 'name ') + q + ': ' + list.length + ' listed, ' + hits.length + ' usable');
         return hits.length === 1 ? { email: String(hits[0].email).trim(), contact_id: String(hits[0].id || ''), name: hits[0].name || '' } : null;
-      } catch (e) { return null; }
+      } catch (e) { if (rec._trace) rec._trace.push('search error ' + String(e).slice(0, 120)); return null; }
     };
     // A WhatsApp contact often has the phone and no email while the same
     // person's email contact sits beside it under the same name, so try both.
@@ -6631,7 +6633,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r152.3 · 2026-09-06';
+var CODE_STAMP = 'r152.4 · 2026-09-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
