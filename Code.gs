@@ -5124,19 +5124,22 @@ function chatwootEmailFor_(rec) {
   if (!found) {
     var phone = String(rec.student_contact || '').replace(/[^0-9+]/g, '');
     var name = String(rec.student_name || '').trim();
-    var q = phone.length >= 8 ? phone : (name.length >= 5 && name.indexOf(' ') > 0 ? name : '');
-    if (q) {
+    var search = function (q, byPhone) {
       try {
         var res = chatwootCall_('/contacts/search?q=' + encodeURIComponent(q));
         var list = (res && res.payload) || [];
         var hits = list.filter(function (c) {
           if (!hasEmail_(c.email) || isAutomatedNotice_(c.name, c.email)) return false;
-          if (phone.length >= 8) return String(c.phone_number || '').replace(/[^0-9+]/g, '').slice(-9) === phone.slice(-9);
+          if (byPhone) return String(c.phone_number || '').replace(/[^0-9+]/g, '').slice(-9) === phone.slice(-9);
           return String(c.name || '').trim().toLowerCase() === name.toLowerCase();
         });
-        if (hits.length === 1) found = { email: String(hits[0].email).trim(), contact_id: String(hits[0].id || ''), name: hits[0].name || '' };
-      } catch (e) {}
-    }
+        return hits.length === 1 ? { email: String(hits[0].email).trim(), contact_id: String(hits[0].id || ''), name: hits[0].name || '' } : null;
+      } catch (e) { return null; }
+    };
+    // A WhatsApp contact often has the phone and no email while the same
+    // person's email contact sits beside it under the same name, so try both.
+    if (phone.length >= 8) found = search(phone, true);
+    if (!found && name.length >= 5 && name.indexOf(' ') > 0) found = search(name, false);
   }
   return found;
 }
@@ -5175,7 +5178,10 @@ function enrichContactOn_(found) {
 var ENRICH_CONTACTS_MAX = 40;
 function enrichContacts() {
   var cutoff = Date.now() - 45 * 864e5, done = 0, filled = 0;
-  getIssues_().issues.forEach(function (i) {
+  // Newest first: the sheet reads oldest first and the cap would spend itself
+  // on July before reaching this week.
+  var all = getIssues_().issues.slice().sort(function (a, b) { return String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')); });
+  all.forEach(function (i) {
     if (done >= ENRICH_CONTACTS_MAX) return;
     if (new Date(i.submitted_at || 0).getTime() < cutoff) return;
     if (hasEmail_(i.student_contact)) return;
@@ -6611,7 +6617,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r152 · 2026-09-06';
+var CODE_STAMP = 'r152.2 · 2026-09-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
