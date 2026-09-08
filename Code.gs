@@ -5141,7 +5141,11 @@ function chatwootEmailFor_(rec) {
     var name = String(rec.student_name || '').trim();
     var search = function (q, byPhone) {
       try {
-        var res = chatwootCall_('/contacts/search?q=' + encodeURIComponent(q));
+        // Chatwoot's contact search by name sometimes answers 422 "took too
+        // long"; a second go a moment later nearly always works.
+        var res;
+        try { res = chatwootCall_('/contacts/search?q=' + encodeURIComponent(q)); }
+        catch (e1) { Utilities.sleep(1500); res = chatwootCall_('/contacts/search?q=' + encodeURIComponent(q)); }
         var list = (res && res.payload) || [];
         var hits = list.filter(function (c) {
           if (!hasEmail_(c.email) || isAutomatedNotice_(c.name, c.email)) return false;
@@ -6633,7 +6637,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r152.4 · 2026-09-06';
+var CODE_STAMP = 'r152.5 · 2026-09-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
