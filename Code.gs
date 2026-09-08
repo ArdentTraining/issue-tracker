@@ -3699,6 +3699,14 @@ function chatwootProbe_(data) {
   // r105.1 diagnostic: look at ONE conversation's plumbing (who its contact
   // is, when it last moved) - added chasing FB-0281, where Sergei's replies
   // lived in conversations the contact walk never returned.
+  // r152: what a contact search or a contact record actually holds (email
+  // present or not), so the nightly email fill can be checked without guessing.
+  if (data.contact_q) {
+    try {
+      var cs = chatwootCall_('/contacts/search?q=' + encodeURIComponent(String(data.contact_q)));
+      out.contacts = ((cs && cs.payload) || []).slice(0, 5).map(function (c) { return { id: c.id, name: c.name, has_email: hasEmail_(c.email), email_domain: String(c.email || '').split('@')[1] || '', phone_tail: String(c.phone_number || '').slice(-4) }; });
+    } catch (e) { out.contacts_error = String(e).slice(0, 160); }
+  }
   if (data.conv) {
     try {
       var rc = UrlFetchApp.fetch(CHATWOOT_BASE + '/api/v1/accounts/' + cfg.account + '/conversations/' + encodeURIComponent(String(data.conv)),
