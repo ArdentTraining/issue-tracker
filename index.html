@@ -2943,7 +2943,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r154 · 2026-09-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r154.1 · 2026-09-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -10452,23 +10452,37 @@ function saveDetail() {
   if (status === "resolved" && !saveDetail._causeAsked && needsCauseCheck(beingClosed)) {
     askCause(beingClosed, function (kind) {
       if (kind === "cancel") return;
-      if (kind === "live") {
-        // Back to where it was, so it stays in whichever queue it was in, and
-        // the note they typed becomes an update on the trail rather than a
-        // resolution note for a fault that is not resolved. resolved_tbc is
-        // the exception: that one auto-closes after a quiet week, which is the
-        // opposite of what they have just told us.
-        var was = String((beingClosed && beingClosed.status) || "open").toLowerCase();
-        $("d_status").value = (was === "resolved_tbc" || was === "resolved" || !was) ? "open" : was;
-        if ($("d_sorted")) $("d_sorted").checked = true;
-        onStatusChange();
+      if (kind !== "live") {
+        saveDetail._causeAsked = true;
+        saveDetail();
+        saveDetail._causeAsked = false;
+        return;
       }
-      saveDetail._causeAsked = true;
-      saveDetail();
-      saveDetail._causeAsked = false;
-      // Last toast wins, and "Issue updated" would not tell them that the
-      // thing they pressed Resolve on is deliberately still open.
-      if (kind === "live") toast("Left open for the fix. Nobody will chase the student about it again.", 6000);
+      // Keep it exactly where it was, so it stays in whichever queue it is in.
+      // resolved_tbc is the one exception: that auto-closes after a quiet
+      // week, which is the opposite of what they have just told us.
+      var was = String((beingClosed && beingClosed.status) || "open").toLowerCase();
+      var keep = (was === "resolved_tbc" || was === "resolved" || !was) ? "open" : was;
+      // The note goes on as a plain update, not through the read-a-pasted-
+      // conversation path: this is one line about what the student was told,
+      // and running it past the AI first put 40 seconds between the press and
+      // anything saving.
+      var id = state.detailId;
+      var notified = !!($("d_notified") && $("d_notified").checked);   // read before the pane goes
+      var chain = note
+        ? apiPost({ action: "addUpdate", issue_id: id, raw_text: note, keep_status: true, app_url: APP_URL })
+        : Promise.resolve({ ok: true });
+      closeDetail();
+      toast("Left open for the fix. Nobody will chase the student about it again.", 6000);
+      chain.then(function () {
+        return apiPost({ action: "updateIssue", issue_id: id, status: keep, student_sorted: true,
+          notified_students: notified });
+      }).then(function (res) {
+        if (!res || !res.ok) { toast("That didn't save: " + ((res && res.error) || "unknown")); return; }
+        patchIssue(id, { status: keep, student_sorted: "true" });
+        renderCurrentView();
+        loadIssues();
+      }).catch(function () { toast("That didn't save."); });
     });
     return;
   }
