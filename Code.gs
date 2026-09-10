@@ -567,6 +567,7 @@ function doPost(e) {
     // token in the request body rather than the URL (URLs leak into browser
     // history and logs; bodies don't). The GET versions below still work.
     if (action === 'reportsTicket') return jsonOut(reportsTicket_(user));
+    if (action === 'tasksTicket') return jsonOut(tasksTicket_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (action === 'bootstrap') return jsonOut(bootstrap_(user));
     if (action === 'getIssuesList') return jsonOut(getIssuesList_());
@@ -859,6 +860,10 @@ function reqPerm_(action) {
     // permission key: it is already held by exactly the accounts that should
     // see Reports, and PERM_KEYS/the admin screen stay untouched.
     case 'reportsTicket': return 'analytics';
+    // Tasks ticket. Any authenticated user, because the list it unlocks is that
+    // user's own and the Edge Function scopes every read and write to the email
+    // inside the ticket. Nothing here to hold a permission key over.
+    case 'tasksTicket': return 'any';
     // Fail closed. Every action reaching this point is one nobody listed above,
     // which means nobody decided who should be allowed to call it. The public
     // and key-gated actions (login, acceptInvite, requestPasswordReset, ping,
@@ -6684,7 +6689,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r155.1 · 2026-09-10';
+var CODE_STAMP = 'r156 · 2026-09-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -10356,6 +10361,32 @@ var REPORTS_TICKET_MINUTES = 30;
  * in the file having got its wiring right.
  */
 function reportsTicket_(user) {
+  return mintPortalTicket_(user, 'analytics');
+}
+
+/**
+ * Mint a portal ticket for the Tasks tab.
+ *
+ * No permission beyond having a tracker login. A task list is private to the
+ * person holding it, so there is nothing here that a second permission key
+ * would be protecting. Phase 1 hides the tab from everyone but Edd in the
+ * front end; that is a UI decision and this is deliberately not a second copy
+ * of it, because a UI restriction is not a rule until the API agrees, and here
+ * the rule we actually want is "your own list, nobody else's".
+ */
+function tasksTicket_(user) {
+  return mintPortalTicket_(user, null);
+}
+
+/**
+ * The one place a ticket is signed.
+ *
+ * Both callers above hand out a credential to another system, so the check
+ * below is a second one on purpose: it should not depend on a caller elsewhere
+ * in this file having got its wiring right. Pass null to require nothing
+ * beyond the authenticated session the dispatcher has already established.
+ */
+function mintPortalTicket_(user, requiredPerm) {
   var secret = PropertiesService.getScriptProperties().getProperty('REPORTS_TICKET_SECRET');
   if (!secret) {
     // Configuration fault, not a permissions one, and worth saying so plainly:
@@ -10366,7 +10397,7 @@ function reportsTicket_(user) {
 
   var pub = publicUser_(user);
   var perms = pub.perms || {};
-  if (perms.analytics !== true) {
+  if (requiredPerm && perms[requiredPerm] !== true) {
     return { ok: false, error: 'forbidden' };
   }
 
@@ -10375,7 +10406,7 @@ function reportsTicket_(user) {
     email: pub.email,
     name: pub.name || null,
     // The whole permission set travels, not just the one being checked. It
-    // costs nothing and it means adding a second Reports view with a different
+    // costs nothing and it means adding a second view with a different
     // permission later needs no change on this side.
     perms: perms,
     iat: now,
@@ -10390,7 +10421,7 @@ function reportsTicket_(user) {
     ok: true,
     ticket: ticket,
     expires_at: payload.exp,
-    // Returned so the dashboard can name the person in its header without a
+    // Returned so the caller can name the person in its header without a
     // second call. It is the same data that is inside the ticket.
     email: pub.email,
     name: pub.name || null

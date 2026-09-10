@@ -1043,6 +1043,15 @@
     <span class="ri-word">Edd</span>
     <span class="rail-badge" id="railBadgeEdd"></span>
   </button>
+  <!-- Tasks (10 Sep). Phase 1 is Edd only, so the gate below is isEddUser(),
+       the same one the Edd page uses. The endpoint does not depend on this:
+       it scopes every read and write to the email inside the ticket, so the
+       day this opens up to everyone, nobody inherits anybody else's list. -->
+  <button type="button" class="rail-item" id="railTasks" onclick="railGo('tasks')" title="Tasks - your own list">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 12 8 16 16 6"/><line x1="11" y1="19" x2="20" y2="19"/></svg>
+    <span class="ri-word">Tasks</span>
+    <span class="rail-badge" id="railBadgeTasks"></span>
+  </button>
   <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
     <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
     <span class="ri-word">Dev</span>
@@ -1632,6 +1641,54 @@
     <div id="eddToolsTags" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;"></div>
     <div id="eddToolsStatus" class="hint" style="margin-top:6px;"></div>
   </div>
+</div>
+
+<!-- ===================== TASKS (10 Sep 2026) =====================
+     A to-do list that is not a queue. Everything else in this app is work
+     that arrived from somewhere; this is the work you give yourself, and it
+     lives in Postgres rather than the Sheet so Claude can read and write it
+     directly. Phase 1 is Edd only. Nothing here knows about instructors,
+     assignment, or the Bug queue: that is Phase 2 and the schema already has
+     room for it. -->
+<div id="tasksView" class="wrap hidden">
+  <h2 style="margin-top:0;">Tasks</h2>
+  <p class="hint" style="margin-top:-6px;">Your own list. Not a queue, not assigned by anyone, and only you can see it.</p>
+
+  <div class="card">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:1;min-width:240px;">
+        <label for="taskTitle">What needs doing</label>
+        <input id="taskTitle" name="ait-tasktitle" autocomplete="one-time-code" placeholder="e.g. chase DHL about the nav plotter"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();tasksAdd();}" />
+      </div>
+      <div>
+        <label for="taskPriority">When</label>
+        <select id="taskPriority">
+          <option value="now">Now</option>
+          <option value="soon" selected>Soon</option>
+          <option value="someday">Someday</option>
+        </select>
+      </div>
+      <div>
+        <label for="taskDue">Due</label>
+        <input id="taskDue" type="date" />
+      </div>
+      <div>
+        <label for="taskRepeat" title="Leave empty for a one-off. Ticking a repeating task creates the next one.">Repeat</label>
+        <select id="taskRepeat">
+          <option value="">One-off</option>
+          <option value="1">Every day</option>
+          <option value="7">Every week</option>
+          <option value="14">Every fortnight</option>
+          <option value="28">Every 4 weeks</option>
+        </select>
+      </div>
+      <button class="btn primary" onclick="tasksAdd()">Add</button>
+    </div>
+    <div id="tasksAddStatus" class="hint" style="margin-top:6px;"></div>
+  </div>
+
+  <div id="tasksList" style="margin-top:16px;"></div>
 </div>
 
 <div id="devView" class="wrap hidden">
@@ -2955,7 +3012,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r155.1 · 2026-09-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r156 · 2026-09-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4162,7 +4219,7 @@ function applyPerms(user) {
   // were, one line each, so nothing can drift apart.
   applyShell();
   var railGate = [["railNew", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
-                  ["railEdd", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
+                  ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
@@ -6309,9 +6366,11 @@ function setView(v) {
   if ($("manualView")) $("manualView").classList.toggle("hidden", v !== "manual");
   // 24 Aug: RCA is a page too - open investigations keep their own presence.
   if ($("rcaView")) $("rcaView").classList.toggle("hidden", v !== "rca");
+  if ($("tasksView")) $("tasksView").classList.toggle("hidden", v !== "tasks");
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "rca") renderRcaHome();
+  if (v === "tasks") renderTasks();
   if (v === "actions") renderActions();
   if (v === "live") { renderLive(); loadLiveCases(); loadOpenChats(); renderActions(); }
   if (v === "admin") renderAdmin();
@@ -6379,7 +6438,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railEdd", "railDev", "railRCA", "railCourse", "railReports", "railStats", "railUsers", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railReports", "railStats", "railUsers", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -6413,6 +6472,7 @@ function railGo(v) {
   // stale bookmark can still ask for the view, so the gate is here as well.
   if (v === "reports" && !(state.perms || {}).analytics) return;
   if (v === "rca" && !(state.perms || {}).users) return;   // dev access returns once Edd has put RCA through its paces
+  if (v === "tasks" && !isEddUser()) return;               // Phase 1 is solo; the endpoint scopes by ticket regardless
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -6428,7 +6488,7 @@ function updateRail() {
   var v = state.view;
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
-               ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railCourse", v === "course"],
+               ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual"],
                ["railRCA", v === "rca"]];
@@ -6446,6 +6506,257 @@ function updateRail() {
 // Two badges, and only two. Chats counts the open conversations. Issues
 // counts the things waiting on somebody, NOT the size of the log - a number
 // that only means work is a number worth looking at.
+// ===================== TASKS (10 Sep 2026) =====================
+// The one part of this app whose data does not live in the Sheet. Tasks sits
+// in Postgres (schema tasks.*, migrations 022-024) behind its own Edge
+// Function, because the point of it is that Claude can read and write the
+// list directly rather than through a connector's permission layer.
+//
+// Auth is the same signed ticket Reports uses, minted by tasksTicket. The
+// endpoint scopes every read and write to the email inside it, so this file
+// never sends an owner and could not read somebody else's list if it tried.
+var TASKS_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tasks";
+var tasks = { ticket: "", exp: 0, items: [], error: "", loading: false, openId: "" };
+
+// Tickets last half an hour. Re-minting costs an Apps Script round trip (two
+// seconds on a good day), so one is kept until it is nearly out rather than
+// fetched per call.
+function tasksTicket(force) {
+  var now = Math.floor(Date.now() / 1000);
+  if (!force && tasks.ticket && tasks.exp - now > 60) return Promise.resolve(tasks.ticket);
+  return apiPost({ action: "tasksTicket" }).then(function (r) {
+    if (!r || !r.ok || !r.ticket) throw new Error((r && r.error) || "could not get a tasks ticket");
+    tasks.ticket = r.ticket;
+    tasks.exp = r.expires_at || (now + 1500);
+    return tasks.ticket;
+  });
+}
+
+function tasksApi(payload, retried) {
+  return tasksTicket(!!retried).then(function (t) {
+    return fetch(TASKS_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + t },
+      body: JSON.stringify(payload)
+    });
+  }).then(function (r) {
+    return r.text().then(function (txt) {
+      var j = null;
+      try { j = JSON.parse(txt); } catch (e) {}
+      // A ticket that expired between minting and arriving is worth exactly one
+      // silent retry with a fresh one. Any more and a genuine permission
+      // problem turns into a loop.
+      if (r.status === 401 && !retried) { tasks.ticket = ""; tasks.exp = 0; return tasksApi(payload, true); }
+      if (!r.ok) throw new Error((j && j.error) || ("the tasks service returned " + r.status));
+      return j || {};
+    });
+  });
+}
+
+function renderTasks() {
+  var host = $("tasksList");
+  if (!host) return;
+  if (!tasks.items.length && !tasks.error) host.innerHTML = '<p class="hint">Fetching your list...</p>';
+  tasksLoad();
+}
+
+function tasksLoad() {
+  if (tasks.loading) return Promise.resolve();
+  tasks.loading = true;
+  return tasksApi({ action: "list" }).then(function (j) {
+    tasks.items = j.tasks || [];
+    tasks.error = "";
+  }).catch(function (e) {
+    tasks.error = String((e && e.message) || e);
+  }).then(function () {
+    tasks.loading = false;
+    paintTasks();
+  });
+}
+
+// Dates arrive as full ISO strings because the driver parses a Postgres date
+// into a JS Date on the way out. The day is the only part that means anything.
+function taskDay(v) { return v ? String(v).slice(0, 10) : ""; }
+function todayStr() {
+  var d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+var TASK_PRI_LABEL = { now: "Now", soon: "Soon", someday: "Someday" };
+var TASK_REPEAT_LABEL = { 1: "daily", 7: "weekly", 14: "fortnightly", 28: "every 4 weeks" };
+
+function taskDueChip(t) {
+  var d = taskDay(t.due_date);
+  if (!d) return "";
+  var today = todayStr();
+  var late = d < today, due = d === today;
+  var label = late ? "Overdue " + d : (due ? "Due today" : "Due " + d);
+  return '<span class="badge st" style="' + (late ? "color:var(--high);border-color:var(--high);" : (due ? "color:var(--accent);border-color:var(--accent);" : "")) + '">' + esc(label) + "</span>";
+}
+
+function paintTasks() {
+  var host = $("tasksList");
+  if (!host) return;
+
+  if (tasks.error) {
+    // Said plainly rather than shown as an empty list: no tasks and no
+    // database look identical otherwise, and that has caught us before.
+    host.innerHTML = '<div class="card"><p style="margin:0 0 6px;"><strong>The list did not load.</strong></p>' +
+      '<p class="hint" style="margin:0 0 10px;">' + esc(tasks.error) + "</p>" +
+      '<button class="btn" onclick="tasksLoad()">Try again</button></div>';
+    return;
+  }
+
+  var open = tasks.items.filter(function (t) { return t.status !== "done"; });
+  var done = tasks.items.filter(function (t) { return t.status === "done"; });
+
+  if ($("railBadgeTasks")) {
+    // Whatever is actually on you today: everything marked Now, plus anything
+    // due today or already late. One number, from the same list you are
+    // looking at, so the badge and the page can never disagree.
+    var today = todayStr();
+    var n = open.filter(function (t) { return t.priority === "now" || (taskDay(t.due_date) && taskDay(t.due_date) <= today); }).length;
+    $("railBadgeTasks").textContent = n ? String(n) : "";
+    $("railBadgeTasks").style.display = n ? "" : "none";
+  }
+
+  var html = "";
+  if (!open.length) {
+    html += '<div class="card"><p style="margin:0;">Nothing on the list. ' +
+      (done.length ? "You have cleared it." : "Add the first one above.") + "</p></div>";
+  }
+
+  ["now", "soon", "someday"].forEach(function (pri) {
+    var group = open.filter(function (t) { return t.priority === pri; });
+    if (!group.length) return;
+    html += '<h3 style="margin:18px 0 8px;">' + TASK_PRI_LABEL[pri] + ' <span class="hint" style="font-weight:400;">' + group.length + "</span></h3>";
+    html += group.map(taskRow).join("");
+  });
+
+  if (done.length) {
+    html += '<h3 style="margin:22px 0 8px;">Done <span class="hint" style="font-weight:400;">last 14 days</span></h3>';
+    html += done.map(taskRow).join("");
+  }
+
+  host.innerHTML = html;
+}
+
+function taskRow(t) {
+  var isDone = t.status === "done";
+  var openEd = tasks.openId === t.task_id;
+  var chips = [];
+  if (!isDone) chips.push(taskDueChip(t));
+  if (t.repeat_days) chips.push('<span class="badge st">Repeats ' + esc(TASK_REPEAT_LABEL[t.repeat_days] || ("every " + t.repeat_days + " days")) + "</span>");
+  // Where it came from, but only when that is not "you typed it". Phase 2 puts
+  // Bug tickets and Chatwoot threads through here and this is the line that
+  // will say so.
+  if (t.source && t.source !== "manual") chips.push('<span class="badge type-badge">From ' + esc(t.source) + "</span>");
+  if (t.notes && !openEd) chips.push('<span class="badge st" title="' + esc(t.notes) + '">Notes</span>');
+
+  var out = '<div class="card" style="padding:12px 14px;margin-bottom:8px;' + (isDone ? "opacity:.62;" : "") + '">' +
+    '<div style="display:flex;gap:10px;align-items:flex-start;">' +
+      '<button class="btn" style="padding:2px 9px;line-height:1.4;" title="' + (isDone ? "Put it back on the list" : "Done") + '" ' +
+        'onclick="' + (isDone ? "tasksReopen" : "tasksComplete") + "('" + t.task_id + "')\">" + (isDone ? "&#8617;" : "&#10003;") + "</button>" +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="' + (isDone ? "text-decoration:line-through;" : "") + '">' + esc(t.title) + "</div>" +
+        (chips.filter(Boolean).length ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">' + chips.filter(Boolean).join("") + "</div>" : "") +
+      "</div>" +
+      '<button class="btn" style="padding:2px 9px;" title="Edit" onclick="tasksToggleEdit(\'' + t.task_id + '\')">' + (openEd ? "&#9652;" : "&#9662;") + "</button>" +
+    "</div>";
+
+  if (openEd) {
+    out += '<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px;">' +
+      '<label for="te_title_' + t.task_id + '">Title</label>' +
+      '<input id="te_title_' + t.task_id + '" value="' + esc(t.title) + '" />' +
+      '<label for="te_notes_' + t.task_id + '" style="margin-top:8px;">Notes</label>' +
+      '<textarea id="te_notes_' + t.task_id + '" rows="3">' + esc(t.notes || "") + "</textarea>" +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px;">' +
+        '<div><label for="te_pri_' + t.task_id + '">When</label><select id="te_pri_' + t.task_id + '">' +
+          ["now", "soon", "someday"].map(function (p) {
+            return '<option value="' + p + '"' + (t.priority === p ? " selected" : "") + ">" + TASK_PRI_LABEL[p] + "</option>";
+          }).join("") + "</select></div>" +
+        '<div><label for="te_due_' + t.task_id + '">Due</label><input id="te_due_' + t.task_id + '" type="date" value="' + taskDay(t.due_date) + '" /></div>' +
+        '<div><label for="te_rep_' + t.task_id + '">Repeat</label><select id="te_rep_' + t.task_id + '">' +
+          [["", "One-off"], ["1", "Every day"], ["7", "Every week"], ["14", "Every fortnight"], ["28", "Every 4 weeks"]].map(function (o) {
+            return '<option value="' + o[0] + '"' + (String(t.repeat_days || "") === o[0] ? " selected" : "") + ">" + o[1] + "</option>";
+          }).join("") + "</select></div>" +
+        '<button class="btn primary" onclick="tasksSave(\'' + t.task_id + '\')">Save</button>' +
+        '<button class="btn" onclick="tasksDelete(\'' + t.task_id + '\')">Delete</button>' +
+      "</div>" +
+      '<p class="hint" style="margin:8px 0 0;">Added ' + esc(taskDay(t.created_at)) + " by " + esc(t.created_by || "?") +
+        (t.updated_by && t.updated_by !== t.created_by ? ", last touched by " + esc(t.updated_by) : "") + ".</p>" +
+    "</div>";
+  }
+  return out + "</div>";
+}
+
+function tasksToggleEdit(id) {
+  tasks.openId = tasks.openId === id ? "" : id;
+  paintTasks();
+}
+
+function tasksAdd() {
+  var title = ($("taskTitle").value || "").trim();
+  var st = $("tasksAddStatus");
+  if (!title) { st.textContent = "It needs a title first."; return; }
+  st.textContent = "Adding...";
+  tasksApi({
+    action: "create",
+    title: title,
+    priority: $("taskPriority").value,
+    due_date: $("taskDue").value || null,
+    repeat_days: $("taskRepeat").value || null
+  }).then(function () {
+    $("taskTitle").value = "";
+    $("taskDue").value = "";
+    $("taskRepeat").value = "";
+    st.textContent = "";
+    return tasksLoad();
+  }).catch(function (e) {
+    st.textContent = "That did not save: " + String((e && e.message) || e);
+  });
+}
+
+function tasksSave(id) {
+  var payload = {
+    action: "update",
+    task_id: id,
+    title: ($("te_title_" + id).value || "").trim(),
+    notes: $("te_notes_" + id).value || null,
+    priority: $("te_pri_" + id).value,
+    due_date: $("te_due_" + id).value || null,
+    repeat_days: $("te_rep_" + id).value || null
+  };
+  if (!payload.title) { toast("A task needs a title."); return; }
+  tasksApi(payload).then(function () {
+    tasks.openId = "";
+    return tasksLoad();
+  }).catch(function (e) { toast("That did not save: " + String((e && e.message) || e)); });
+}
+
+function tasksComplete(id) {
+  tasksApi({ action: "complete", task_id: id }).then(function (j) {
+    // A repeating task makes its replacement server-side, so say so rather
+    // than letting the next one appear out of nowhere.
+    if (j && j.next) toast("Done. Next one due " + taskDay(j.next.due_date) + ".");
+    return tasksLoad();
+  }).catch(function (e) { toast("That did not save: " + String((e && e.message) || e)); });
+}
+
+function tasksReopen(id) {
+  tasksApi({ action: "reopen", task_id: id })
+    .then(function () { return tasksLoad(); })
+    .catch(function (e) { toast("That did not save: " + String((e && e.message) || e)); });
+}
+
+function tasksDelete(id) {
+  // No bin and no undo on this table, so the question gets asked properly.
+  if (!confirm("Delete this task? There is no undo.")) return;
+  tasksApi({ action: "delete", task_id: id }).then(function () {
+    tasks.openId = "";
+    return tasksLoad();
+  }).catch(function (e) { toast("That did not delete: " + String((e && e.message) || e)); });
+}
+
 // ===================== r147: THE BELL =====================
 // What is waiting for THIS person: answers to their questions (the same list
 // the dev/course pages show) and their own feedback that has moved on from
