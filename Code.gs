@@ -4084,11 +4084,38 @@ function isAutomatedNotice_(name, email) {
   return false;
 }
 function chatwootList_(data) {
-  var out;
-  try {
-    out = chatwootCall_('/conversations?status=' + encodeURIComponent(data.status || 'open') + '&page=1');
-  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+  // r158 (FB-0360, Edd: "we need to get it connected to chatwoot again").
+  // Chatwoot's conversation index answers 500 on a status filter it does not
+  // like, and has done for over a year on their own tracker (chatwoot#12047,
+  // reported against status=resolved; on 10 Sep 2026 every status we tried
+  // 500'd). Auth was never the problem: the contacts endpoint answered with a
+  // Chatwoot-shaped 422 on the same token in the same minute.
+  //
+  // So: try it, try it once more (their API is documented flaky and the 422
+  // "took too long" already gets a retry elsewhere), then ask for the page
+  // with NO status filter and sieve it here. Their filtering being broken
+  // should cost us the filter, not the whole list.
+  var status = String(data.status || 'open');
+  var attempts = [
+    '/conversations?status=' + encodeURIComponent(status) + '&page=1',
+    '/conversations?status=' + encodeURIComponent(status) + '&page=1',
+    '/conversations?page=1'
+  ];
+  var out = null, err = '', degraded = false;
+  for (var a = 0; a < attempts.length && !out; a++) {
+    try {
+      out = chatwootCall_(attempts[a]);
+      if (a === 2) degraded = true;          // came back without their filter
+    } catch (e) {
+      err = String(e.message || e);
+      if (a === 0) Utilities.sleep(700);     // let a wobble pass before retrying
+    }
+  }
+  if (!out) return { ok: false, error: err };
   var payload = (out && out.data && out.data.payload) || (out && out.payload) || [];
+  // Ours now, whether we filtered there or here. Harmless on the happy path,
+  // because a status query only ever returns that status anyway.
+  payload = payload.filter(function (c) { return String(c.status || '') === status; });
   payload = payload.filter(function (c) {
     var sender = (c.meta && c.meta.sender) || {};
     return !isAutomatedNotice_(sender.name, sender.email);
@@ -4104,7 +4131,10 @@ function chatwootList_(data) {
       snippet: String((c.messages && c.messages.length && c.messages[c.messages.length - 1].content) || '').replace(/\s+/g, ' ').slice(0, 120)
     };
   });
-  return { ok: true, conversations: rows };
+  // A fallback that does not announce itself is how a half-working list gets
+  // read as the whole truth. Say so, and say why.
+  return { ok: true, conversations: rows, degraded: degraded || undefined,
+    degraded_why: degraded ? ('Chatwoot refused the ' + status + ' filter (' + String(err).slice(0, 120) + '), so this is the most recent page sieved here. Something older may be missing.') : undefined };
 }
 // Private (internal) note back on the conversation, so Chatwoot shows the
 // issue was logged and where to follow it. Never visible to the student.
@@ -6736,7 +6766,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r157 · 2026-09-10';
+var CODE_STAMP = 'r158 · 2026-09-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

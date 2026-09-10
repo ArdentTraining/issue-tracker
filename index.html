@@ -3012,7 +3012,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r157 · 2026-09-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r158 · 2026-09-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5398,11 +5398,19 @@ function loadOpenChats(force) {
     state._openChatsLoading = false;
     state._openChats = (res && res.ok) ? (res.conversations || []) : [];
     state._openChatsError = (res && res.ok) ? "" : ((res && res.error) || "unknown");
+    state._openChatsDegraded = (res && res.ok && res.degraded) ? (res.degraded_why || "Chatwoot answered without its own filter.") : "";
+    // r158 (FB-0360): renderOpenChats holds the loading and error lines, and
+    // NOTHING had ever called it - FB-0337 took the second list out and left
+    // its renderer orphaned. So a Chatwoot outage drew an empty box and read
+    // as a quiet inbox for however long it lasted.
+    renderOpenChats();
     if (state.view === "live") renderLive();
   }).catch(function (e) {
     state._openChatsLoading = false;
     state._openChats = [];
     state._openChatsError = String(e && e.message || e);
+    state._openChatsDegraded = "";
+    renderOpenChats();
     if (state.view === "live") renderLive();
   });
 }
@@ -5433,13 +5441,18 @@ function unpickedChats() {
 function renderOpenChats() {
   var el = $("openChats");
   if (!el) return;
-  if (!state._openChatsLoading && !state._openChatsError) { el.innerHTML = ""; return; }
+  if (!state._openChatsLoading && !state._openChatsError && !state._openChatsDegraded) { el.innerHTML = ""; return; }
   if (state._openChatsLoading && !state._openChats) {
     el.innerHTML = '<p class="muted small"><span class="spinner"></span> checking Chatwoot…</p>';
     return;
   }
   if (state._openChatsError) {
-    el.innerHTML = '<p class="muted small">Could not reach Chatwoot: ' + esc(state._openChatsError) + '</p>';
+    el.innerHTML = '<p class="muted small">Could not reach Chatwoot, so any conversation without a case open on it is missing from the list above. ' +
+      esc(state._openChatsError) + ' <a href="#" onclick="loadOpenChats(true);return false;">Try again</a></p>';
+    return;
+  }
+  if (state._openChatsDegraded) {
+    el.innerHTML = '<p class="muted small">' + esc(state._openChatsDegraded) + '</p>';
     return;
   }
   var rows = unpickedChats();
@@ -5487,7 +5500,14 @@ function renderLive() {
     // r128 (Edd: "Why is sara at the top here? seperated out?"): the case list
     // finally says what it is, and a case whose conversation is snoozed or
     // pending in Chatwoot says so instead of sitting there unexplained.
-    el.innerHTML = '<h3 style="margin:0 0 8px;">Open in Chatwoot (' + (cases.length + unpicked.length) + ')</h3>' + cases.map(function (c) {
+    // r158 (FB-0360, Edd: "Why is only one thing showing in 'open in chatwoot'
+    // and it isn't something which is open in chatwoot"). When Chatwoot has not
+    // answered, this list is only our own cases, and some of those are resolved
+    // over there and say so on their chip. Calling that "Open in Chatwoot" is a
+    // claim we cannot make, so the heading says what the list actually is and
+    // the line underneath says what is missing.
+    var honest = state._openChatsError ? 'Open cases' : 'Open in Chatwoot';
+    el.innerHTML = '<h3 style="margin:0 0 8px;">' + honest + ' (' + (cases.length + unpicked.length) + ')</h3>' + cases.map(function (c) {
       // Edd, 22 Aug 2026: "things seem to get 'assigned' to a person. we don't
       // need this feature on this page." The chip read as ownership, and this
       // page is just what is live in Chatwoot that might be a bug - who
