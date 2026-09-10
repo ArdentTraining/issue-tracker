@@ -2199,7 +2199,7 @@
   </ul>
   <p>At the very foot of the pane there are two more ways out, <span class="ui">Mark resolved</span> and <span class="ui">Park it</span>, for when the issue is done and there is nothing to change in the card above.</p>
   <p>Resolving without a note is refused, with <em>Add a resolution note before resolving.</em> That line is what the next person reads when the same fault turns up in six months.</p>
-  <p>Closing one also asks <span class="ui">Is the fault itself sorted?</span> The two are not the same thing: a student can be perfectly happy because we found them a way round, while the fault that tripped them up is still sitting there for the next person. Answer <span class="ui">Sorted properly</span> and it closes as normal. Answer <span class="ui">The student is sorted, the fault is not</span> and it stays exactly where it is, in whichever queue it was in, with the student marked as needing no further contact so nobody goes back to them. Whatever was typed in the box is kept as an update rather than a resolution note. The question is skipped where it has no answer: an internal report with nobody on the other end, a parcel, a fix a developer has just landed, or an issue already marked no-further-contact.</p>
+  <p>Closing one also asks <span class="ui">Is the fault itself sorted?</span> The two are not the same thing: a student can be perfectly happy because we found them a way round, while the fault that tripped them up is still sitting there for the next person. Answer <span class="ui">Sorted properly</span> and it closes as normal. Answer <span class="ui">The student is sorted, the fault is not</span> and it stays exactly where it is, in whichever queue it was in, with the student marked as needing no further contact so nobody goes back to them. Whatever was typed in the box is kept as an update rather than a resolution note. The question is skipped where it has no answer: an internal report with nobody on the other end, a parcel, or a fix a developer has just landed and tested.</p>
 
   <h4>When a fix comes back</h4>
   <p>A fix now resolves the issue on its own. Whoever fixed it tests it, so there is no second person clicking to confirm: that step was ceremony, and it left real fixes sitting in a lane for days waiting on somebody who had not seen the fault in the first place.</p>
@@ -2943,7 +2943,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r154.1 · 2026-09-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r154.2 · 2026-09-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6148,7 +6148,10 @@ function needsCauseCheck(issue) {
   if (!issue) return false;
   var s = String(issue.status || "open").toLowerCase();
   if (s === "resolved" || s === "past" || s === "dev_fixed") return false;
-  if (isTrue(issue.student_sorted)) return false;
+  // "No further contact" being ticked already is NOT a reason to skip it: that
+  // tick says the student is done with, and says nothing about whether the
+  // fault is. Somebody pressing Resolve on one of those is making exactly the
+  // judgement this question is for.
   if (audienceOf(issue) === "internal") return false;
   if (String(issue.student_involved || "") === "no") return false;
   if (catOf(issue) === "shipping") return false;
