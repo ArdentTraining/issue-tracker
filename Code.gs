@@ -1914,6 +1914,13 @@ function addIssue_(data) {
     kind: 'report',
     student_name: data.student_name || '',
     student_contact: data.student_contact || '',
+    // r157 (Edd, 10 Sep 2026): "it's literally one communication in chatwoot."
+    // Which conversation this filing came from. The issue row has carried
+    // chatwoot_conversation_id since r145, but the individual report never did,
+    // so the merge path had nothing to compare and counted the same thread
+    // imported twice as two people. FT.02.02 reached high, and the dev queue,
+    // on one student filed three times (twice by Charlie, once by Peter).
+    chatwoot_conversation_id: String(data.chatwoot_conversation_id || '').trim(),
     device_info: data.device_info || '',
     instructor_name: data.instructor_name || '',
     instructor_email: data.instructor_email || '',
@@ -2312,9 +2319,15 @@ function addReportToIssue_(id, data, report) {
       raw_text: rec.raw_text || '', date: rec.submitted_at || ''
     });
   }
+  // r157: the trail keeps every filing, always. What changes is whether this
+  // one counts as another PERSON. A repeat of a conversation we already hold
+  // is still worth having in the trail (it is how we see two instructors
+  // working the same thread), it just must not move the score.
+  var countBefore = realReportCount_(reports);
   reports.push(report);
   rec.reports_json = capReports_(reports);
   rec.report_count = realReportCount_(reports);
+  var repeatFiling = rec.report_count === countBefore;
 
   // Each extra report nudges the priority up a level, never below what this
   // report was logged as.
@@ -2355,9 +2368,13 @@ function addReportToIssue_(id, data, report) {
 
   // Repeat reports can tip a tech issue over the routing line (3+ reports, or
   // the priority bump above making it high): hand it to the developers.
+  // r157: rec.report_count, NOT reports.length. The trail holds every filing,
+  // including the same conversation imported twice, so counting entries here
+  // would still send one student to the developers on a triple-filing even
+  // with the score fixed. Three reports means three PEOPLE.
   if (String(rec.category).toLowerCase() === 'tech_issue' &&
       String(rec.status).toLowerCase() === 'open' &&
-      (reports.length >= 3 || String(rec.priority).toLowerCase() === 'high')) {
+      (rec.report_count >= 3 || String(rec.priority).toLowerCase() === 'high')) {
     rec.status = 'with_dev';
     if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
   }
@@ -2402,7 +2419,7 @@ function addReportToIssue_(id, data, report) {
       if (mn && !mn.ok) mergeNote = mn.why;
     } catch (e) { mergeNote = String(e).slice(0, 200); }
   }
-  return { ok: true, issue: rec, merged: true, report_count: rec.report_count, note_error: mergeNote || undefined };
+  return { ok: true, issue: rec, merged: true, report_count: rec.report_count, repeat_filing: repeatFiling || undefined, note_error: mergeNote || undefined };
 }
 
 // Raise priority one level toward high, but never below the incoming report's
@@ -2451,10 +2468,17 @@ function recentReportCount_(rec) {
   try { reps = rec && rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
   if (!reps.length) return 1;   // a bare row: its one report is its submission
   var cutoff = Date.now() - BURST_WINDOW_DAYS * 24 * 3600 * 1000;
-  var n = 0;
+  // r157: de-duplicate by source across the WHOLE trail, keeping the first
+  // time each person appeared, then count how many of those firsts fall in the
+  // window. Filtering to the window first would let the same conversation
+  // filed twice today count twice, which is the burst bonus firing on one
+  // person and is exactly what put FT.02.02 on the developers' board.
+  var n = 0, seen = {};
   for (var i = 0; i < reps.length; i++) {
     var k = String(reps[i].kind || 'report').toLowerCase();
     if (k === 'question' || k === 'answer' || k === 'update' || k === 'nudge') continue;
+    var key = reportSourceKey_(reps[i]);
+    if (key) { if (seen[key]) continue; seen[key] = 1; }
     var d = new Date(reps[i].date || 0).getTime();
     if (d >= cutoff) n++;
   }
@@ -2480,12 +2504,35 @@ function priorityFromScore_(rec) {
 // asking the admins a question pushed the report count up by one, and after
 // FB-0261 that would have quietly raised the priority too. A question is not a
 // person hitting the fault.
+// Where a report CAME FROM, as one comparable string (r157). Two entries with
+// the same key are the same person telling us the same thing, however many
+// times it was filed and by however many instructors. The conversation id is
+// the honest answer when we have it; without one (a typed report, a legacy
+// row) we fall back to who it is about plus the opening of the text, which is
+// what caught all 13 historical cases when we swept for them.
+//
+// An entry with nothing to go on returns '' and is always counted on its own,
+// because collapsing unknowns together would UNDER-count, and under-counting
+// hides a real fault. Over-counting only inflates one; that asymmetry is why
+// the fallback is deliberately conservative.
+function reportSourceKey_(r) {
+  if (!r) return '';
+  var conv = String(r.chatwoot_conversation_id || '').trim();
+  if (conv) return 'conv:' + conv;
+  var who = String(r.student_contact || r.student_name || '').toLowerCase().trim();
+  var text = String(r.raw_text || '').slice(0, 200).replace(/\s+/g, ' ').trim();
+  return (who || text) ? ('who:' + who + '|' + text) : '';
+}
+
+// How many PEOPLE have reported this, not how many times it was filed.
 function realReportCount_(reps) {
   if (!reps || !reps.length) return 0;
-  var n = 0;
+  var n = 0, seen = {};
   for (var i = 0; i < reps.length; i++) {
     var k = String(reps[i].kind || 'report').toLowerCase();
     if (k === 'question' || k === 'answer' || k === 'update' || k === 'nudge') continue;
+    var key = reportSourceKey_(reps[i]);
+    if (key) { if (seen[key]) continue; seen[key] = 1; }
     n++;
   }
   return n || 1;   // an old row with only untyped entries still counts as one
@@ -6689,7 +6736,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r156 · 2026-09-10';
+var CODE_STAMP = 'r157 · 2026-09-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

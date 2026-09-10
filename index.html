@@ -3012,7 +3012,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r156 · 2026-09-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r157 · 2026-09-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9362,6 +9362,10 @@ function submitIssue() {
       : wasParked ? "Update added and the issue parked."
       : "Update added to the existing issue.");
     else if (res.split) toast("Logged as " + res.split + " separate issues.");
+    // r157: a repeat filing of a conversation we already hold is added to the
+    // trail but does not count as another person, so saying "now 3 reports"
+    // would be telling the instructor something untrue. Say what happened.
+    else if (res.merged && res.repeat_filing) toast("Already on the log from this same conversation - added to the trail, still counted as " + (res.report_count || "1") + "." + (wasTbc ? " Marked Resolved - TBC." : ""));
     else if (res.merged) toast("Already reported - added to the existing one (now " + (res.report_count || "") + " reports)." + (wasTbc ? " Marked Resolved - TBC." : ""));
     else toast(wasResolvedNew ? "Logged as Resolved."
       : wasParked ? "Logged as Parked. It'll wake up on its own if anyone else reports it."
