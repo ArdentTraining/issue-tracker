@@ -2199,6 +2199,7 @@
   </ul>
   <p>At the very foot of the pane there are two more ways out, <span class="ui">Mark resolved</span> and <span class="ui">Park it</span>, for when the issue is done and there is nothing to change in the card above.</p>
   <p>Resolving without a note is refused, with <em>Add a resolution note before resolving.</em> That line is what the next person reads when the same fault turns up in six months.</p>
+  <p>Closing one also asks <span class="ui">Is the fault itself sorted?</span> The two are not the same thing: a student can be perfectly happy because we found them a way round, while the fault that tripped them up is still sitting there for the next person. Answer <span class="ui">Sorted properly</span> and it closes as normal. Answer <span class="ui">The student is sorted, the fault is not</span> and it stays exactly where it is, in whichever queue it was in, with the student marked as needing no further contact so nobody goes back to them. Whatever was typed in the box is kept as an update rather than a resolution note. The question is skipped where it has no answer: an internal report with nobody on the other end, a parcel, a fix a developer has just landed, or an issue already marked no-further-contact.</p>
 
   <h4>When a fix comes back</h4>
   <p>A fix now resolves the issue on its own. Whoever fixed it tests it, so there is no second person clicking to confirm: that step was ceremony, and it left real fixes sitting in a lane for days waiting on somebody who had not seen the fault in the first place.</p>
@@ -2805,6 +2806,26 @@
   </div>
 </div>
 
+<!-- Edd, 10 Sep 2026: "we kind of need an option for student is happy but the
+     underlying bug is not resolved... I just think our instructors won't get
+     that." Both endings already existed - Resolved, or left open with "student
+     needs no further contact" - but the second was a tick box halfway down a
+     pane, so a fault that was still live got closed along with the student.
+     The tick box is still there; this asks the same thing in the words of the
+     job, at the moment somebody is about to close it. -->
+<div class="modal-bg" id="causeModal">
+  <div class="modal" style="max-width:540px;">
+    <h3>Is the fault itself sorted?</h3>
+    <p class="small muted" id="causeLead">The student is happy either way. This is about the thing that went wrong: if it could still happen to somebody else, we want it left open so it gets looked at.</p>
+    <div class="btns" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <button class="ghost" onclick="causeChoice('fixed')" id="causeFixedBtn">Sorted properly - close it</button>
+      <button class="primary" onclick="causeChoice('live')" id="causeLiveBtn">The student is sorted, the fault is not</button>
+      <button class="ghost small" style="padding:6px 12px;" onclick="causeChoice('cancel')">Cancel</button>
+    </div>
+    <p class="small muted" id="causeFoot" style="margin-top:8px;"></p>
+  </div>
+</div>
+
 <!-- SLIDE / QUESTION NUMBER POPUP -->
 <div class="modal-bg" id="slideModal">
   <div class="modal">
@@ -2922,7 +2943,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r153 · 2026-09-07";  // bump this with each round, it lands on every feedback report
+var BUILD = "r154 · 2026-09-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6117,7 +6138,58 @@ function actionsSentUpdate(id) {
     loadIssues();
   }).catch(function (e) { toastErr("That", e); });
 }
+// ---- "is the fault itself sorted?" (Edd, 10 Sep 2026) --------------------
+// Asked wherever somebody is about to close a live student-facing issue by
+// hand. Not asked when the answer is already on the record: an internal report
+// with no student in it, a parcel (there is no underlying fault to chase), a
+// dev fix that has just landed, or an issue already marked as needing no
+// further contact.
+function needsCauseCheck(issue) {
+  if (!issue) return false;
+  var s = String(issue.status || "open").toLowerCase();
+  if (s === "resolved" || s === "past" || s === "dev_fixed") return false;
+  if (isTrue(issue.student_sorted)) return false;
+  if (audienceOf(issue) === "internal") return false;
+  if (String(issue.student_involved || "") === "no") return false;
+  if (catOf(issue) === "shipping") return false;
+  return true;
+}
+function askCause(issue, onAnswer) {
+  state._causeAnswer = onAnswer;
+  var team = catOf(issue) === "course_error" ? "the course team" : "the developers";
+  var who = String(issue.student_name || "").trim().split(" ")[0];
+  $("causeLead").textContent = (who ? who + " is" : "The student is") +
+    " happy either way. This is about the thing that went wrong: if it could still happen to somebody else, we want it left open so it gets looked at.";
+  $("causeFoot").textContent = "Leaving it open keeps it in front of " + team +
+    " and takes " + (who || "the student") + " off our chase list, so nobody goes back to them about it.";
+  wizardShow("causeModal");
+}
+function causeChoice(kind) {
+  $("causeModal").classList.remove("show");
+  wizardClosed();
+  var cb = state._causeAnswer; state._causeAnswer = null;
+  if (cb) cb(kind);
+}
+
 function actionsResolveTbc(id, good) {
+  var issue = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (good && needsCauseCheck(issue)) {
+    askCause(issue, function (kind) {
+      if (kind === "cancel") return;
+      if (kind === "live") {
+        toast("Left open. Nobody will chase the student about it again.");
+        optimistic(id, { status: "open", student_sorted: "true" },
+          { action: "updateIssue", issue_id: id, status: "open", student_sorted: "true" },
+          { failMsg: "That didn't save" });
+        return;
+      }
+      actionsResolveTbcNow(id, true);
+    });
+    return;
+  }
+  actionsResolveTbcNow(id, good);
+}
+function actionsResolveTbcNow(id, good) {
   toast(good ? "Resolved for good." : "Reopened for a proper fix.");
   optimistic(id, { status: good ? "resolved" : "open" },
     { action: "updateIssue", issue_id: id, status: good ? "resolved" : "open" },
@@ -10373,6 +10445,33 @@ function saveDetail() {
   var note = detailResolutionNote();
   // Make sure we capture how it was fixed when fully resolving.
   if (status === "resolved" && !note) { toast("Add a resolution note before resolving."); return; }
+  // The same question, once, on the way past. closeFromDetail sets the
+  // dropdown and comes through here, so hooking the save covers both the
+  // Mark resolved button and somebody changing the status by hand.
+  var beingClosed = (state.issues || []).filter(function (i) { return i.issue_id === state.detailId; })[0];
+  if (status === "resolved" && !saveDetail._causeAsked && needsCauseCheck(beingClosed)) {
+    askCause(beingClosed, function (kind) {
+      if (kind === "cancel") return;
+      if (kind === "live") {
+        // Back to where it was, so it stays in whichever queue it was in, and
+        // the note they typed becomes an update on the trail rather than a
+        // resolution note for a fault that is not resolved. resolved_tbc is
+        // the exception: that one auto-closes after a quiet week, which is the
+        // opposite of what they have just told us.
+        var was = String((beingClosed && beingClosed.status) || "open").toLowerCase();
+        $("d_status").value = (was === "resolved_tbc" || was === "resolved" || !was) ? "open" : was;
+        if ($("d_sorted")) $("d_sorted").checked = true;
+        onStatusChange();
+      }
+      saveDetail._causeAsked = true;
+      saveDetail();
+      saveDetail._causeAsked = false;
+      // Last toast wins, and "Issue updated" would not tell them that the
+      // thing they pressed Resolve on is deliberately still open.
+      if (kind === "live") toast("Left open for the fix. Nobody will chase the student about it again.", 6000);
+    });
+    return;
+  }
   var payload = {
     action: "updateIssue",
     issue_id: state.detailId,
