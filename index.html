@@ -2955,7 +2955,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r155 · 2026-09-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r155.1 · 2026-09-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5808,8 +5808,11 @@ function liveCheckpoint(decision) {
     // is the exception: that one deliberately stays put, because it joined
     // somebody else's live case rather than finishing this one.
     // FB-0357: the note is how the chat and the log stay joined up, so when it
-    // does not arrive that is worth a sentence rather than a silent gap.
-    if (res.note_error) toast("Filed, but the private note did not reach Chatwoot (" + res.note_error + "). Worth pasting the link on by hand.", 9000);
+    // does not arrive that is worth a sentence rather than a silent gap. Last,
+    // and on a delay, or the toast for the filing itself paints over it.
+    if (res.note_error) setTimeout(function () {
+      toast("Filed, but the private note did not reach Chatwoot (" + res.note_error + "). Worth pasting the link on by hand.", 9000);
+    }, 1400);
     if (res.merged) { loadLiveCasesThenRender(); loadIssues(); return; }
     // FB-0356: still talking to them, so the case stays on the list. The issue
     // is filed either way, which is the whole point of the change.
