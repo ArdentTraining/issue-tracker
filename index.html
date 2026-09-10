@@ -2241,7 +2241,8 @@
   </table></div>
   <p>A blue dot on a case means something has happened since you personally last opened it. <span class="ui">Refresh</span> at the top of the list is free and re-reads everything, while <span class="ui">refresh the brief</span> inside a case rewrites the summary and costs a call, which is why they are two separate buttons rather than one.</p>
   <h4>Filing it</h4>
-  <p>Two choices, and the words under each change as you pick. <span class="ui">Resolved</span> means sorted with nothing left to do. <span class="ui">Still open</span> means the chat is done but the fault is not, so it stays open and the student may need telling once it is fixed.</p>
+  <p>Two choices, and the words under each change as you pick. Both are about the <em>fault</em>, not about the conversation. <span class="ui">Resolved</span> means sorted with nothing left to do. <span class="ui">Still open</span> means the fault is still there, so it stays open and the student may need telling once it is fixed.</p>
+  <p>Underneath there is a tick, <span class="ui">I am not finished with the student, keep this chat on my list</span>. Filing normally takes the chat off your list, because most of the time you file once you are done. Tick it and the issue is filed exactly the same way while the conversation stays where it is, which is what you want when you already know what the fault is and are still going back and forth with the student about it. There is no need to wait until the chat is finished before logging something.</p>
   <p>The note is required either way, comes pre-filled from the brief, and is worth changing to what you actually told them. An open issue with no note is one nobody else can pick up.</p>
   <div class="man-note">
     <strong>There is no Park button here on purpose</strong>
@@ -2677,13 +2678,24 @@
       </button>
       <button type="button" class="ghost" id="liveOutSel_open" onclick="setLiveOutcome('open')"
         style="flex:1 1 200px;text-align:left;padding:10px 12px;"
-        title="The chat with the student is finished, but the fault is not. It stays open and the student may need telling once it is fixed.">
-        <b>Still open</b><br><span class="small muted">Chat is done, the fault is not.</span>
+        title="The fault is still there. Log it now whether or not you have finished with the student; it stays open and they may need telling once it is fixed.">
+        <b>Still open</b><br><span class="small muted">The fault is still there.</span>
       </button>
     </div>
     <label class="small" for="liveOutcomeNote" id="liveOutcomeLabel" style="display:block;margin-bottom:4px;">What actually sorted it?</label>
     <textarea id="liveOutcomeNote" rows="4" style="width:100%;font-size:13px;"></textarea>
     <div class="small muted" id="liveOutcomePrefill" style="margin-top:4px;"></div>
+    <!-- FB-0356 (Edd, 10 Sep 2026): "it would be better if the options were
+         resolved or still open. Not chat is done, issue is not fixed. So
+         people can log an issue without the chat having to be done." The two
+         buttons above are about the FAULT. Whether the conversation is
+         finished is a different question, and it belongs here: unticked, the
+         case leaves the chat list as it has since FB-0251; ticked, it stays
+         put because there is still something to say to the student. -->
+    <label style="display:block;margin-top:10px;font-size:13px;color:var(--text);">
+      <input type="checkbox" id="liveKeepChat" style="width:auto;margin-right:6px;vertical-align:-1px;">
+      I am not finished with the student, keep this chat on my list
+    </label>
     <div class="btns" style="margin-top:12px;">
       <button class="primary" id="liveOutcomeGo" onclick="liveOutcomeSubmit()">Log it</button>
       <button class="ghost" onclick="closeLiveOutcome()">Cancel</button>
@@ -2943,7 +2955,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r154.2 · 2026-09-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r155 · 2026-09-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5795,7 +5807,18 @@ function liveCheckpoint(decision) {
     // with the student is done - so the case closes itself either way. A merge
     // is the exception: that one deliberately stays put, because it joined
     // somebody else's live case rather than finishing this one.
+    // FB-0357: the note is how the chat and the log stay joined up, so when it
+    // does not arrive that is worth a sentence rather than a silent gap.
+    if (res.note_error) toast("Filed, but the private note did not reach Chatwoot (" + res.note_error + "). Worth pasting the link on by hand.", 9000);
     if (res.merged) { loadLiveCasesThenRender(); loadIssues(); return; }
+    // FB-0356: still talking to them, so the case stays on the list. The issue
+    // is filed either way, which is the whole point of the change.
+    if (state._liveKeepChat) {
+      state._liveKeepChat = false;
+      toast("Filed, and the chat stays on your list.", 6000);
+      loadLiveCasesThenRender(); loadIssues();
+      return;
+    }
     var conv = c.conversation_id;
     apiPost({ action: "caseClose", conversation_id: conv, app_url: APP_URL })
       .catch(function () {})
@@ -5818,6 +5841,7 @@ function liveLogIssue() {
   if (!c) return;
   $("liveOutcomeTitle").textContent = c.issue_id ? "Update the issue from this conversation" : "Log this issue";
   $("liveOutcomeNote").value = "";
+  if ($("liveKeepChat")) $("liveKeepChat").checked = false;
   state._liveOutcomePre = "";
   setLiveOutcome("resolved");
   $("liveOutcomeModal").classList.add("show");
@@ -5851,7 +5875,7 @@ function setLiveOutcome(kind) {
     : "Where has this got to, and what is the student waiting on?";
   $("liveOutcomeSub").textContent = resolved
     ? "Filed with the answer saved against it, out of the fix queues, and nobody is pinged, because there is nothing left to do. If the conversation shows it was only sorted for this one student rather than actually fixed, it is parked instead, so a later report can still be linked to it."
-    : "Filed and left open. It routes like any other issue, and the student may need telling once it is fixed.";
+    : "Filed and left open. It routes like any other issue, and the student may need telling once it is fixed. Log it as soon as you know what the fault is - the conversation does not have to be finished.";
   $("liveOutcomeGo").textContent = resolved ? "Log it as resolved" : "Log it as still open";
   // Only swap the text if it is still ours. Anything typed stays put.
   var box = $("liveOutcomeNote");
@@ -5876,6 +5900,7 @@ function liveOutcomeSubmit() {
     $("liveOutcomeNote").focus();
     return;
   }
+  state._liveKeepChat = !!($("liveKeepChat") && $("liveKeepChat").checked);
   closeLiveOutcome();
   // "open" carries no outcome flag, which is the original checkpoint behaviour:
   // file it and leave it live. The note still rides along as the update text.
@@ -9027,6 +9052,12 @@ function submitIssue() {
     else toast(wasResolvedNew ? "Logged as Resolved."
       : wasParked ? "Logged as Parked. It'll wake up on its own if anyone else reports it."
       : (wasTbc ? "Logged as Resolved - TBC." : (state.editingId ? "Issue updated." : "Issue logged.")));
+    // FB-0357: the private note is how the chat and the log stay joined up, so
+    // one that never arrived is worth saying rather than leaving as a gap
+    // somebody finds days later. Second, so it is the line left on screen.
+    if (res.note_error) setTimeout(function () {
+      toast("Logged, but the private note did not reach Chatwoot (" + res.note_error + "). Worth pasting the link on by hand.", 9000);
+    }, 1400);
     // Work out where any pending screenshots belong, then let them upload in
     // the background: the save itself is already done.
     var targetIds = state.editingId ? [state.editingId]

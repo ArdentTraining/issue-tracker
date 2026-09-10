@@ -4068,13 +4068,19 @@ function chatwootNote_(convId, issue, appUrl) {
   var text = 'Logged in Bugs: ' + (issue.summary || '(no summary)') +
     '\nPriority: ' + (issue.priority || '-') + (issue.lesson_code ? ' · ' + issue.lesson_code : '') +
     '\n' + issueLink_(issue, appUrl);
-  try {
+  // One retry, same as the contact search (r152.5): the note that went missing
+  // on 8 September posted first time when it was tried again by hand, so the
+  // failure was a moment of Chatwoot rather than anything about the request.
+  var post = function () {
     chatwootCall_('/conversations/' + convId + '/messages', 'post', {
       content: text, message_type: 'outgoing', private: true
     });
+  };
+  try {
+    try { post(); } catch (e1) { Utilities.sleep(1500); post(); }
     return { ok: true };
   } catch (e) {
-    Logger.log('chatwootNote_ failed on conversation ' + convId + ': ' + e);
+    Logger.log('chatwootNote_ failed twice on conversation ' + convId + ': ' + e);
     return { ok: false, why: String(e).slice(0, 200) };
   }
 }
@@ -6678,7 +6684,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r155 · 2026-09-10';
+var CODE_STAMP = 'r155.1 · 2026-09-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -8388,7 +8394,9 @@ function caseCheckpoint_(data) {
     // fault is still live for everybody else on it, and one student getting
     // sorted is no reason to stop work (the same rule addReportToIssue_ keeps
     // for a "Submit and park" that merges).
-    merged_stays_open: !!r.merged && !!outcome, timings: TT };
+    merged_stays_open: !!r.merged && !!outcome,
+    note_error: r.note_error || undefined,   // FB-0357: said out loud, not swallowed
+    timings: TT };
 }
 
 // Manual close - for the conversations that fizzle out, or once everything is
