@@ -4111,6 +4111,20 @@ function chatwootList_(data) {
       if (a === 0) Utilities.sleep(700);     // let a wobble pass before retrying
     }
   }
+  // r158.1: the index is not the only way to ask. Proved on 10 Sep that the
+  // connection itself is healthy - GET /conversations/8821 returned the
+  // contact, the email and the transcript in the same minute the index was
+  // 500ing - so the fault is that one listing query, on our account, with
+  // Chatwoot's own status page green. POST /conversations/filter answers the
+  // same question down a different code path, so try it before giving up.
+  if (!out) {
+    try {
+      var f = chatwootCall_('/conversations/filter', 'post', { payload: [
+        { attribute_key: 'status', filter_operator: 'equal_to', values: [status], query_operator: null }
+      ] });
+      if (f) { out = f; degraded = true; }
+    } catch (e2) { err = err + ' | filter endpoint: ' + String(e2.message || e2).slice(0, 120); }
+  }
   if (!out) return { ok: false, error: err };
   var payload = (out && out.data && out.data.payload) || (out && out.payload) || [];
   // Ours now, whether we filtered there or here. Harmless on the happy path,
@@ -4134,7 +4148,7 @@ function chatwootList_(data) {
   // A fallback that does not announce itself is how a half-working list gets
   // read as the whole truth. Say so, and say why.
   return { ok: true, conversations: rows, degraded: degraded || undefined,
-    degraded_why: degraded ? ('Chatwoot refused the ' + status + ' filter (' + String(err).slice(0, 120) + '), so this is the most recent page sieved here. Something older may be missing.') : undefined };
+    degraded_why: degraded ? ('Chatwoot’s conversation list refused the ' + status + ' query (' + String(err).slice(0, 120) + '), so this came back another way. It should be complete, but treat it as a best effort until their list works again.') : undefined };
 }
 // Private (internal) note back on the conversation, so Chatwoot shows the
 // issue was logged and where to follow it. Never visible to the student.
@@ -6766,7 +6780,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r158 · 2026-09-10';
+var CODE_STAMP = 'r158.1 · 2026-09-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
