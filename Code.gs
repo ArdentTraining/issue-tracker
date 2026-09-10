@@ -2211,6 +2211,7 @@ function addIssue_(data) {
       }
     } catch (e) {}
   }
+  var noteError = '';   // FB-0357: a Chatwoot note that did not arrive is said out loud
   var sheet = sheetByName_(targetSheetName_(category));
   sheet.appendRow(recordToRow_(issue));
   if (fastTrackRequested) { try { sendFastTrackRequestSlack_(issue, data.app_url || getAppUrl_()); } catch (e) {} }
@@ -2232,10 +2233,13 @@ function addIssue_(data) {
   // Imported from a live chat: leave an internal note on that conversation so
   // the two systems stay joined up.
   if (data.chatwoot_conversation_id) {
-    try { chatwootNote_(data.chatwoot_conversation_id, issue, data.app_url || getAppUrl_()); } catch (e) {}
+    try {
+      var note157 = chatwootNote_(data.chatwoot_conversation_id, issue, data.app_url || getAppUrl_());
+      if (note157 && !note157.ok) noteError = note157.why;
+    } catch (e) { noteError = String(e).slice(0, 200); }
   }
 
-  return { ok: true, issue: issue, merged: false };
+  return { ok: true, issue: issue, merged: false, note_error: noteError || undefined };
 }
 
 // Roll a new report into an existing issue row: add its student to the list,
@@ -2382,7 +2386,18 @@ function addReportToIssue_(id, data, report) {
     try { checkSharedWorkaround_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
-  return { ok: true, issue: rec, merged: true, report_count: rec.report_count };
+  // FB-0357: a report that JOINS an existing issue never left a note on the
+  // conversation it came from, so the chat and the log stayed unjoined exactly
+  // where a second person hitting the same fault most needs the link. The
+  // issue's own conversation id is left alone: it points at the first report.
+  var mergeNote = '';
+  if (data.chatwoot_conversation_id) {
+    try {
+      var mn = chatwootNote_(data.chatwoot_conversation_id, rec, data.app_url || getAppUrl_());
+      if (mn && !mn.ok) mergeNote = mn.why;
+    } catch (e) { mergeNote = String(e).slice(0, 200); }
+  }
+  return { ok: true, issue: rec, merged: true, report_count: rec.report_count, note_error: mergeNote || undefined };
 }
 
 // Raise priority one level toward high, but never below the incoming report's
@@ -3701,6 +3716,15 @@ function chatwootProbe_(data) {
   // lived in conversations the contact walk never returned.
   // r152: what a contact search or a contact record actually holds (email
   // present or not), so the nightly email fill can be checked without guessing.
+  // FB-0357: post the Chatwoot note for one issue and say what happened.
+  if (data.note_issue) {
+    try {
+      var nf = findRow_(String(data.note_issue));
+      if (!nf) out.note = 'issue not found';
+      else out.note = { conv: nf.record.chatwoot_conversation_id || '(none stored)',
+        result: chatwootNote_(nf.record.chatwoot_conversation_id, nf.record, getAppUrl_()) };
+    } catch (e) { out.note = 'error ' + String(e).slice(0, 200); }
+  }
   // r152.3: dry-run the email fill on one issue, reporting the route taken.
   if (data.enrich_issue) {
     try {
@@ -4032,10 +4056,15 @@ function chatwootList_(data) {
 }
 // Private (internal) note back on the conversation, so Chatwoot shows the
 // issue was logged and where to follow it. Never visible to the student.
+// FB-0357 (Edd, 10 Sep 2026): "this is logged but a private note hasn't
+// appeared on chatwoot". It could not have been noticed sooner: this threw
+// inside its own try/catch AND inside every caller's, so a note that never
+// arrived looked exactly like one that did. It reports now, and the callers
+// carry the reason back to whoever pressed the button.
 function chatwootNote_(convId, issue, appUrl) {
-  if (!convId) return;
+  if (!convId) return { ok: false, why: 'no conversation id on the issue' };
   var cfg = chatwootCfg_();
-  if (!cfg.token || !cfg.account) return;
+  if (!cfg.token || !cfg.account) return { ok: false, why: 'Chatwoot is not configured' };
   var text = 'Logged in Bugs: ' + (issue.summary || '(no summary)') +
     '\nPriority: ' + (issue.priority || '-') + (issue.lesson_code ? ' · ' + issue.lesson_code : '') +
     '\n' + issueLink_(issue, appUrl);
@@ -4043,7 +4072,11 @@ function chatwootNote_(convId, issue, appUrl) {
     chatwootCall_('/conversations/' + convId + '/messages', 'post', {
       content: text, message_type: 'outgoing', private: true
     });
-  } catch (e) {}
+    return { ok: true };
+  } catch (e) {
+    Logger.log('chatwootNote_ failed on conversation ' + convId + ': ' + e);
+    return { ok: false, why: String(e).slice(0, 200) };
+  }
 }
 
 // ---- nightly chat scan ----------------------------------------------------
@@ -6645,7 +6678,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r154 · 2026-09-10';
+var CODE_STAMP = 'r155 · 2026-09-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
