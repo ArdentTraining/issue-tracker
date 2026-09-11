@@ -3012,7 +3012,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r158.1 · 2026-09-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r159 · 2026-09-11";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7786,9 +7786,15 @@ function hideLoading() { $("loadingOverlay").classList.remove("show"); }
 
 function requestTroubleshoot(checklistOnly) {
   hideTroubleshoot();
-  if (state.category !== "tech_issue") return;
+  if (state.category !== "tech_issue") {
+    sayNoTroubleshoot("This is a course error rather than a platform fault, so there is nothing for the student to try on their end. It goes to the course team to fix.", false);
+    return;
+  }
   var raw = getField("rawText");
-  if (!raw) return;
+  if (!raw) {
+    sayNoTroubleshoot("Paste the conversation or your notes above and these will be worked out from it.", false);
+    return;
+  }
   // With no student on the other end the steps are for whoever is sitting
   // there, which is one of us, so the backend words them in the second person
   // and skips the student-account ones. That covers our own systems and, since
@@ -7802,19 +7808,49 @@ function requestTroubleshoot(checklistOnly) {
   // reviews the extracted fields. If the form has moved on by the time they
   // arrive (submitted, cleared, new paste), they are stale and get dropped.
   var rawAtRequest = raw;
+  if (!state._tsRetries) state._tsRetries = 0;
   $("extractStatus").textContent = "working out what to try, in the background…";
   apiPost(payload).then(function (res) {
-    if (getField("rawText") !== rawAtRequest) return;
+    // r159: clear the status line FIRST. The stale check used to return before
+    // this, leaving "working out what to try, in the background…" on screen for
+    // good, because nothing else ever cleared it.
     $("extractStatus").textContent = "";
+    if (getField("rawText") !== rawAtRequest) {
+      // The text moved while these were cooking, so they were worked out from
+      // words that are no longer there. They used to be dropped in silence and
+      // never recomputed, since the only caller is the end of the extract flow.
+      // Ask again against what is actually in the box now, but only a few
+      // times: somebody still typing would otherwise have us chasing the text
+      // round the box for as long as they kept going.
+      state._tsRetries = (state._tsRetries || 0) + 1;
+      if (state._tsRetries <= 3) requestTroubleshoot(checklistOnly);
+      else sayNoTroubleshoot("The pasted text kept changing while these were being worked out. Press below when you have finished editing it.", true);
+      return;
+    }
     if (res && res.ok) {
       // AI pre-fills the pre-dev checklist from the conversation; instructor adjusts.
       state.checklist = (res.checklist && typeof res.checklist === "object") ? res.checklist : {};
       renderFormChecklist();
     }
-    if (!checklistOnly && res && res.ok && res.found && res.steps && res.steps.length) {
-      showTroubleshoot(res.steps, res.escalate, res.note, payload.staff, res.degraded, res.reason);
+    if (checklistOnly) {
+      sayNoTroubleshoot("The conversation says a workaround already sorted this student, so there is nothing left to try with them. The checklist below is filled in from what was tried.", false);
+      return;
     }
-  }).catch(function (e) { if (getField("rawText") === rawAtRequest) $("extractStatus").textContent = ""; console.error(e); });
+    if (res && res.ok && res.found && res.steps && res.steps.length) {
+      showTroubleshoot(res.steps, res.escalate, res.note, payload.staff, res.degraded, res.reason);
+      return;
+    }
+    // Nothing to show, so say which of the two it is rather than leaving a gap.
+    sayNoTroubleshoot(res && res.ok
+      ? "Nothing useful to suggest for this one. That usually means the fault is ours rather than anything the student can act on, so log it and it will go to the right team."
+      : ("Could not work out the steps: " + ((res && res.error) || "the call came back empty") + "."), !(res && res.ok));
+  }).catch(function (e) {
+    $("extractStatus").textContent = "";
+    console.error(e);
+    if (getField("rawText") === rawAtRequest) {
+      sayNoTroubleshoot("Could not work out the steps: " + String((e && e.message) || e) + ".", true);
+    }
+  });
 }
 
 // ---- same fault, different student: offer to add as another report --------
@@ -8209,8 +8245,14 @@ function afterExtractReady() {
   var chatResolved = (state.resolution && state.resolution.status === "resolved") || allSubsFullyResolved;
   var workedAround = (state.resolution && state.resolution.status === "tbc") || (allSubsSorted && !allSubsFullyResolved);
   if (state.requestKind !== "improvement" && !chatResolved) {
+    state._tsRetries = 0;
     if (!workedAround) requestSuggestion();
     requestTroubleshoot(workedAround);
+  } else if (chatResolved) {
+    // r159 (Holly): this branch called nothing at all, so the panel simply was
+    // not there and no reason was given. It is the right call - the chat says
+    // this student is already sorted - but it has to be said out loud.
+    sayNoTroubleshoot("The conversation reads as already sorted for this student, so there is nothing left to try with them. Log it anyway and it still counts towards the fault.", false);
   }
 }
 function showEmailModal() {
@@ -8868,6 +8910,25 @@ function hideTroubleshoot() {
   $("tshootModal").classList.remove("show");
   state.troubleshootSteps = null;
   state.troubleshootAck = false;
+}
+// r159 (Holly, via Edd, 10 Sep 2026): "the things to try next is inconsistent
+// in that it often just doesn't show." It was not inconsistent. There were six
+// ways for it not to appear and every one of them returned in silence, so from
+// the instructor's side it read as a feature that works sometimes.
+//
+// Four of those are deliberate (a course error, an improvement, a chat that is
+// already resolved, a workaround already applied). Being deliberate is not the
+// same as being obvious, so say which one it is. The other two are failures and
+// get a retry. No path may now end with an empty box.
+function sayNoTroubleshoot(why, retry) {
+  var el = $("troubleshootPanel");
+  if (!el) return;
+  state.troubleshootSteps = null;
+  state.troubleshootAck = true;          // never block submit on an absent list
+  el.innerHTML = '<div class="h">Things to try</div>' +
+    '<div class="small muted">' + esc(why) + '</div>' +
+    (retry ? '<button class="ghost small" style="margin-top:8px;padding:4px 10px;" onclick="requestTroubleshoot(false)">Try working them out again</button>' : '');
+  el.classList.remove("hidden");
 }
 
 // Who a report HITS, which is a different question from who noticed it (see
