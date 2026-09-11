@@ -3012,7 +3012,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r159 · 2026-09-11";  // bump this with each round, it lands on every feedback report
+var BUILD = "r160 · 2026-09-11";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5294,7 +5294,9 @@ function rcaDraftFindings() {
     '{"root_cause":"...","evidence":"...","fix":"...","verification":"...","incident_count":"..."}. ' +
     "Conversation IDs only, never student names or emails. Mark anything unconfirmed as such.";
   rcaSend(instruction).then(function (res) {
-    if (!res || !res.ok) return;
+    // r160: pressing Draft findings and having nothing whatever happen is the
+    // worst of both - it looks like the button is broken rather than the call.
+    if (!res || !res.ok) { toast("Could not draft the findings: " + ((res && res.error) || "the call came back empty") + ". Press it again to retry."); return; }
     var textBlocks = [];
     (res.messages || []).forEach(function (m) { if (m.role === "assistant") (m.content || []).forEach(function (c) { if (c.type === "text") textBlocks.push(c.text); }); });
     var last = textBlocks.join("\n");
@@ -5333,7 +5335,16 @@ function loadLiveCases() {
   state._liveLoading = true;
   apiPost({ action: "listLiveCases" }).then(function (res) {
     state._liveLoading = false;
-    if (!res || !res.ok) return;
+    if (!res || !res.ok) {
+      // r160: this used to return here, leaving state.liveLoaded false, so
+      // renderLive kept drawing "loading the case list…" for ever. A tab that
+      // cannot say it failed looks like a tab that is still trying.
+      state.liveLoadError = (res && res.error) || "the call came back empty";
+      state.liveLoaded = true;
+      if (state.view === "live") renderLive();
+      return;
+    }
+    state.liveLoadError = "";
     state.liveCases = res.cases || []; state.closedCases = res.closed_cases || [];
     state.liveLoaded = true;
     updateRailBadges();
@@ -5341,7 +5352,12 @@ function loadLiveCases() {
     // The "chat open" badges ride on Track and Actions rows.
     else if (state.view === "admin") renderAdmin();
     else if (state.view === "actions") renderActions();
-  }).catch(function () { state._liveLoading = false; });
+  }).catch(function (e) {
+    state._liveLoading = false;
+    state.liveLoadError = String((e && e.message) || e);
+    state.liveLoaded = true;
+    if (state.view === "live") renderLive();
+  });
 }
 function refreshScans() {
   return apiGet("chatScanList").then(function (res) {
@@ -5487,6 +5503,11 @@ function renderLive() {
   var cases = state.liveCases || [];
   if (!state.liveLoaded) {
     el.innerHTML = '<p class="muted small"><span class="spinner"></span> loading the case list…</p>';
+    return;
+  }
+  if (state.liveLoadError) {
+    el.innerHTML = '<p class="muted small">Could not load the case list: ' + esc(state.liveLoadError) +
+      ' <a href="#" onclick="state.liveLoaded=false;loadLiveCases();return false;">Try again</a></p>';
     return;
   }
   // FB-0337 (Edd): "'open cases' and 'open in chatwoot' could all just be

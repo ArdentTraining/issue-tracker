@@ -2292,6 +2292,33 @@ function capReports_(arr) {
   return s;
 }
 
+// r160 (the 11 Sep silent-failure sweep). Reading the trail and losing it were
+// one keystroke apart. Every writer did `catch (e) { reps = []; }`, and each of
+// them then pushes an entry and writes the array back - so a trail that failed
+// to parse was REPLACED by a fresh one-entry array, and every report on that
+// row went with it. No error, no log, nothing to find afterwards. On the image
+// cluster that is 45 reports gone on one bad parse.
+//
+// Read it through here instead. An absent trail is fine and comes back empty
+// (plenty of older rows have none). A trail that is THERE and will not parse
+// comes back flagged, and any caller about to write must refuse, because the
+// row we cannot read is precisely the one we must not overwrite.
+function readTrail_(rec) {
+  var raw = rec && rec.reports_json;
+  if (!raw) return { reps: [], broken: false };
+  try {
+    var arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return { reps: [], broken: true, why: 'the trail parsed but is not a list' };
+    return { reps: arr, broken: false };
+  } catch (e) {
+    return { reps: [], broken: true, why: String(e.message || e).slice(0, 120) };
+  }
+}
+function trailRefusal_(id, t) {
+  return { ok: false, error: 'The report trail on ' + id + ' could not be read (' + (t.why || 'unparseable') +
+    '), so nothing has been written to it. It is left exactly as it is rather than rebuilt, because rebuilding would lose every report already on the row. The reports_json cell on that row needs looking at by hand.' };
+}
+
 function addReportToIssue_(id, data, report) {
   var found = findRow_(id);
   if (!found) return { ok: false, error: 'matched issue not found: ' + id };
@@ -2308,8 +2335,9 @@ function addReportToIssue_(id, data, report) {
     rec.raw_text = (rec.raw_text || '') + '\n\n--- resurfaced from the pre-launch archive: reported again ---';
   }
 
-  var reports = [];
-  try { reports = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reports = []; }
+  var t160 = readTrail_(rec);
+  if (t160.broken) return trailRefusal_(id, t160);   // falls through to filing as its own row
+  var reports = t160.reps;
   if (!reports.length) {
     // Older row with no reports list yet: seed it from the row's own student.
     reports.push({
@@ -3027,7 +3055,9 @@ function addUpdate_(data) {
 
   // Add this update to the timeline (shown as an accordion entry in the detail).
   var reps = [];
-  try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
+  var tU = readTrail_(rec);
+  if (tU.broken) return trailRefusal_(rec.issue_id || 'this issue', tU);
+  reps = tU.reps;
   reps.push({
     kind: isNudge ? 'nudge' : 'update',
     student_name: data.student_name || '', student_contact: data.student_contact || '',
@@ -3147,8 +3177,13 @@ function linkIssues_(data) {
   if (!tgt) return { ok: false, error: 'Target issue not found.' };
   var s = src.record, t = tgt.record;
 
-  var sReps = []; try { sReps = s.reports_json ? JSON.parse(s.reports_json) : []; } catch (e) { sReps = []; }
-  var tReps = []; try { tReps = t.reports_json ? JSON.parse(t.reports_json) : []; } catch (e) { tReps = []; }
+  // r160: this one merges two rows into one, so an unreadable trail on either
+  // side would lose a whole issue's history, not just an entry.
+  var tS160 = readTrail_(s), tT160 = readTrail_(t);
+  if (tS160.broken) return trailRefusal_(s.issue_id || 'the source issue', tS160);
+  if (tT160.broken) return trailRefusal_(t.issue_id || 'the target issue', tT160);
+  var sReps = tS160.reps;
+  var tReps = tT160.reps;
   if (!sReps.length) {
     sReps = [{ kind: 'report', student_name: s.student_name || '', student_contact: s.student_contact || '',
       device_info: s.device_info || '', instructor_name: s.instructor_name || '', summary: s.summary || '',
@@ -3359,7 +3394,9 @@ function flagQuery_(data) {
 
   var forWhom = target === 'instructor' ? ('Question for ' + (rec.instructor_name || 'the instructor')) : 'Question for the admins';
   var reps = [];
-  try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
+  var tQ = readTrail_(rec);
+  if (tQ.broken) return trailRefusal_(rec.issue_id || 'this issue', tQ);
+  reps = tQ.reps;
   reps.push({ kind: 'question', instructor_name: who, summary: forWhom, raw_text: question, date: now });
   rec.reports_json = capReports_(reps);
   rec.report_count = realReportCount_(reps);
@@ -3451,7 +3488,9 @@ function answerQuery_(data) {
   var now = new Date().toISOString();
 
   var reps = [];
-  try { reps = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reps = []; }
+  var tA = readTrail_(rec);
+  if (tA.broken) return trailRefusal_(rec.issue_id || 'this issue', tA);
+  reps = tA.reps;
   // r145: `to` names the asker, so the dev/course page can show each person
   // their own new replies without pairing entries up by hand.
   reps.push({ kind: 'answer', instructor_name: who, summary: 'Reply to question', raw_text: reply, date: now, to: rec.dev_query_by || '' });
@@ -5466,8 +5505,12 @@ function splitIssue_(data) {
   if (!found) return { ok: false, error: 'No issue found with id ' + id };
 
   var rec = found.record;
-  var reports = [];
-  try { reports = rec.reports_json ? JSON.parse(rec.reports_json) : []; } catch (e) { reports = []; }
+  // r160: an unreadable trail used to arrive here as an empty array and come
+  // back out as "only one report, nothing to split" - a refusal that names the
+  // wrong reason is a refusal nobody can act on.
+  var tSp = readTrail_(rec);
+  if (tSp.broken) return trailRefusal_(id, tSp);
+  var reports = tSp.reps;
   if (reports.length <= 1) return { ok: false, error: 'This issue has only one report, nothing to split.' };
 
   var now = new Date().toISOString();
@@ -6780,7 +6823,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r159 · 2026-09-11';
+var CODE_STAMP = 'r160 · 2026-09-11';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
