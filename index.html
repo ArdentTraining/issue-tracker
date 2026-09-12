@@ -208,6 +208,21 @@
   .irpcs-diff .d-new { color: var(--low); white-space: pre-wrap; }
   .irpcs-json { width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45; }
   .irpcs-json.bad { border-color: var(--high); }
+
+  /* Media (r162) */
+  .irpcs-media-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .irpcs-media-row:last-child { border-bottom: 0; }
+  .irpcs-thumb { width: 64px; height: 44px; flex: 0 0 auto; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); object-fit: cover; overflow: hidden; }
+  .irpcs-play { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 15px; position: relative; }
+  .irpcs-play img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .irpcs-bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  .irpcs-bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+  .irpcs-att { display: flex; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .irpcs-att:last-of-type { border-bottom: 0; }
+  .irpcs-att-n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 11px; display: flex; align-items: center; justify-content: center; }
+  .irpcs-picker { margin-top: 8px; border: 1px solid var(--accent); border-radius: var(--radius); padding: 10px; max-height: 320px; overflow-y: auto; }
+  .irpcs-pick { display: block; width: 100%; text-align: left; background: none; border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; margin-bottom: 5px; color: var(--text); cursor: pointer; font-size: 13px; }
+  .irpcs-pick:hover { background: var(--surface-2); }
   /* The Log page lost its second column when "previous submissions" went, and
      a half-empty grid is worse than no grid (Edd, FB-0144). The form takes the
      width now, which the folded field groups and the split tabs all wanted
@@ -1994,6 +2009,11 @@
     <div class="irpcs-frame-host" id="irpcsFrameHost"></div>
   </div>
 
+  <!-- ---------- MEDIA ---------- -->
+  <div id="irpcsMediaPane" class="hidden">
+    <div id="irpcsMediaBody"></div>
+  </div>
+
   <!-- ---------- RESULTS ---------- -->
   <div id="irpcsResultsPane" class="hidden">
     <div id="irpcsResultsBody"></div>
@@ -3127,7 +3147,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r161 · 2026-09-12";  // bump this with each round, it lands on every feedback report
+var BUILD = "r162 · 2026-09-12";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7013,6 +7033,7 @@ function tasksDelete(id) {
 //      first person to edit that one question would silently delete a field
 //      nobody would think to look for.
 var IRPCS_EDITOR_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/irpcs-editor";
+var IRPCS_MEDIA_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/irpcs-media";
 var IRPCS_APP_URL = "https://irpcs.ehewett.workers.dev";
 
 var irpcs = {
@@ -7045,8 +7066,25 @@ function irpcsTicket(force) {
 // with a fresh ticket, which covers a ticket that died between minting and
 // arriving. Any more than one and a real permission problem becomes a loop.
 function irpcsApi(opts, retried) {
+  return irpcsCall(IRPCS_EDITOR_URL, opts, retried);
+}
+function irpcsMediaApi(opts, retried) {
+  return irpcsCall(IRPCS_MEDIA_URL, opts, retried);
+}
+
+// One call path for both functions, because they share a ticket, a retry rule
+// and a way of reporting failure, and two copies of that would drift.
+function irpcsCall(endpoint, opts, retried) {
   return irpcsTicket(!!retried).then(function (t) {
-    var url = IRPCS_EDITOR_URL, init = { headers: { authorization: "Bearer " + t } };
+    // r162: `cache: "no-store"`, and it is not belt and braces.
+    //
+    // These are plain GETs and the Edge Functions send no Cache-Control, so the
+    // browser caches them on its own guess at a lifetime. Found live: a save
+    // landed correctly in the database, and re-opening the item served the
+    // PREVIOUS body out of cache. On that occasion the previous body was a
+    // corrupted one, so the editor reported a fault that had already been
+    // fixed. Reading your own write is the whole job here.
+    var url = endpoint, init = { headers: { authorization: "Bearer " + t }, cache: "no-store" };
     if (opts.body) {
       init.method = "POST";
       init.headers["content-type"] = "application/json";
@@ -7066,7 +7104,7 @@ function irpcsApi(opts, retried) {
       // JSON leaves j null, and the two lines below then throw carrying the
       // status code instead of a parser message about an unexpected token.
       try { j = JSON.parse(txt); } catch (e) {}
-      if (r.status === 401 && !retried) { irpcs.ticket = ""; irpcs.exp = 0; return irpcsApi(opts, true); }
+      if (r.status === 401 && !retried) { irpcs.ticket = ""; irpcs.exp = 0; return irpcsCall(endpoint, opts, true); }
       if (!r.ok) throw new Error((j && j.error) || ("the IRPCS service returned " + r.status));
       return j || {};
     });
@@ -7078,6 +7116,8 @@ function renderIrpcs() {
   if (irpcs.tab === "content") {
     if (!irpcs.loaded && !irpcs.loading) irpcsLoadList();
     else { irpcsRenderList(); irpcsRenderEditor(); }
+  } else if (irpcs.tab === "media") {
+    irpcsMediaLoad();
   } else if (irpcs.tab === "preview") {
     irpcsRenderPreview();
   } else {
@@ -7094,7 +7134,8 @@ function irpcsSetTab(k) {
 }
 
 function irpcsShowTab() {
-  var panes = [["irpcsContentPane", "content"], ["irpcsPreviewPane", "preview"], ["irpcsResultsPane", "results"]];
+  var panes = [["irpcsContentPane", "content"], ["irpcsMediaPane", "media"],
+               ["irpcsPreviewPane", "preview"], ["irpcsResultsPane", "results"]];
   panes.forEach(function (p) {
     var el = $(p[0]);
     if (el) el.classList.toggle("hidden", irpcs.tab !== p[1]);
@@ -7212,6 +7253,7 @@ function irpcsOpen(id) {
   irpcs.viewingVersion = null;
   irpcs.jsonBad = false;
   irpcs.saveMismatch = "";
+  if (irpcs.media) irpcs.media.picker = null;   // a half-open picker belongs to the item it was opened on
   irpcs.itemLoading = true;
   irpcsRenderList();
   var host = $("irpcsEditor");
@@ -7331,7 +7373,12 @@ function irpcsRenderEditor() {
       'Nothing published has changed, so students are unaffected. Worth saying something before editing this one again.</p></div>'
     : "";
 
-  host.innerHTML = head + warn + (irpcs.publishing ? irpcsPublishPanel() : "") + body + irpcsVersionPanel();
+  // Media hangs off rules and questions. Scenarios and library entries are
+  // edited as raw JSON, so a panel that wrote into the same object would be
+  // fighting the textarea for who owns `media`.
+  var media = (it.kind === "rule" || it.kind === "question") ? irpcsMediaPanel(e) : "";
+
+  host.innerHTML = head + warn + (irpcs.publishing ? irpcsPublishPanel() : "") + body + media + irpcsVersionPanel();
   irpcsMarkDirty();
 }
 
@@ -7403,10 +7450,17 @@ function irpcsQuestionForm(e) {
     '</div>' +
     irpcsTextField("Why that is the answer", "reasoning", e.reasoning, 4, "Shown after they answer, right or wrong, so it carries the reasoning and not just the verdict.") +
     '<div class="row" style="gap:12px;flex-wrap:wrap;">' +
-      '<div class="fld" style="flex:0 0 auto;"><label for="irf_level">Level</label>' +
+      // r162: EN joined the ladder. irpcs-editor validates level against
+      // EN, DS and YM and 400s on anything else, so an Essential Navigation
+      // question could be stored by the import but never set from here.
+      // The ladder is cumulative: a Yachtmaster student still gets asked the
+      // Essential Navigation questions, so this is "from which level on", not
+      // "which course only".
+      '<div class="fld" style="flex:0 0 auto;"><label for="irf_level">Asked from</label>' +
         '<select id="irf_level" onchange="irpcsSet(\'level\', this.value)">' +
-          '<option value="DS"' + (e.level === "DS" ? " selected" : "") + '>Day Skipper</option>' +
-          '<option value="YM"' + (e.level === "YM" ? " selected" : "") + '>Yachtmaster</option>' +
+          IRPCS_LEVELS.map(function (l) {
+            return '<option value="' + l.k + '"' + (e.level === l.k ? " selected" : "") + '>' + esc(l.label) + '</option>';
+          }).join("") +
         '</select></div>' +
       '<div class="fld" style="flex:1;min-width:160px;"><label for="irf_refs">Rule references</label>' +
         '<input id="irf_refs" type="text" value="' + esc(refs) + '" placeholder="e.g. 12, 13" ' +
@@ -7730,6 +7784,503 @@ function irpcsRenderResults() {
     '</div>';
 }
 
+/* ===================== IRPCS MEDIA (r162) =====================
+ *
+ * Three things can hang off a rule or a question: a video explanation, a
+ * diagram, and a vessel model the student can drag round. Two of the three are
+ * uploads; the third is a choice from a catalogue the student page already
+ * draws from, so there is nothing to upload for it at all.
+ *
+ * The file never passes through us. Cloudflare hands back a one-time URL and the
+ * browser posts straight there, which is what keeps a 300MB video out of an Edge
+ * Function. Our side only ever sees the small JSON either end of that.
+ *
+ * A video is 'pending' while Cloudflare transcodes, a minute or two for a short
+ * explanation, and a pending video can never be attached to an item: a student
+ * tapping play on one that is still baking gets a black box and decides we are
+ * broken.
+ */
+
+// The ladder. Cumulative, so a Yachtmaster student is still asked the Essential
+// Navigation questions, and irpcs-editor rejects anything not in this list.
+var IRPCS_LEVELS = [
+  { k: "EN", label: "Essential Navigation" },
+  { k: "DS", label: "Day Skipper" },
+  { k: "YM", label: "Yachtmaster" }
+];
+
+// The vessel models the student page can draw. No upload: attaching one is
+// choosing from this list. The rule is what each belongs to, and it is used to
+// float the likely ones to the top when a rule is being edited.
+var IRPCS_MODELS = [
+  { preset: "power_under50",   label: "Power-driven vessel under 50m, underway",      rule: 23 },
+  { preset: "power_over50",    label: "Power-driven vessel of 50m or more, underway", rule: 23 },
+  { preset: "sailing",         label: "Sailing vessel underway",                      rule: 25 },
+  { preset: "sail_motoring",   label: "Sailing vessel under engine",                  rule: 25 },
+  { preset: "towing",          label: "Power-driven vessel towing, tow under 200m",   rule: 24 },
+  { preset: "trawling",        label: "Vessel trawling",                              rule: 26 },
+  { preset: "fishing_other",   label: "Vessel fishing, other than trawling",          rule: 26 },
+  { preset: "nuc",             label: "Vessel not under command",                     rule: 27 },
+  { preset: "ram",             label: "Vessel restricted in ability to manoeuvre",    rule: 27 },
+  { preset: "constrained",     label: "Vessel constrained by her draught",            rule: 28 },
+  { preset: "pilot",           label: "Pilot vessel on duty",                         rule: 29 },
+  { preset: "anchored_under50",label: "Vessel at anchor, under 50m",                  rule: 30 },
+  { preset: "anchored_over50", label: "Vessel at anchor, 50m or more",                rule: 30 }
+];
+function irpcsModelLabel(preset) {
+  var m = IRPCS_MODELS.filter(function (x) { return x.preset === preset; })[0];
+  return m ? m.label : preset;
+}
+
+// Eight is the cap irpcs-editor enforces. Held here too so somebody finds out
+// while they are choosing rather than after pressing Save.
+var IRPCS_MEDIA_MAX = 8;
+
+irpcs.media = { items: [], loaded: false, loading: false, error: "", form: null, busy: null, picker: null };
+irpcs._poll = {};
+
+/* ---------------- the library ---------------- */
+
+function irpcsMediaLoad(force) {
+  if (irpcs.media.loading) return Promise.resolve();
+  if (irpcs.media.loaded && !force) { irpcsRenderMedia(); return Promise.resolve(); }
+  irpcs.media.loading = true;
+  irpcs.media.error = "";
+  return irpcsMediaApi({ query: { op: "list" } }).then(function (j) {
+    irpcs.media.items = j.media || [];
+    irpcs.media.loaded = true;
+  }).catch(function (e) {
+    irpcs.media.error = String((e && e.message) || e);
+  }).then(function () {
+    irpcs.media.loading = false;
+    irpcsRenderMedia();
+    irpcsPollPending();
+  });
+}
+
+// Anything still transcoding gets asked about every few seconds until it
+// settles. One timer per item, cleared when it does, so leaving the tab open
+// overnight does not accumulate them.
+function irpcsPollPending() {
+  irpcs.media.items.filter(function (m) { return m.status === "pending"; }).forEach(function (m) {
+    if (irpcs._poll[m.media_id]) return;
+    irpcs._poll[m.media_id] = setTimeout(function () {
+      delete irpcs._poll[m.media_id];
+      irpcsMediaApi({ body: { op: "confirm", media_id: m.media_id } }).then(function (j) {
+        var row = irpcs.media.items.filter(function (x) { return x.media_id === m.media_id; })[0];
+        if (row && j.media) {
+          row.status = j.media.status;
+          if (j.media.url) row.url = j.media.url;
+          if (j.media.duration_s != null) row.duration_s = j.media.duration_s;
+          row.reason = j.reason || row.reason;
+          row.progress = j.progress == null ? null : Number(j.progress);
+        }
+        if (irpcs.tab === "media") irpcsRenderMedia();
+        irpcsPollPending();
+      }).catch(function () {
+        // Leave it pending and try again on the next pass rather than marking
+        // it failed: a dropped poll says nothing about the upload.
+        if (irpcs.tab === "media") irpcsPollPending();
+      });
+    }, 3000);
+  });
+}
+
+function irpcsRenderMedia() {
+  var host = $("irpcsMediaBody");
+  if (!host) return;
+
+  var form = irpcs.media.form ? irpcsMediaForm() : "";
+  var busy = irpcs.media.busy ? irpcsMediaBusy() : "";
+
+  var head =
+    '<div class="card" style="padding:10px 12px;margin-bottom:12px;">' +
+      '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">' +
+        '<button class="small" style="padding:5px 10px;" onclick="irpcsMediaStart(\'video\')">Add a video</button>' +
+        '<button class="small" style="padding:5px 10px;" onclick="irpcsMediaStart(\'image\')">Add a diagram</button>' +
+        '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaLoad(true)">Refresh</button>' +
+        '<span class="small muted" style="flex:1;min-width:200px;">Videos up to half an hour. Nothing here is ever deleted, because a lesson published last month may still point at it.</span>' +
+      '</div>' +
+    '</div>';
+
+  if (irpcs.media.error) {
+    host.innerHTML = head + form + busy +
+      '<div class="card"><p class="hint" style="margin:0 0 8px;">The media library did not load.</p>' +
+      '<p class="small muted" style="margin:0 0 10px;">' + esc(irpcs.media.error) + '</p>' +
+      '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaLoad(true)">Try again</button></div>';
+    return;
+  }
+
+  if (!irpcs.media.items.length) {
+    host.innerHTML = head + form + busy +
+      '<div class="card"><p class="hint" style="margin:0;">' +
+      (irpcs.media.loaded ? "Nothing uploaded yet. A video or a diagram added here can then be attached to a rule or a question."
+                          : "Fetching the library...") +
+      '</p></div>';
+    return;
+  }
+
+  host.innerHTML = head + form + busy + '<div class="card" style="padding:0;">' +
+    irpcs.media.items.map(irpcsMediaRow).join("") + '</div>';
+}
+
+function irpcsMediaRow(m) {
+  var when = m.uploaded_at ? fmtDate(m.uploaded_at) : "";
+  var who = m.uploaded_by ? String(m.uploaded_by).split("@")[0] : "";
+  // bytes is a bigint and duration_s a numeric, and postgres.js hands both to
+  // JavaScript as STRINGS. Number() them before any arithmetic or a size ends
+  // up concatenated rather than added.
+  var secs = m.duration_s == null ? null : Number(m.duration_s);
+  var mins = secs == null ? "" : Math.floor(secs / 60) + "m " + Math.round(secs % 60) + "s";
+
+  var thumb;
+  if (m.kind === "image" && m.url) {
+    thumb = '<img src="' + esc(m.url) + '" alt="" class="irpcs-thumb">';
+  } else if (m.kind === "video" && m.provider_id) {
+    // Stream's standard thumbnail path. If Cloudflare ever moves it the image
+    // simply fails and the play glyph underneath shows instead, which is why
+    // the glyph is always there rather than being swapped in.
+    thumb = '<span class="irpcs-thumb irpcs-play">▶' +
+      '<img src="https://videodelivery.net/' + esc(m.provider_id) + '/thumbnails/thumbnail.jpg" alt="" ' +
+      'onerror="this.style.display=\'none\'"></span>';
+  } else {
+    thumb = '<span class="irpcs-thumb irpcs-play">▶</span>';
+  }
+
+  var status;
+  if (m.status === "ready") status = '<span class="badge" style="border-color:var(--low);color:var(--low);">ready</span>';
+  else if (m.status === "pending") status = '<span class="badge" style="border-color:var(--medium);color:var(--medium);">' +
+    (m.progress != null ? "processing " + Math.round(m.progress) + "%" : "processing") + '</span>';
+  else status = '<span class="badge" style="border-color:var(--high);color:var(--high);">not usable</span>';
+
+  return '<div class="irpcs-media-row">' + thumb +
+    '<div style="min-width:0;flex:1;">' +
+      '<div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;">' + esc(m.title || m.media_id) + '</div>' +
+      '<div class="small muted">' + esc(m.kind) + (mins ? " · " + esc(mins) : "") +
+        (who ? " · " + esc(who) : "") + (when ? " · " + esc(when) : "") + '</div>' +
+      (m.alt_text ? '<div class="small muted" style="margin-top:2px;">' + esc(m.alt_text) + '</div>' : "") +
+      (m.status !== "ready" && m.status !== "pending"
+        ? '<div class="small" style="margin-top:3px;color:var(--high);">' +
+          esc(m.reason || "This one cannot be used. It either failed to process, or somebody marked it unusable.") +
+          ' <button class="ghost small" style="padding:2px 7px;margin-left:4px;" onclick="irpcsMediaStart(\'' +
+          esc(m.kind) + '\')">Upload again</button></div>'
+        : "") +
+    '</div>' +
+    '<div class="row" style="gap:6px;flex:0 0 auto;align-items:center;">' + status +
+      (m.status === "ready"
+        ? '<button class="ghost small" style="padding:3px 8px;" onclick="irpcsMediaHide(\'' + esc(m.media_id) + '\')" ' +
+          'title="Stops it being offered from now on. It is not deleted, because an item published last month may still point at it.">Retire</button>'
+        : "") +
+    '</div></div>';
+}
+
+function irpcsMediaHide(id) {
+  var m = irpcs.media.items.filter(function (x) { return x.media_id === id; })[0];
+  if (!confirm('Retire "' + ((m && m.title) || id) + '"?\n\nIt stops being offered for new items. Anything already using it carries on working, because nothing is deleted.')) return;
+  irpcsMediaApi({ body: { op: "hide", media_id: id } }).then(function () {
+    toast("Retired. Anything already pointing at it still works.");
+    return irpcsMediaLoad(true);
+  }).catch(function (e) { toast("That did not work: " + String((e && e.message) || e)); });
+}
+
+/* ---------------- uploading ---------------- */
+
+// The form comes first and the file picker second, deliberately for a diagram:
+// the description is the only moment anyone is going to write one, and asking
+// after the upload has started is how it gets left blank.
+function irpcsMediaStart(kind) {
+  irpcs.media.form = { kind: kind, title: "", alt: "", file: null };
+  irpcsRenderMedia();
+}
+function irpcsMediaCancel() {
+  irpcs.media.form = null;
+  irpcsRenderMedia();
+}
+function irpcsMediaField(k, v) {
+  if (!irpcs.media.form) return;
+  irpcs.media.form[k] = v;
+  var go = $("irpcsMediaGo");
+  if (go) go.disabled = !irpcsMediaReady();
+}
+function irpcsMediaFile(input) {
+  if (!irpcs.media.form) return;
+  var f = input.files && input.files[0];
+  irpcs.media.form.file = f || null;
+  var nm = $("irpcsMediaFileName");
+  if (nm) nm.textContent = f ? f.name + " (" + Math.round(f.size / 1048576) + " MB)" : "no file chosen";
+  // A sensible default title saves a step, and the filename is usually what
+  // the person would have typed anyway.
+  if (f && !irpcs.media.form.title) {
+    var t = $("irpcsMediaTitle");
+    if (t) { t.value = f.name.replace(/\.[^.]+$/, ""); irpcs.media.form.title = t.value; }
+  }
+  var go = $("irpcsMediaGo");
+  if (go) go.disabled = !irpcsMediaReady();
+}
+function irpcsMediaReady() {
+  var f = irpcs.media.form;
+  if (!f || !f.file) return false;
+  if (!String(f.title || "").trim()) return false;
+  if (f.kind === "image" && !String(f.alt || "").trim()) return false;
+  return true;
+}
+
+function irpcsMediaForm() {
+  var f = irpcs.media.form, isImg = f.kind === "image";
+  return '<div class="card" style="margin-bottom:12px;border-color:var(--accent);">' +
+    '<div style="font-weight:700;margin-bottom:8px;">' + (isImg ? "Add a diagram" : "Add a video") + '</div>' +
+    (isImg
+      ? '<div class="fld"><label for="irpcsMediaAlt">Describe the diagram</label>' +
+        '<p class="small muted" style="margin:0 0 4px;">Required, and this is the only moment anyone is going to write it. Somebody using a screen reader gets this instead of the picture, so say what it shows rather than naming it: "two boats crossing, red to red" rather than "crossing diagram".</p>' +
+        '<input id="irpcsMediaAlt" type="text" oninput="irpcsMediaField(\'alt\', this.value)"></div>'
+      : "") +
+    '<div class="fld"><label for="irpcsMediaTitle">Title</label>' +
+      '<input id="irpcsMediaTitle" type="text" placeholder="' + (isImg ? "e.g. Crossing, red to red" : "e.g. Crossing, explained") + '" ' +
+      'oninput="irpcsMediaField(\'title\', this.value)"></div>' +
+    '<div class="fld"><label for="irpcsMediaPick">The file</label>' +
+      '<input id="irpcsMediaPick" type="file" accept="' + (isImg ? "image/*" : "video/*") + '" onchange="irpcsMediaFile(this)">' +
+      '<div class="small muted" id="irpcsMediaFileName" style="margin-top:4px;">no file chosen</div></div>' +
+    '<div class="row" style="gap:8px;">' +
+      '<button class="small" id="irpcsMediaGo" style="padding:5px 10px;" onclick="irpcsMediaUpload()" disabled>Start the upload</button>' +
+      '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaCancel()">Cancel</button>' +
+    '</div></div>';
+}
+
+function irpcsMediaBusy() {
+  var b = irpcs.media.busy;
+  return '<div class="card" style="margin-bottom:12px;">' +
+    '<div style="font-weight:700;margin-bottom:4px;">' + esc(b.title || "Uploading") + '</div>' +
+    '<p class="small muted" style="margin:0 0 8px;">' + esc(b.stage) + '</p>' +
+    '<div class="irpcs-bar"><span style="width:' + Math.max(2, Math.min(100, b.pct || 0)) + '%;"></span></div>' +
+    (b.error ? '<p class="small" style="margin:8px 0 0;color:var(--high);">' + esc(b.error) + '</p>' +
+      '<button class="ghost small" style="padding:5px 10px;margin-top:8px;" onclick="irpcsMediaBusyClear()">Close</button>' : "") +
+    '</div>';
+}
+function irpcsMediaBusyClear() { irpcs.media.busy = null; irpcsRenderMedia(); }
+
+function irpcsMediaUpload() {
+  var f = irpcs.media.form;
+  if (!f || !irpcsMediaReady()) return;
+  var isImg = f.kind === "image";
+  var file = f.file;
+
+  irpcs.media.busy = { title: f.title, stage: "Asking Cloudflare for somewhere to put it...", pct: 2, error: "" };
+  irpcs.media.form = null;
+  irpcsRenderMedia();
+
+  var start = isImg
+    ? { op: "image", title: f.title, alt: f.alt }
+    : { op: "video", title: f.title };
+
+  irpcsMediaApi({ body: start }).then(function (j) {
+    if (!j || !j.upload_url) throw new Error("no upload URL came back");
+    irpcs.media.busy.stage = "Sending the file. This goes straight to Cloudflare and never through us.";
+    irpcs.media.busy.pct = 3;
+    irpcsRenderMedia();
+    return irpcsPutFile(j.upload_url, file).then(function () { return j; });
+  }).then(function (j) {
+    irpcs.media.busy.pct = 100;
+    irpcs.media.busy.stage = isImg ? "Fetching the delivery link..." : "Cloudflare is processing the video. This is usually a minute or two.";
+    irpcsRenderMedia();
+    return irpcsConfirmUntilReady(j.media_id);
+  }).then(function (media) {
+    irpcs.media.busy = null;
+    if (media && media.status === "ready") toast("Uploaded. It can be attached to a rule or a question now.");
+    else toast("Uploaded, and still processing. It will turn ready on its own.");
+    return irpcsMediaLoad(true);
+  }).catch(function (e) {
+    // The row exists in the library either way, so say what happened and leave
+    // it visible rather than clearing the panel and looking like nothing ran.
+    if (irpcs.media.busy) {
+      irpcs.media.busy.error = String((e && e.message) || e);
+      irpcs.media.busy.stage = "It did not get there.";
+    }
+    irpcsRenderMedia();
+    irpcsMediaLoad(true);
+  });
+}
+
+// XMLHttpRequest rather than fetch, for one reason: fetch cannot report upload
+// progress, and a 300MB video behind a spinner that never moves is how somebody
+// decides it has hung and closes the tab.
+function irpcsPutFile(uploadUrl, file) {
+  return new Promise(function (resolve, reject) {
+    var form = new FormData();
+    form.append("file", file);
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", uploadUrl, true);
+    xhr.upload.onprogress = function (ev) {
+      if (!ev.lengthComputable || !irpcs.media.busy) return;
+      irpcs.media.busy.pct = Math.round((ev.loaded / ev.total) * 100);
+      irpcs.media.busy.stage = "Sending the file, " + irpcs.media.busy.pct + "% of " +
+        Math.round(file.size / 1048576) + " MB.";
+      irpcsRenderMedia();
+    };
+    xhr.onload = function () {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error("Cloudflare refused the file (" + xhr.status + ")"));
+    };
+    xhr.onerror = function () { reject(new Error("the connection dropped during the upload")); };
+    xhr.onabort = function () { reject(new Error("the upload was cancelled")); };
+    xhr.send(form);
+  });
+}
+
+// Poll until it settles or we give up. Giving up is not the same as failing:
+// the row stays in the library and keeps polling while the tab is open.
+function irpcsConfirmUntilReady(mediaId, tries) {
+  tries = tries || 0;
+  return new Promise(function (r) { setTimeout(r, tries === 0 ? 1200 : 3000); }).then(function () {
+    return irpcsMediaApi({ body: { op: "confirm", media_id: mediaId } });
+  }).then(function (j) {
+    var m = j.media || {};
+    if (m.status === "ready") return m;
+    if (m.status && m.status !== "pending") throw new Error(j.reason || "Cloudflare could not process that file");
+    if (irpcs.media.busy && j.progress != null) {
+      irpcs.media.busy.stage = "Cloudflare is processing the video, " + Math.round(Number(j.progress)) + "% done.";
+      irpcsRenderMedia();
+    }
+    if (tries >= 40) return m;   // two minutes of polling, then let the library carry on
+    return irpcsConfirmUntilReady(mediaId, tries + 1);
+  });
+}
+
+/* ---------------- the panel on an item ---------------- */
+
+function irpcsMediaPanel(e) {
+  var list = Array.isArray(e.media) ? e.media : [];
+  var rows = list.map(function (m, i) {
+    var what;
+    if (m.kind === "video") what = "Video · " + (m.title || m.uid);
+    else if (m.kind === "image") what = "Diagram · " + (m.alt || m.caption || m.url);
+    else what = "Vessel model · " + irpcsModelLabel(m.preset);
+    return '<div class="irpcs-att">' +
+      '<span class="irpcs-att-n">' + (i + 1) + '</span>' +
+      '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">' + esc(what) + '</span>' +
+      '<button class="ghost small" style="padding:2px 7px;" onclick="irpcsMediaMove(' + i + ',-1)" ' +
+        (i === 0 ? "disabled" : "") + ' title="Move up">↑</button>' +
+      '<button class="ghost small" style="padding:2px 7px;" onclick="irpcsMediaMove(' + i + ',1)" ' +
+        (i === list.length - 1 ? "disabled" : "") + ' title="Move down">↓</button>' +
+      '<button class="ghost small" style="padding:2px 7px;color:var(--high);" onclick="irpcsMediaDetach(' + i + ')">Remove</button>' +
+      '</div>';
+  }).join("");
+
+  return '<div class="card" style="margin-top:12px;">' +
+    '<div style="font-weight:700;margin-bottom:4px;">Media</div>' +
+    '<p class="small muted" style="margin:0 0 8px;">Shown in this order, under the teaching text. ' +
+      esc(list.length + " of " + IRPCS_MEDIA_MAX) + ' used.</p>' +
+    (rows || '<p class="small muted" style="margin:0 0 8px;">Nothing attached.</p>') +
+    (irpcs.media.picker ? irpcsMediaPicker() :
+      '<div class="row" style="gap:8px;margin-top:8px;">' +
+        '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaPick(\'library\')"' +
+          (list.length >= IRPCS_MEDIA_MAX ? " disabled" : "") + '>Attach a video or diagram</button>' +
+        '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaPick(\'model\')"' +
+          (list.length >= IRPCS_MEDIA_MAX ? " disabled" : "") + '>Attach a vessel model</button>' +
+      '</div>') +
+    '</div>';
+}
+
+function irpcsMediaPick(which) {
+  irpcs.media.picker = which;
+  irpcsRenderEditor();
+  if (which === "library" && !irpcs.media.loaded) {
+    irpcsMediaLoad().then(function () { if (irpcs.media.picker === "library") irpcsRenderEditor(); });
+  }
+}
+function irpcsMediaPickClose() { irpcs.media.picker = null; irpcsRenderEditor(); }
+
+function irpcsMediaPicker() {
+  if (irpcs.media.picker === "model") {
+    // When a rule is open, its own presets go first: most of the time that is
+    // the one the author wants, and Rule 27 has two of the thirteen.
+    var here = (irpcs.item && irpcs.item.kind === "rule") ? Number((irpcs.edited || {}).number) : null;
+    var mine = IRPCS_MODELS.filter(function (m) { return here && m.rule === here; });
+    var rest = IRPCS_MODELS.filter(function (m) { return !(here && m.rule === here); });
+    var btn = function (m) {
+      return '<button type="button" class="irpcs-pick" onclick="irpcsMediaAttachModel(\'' + esc(m.preset) + '\')">' +
+        esc(m.label) + '<span class="small muted"> · Rule ' + m.rule + '</span></button>';
+    };
+    return '<div class="irpcs-picker">' +
+      '<div class="small muted" style="margin-bottom:6px;">Nothing to upload. The student page draws these, so attaching one is choosing it.</div>' +
+      (mine.length ? '<div class="small" style="margin-bottom:4px;">For this rule</div>' + mine.map(btn).join("") +
+        '<div class="small" style="margin:8px 0 4px;">Everything else</div>' : "") +
+      rest.map(btn).join("") +
+      '<button class="ghost small" style="padding:5px 10px;margin-top:8px;" onclick="irpcsMediaPickClose()">Cancel</button>' +
+      '</div>';
+  }
+
+  if (irpcs.media.error) {
+    return '<div class="irpcs-picker"><p class="small" style="margin:0 0 8px;color:var(--high);">' +
+      esc(irpcs.media.error) + '</p>' +
+      '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaLoad(true)">Try again</button> ' +
+      '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaPickClose()">Cancel</button></div>';
+  }
+  if (!irpcs.media.loaded) return '<div class="irpcs-picker"><p class="small muted" style="margin:0;">Fetching the library...</p></div>';
+
+  // Only ready media. A pending video attached now would reach a student as a
+  // black box, and a retired one is retired for a reason.
+  var ready = irpcs.media.items.filter(function (m) { return m.status === "ready"; });
+  var pending = irpcs.media.items.filter(function (m) { return m.status === "pending"; }).length;
+
+  return '<div class="irpcs-picker">' +
+    (ready.length
+      ? ready.map(function (m) {
+          return '<button type="button" class="irpcs-pick" onclick="irpcsMediaAttach(\'' + esc(m.media_id) + '\')">' +
+            esc(m.title || m.media_id) + '<span class="small muted"> · ' + esc(m.kind) + '</span></button>';
+        }).join("")
+      : '<p class="small muted" style="margin:0 0 8px;">Nothing ready to attach yet. Upload one on the Media tab.</p>') +
+    (pending ? '<p class="small muted" style="margin:8px 0 0;">' + pending +
+      ' still processing, and not offered until ready: a video a student taps before Cloudflare has finished plays as a black box.</p>' : "") +
+    '<button class="ghost small" style="padding:5px 10px;margin-top:8px;" onclick="irpcsMediaPickClose()">Cancel</button>' +
+    '</div>';
+}
+
+function irpcsMediaAttachEntry(entry) {
+  var list = Array.isArray(irpcs.edited.media) ? irpcs.edited.media.slice() : [];
+  if (list.length >= IRPCS_MEDIA_MAX) { toast("Eight pieces of media on one item is plenty."); return; }
+  list.push(entry);
+  irpcs.edited.media = list;
+  irpcs.media.picker = null;
+  irpcsMarkDirty();
+  irpcsRenderEditor();
+}
+
+function irpcsMediaAttach(mediaId) {
+  var m = irpcs.media.items.filter(function (x) { return x.media_id === mediaId; })[0];
+  if (!m) return;
+  if (m.kind === "video") {
+    irpcsMediaAttachEntry({ kind: "video", uid: m.provider_id, title: m.title || "" });
+  } else {
+    // alt is required by the save, and it is required for a reason, so it is
+    // taken from the library row rather than left for somebody to fill in.
+    var alt = String(m.alt_text || "").trim();
+    if (!alt) { toast("That diagram has no description, so it cannot be attached. Upload it again with one."); return; }
+    irpcsMediaAttachEntry({ kind: "image", url: m.url, alt: alt });
+  }
+}
+function irpcsMediaAttachModel(preset) {
+  irpcsMediaAttachEntry({ kind: "model", preset: preset });
+}
+
+function irpcsMediaDetach(i) {
+  var list = Array.isArray(irpcs.edited.media) ? irpcs.edited.media.slice() : [];
+  list.splice(i, 1);
+  // An empty list is written as an empty list, not dropped, so removing the
+  // last one is a change the save actually carries.
+  irpcs.edited.media = list;
+  irpcsMarkDirty();
+  irpcsRenderEditor();
+}
+function irpcsMediaMove(i, d) {
+  var list = Array.isArray(irpcs.edited.media) ? irpcs.edited.media.slice() : [];
+  var j = i + d;
+  if (j < 0 || j >= list.length) return;
+  var tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+  irpcs.edited.media = list;
+  irpcsMarkDirty();
+  irpcsRenderEditor();
+}
+
 // ===================== r147: THE BELL =====================
 // What is waiting for THIS person: answers to their questions (the same list
 // the dev/course pages show) and their own feedback that has moved on from
@@ -7941,7 +8492,8 @@ function subRailSpec() {
   };
   if (v === "irpcs") return {
     head: "IRPCS", cur: irpcs.tab, go: irpcsSetTab,
-    items: [{ key: "content", label: "Content" }, { key: "preview", label: "Preview" }, { key: "results", label: "Results" }]
+    items: [{ key: "content", label: "Content" }, { key: "media", label: "Media" },
+            { key: "preview", label: "Preview" }, { key: "results", label: "Results" }]
   };
   if (v === "dev") return {
     head: "Developers", cur: state.devFilter, go: setDevFilter,
