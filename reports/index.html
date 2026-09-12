@@ -361,6 +361,12 @@
       <div id="usage" class="loading">Loading…</div>
     </details>
 
+    <details class="acc" id="sec_questions" data-sec="questions">
+      <summary><span class="acc-h">Questions</span><span class="acc-sum" id="sum_questions">…</span></summary>
+      <p class="hint">Per-question results from the quizzes and module assessments, broken down to the individual answer box rather than the whole question. Marks earned is the better number than fully correct, because a six-box question marked wrong may have had five boxes right. <b>Read the attempts column beside any percentage</b>: the question bank randomises, so one question may have been seen by a dozen people and another by sixty, and their rates are not comparable. Only lessons exported as xAPI appear here.</p>
+      <div id="questions" class="loading">Loading…</div>
+    </details>
+
     <details class="acc" id="sec_health" data-sec="health">
       <summary><span class="acc-h">Collection health</span><span class="acc-sum" id="sum_health">…</span></summary>
       <p class="hint">Every registered lesson and whether it is reporting. "Quiz package" is expected for QuizMaker content and a problem for teaching lessons.</p>
@@ -693,7 +699,8 @@ function isOpen(k){ const el = document.getElementById('sec_' + k); return !!(el
 const RENDERERS = { firstslide: renderFirstSlide, reported: renderReported,
                     coverage: renderCoverage, confusion: renderConfusion,
                     lessons: renderLessons, engagement: renderEngagement,
-                    dropoff: renderDropoff, activity: renderActivity, usage: renderUsage, health: renderHealth };
+                    dropoff: renderDropoff, activity: renderActivity, usage: renderUsage,
+                    questions: renderQuestions, health: renderHealth };
 function renderSection(k){
   if(!RENDERERS[k] || !DIRTY[k] || !isOpen(k)) return;
   RENDERERS[k]();
@@ -747,10 +754,27 @@ function renderCards(){
    the thing you would have opened the section to find out: the worst offender,
    or the count. Cheap to work out - a few passes over an array - so it happens
    whether or not the section is open. */
+/* The Questions fold, shut: the thing you would open it to find out. A marking
+   scheme refusing a right answer beats a difficulty number, because it is
+   actionable today and it is unfair to a student until it is fixed. */
+function questionsSummary(){
+  const q = DATA.questions;
+  if (!q || q.error) return 'unavailable';
+  const diff = q.difficulty || [], narrow = q.narrow || [];
+  if (!diff.length) return 'no xAPI quizzes yet';
+  const answers = diff.reduce((a,r) => a + Number(r.attempts || 0), 0);
+  const spacing = narrow.filter(r => r.kind === 'case_or_spacing').length;
+  if (spacing) return spacing + ' answer' + (spacing === 1 ? '' : 's') + ' marked wrong that should not be';
+  const hardest = diff.slice().sort((a,b) => (Number(a.pct_marks_earned)||0) - (Number(b.pct_marks_earned)||0))[0];
+  return diff.length + ' question' + (diff.length === 1 ? '' : 's') + ', ' + answers + ' answer' + (answers === 1 ? '' : 's') +
+         (hardest ? ' \u00b7 hardest ' + hardest.question_code + ' at ' + (hardest.pct_marks_earned == null ? '?' : hardest.pct_marks_earned + '%') : '');
+}
+
 function renderSummaries(){
   const stats = VIEW.stats, put = (id, t) => { const el = document.getElementById(id); if(el) el.textContent = t; };
   put('sum_activity', activitySummary());
   put('sum_usage', usageSummary());
+  put('sum_questions', questionsSummary());
 
   /* The four sections added 19 Aug. Same rule as the rest: the fold says what
      is inside it, so nobody has to open all nine to find the one that matters. */
@@ -1166,6 +1190,57 @@ function renderUsage(){
     days.map(d => { const rs = u.daily.filter(r => r.day === d); return '<tr><td>' + esc(d) + '</td>' + roles.map(role => { const r = rs.find(x => x.role === role); return '<td>' + (r ? r.tabs + ' <span style="color:var(--muted)">/ ' + r.clicks + '</span>' : '—') + '</td>'; }).join('') + '<td>' + rs.reduce((a,r) => a + Number(r.logged), 0) + '</td></tr>'; }).join('') + '</tbody></table><p class="hint">Sessions / presses per role per day, and issues logged.</p>';
   host.innerHTML = '<h3 style="margin:6px 0 8px">Pages</h3>' + pages + '<h3 style="margin:18px 0 4px">Controls</h3>' + controls +
     '<h3 style="margin:18px 0 8px">Issue panes</h3>' + panes + '<h3 style="margin:18px 0 8px">Day by day</h3>' + daily;
+}
+
+function renderQuestions(){
+  const host = document.getElementById('questions'); host.classList.remove('loading');
+  const q = DATA.questions;
+  if (!q || q.error) { host.innerHTML = '<div class="note">' + (q && q.error ? 'Could not read questions: ' + esc(q.error) : 'No question data in this build.') + '</div>'; return; }
+  const diff = q.difficulty || [], wrong = q.wrong || [], narrow = q.narrow || [];
+  if (!diff.length) { host.innerHTML = '<div class="note">Nothing yet. Only lessons exported as xAPI report question data; teaching lessons and older quiz packages do not. Upload one and it appears here.</div>'; return; }
+  const thin = diff.reduce((a,r) => a + Number(r.attempts || 0), 0) < 30;
+
+  /* Hardest first, by marks earned rather than by pass/fail. */
+  const byHard = diff.slice().sort((a,b) => (Number(a.pct_marks_earned)||0) - (Number(b.pct_marks_earned)||0));
+  let hard = '<table><thead><tr><th>Question</th><th>Type</th><th>Attempts</th><th>Marks earned</th><th>Fully right</th><th>Blank boxes</th><th>Typical time</th></tr></thead><tbody>' +
+    byHard.map(r => '<tr><td>' + esc(r.question_code) + (r.variant ? ' <span style="color:var(--muted)">' + esc(r.variant) + '</span>' : '') + '</td>' +
+      '<td style="color:var(--muted)">' + esc(r.interaction_type || '') + '</td>' +
+      '<td>' + r.attempts + '</td>' +
+      '<td>' + (r.pct_marks_earned == null ? '\u2014' : r.pct_marks_earned + '%') + '</td>' +
+      '<td style="color:var(--muted)">' + (r.pct_fully_correct == null ? '\u2014' : r.pct_fully_correct + '%') + '</td>' +
+      '<td style="color:var(--muted)">' + (r.pct_parts_left_blank == null ? '\u2014' : r.pct_parts_left_blank + '%') + '</td>' +
+      '<td style="color:var(--muted)">' + (r.mean_seconds == null ? '\u2014' : r.mean_seconds + 's') + '</td></tr>').join('') +
+    '</tbody></table>';
+
+  /* What people actually put. The whole reason for capturing the response. */
+  const topWrong = wrong.slice().sort((a,b) => Number(b.times_given) - Number(a.times_given)).slice(0, 40);
+  let wrongTbl = topWrong.length
+    ? '<table><thead><tr><th>Question</th><th>Box</th><th>They put</th><th>Wanted</th><th>Times</th></tr></thead><tbody>' +
+      topWrong.map(r => '<tr><td>' + esc(r.question_code) + '</td><td style="color:var(--muted)">' + (Number(r.part_index) + 1) + '</td>' +
+        '<td>' + esc(r.answer_given || '') + '</td><td style="color:var(--muted)">' + esc(r.answer_expected || '') + '</td><td>' + r.times_given + '</td></tr>').join('') +
+      '</tbody></table>' + (wrong.length > topWrong.length ? '<p class="hint">Showing the 40 most common of ' + wrong.length + '.</p>' : '')
+    : '<div class="note">No wrong answers recorded yet.</div>';
+
+  /* Marked wrong, possibly unfairly. Two kinds, because they need different fixes. */
+  const spacing = narrow.filter(r => r.kind === 'case_or_spacing'), near = narrow.filter(r => r.kind === 'near_miss');
+  let narrowHtml = '';
+  if (!narrow.length) {
+    narrowHtml = '<div class="note">Nothing flagged. Either the marking schemes are fitting the answers people give, or there is not enough data yet to tell.</div>';
+  } else {
+    const tbl = rows => '<table><thead><tr><th>Question</th><th>Box</th><th>They put</th><th>Accepted</th><th>Times</th></tr></thead><tbody>' +
+      rows.map(r => '<tr><td>' + esc(r.question_code) + '</td><td style="color:var(--muted)">' + (Number(r.part_index) + 1) + '</td>' +
+        '<td>' + esc(r.given) + '</td><td style="color:var(--muted)">' + esc(r.expected) + '</td><td>' + r.times_given + '</td></tr>').join('') + '</tbody></table>';
+    if (spacing.length) narrowHtml += '<h4 style="margin:12px 0 6px">Identical but for case or spacing (' + spacing.length + ')</h4>' +
+      '<p class="hint">These are marking-scheme faults rather than judgement calls. The answer is right and the scheme is refusing it.</p>' + tbl(spacing);
+    if (near.length) narrowHtml += '<h4 style="margin:18px 0 6px">A character or two out (' + near.length + ')</h4>' +
+      '<p class="hint">Might be a typo, might be a real mistake, and only you can tell which. Numeric answers are deliberately excluded: one digit wrong on a tidal height is wholly wrong, not nearly right.</p>' + tbl(near);
+  }
+
+  host.innerHTML =
+    (thin ? '<div class="note">Fewer than 30 answers so far, so treat everything below as a signal rather than a finding.</div>' : '') +
+    '<h3 style="margin:6px 0 8px">Hardest questions</h3>' + hard +
+    '<h3 style="margin:18px 0 8px">What people put instead</h3>' + wrongTbl +
+    '<h3 style="margin:18px 0 8px">Marked wrong, possibly unfairly</h3>' + narrowHtml;
 }
 
 function renderLive(){
