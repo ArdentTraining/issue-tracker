@@ -176,6 +176,38 @@
 
   .two-col { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 18px; align-items: start; }
   @media (max-width: 860px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* IRPCS (r161). Its own small set rather than borrowing .split-host, which is
+     wired to issue cards and their drawer. Nothing here leaks outside #irpcsView. */
+  .irpcs-split { display: grid; grid-template-columns: 320px 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 900px) { .irpcs-split { grid-template-columns: 1fr; } }
+  .irpcs-list { max-height: 74vh; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .irpcs-row { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 9px 11px; cursor: pointer; color: var(--text); }
+  .irpcs-row:last-child { border-bottom: 0; }
+  .irpcs-row:hover { background: var(--surface-2); }
+  .irpcs-row.active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+  .irpcs-row .lbl { font-size: 13px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .irpcs-row .meta { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .irpcs-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+  /* One dot, one meaning: this item has changes no student has seen yet. */
+  .irpcs-pending { color: var(--medium); font-weight: 700; }
+  .irpcs-edit { min-height: 200px; }
+  .irpcs-edit .fld { margin-bottom: 12px; }
+  .irpcs-edit label { display: block; margin-bottom: 3px; }
+  .irpcs-edit textarea { width: 100%; }
+  .irpcs-verbatim { white-space: pre-wrap; font-size: 12px; line-height: 1.5; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; max-height: 220px; overflow-y: auto; color: var(--muted); }
+  .irpcs-opt { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .irpcs-opt input[type=text] { flex: 1; }
+  .irpcs-opt .rad { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .irpcs-cq { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; margin-bottom: 10px; }
+  .irpcs-frame-host { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  .irpcs-frame-host iframe { display: block; width: 100%; height: 78vh; border: 0; }
+  .irpcs-diff { font-size: 12px; line-height: 1.5; max-height: 50vh; overflow-y: auto; }
+  .irpcs-diff .d-field { font-weight: 700; margin-top: 10px; }
+  .irpcs-diff .d-old { color: var(--high); white-space: pre-wrap; }
+  .irpcs-diff .d-new { color: var(--low); white-space: pre-wrap; }
+  .irpcs-json { width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45; }
+  .irpcs-json.bad { border-color: var(--high); }
   /* The Log page lost its second column when "previous submissions" went, and
      a half-empty grid is worse than no grid (Edd, FB-0144). The form takes the
      width now, which the folded field groups and the split tabs all wanted
@@ -1064,6 +1096,13 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="15" y2="11"/></svg>
     <span class="ri-word">Course</span>
   </button>
+  <!-- IRPCS (r161). Its own permission rather than riding on 'course': editing
+       here publishes straight to students, which is a different job from
+       working a course-fix queue, and a different set of people. -->
+  <button type="button" class="rail-item" id="railIrpcs" onclick="railGo('irpcs')" title="IRPCS - the collision rules course: content, preview and results">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l9-13 9 13"/><path d="M3 17c3 2 6 2 9 0s6-2 9 0"/></svg>
+    <span class="ri-word">IRPCS</span>
+  </button>
   <button type="button" class="rail-item" id="railReports" onclick="railGo('reports')" title="Reports">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><polyline points="7 14 11 9 15 12 20 6"/></svg>
     <span class="ri-word">Reports</span>
@@ -1805,6 +1844,12 @@
         <label class="small"><input type="checkbox" id="inv_manage"> Admin</label>
         <label class="small"><input type="checkbox" id="inv_analytics"> Analytics</label>
         <label class="small"><input type="checkbox" id="inv_users"> Manage users</label>
+        <!-- r161. These boxes are hand-written, unlike the per-user row lower
+             down which builds itself from PERM_LABELS, and doInvite() reads
+             every key in PERM_LABELS without checking the element is there.
+             So a new permission key that is not also given a box here does not
+             degrade quietly - it throws, and nobody can be invited at all. -->
+        <label class="small"><input type="checkbox" id="inv_irpcs"> IRPCS</label>
       </div>
       <label style="margin-top:8px;">Fixes they can be given<span class="helphost" data-help="This is who can be picked in Assigned to, not who can see the page. Anyone with Manage users sees both queues anyway, so leave these unticked for an admin who does not actually take fixes."></span></label>
       <div class="permrow">
@@ -1885,6 +1930,76 @@
      the manual. Nothing in them is real: every student name, email address and
      report in a screenshot is invented, because this file is served from a
      PUBLIC repo and anyone can read it. Keep it that way. -->
+<!-- ===================== IRPCS (r161) =====================
+     The collision-rules course: a content editor for the team who write it, and
+     the student app itself in a frame so they can play a question before it
+     goes anywhere near a learner.
+
+     Gated on the 'irpcs' permission. The rail item hiding is cosmetic; the
+     Edge Function checks the same permission inside the signed ticket on every
+     single call, so hiding the button is a convenience and never the rule.
+
+     None of this data is in the Sheet. Content lives in Postgres (schema
+     irpcs.*) behind the irpcs-editor function, and the student app reads only
+     published RELEASES, which is what keeps a half-edited question off a
+     learner's screen no matter how mid-thought a draft is. -->
+<div id="irpcsView" class="wrap hidden">
+  <h2 style="margin:0 0 4px;">IRPCS</h2>
+  <p class="hint" style="margin:0 0 14px;" id="irpcsSubhead">The collision rules course. Edit the content, preview it as a student, and see which questions are tripping people up.</p>
+
+  <!-- ---------- CONTENT ---------- -->
+  <div id="irpcsContentPane">
+    <div class="card" style="padding:10px 12px;margin-bottom:12px;">
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+        <select id="irpcsKind" onchange="irpcsFilter('kind', this.value)" title="Which kind of item">
+          <option value="all">All kinds</option>
+          <option value="rule">Rules</option>
+          <option value="question">Questions</option>
+          <option value="scenario">Scenarios</option>
+          <option value="library">Library</option>
+        </select>
+        <input id="irpcsRule" style="width:120px;" placeholder="Rule no." inputmode="numeric"
+               oninput="irpcsFilter('rule', this.value)" title="Rule number. Questions are matched on their first rule reference." />
+        <input id="irpcsQ" style="flex:1;min-width:160px;" placeholder="Search the text"
+               oninput="irpcsFilter('q', this.value)" />
+        <label class="small muted" style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
+          <input type="checkbox" id="irpcsPending" onchange="irpcsFilter('pending', this.checked)" /> unpublished changes only
+        </label>
+        <button class="ghost small" style="padding:5px 10px;" onclick="irpcsLoadList(true)" title="Fetch the list again">Refresh</button>
+        <button class="small" id="irpcsPublishAllBtn" style="padding:5px 10px;" onclick="irpcsPublishAll()"
+                title="Publishes every item with unpublished changes, then builds a release. The student app only reads releases, so this is the moment anything reaches a learner.">Publish all pending</button>
+      </div>
+      <div class="small muted" id="irpcsCounts" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="irpcs-split">
+      <div class="irpcs-list" id="irpcsList"></div>
+      <div class="irpcs-edit" id="irpcsEditor"></div>
+    </div>
+  </div>
+
+  <!-- ---------- PREVIEW ---------- -->
+  <div id="irpcsPreviewPane" class="hidden">
+    <div class="card" style="padding:10px 12px;margin-bottom:12px;">
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+        <button class="small" style="padding:5px 10px;" onclick="irpcsPreviewOpen('published')"
+                title="The current release, exactly as a student sees it.">Open the published app</button>
+        <button class="ghost small" style="padding:5px 10px;" onclick="irpcsPreviewOpen('draft')"
+                title="Unpublished drafts included, so a question can be played before it is published.">Preview the draft</button>
+        <button class="ghost small" style="padding:5px 10px;" onclick="irpcsPreviewPopOut()"
+                title="Open in a new tab, which is the honest way to judge how it feels on a phone.">Open in a new tab</button>
+        <span class="small muted" id="irpcsPreviewNote" style="flex:1;min-width:200px;"></span>
+      </div>
+    </div>
+    <div class="irpcs-frame-host" id="irpcsFrameHost"></div>
+  </div>
+
+  <!-- ---------- RESULTS ---------- -->
+  <div id="irpcsResultsPane" class="hidden">
+    <div id="irpcsResultsBody"></div>
+  </div>
+</div>
+
 <!-- ===================== RCA (Root Cause Analysis) =====================
      Promote an issue to a private diagnostic record: a persistent chat with
      Claude wired to read-only support data. Admin/dev only - the Worker
@@ -3012,7 +3127,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r160 · 2026-09-11";  // bump this with each round, it lands on every feedback report
+var BUILD = "r161 · 2026-09-12";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4220,11 +4335,12 @@ function applyPerms(user) {
   applyShell();
   var railGate = [["railNew", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
+                  ["railIrpcs", p.irpcs],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
   // The divider only earns its place if there is something on both sides.
-  if ($("railDiv")) $("railDiv").style.display = (p.dev || p.course || p.analytics || p.users) ? "" : "none";
+  if ($("railDiv")) $("railDiv").style.display = (p.dev || p.course || p.analytics || p.users || p.irpcs) ? "" : "none";
   // FB-0263: an admin sees the fix queues without being a name in them. The
   // "developer" and "course" permissions now mean "can be assigned work here",
   // and nothing else; visibility rides on being an admin.
@@ -6408,10 +6524,12 @@ function setView(v) {
   // 24 Aug: RCA is a page too - open investigations keep their own presence.
   if ($("rcaView")) $("rcaView").classList.toggle("hidden", v !== "rca");
   if ($("tasksView")) $("tasksView").classList.toggle("hidden", v !== "tasks");
+  if ($("irpcsView")) $("irpcsView").classList.toggle("hidden", v !== "irpcs");
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "rca") renderRcaHome();
   if (v === "tasks") renderTasks();
+  if (v === "irpcs") renderIrpcs();
   if (v === "actions") renderActions();
   if (v === "live") { renderLive(); loadLiveCases(); loadOpenChats(); renderActions(); }
   if (v === "admin") renderAdmin();
@@ -6479,7 +6597,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railReports", "railStats", "railUsers", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railReports", "railStats", "railUsers", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -6514,6 +6632,7 @@ function railGo(v) {
   if (v === "reports" && !(state.perms || {}).analytics) return;
   if (v === "rca" && !(state.perms || {}).users) return;   // dev access returns once Edd has put RCA through its paces
   if (v === "tasks" && !isEddUser()) return;               // Phase 1 is solo; the endpoint scopes by ticket regardless
+  if (v === "irpcs" && !(state.perms || {}).irpcs) return; // and the Edge Function checks the same key on every call
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -6530,6 +6649,7 @@ function updateRail() {
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
+               ["railIrpcs", v === "irpcs"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual"],
                ["railRCA", v === "rca"]];
@@ -6798,6 +6918,673 @@ function tasksDelete(id) {
   }).catch(function (e) { toast("That did not delete: " + String((e && e.message) || e)); });
 }
 
+// ===================== IRPCS (r161) =====================
+// The collision-rules course. Content lives in Postgres (schema irpcs.*),
+// reached through the irpcs-editor Edge Function, which verifies the same
+// signed staff ticket Reports already uses and asks for the 'irpcs' permission
+// inside it. So the gate is on the server on every call; the rail item hiding
+// itself is a convenience and never the rule.
+//
+// Two things about this data are worth holding on to, because they shape the
+// whole screen:
+//
+//   1. Every item has a DRAFT and a PUBLISHED body, and the student app only
+//      ever reads a published RELEASE. Saving is therefore cheap and private -
+//      a half-written question cannot reach a learner however long it sits
+//      there - and publishing is the deliberate, noted step.
+//
+//   2. The bodies are jsonb with no fixed schema. Most questions have seven
+//      keys, but one has an extra 'fixed_order'; four scenarios carry a
+//      'readout' the other seven do not. So every save MERGES the form's
+//      fields onto the body we were given rather than rebuilding it, or the
+//      first person to edit that one question would silently delete a field
+//      nobody would think to look for.
+var IRPCS_EDITOR_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/irpcs-editor";
+var IRPCS_APP_URL = "https://irpcs.ehewett.workers.dev";
+
+var irpcs = {
+  tab: "content",
+  ticket: "", exp: 0,
+  items: [], loaded: false, loading: false, error: "",
+  openId: "", item: null, versions: [], itemLoading: false,
+  edited: null, jsonText: "", jsonBad: false,
+  publishing: null, viewingVersion: null,
+  f: { kind: "all", rule: "", q: "", pending: false },
+  learner: { token: "", exp: 0, error: "" },
+  previewMode: "published"
+};
+
+// Tickets last half an hour and cost an Apps Script round trip (two seconds on
+// a good day), so one is kept until it is nearly out rather than fetched per
+// call. Same shape as the Tasks and Reports ones on purpose.
+function irpcsTicket(force) {
+  var now = Math.floor(Date.now() / 1000);
+  if (!force && irpcs.ticket && irpcs.exp - now > 60) return Promise.resolve(irpcs.ticket);
+  return apiPost({ action: "irpcsTicket" }).then(function (r) {
+    if (!r || !r.ok || !r.ticket) throw new Error((r && r.error) || "could not get an IRPCS ticket");
+    irpcs.ticket = r.ticket;
+    irpcs.exp = r.expires_at || (now + 1500);
+    return irpcs.ticket;
+  });
+}
+
+// opts: { query } for a GET, { body } for a POST. One silent retry on a 401
+// with a fresh ticket, which covers a ticket that died between minting and
+// arriving. Any more than one and a real permission problem becomes a loop.
+function irpcsApi(opts, retried) {
+  return irpcsTicket(!!retried).then(function (t) {
+    var url = IRPCS_EDITOR_URL, init = { headers: { authorization: "Bearer " + t } };
+    if (opts.body) {
+      init.method = "POST";
+      init.headers["content-type"] = "application/json";
+      init.body = JSON.stringify(opts.body);
+    } else {
+      var qs = [];
+      Object.keys(opts.query || {}).forEach(function (k) {
+        qs.push(encodeURIComponent(k) + "=" + encodeURIComponent(opts.query[k]));
+      });
+      url += "?" + qs.join("&");
+    }
+    return fetch(url, init);
+  }).then(function (r) {
+    return r.text().then(function (txt) {
+      var j = null;
+      // Empty on purpose, and it is not a swallowed failure: a body that is not
+      // JSON leaves j null, and the two lines below then throw carrying the
+      // status code instead of a parser message about an unexpected token.
+      try { j = JSON.parse(txt); } catch (e) {}
+      if (r.status === 401 && !retried) { irpcs.ticket = ""; irpcs.exp = 0; return irpcsApi(opts, true); }
+      if (!r.ok) throw new Error((j && j.error) || ("the IRPCS service returned " + r.status));
+      return j || {};
+    });
+  });
+}
+
+function renderIrpcs() {
+  irpcsShowTab();
+  if (irpcs.tab === "content") {
+    if (!irpcs.loaded && !irpcs.loading) irpcsLoadList();
+    else { irpcsRenderList(); irpcsRenderEditor(); }
+  } else if (irpcs.tab === "preview") {
+    irpcsRenderPreview();
+  } else {
+    irpcsRenderResults();
+  }
+}
+
+// Called by reference, not by name: subRailSpec() hands this to the sub-rail as
+// its `go`. A grep for "irpcsSetTab(" therefore finds only the definition, and
+// the silent-failure sweep reports it as never called. It is called.
+function irpcsSetTab(k) {
+  irpcs.tab = k;
+  renderIrpcs();
+}
+
+function irpcsShowTab() {
+  var panes = [["irpcsContentPane", "content"], ["irpcsPreviewPane", "preview"], ["irpcsResultsPane", "results"]];
+  panes.forEach(function (p) {
+    var el = $(p[0]);
+    if (el) el.classList.toggle("hidden", irpcs.tab !== p[1]);
+  });
+}
+
+/* ---------------- the list ---------------- */
+
+function irpcsLoadList(force) {
+  if (irpcs.loading) return Promise.resolve();
+  if (irpcs.loaded && !force) { irpcsRenderList(); return Promise.resolve(); }
+  irpcs.loading = true;
+  irpcs.error = "";
+  var host = $("irpcsList");
+  if (host && !irpcs.items.length) host.innerHTML = '<p class="hint" style="padding:12px;">Fetching the content...</p>';
+  return irpcsApi({ query: { op: "list" } }).then(function (j) {
+    irpcs.items = j.items || [];
+    irpcs.loaded = true;
+  }).catch(function (e) {
+    irpcs.error = String((e && e.message) || e);
+  }).then(function () {
+    irpcs.loading = false;
+    irpcsRenderList();
+    irpcsRenderEditor();
+  });
+}
+
+function irpcsFilter(key, val) {
+  irpcs.f[key] = val;
+  irpcsRenderList();
+}
+
+function irpcsVisible() {
+  var f = irpcs.f, q = String(f.q || "").trim().toLowerCase();
+  var rule = String(f.rule || "").trim();
+  return irpcs.items.filter(function (it) {
+    if (f.kind !== "all" && it.kind !== f.kind) return false;
+    if (f.pending && !it.pending) return false;
+    if (rule && String(it.rule_number == null ? "" : it.rule_number) !== rule) return false;
+    if (q && String(it.label || "").toLowerCase().indexOf(q) < 0 && String(it.item_id).toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+}
+
+function irpcsRenderList() {
+  var host = $("irpcsList");
+  if (!host) return;
+
+  if (irpcs.error) {
+    host.innerHTML = '<div style="padding:12px;"><p class="hint" style="margin:0 0 8px;">The content did not load.</p>' +
+      '<p class="small muted" style="margin:0 0 10px;">' + esc(irpcs.error) + '</p>' +
+      '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsLoadList(true)">Try again</button></div>';
+    irpcsRenderCounts();
+    return;
+  }
+
+  var rows = irpcsVisible();
+  if (!rows.length) {
+    host.innerHTML = '<p class="hint" style="padding:12px;">' +
+      (irpcs.items.length ? "Nothing matches those filters." : "No items yet.") + '</p>';
+    irpcsRenderCounts();
+    return;
+  }
+
+  host.innerHTML = rows.map(function (it) {
+    var who = it.draft_updated_by ? String(it.draft_updated_by).split("@")[0] : "";
+    return '<button type="button" class="irpcs-row' + (it.item_id === irpcs.openId ? " active" : "") + '" ' +
+      'onclick="irpcsOpen(\'' + esc(it.item_id) + '\')">' +
+      '<div class="lbl">' + esc(it.label || it.item_id) + '</div>' +
+      '<div class="meta">' +
+        '<span class="irpcs-kind">' + esc(it.kind) + '</span>' +
+        '<span>' + esc(it.item_id) + '</span>' +
+        (it.pending ? '<span class="irpcs-pending" title="Edited since it was last published, so no student has seen this yet">unpublished</span>' : '') +
+        (who ? '<span>' + esc(who) + '</span>' : '') +
+      '</div></button>';
+  }).join("");
+  irpcsRenderCounts();
+}
+
+function irpcsRenderCounts() {
+  var el = $("irpcsCounts");
+  if (!el) return;
+  var pending = irpcs.items.filter(function (i) { return i.pending; }).length;
+  var shown = irpcsVisible().length;
+  el.innerHTML = esc(shown + " of " + irpcs.items.length + " items") +
+    (pending ? ' &middot; <span class="irpcs-pending">' + pending + " with unpublished changes</span>" : " &middot; everything is published");
+  var btn = $("irpcsPublishAllBtn");
+  if (btn) btn.disabled = !pending;
+}
+
+/* ---------------- opening one item ---------------- */
+
+function irpcsOpen(id) {
+  if (!irpcsConfirmLeave()) return;
+  irpcs.openId = id;
+  irpcs.item = null;
+  irpcs.versions = [];
+  irpcs.edited = null;
+  irpcs.publishing = null;
+  irpcs.viewingVersion = null;
+  irpcs.jsonBad = false;
+  irpcs.itemLoading = true;
+  irpcsRenderList();
+  var host = $("irpcsEditor");
+  if (host) host.innerHTML = '<p class="hint">Opening...</p>';
+  irpcsApi({ query: { op: "item", id: id } }).then(function (j) {
+    irpcs.item = j.item || null;
+    irpcs.versions = j.versions || [];
+    // The working copy. A clone, so Cancel really is a cancel and the list's
+    // idea of the item is never quietly rewritten by a keystroke.
+    irpcs.edited = irpcs.item ? JSON.parse(JSON.stringify(irpcs.item.draft || {})) : {};
+    irpcs.jsonText = JSON.stringify(irpcs.edited, null, 2);
+  }).catch(function (e) {
+    irpcs.item = null;
+    toast("Could not open that item: " + String((e && e.message) || e));
+  }).then(function () {
+    irpcs.itemLoading = false;
+    irpcsRenderEditor();
+  });
+}
+
+function irpcsDirty() {
+  if (!irpcs.item || !irpcs.edited) return false;
+  return JSON.stringify(irpcs.edited) !== JSON.stringify(irpcs.item.draft || {});
+}
+function irpcsConfirmLeave() {
+  if (!irpcsDirty()) return true;
+  return confirm("This item has unsaved changes. Leave them behind?");
+}
+
+// Every form control writes through here. Paths are shallow ('plain') or one
+// level into an array ('options', 2), which covers everything the forms touch.
+function irpcsSet(field, value) {
+  if (!irpcs.edited) return;
+  irpcs.edited[field] = value;
+  irpcsMarkDirty();
+}
+function irpcsSetIn(field, idx, value) {
+  if (!irpcs.edited || !Array.isArray(irpcs.edited[field])) return;
+  irpcs.edited[field][idx] = value;
+  irpcsMarkDirty();
+}
+function irpcsSetCq(i, field, value) {
+  var cq = irpcs.edited && irpcs.edited.check_questions;
+  if (!cq || !cq[i]) return;
+  cq[i][field] = value;
+  irpcsMarkDirty();
+}
+function irpcsSetCqOption(i, idx, value) {
+  var cq = irpcs.edited && irpcs.edited.check_questions;
+  if (!cq || !cq[i] || !Array.isArray(cq[i].options)) return;
+  cq[i].options[idx] = value;
+  irpcsMarkDirty();
+}
+function irpcsMarkDirty() {
+  var el = $("irpcsDirty");
+  if (el) el.textContent = irpcsDirty() ? "unsaved changes" : "";
+  var btn = $("irpcsSaveBtn");
+  if (btn) btn.disabled = !irpcsDirty() || irpcs.jsonBad;
+}
+
+/* ---------------- the editors ---------------- */
+
+function irpcsRenderEditor() {
+  var host = $("irpcsEditor");
+  if (!host) return;
+  if (irpcs.itemLoading) { host.innerHTML = '<p class="hint">Opening...</p>'; return; }
+  if (!irpcs.item) {
+    host.innerHTML = '<div class="card"><p class="hint" style="margin:0;">Pick an item on the left to edit it.</p></div>';
+    return;
+  }
+
+  var it = irpcs.item, e = irpcs.edited || {};
+  var head =
+    '<div class="card" style="margin-bottom:12px;">' +
+      '<div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">' +
+        '<div style="min-width:0;">' +
+          '<div class="small muted">' + esc(it.kind) + ' &middot; ' + esc(it.item_id) + '</div>' +
+          '<div style="font-weight:700;">' + esc(irpcsTitleOf(it)) + '</div>' +
+          '<div class="small muted" style="margin-top:3px;">' + esc(irpcsStamp(it)) + '</div>' +
+        '</div>' +
+        '<div class="row" style="gap:8px;flex:0 0 auto;align-items:center;">' +
+          '<span class="small irpcs-pending" id="irpcsDirty"></span>' +
+          '<button class="small" id="irpcsSaveBtn" style="padding:5px 10px;" onclick="irpcsSave()" disabled>Save draft</button>' +
+          '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsPublishStart()" ' +
+            'title="Shows what would change, then asks for a note before anything is published.">Publish...</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  var body;
+  if (it.kind === "rule") body = irpcsRuleForm(e);
+  else if (it.kind === "question") body = irpcsQuestionForm(e);
+  else body = irpcsJsonForm(e);
+
+  host.innerHTML = head + (irpcs.publishing ? irpcsPublishPanel() : "") + body + irpcsVersionPanel();
+  irpcsMarkDirty();
+}
+
+function irpcsTitleOf(it) {
+  var d = it.draft || {};
+  if (it.kind === "rule") return "Rule " + d.number + ": " + (d.title || "");
+  if (it.kind === "question") return String(d.stem || it.item_id).slice(0, 120);
+  return d.title || d.rule_id || it.item_id;
+}
+function irpcsStamp(it) {
+  var parts = [];
+  if (it.draft_updated_at) parts.push("draft saved " + fmtDate(it.draft_updated_at) + (it.draft_updated_by ? " by " + String(it.draft_updated_by).split("@")[0] : ""));
+  parts.push(it.published_at ? "published " + fmtDate(it.published_at) : "never published");
+  return parts.join(" · ");
+}
+
+function irpcsTextField(label, field, value, rows, hint) {
+  return '<div class="fld"><label for="irf_' + esc(field) + '">' + esc(label) + '</label>' +
+    (hint ? '<p class="small muted" style="margin:0 0 4px;">' + esc(hint) + '</p>' : '') +
+    '<textarea id="irf_' + esc(field) + '" rows="' + (rows || 3) + '" ' +
+    'oninput="irpcsSet(\'' + esc(field) + '\', this.value)">' + esc(value == null ? "" : value) + '</textarea></div>';
+}
+
+function irpcsRuleForm(e) {
+  var cqs = Array.isArray(e.check_questions) ? e.check_questions : [];
+  var cqHtml = cqs.map(function (cq, i) {
+    var opts = Array.isArray(cq.options) ? cq.options : [];
+    return '<div class="irpcs-cq">' +
+      '<div class="small muted" style="margin-bottom:6px;">Check question ' + (i + 1) + '</div>' +
+      '<div class="fld"><label>Question</label>' +
+        '<textarea rows="2" oninput="irpcsSetCq(' + i + ', \'stem\', this.value)">' + esc(cq.stem || "") + '</textarea></div>' +
+      opts.map(function (o, idx) {
+        return '<div class="irpcs-opt">' +
+          '<label class="rad"><input type="radio" name="irpcs_cq_' + i + '" ' + (Number(cq.correct) === idx ? "checked" : "") +
+            ' onchange="irpcsSetCq(' + i + ', \'correct\', ' + idx + ')"> correct</label>' +
+          '<input type="text" value="' + esc(o) + '" oninput="irpcsSetCqOption(' + i + ', ' + idx + ', this.value)">' +
+          '</div>';
+      }).join("") +
+      '<div class="fld" style="margin-bottom:0;"><label>Why that is the answer</label>' +
+        '<textarea rows="2" oninput="irpcsSetCq(' + i + ', \'reasoning\', this.value)">' + esc(cq.reasoning || "") + '</textarea></div>' +
+      '</div>';
+  }).join("");
+
+  return '<div class="card">' +
+    '<div class="fld"><label>The rule itself</label>' +
+      '<p class="small muted" style="margin:0 0 4px;">Read only. This is the legal text and it is not ours to reword.</p>' +
+      '<div class="irpcs-verbatim">' + esc(e.verbatim || "") + '</div></div>' +
+    irpcsTextField("Plain English", "plain", e.plain, 7, "What the rule actually means, in the words we would use on the boat.") +
+    irpcsTextField("Extra tip", "extra_tip", e.extra_tip, 3) +
+    irpcsTextField("Example", "example", e.example, 3, "A real situation where this rule decides what we do. Leave it empty if there is not a good one.") +
+    (cqHtml ? '<div class="fld"><label>Check questions</label>' + cqHtml + '</div>' : "") +
+    '</div>';
+}
+
+function irpcsQuestionForm(e) {
+  var opts = Array.isArray(e.options) ? e.options : [];
+  var refs = Array.isArray(e.rule_refs) ? e.rule_refs.join(", ") : "";
+  return '<div class="card">' +
+    irpcsTextField("Question", "stem", e.stem, 3) +
+    '<div class="fld"><label>Answers</label>' +
+      '<p class="small muted" style="margin:0 0 4px;">Tick the right one.</p>' +
+      opts.map(function (o, idx) {
+        return '<div class="irpcs-opt">' +
+          '<label class="rad"><input type="radio" name="irpcs_q_correct" ' + (Number(e.correct) === idx ? "checked" : "") +
+            ' onchange="irpcsSet(\'correct\', ' + idx + ')"> correct</label>' +
+          '<input type="text" value="' + esc(o) + '" oninput="irpcsSetIn(\'options\', ' + idx + ', this.value)">' +
+          '</div>';
+      }).join("") +
+    '</div>' +
+    irpcsTextField("Why that is the answer", "reasoning", e.reasoning, 4, "Shown after they answer, right or wrong, so it carries the reasoning and not just the verdict.") +
+    '<div class="row" style="gap:12px;flex-wrap:wrap;">' +
+      '<div class="fld" style="flex:0 0 auto;"><label for="irf_level">Level</label>' +
+        '<select id="irf_level" onchange="irpcsSet(\'level\', this.value)">' +
+          '<option value="DS"' + (e.level === "DS" ? " selected" : "") + '>Day Skipper</option>' +
+          '<option value="YM"' + (e.level === "YM" ? " selected" : "") + '>Yachtmaster</option>' +
+        '</select></div>' +
+      '<div class="fld" style="flex:1;min-width:160px;"><label for="irf_refs">Rule references</label>' +
+        '<input id="irf_refs" type="text" value="' + esc(refs) + '" placeholder="e.g. 12, 13" ' +
+          'oninput="irpcsSetRefs(this.value)"></div>' +
+    '</div>' +
+    '</div>';
+}
+
+// Rule refs are numbers in the body, not text, and the app groups questions by
+// them. A stray character that turned 12 into "12 " would quietly drop this
+// question out of Rule 12 with nothing on screen to say so.
+function irpcsSetRefs(text) {
+  var nums = String(text).split(/[^0-9]+/).filter(function (s) { return s !== ""; }).map(Number);
+  irpcsSet("rule_refs", nums);
+}
+
+function irpcsJsonForm() {
+  return '<div class="card">' +
+    '<div class="fld" style="margin-bottom:6px;"><label for="irpcsJson">The item, as JSON</label>' +
+    '<p class="small muted" style="margin:0 0 4px;">Scenarios and library entries do not have a form yet. Editing the JSON directly is honest about that, and it will not let you save something malformed.</p>' +
+    '<textarea id="irpcsJson" class="irpcs-json" rows="24" oninput="irpcsJsonInput(this.value)">' + esc(irpcs.jsonText) + '</textarea></div>' +
+    '<p class="small" id="irpcsJsonMsg" style="margin:0;"></p>' +
+    '</div>';
+}
+
+function irpcsJsonInput(text) {
+  irpcs.jsonText = text;
+  var msg = $("irpcsJsonMsg"), box = $("irpcsJson");
+  try {
+    var parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("the body has to be an object");
+    irpcs.edited = parsed;
+    irpcs.jsonBad = false;
+    if (box) box.classList.remove("bad");
+    if (msg) { msg.textContent = ""; msg.className = "small"; }
+  } catch (err) {
+    irpcs.jsonBad = true;
+    if (box) box.classList.add("bad");
+    if (msg) { msg.textContent = "Not valid JSON yet: " + String(err.message || err); msg.className = "small irpcs-pending"; }
+  }
+  irpcsMarkDirty();
+}
+
+/* ---------------- saving and publishing ---------------- */
+
+// The merge that keeps the odd extra key alive. See the note at the top.
+function irpcsBodyForSave() {
+  var base = (irpcs.item && irpcs.item.draft) || {};
+  var out = {};
+  Object.keys(base).forEach(function (k) { out[k] = base[k]; });
+  Object.keys(irpcs.edited || {}).forEach(function (k) { out[k] = irpcs.edited[k]; });
+  return out;
+}
+
+function irpcsSave() {
+  if (!irpcs.item) return;
+  if (irpcs.jsonBad) { toast("Fix the JSON first."); return; }
+  var btn = $("irpcsSaveBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Saving..."; }
+  var body = irpcsBodyForSave();
+  var id = irpcs.item.item_id;
+  irpcsApi({ body: { op: "save", item_id: id, body: body } }).then(function (j) {
+    irpcs.item.draft = body;
+    irpcs.item.draft_updated_at = (j.saved && j.saved.draft_updated_at) || new Date().toISOString();
+    irpcs.item.draft_updated_by = (j.saved && j.saved.draft_updated_by) || irpcs.item.draft_updated_by;
+    // Keep the row in the left-hand list honest about the unpublished marker,
+    // without a second round trip for the whole list.
+    var row = irpcs.items.filter(function (x) { return x.item_id === id; })[0];
+    if (row) {
+      row.pending = !!(j.saved && j.saved.pending);
+      row.draft_updated_by = irpcs.item.draft_updated_by;
+    }
+    toast("Draft saved. Nothing has reached a student yet.");
+    irpcsRenderList();
+    irpcsRenderEditor();
+  }).catch(function (e) {
+    toast("That did not save: " + String((e && e.message) || e));
+    if (btn) { btn.disabled = false; btn.textContent = "Save draft"; }
+  });
+}
+
+function irpcsPublishStart() {
+  if (!irpcs.item) return;
+  if (irpcsDirty()) { toast("Save the draft first, then publish it."); return; }
+  irpcs.publishing = true;
+  irpcsRenderEditor();
+  var n = $("irpcsNote");
+  if (n) n.focus();
+}
+function irpcsPublishCancel() {
+  irpcs.publishing = null;
+  irpcsRenderEditor();
+}
+
+function irpcsPublishPanel() {
+  var it = irpcs.item;
+  var diff = irpcsDiff(it.published, it.draft);
+  return '<div class="card" style="margin-bottom:12px;border-color:var(--accent);">' +
+    '<div style="font-weight:700;margin-bottom:4px;">Publish this item</div>' +
+    '<p class="small muted" style="margin:0 0 10px;">This is what changes for students. The red line is what is there now, the green line is what replaces it.</p>' +
+    '<div class="irpcs-diff">' + (diff || '<p class="small muted">Nothing to publish. The draft matches what is already published.</p>') + '</div>' +
+    '<div class="fld" style="margin:12px 0 8px;"><label for="irpcsNote">What changed, and why</label>' +
+      '<p class="small muted" style="margin:0 0 4px;">The version history keeps this. In six months it is the only thing that will say why.</p>' +
+      '<input id="irpcsNote" type="text" placeholder="e.g. Rule 12 plain English was ambiguous about windward"></div>' +
+    '<div class="row" style="gap:8px;">' +
+      '<button class="small" style="padding:5px 10px;" onclick="irpcsPublishConfirm()">Publish</button>' +
+      '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsPublishCancel()">Cancel</button>' +
+    '</div></div>';
+}
+
+function irpcsPublishConfirm() {
+  var note = String(($("irpcsNote") && $("irpcsNote").value) || "").trim();
+  if (note.length < 3) { toast("Add a few words on what changed."); return; }
+  var id = irpcs.openId;
+  irpcsApi({ body: { op: "publish", item_id: id, note: note } }).then(function (j) {
+    toast("Published as version " + j.version + ". Build a release to put it in front of students.");
+    irpcs.publishing = null;
+    return irpcsOpenAgain();
+  }).catch(function (e) {
+    toast("That did not publish: " + String((e && e.message) || e));
+  });
+}
+
+// Re-read the item and the list after anything that changes published state,
+// rather than guessing locally at what the server now holds.
+function irpcsOpenAgain() {
+  var id = irpcs.openId;
+  irpcs.loaded = false;
+  return irpcsLoadList(true).then(function () { if (id) irpcsOpen(id); });
+}
+
+function irpcsPublishAll() {
+  var pending = irpcs.items.filter(function (i) { return i.pending; }).length;
+  if (!pending) { toast("Nothing is waiting to be published."); return; }
+  var note = prompt("Publishing " + pending + " item" + (pending === 1 ? "" : "s") + " and building a release.\n\nWhat changed?");
+  if (note === null) return;
+  note = String(note).trim();
+  if (note.length < 3) { toast("Add a few words on what changed."); return; }
+  toast("Publishing...");
+  irpcsApi({ body: { op: "publish_all", note: note } }).then(function (j) {
+    var n = (j.published || []).length;
+    toast("Published " + n + " item" + (n === 1 ? "" : "s") + " as release " + j.release_id + ". That is live for students now.");
+    return irpcsOpenAgain();
+  }).catch(function (e) {
+    toast("That did not publish: " + String((e && e.message) || e));
+  });
+}
+
+/* ---------------- version history ---------------- */
+
+function irpcsVersionPanel() {
+  if (!irpcs.versions.length) {
+    return '<div class="card" style="margin-top:12px;"><div style="font-weight:700;margin-bottom:4px;">History</div>' +
+      '<p class="small muted" style="margin:0;">Nothing published yet, so there is no history to roll back to.</p></div>';
+  }
+  var rows = irpcs.versions.map(function (v) {
+    return '<div class="row" style="gap:8px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;">' +
+      '<span style="font-weight:700;flex:0 0 auto;">v' + v.version + '</span>' +
+      '<span class="small muted" style="flex:0 0 auto;">' + esc(fmtDate(v.published_at)) + ' &middot; ' + esc(String(v.published_by || "").split("@")[0]) + '</span>' +
+      '<span class="small" style="flex:1;min-width:140px;">' + esc(v.note || "") + '</span>' +
+      '<button class="ghost small" style="padding:3px 8px;flex:0 0 auto;" onclick="irpcsViewVersion(' + v.version + ')">View</button>' +
+      '<button class="ghost small" style="padding:3px 8px;flex:0 0 auto;" onclick="irpcsRollback(' + v.version + ')" ' +
+        'title="Restores this version into the draft. Publishing it is still a separate step.">Restore</button>' +
+      '</div>';
+  }).join("");
+  var viewer = irpcs.viewingVersion
+    ? '<div style="margin-top:10px;"><div class="small muted" style="margin-bottom:4px;">Version ' + irpcs.viewingVersion.version + ', against the current draft</div>' +
+      '<div class="irpcs-diff">' + (irpcsDiff(irpcs.viewingVersion.body, irpcs.item.draft) || '<p class="small muted">Identical to the current draft.</p>') + '</div></div>'
+    : "";
+  return '<div class="card" style="margin-top:12px;"><div style="font-weight:700;margin-bottom:6px;">History</div>' + rows + viewer + '</div>';
+}
+
+function irpcsViewVersion(v) {
+  irpcsApi({ query: { op: "version", id: irpcs.openId, version: v } }).then(function (j) {
+    irpcs.viewingVersion = j.version;
+    irpcsRenderEditor();
+  }).catch(function (e) { toast("Could not fetch that version: " + String((e && e.message) || e)); });
+}
+
+function irpcsRollback(v) {
+  if (!confirm("Restore version " + v + " into the draft?\n\nThis does not publish anything, so students carry on seeing what they see now until you publish it.")) return;
+  irpcsApi({ body: { op: "rollback", item_id: irpcs.openId, version: v } }).then(function () {
+    toast("Version " + v + " is back in the draft. Publish it when you are happy with it.");
+    return irpcsOpenAgain();
+  }).catch(function (e) { toast("That did not restore: " + String((e && e.message) || e)); });
+}
+
+/* ---------------- diff ---------------- */
+
+// Field by field on the top-level keys, which is the level people actually
+// think in ("the plain English changed"). Nested arrays are shown as their
+// JSON, which is blunt but never misleading.
+function irpcsDiff(oldBody, newBody) {
+  var a = oldBody || {}, b = newBody || {};
+  var keys = {};
+  Object.keys(a).forEach(function (k) { keys[k] = 1; });
+  Object.keys(b).forEach(function (k) { keys[k] = 1; });
+  return Object.keys(keys).sort().map(function (k) {
+    var av = a[k], bv = b[k];
+    if (JSON.stringify(av) === JSON.stringify(bv)) return "";
+    return '<div class="d-field">' + esc(k) + '</div>' +
+      '<div class="d-old">' + esc(irpcsShow(av)) + '</div>' +
+      '<div class="d-new">' + esc(irpcsShow(bv)) + '</div>';
+  }).join("");
+}
+function irpcsShow(v) {
+  if (v === undefined) return "(not set)";
+  if (v === null) return "(empty)";
+  if (typeof v === "string") return v;
+  return JSON.stringify(v, null, 2);
+}
+
+/* ---------------- preview ---------------- */
+
+// A learner token, not a staff ticket, and the difference matters: this one
+// carries no permissions at all, only an id, because inside the app the tester
+// IS a learner. Fifteen minutes is plenty - the app swaps it for a twelve-hour
+// session token on its first call and never needs the launch token again.
+function irpcsLearnerToken() {
+  var now = Math.floor(Date.now() / 1000);
+  if (irpcs.learner.token && irpcs.learner.exp - now > 60) return Promise.resolve(irpcs.learner.token);
+  return apiPost({ action: "irpcsLearnerToken" }).then(function (r) {
+    if (!r || !r.ok || !r.token) throw new Error((r && r.error) || "could not mint a preview token");
+    irpcs.learner.token = r.token;
+    irpcs.learner.exp = r.expires_at || (now + 800);
+    irpcs.learner.error = "";
+    return r.token;
+  });
+}
+
+function irpcsRenderPreview() {
+  var host = $("irpcsFrameHost");
+  if (host && !host.firstChild) irpcsPreviewOpen(irpcs.previewMode);
+}
+
+function irpcsPreviewOpen(mode) {
+  irpcs.previewMode = mode;
+  var host = $("irpcsFrameHost");
+  if (!host) return;
+  host.innerHTML = '<p class="hint" style="padding:14px;">Opening the app...</p>';
+  irpcsPreviewUrl(mode).then(function (url) {
+    host.innerHTML = '<iframe src="' + esc(url) + '" title="IRPCS student app preview" referrerpolicy="no-referrer"></iframe>';
+    var note = $("irpcsPreviewNote");
+    if (note) {
+      note.textContent = mode === "draft"
+        ? "Drafts included, so this is not what students see. Progress still saves under your own email."
+        : "The current release, exactly as students see it. Progress saves under your own email.";
+    }
+  }).catch(function (e) {
+    irpcs.learner.error = String((e && e.message) || e);
+    host.innerHTML = '<div style="padding:14px;"><p class="hint" style="margin:0 0 6px;">The preview could not start.</p>' +
+      '<p class="small muted" style="margin:0 0 10px;">' + esc(irpcs.learner.error) + '</p>' +
+      (irpcs.learner.error.indexOf("IRPCS_TOKEN_SECRET") >= 0
+        ? '<p class="small muted" style="margin:0 0 10px;">This is a setup step rather than a fault. The shared secret has not been put into Script Properties yet, and until it is, the editor works and only the preview is dark.</p>'
+        : "") +
+      '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsPreviewOpen(\'' + esc(mode) + '\')">Try again</button></div>';
+    var note = $("irpcsPreviewNote");
+    if (note) note.textContent = "";
+  });
+}
+
+function irpcsPreviewUrl(mode) {
+  return irpcsLearnerToken().then(function (t) {
+    return IRPCS_APP_URL + "/?t=" + encodeURIComponent(t) + (mode === "draft" ? "&release=draft" : "");
+  });
+}
+
+function irpcsPreviewPopOut() {
+  // The window is opened inside the click, because a popup blocker will stop
+  // one opened later in a promise, and pointed at the URL once the token is
+  // back. That way the new tab is never a blank one waiting on Apps Script.
+  var w = window.open("", "_blank");
+  irpcsPreviewUrl(irpcs.previewMode).then(function (url) {
+    if (w) w.location = url; else toast("Your browser blocked the new tab.");
+  }).catch(function (e) {
+    if (w) w.close();
+    toast("Could not open the preview: " + String((e && e.message) || e));
+  });
+}
+
+/* ---------------- results ---------------- */
+
+function irpcsRenderResults() {
+  var host = $("irpcsResultsBody");
+  if (!host) return;
+  host.innerHTML = '<div class="card">' +
+    '<div style="font-weight:700;margin-bottom:4px;">Which questions are tripping people up</div>' +
+    '<p class="small muted" style="margin:0 0 10px;">Per-question accuracy, worst first, with the wrong answer people pick most often. That pair is how a badly worded question gives itself away: a wrong option everybody reaches for is usually a wrong option that reads as true.</p>' +
+    '<p class="hint" style="margin:0;">Not wired up yet. It needs one more read on the IRPCS side, an <code>op=stats</code> over <code>irpcs.question_stats_v</code>, and there is nothing to show until the preview has put some real answers into <code>irpcs.events</code>. Both are in hand.</p>' +
+    '</div>';
+}
+
 // ===================== r147: THE BELL =====================
 // What is waiting for THIS person: answers to their questions (the same list
 // the dev/course pages show) and their own feedback that has moved on from
@@ -7006,6 +7793,10 @@ function subRailSpec() {
   if (v === "users") return {
     head: "Admin", cur: state.usersSection, go: setUsersSection,
     items: [{ key: "people", label: "People" }, { key: "feedback", label: "Feedback" }, { key: "playbook", label: "Playbook" }]
+  };
+  if (v === "irpcs") return {
+    head: "IRPCS", cur: irpcs.tab, go: irpcsSetTab,
+    items: [{ key: "content", label: "Content" }, { key: "preview", label: "Preview" }, { key: "results", label: "Results" }]
   };
   if (v === "dev") return {
     head: "Developers", cur: state.devFilter, go: setDevFilter,
@@ -12892,7 +13683,12 @@ var PERM_LABELS = [
   { k: "analytics", label: "Analytics" },
   { k: "dev", label: "Developers" },
   { k: "course", label: "Course fixes" },
-  { k: "users", label: "Admin" }
+  { k: "users", label: "Admin" },
+  // r161. This list and PERM_KEYS in Code.gs are one list in two places:
+  // updateUser_ rebuilds the whole perms object from PERM_KEYS, so a key here
+  // that is missing there (or the other way round) gets quietly wiped off every
+  // account the next time an admin saves anybody.
+  { k: "irpcs", label: "IRPCS" }
 ];
 
 function invitePreset(kind) {

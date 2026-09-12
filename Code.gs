@@ -568,6 +568,8 @@ function doPost(e) {
     // history and logs; bodies don't). The GET versions below still work.
     if (action === 'reportsTicket') return jsonOut(reportsTicket_(user));
     if (action === 'tasksTicket') return jsonOut(tasksTicket_(user));
+    if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
+    if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (action === 'bootstrap') return jsonOut(bootstrap_(user));
     if (action === 'getIssuesList') return jsonOut(getIssuesList_());
@@ -672,7 +674,16 @@ var USERS_SHEET = 'Users';
 // Holly: stay on the issue after logging it). Owned by the account, so they
 // follow the person between devices.
 var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_salt', 'invite_token', 'session_token', 'session_expires', 'created_at', 'prefs_json'];
-var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users'];
+// r161: 'irpcs' joins the set. It is a real key rather than a reuse of 'course'
+// because the IRPCS section publishes content straight to students, which is a
+// different thing from working a course-fix queue, and the two groups are not
+// the same people. Nobody holds it until an admin ticks it, including Edd.
+//
+// Adding a key here is only half the job: updateUser_ rebuilds the whole perms
+// object from PERM_KEYS, so a key missing from PERM_LABELS in index.html would
+// be silently stripped off every account the next time anyone pressed Save on
+// the Users page. The two lists move together, always.
+var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs'];
 var SESSION_DAYS = 30;
 var HASH_ROUNDS = 2000;
 // Password-reset links expire after this many minutes. The expiry is packed into
@@ -864,6 +875,15 @@ function reqPerm_(action) {
     // user's own and the Edge Function scopes every read and write to the email
     // inside the ticket. Nothing here to hold a permission key over.
     case 'tasksTicket': return 'any';
+    // The IRPCS section. Both of these hand a credential to another system, so
+    // both are gated here AND checked again where they are minted - the UI
+    // hiding the rail item is cosmetic, this is the rule.
+    //
+    // irpcsLearnerToken mints a STUDENT identity for the preview, so it is
+    // worth being clear about what it is not: it carries no permissions at all,
+    // only a learner id, and it gets the same gate as the editor because the
+    // only reason to hold one is to test content you are working on.
+    case 'irpcsTicket': case 'irpcsLearnerToken': return 'irpcs';
     // Fail closed. Every action reaching this point is one nobody listed above,
     // which means nobody decided who should be allowed to call it. The public
     // and key-gated actions (login, acceptInvite, requestPasswordReset, ping,
@@ -6823,7 +6843,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r160 · 2026-09-11';
+var CODE_STAMP = 'r161 · 2026-09-12';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -10513,9 +10533,21 @@ function tasksTicket_(user) {
 }
 
 /**
+ * Mint a portal ticket for the IRPCS content editor (r161).
+ *
+ * Same ticket, same secret, same verifier: irpcs-editor runs a straight copy of
+ * what the Reports `courses` function checks, asking for the 'irpcs' permission
+ * instead of 'analytics'. A second signing scheme would have drifted from this
+ * one the first time either side changed.
+ */
+function irpcsTicket_(user) {
+  return mintPortalTicket_(user, 'irpcs');
+}
+
+/**
  * The one place a ticket is signed.
  *
- * Both callers above hand out a credential to another system, so the check
+ * All three callers above hand out a credential to another system, so the check
  * below is a second one on purpose: it should not depend on a caller elsewhere
  * in this file having got its wiring right. Pass null to require nothing
  * beyond the authenticated session the dispatcher has already established.
@@ -10569,6 +10601,67 @@ function mintPortalTicket_(user, requiredPerm) {
  */
 function b64UrlEncode_(bytes) {
   return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+}
+
+/* ===================== IRPCS LEARNER TOKEN (r161) =====================
+ *
+ * A different animal from the tickets above, and worth keeping the difference
+ * in view. A ticket says "this is a member of staff and here is what they are
+ * allowed to do". This says "this is a learner, and here is their id" - no
+ * permissions in it at all. The IRPCS app takes its identity from one of these
+ * on the URL, which is why the preview can save progress: the tester is a
+ * learner like any other for as long as the token lasts.
+ *
+ * It is also a rehearsal. When the LMS wires IRPCS up for real, this is the
+ * thing its developers have to build, so doing it here first is how we find the
+ * snags on our own time rather than theirs.
+ *
+ * Separate secret from the tickets, deliberately: IRPCS_TOKEN_SECRET, matching
+ * what Supabase already holds. One secret doing two jobs means a rotation on
+ * either side breaks the other.
+ */
+var IRPCS_TOKEN_MINUTES = 15;
+
+function irpcsLearnerToken_(user) {
+  var secret = PropertiesService.getScriptProperties().getProperty('IRPCS_TOKEN_SECRET');
+  if (!secret) {
+    // Config fault, not a permission one. Said plainly for the same reason as
+    // the ticket secret above: otherwise somebody goes hunting through the user
+    // list for a problem that is not there.
+    return { ok: false, error: 'IRPCS_TOKEN_SECRET is not set in Script Properties' };
+  }
+
+  var pub = publicUser_(user);
+  if ((pub.perms || {}).irpcs !== true) return { ok: false, error: 'forbidden' };
+
+  // learner_id is the tracker email, and it is a STAND-IN. Real students will
+  // arrive from the LMS carrying an LMS user id, so irpcs.events will hold two
+  // shapes of id side by side, ours looking like an email and theirs not. That
+  // is fine for testing and it is not a bug when somebody spots it later, but
+  // it does mean tester rows have to be excluded before anyone reads the
+  // learner numbers as if they were students.
+  var now = Math.floor(Date.now() / 1000);
+  var payload = {
+    learner_id: pub.email,
+    name: String(pub.name || '').trim().split(/\s+/)[0] || pub.email,
+    // SECONDS, not milliseconds, and the reason to be careful is the opposite
+    // of the one you would expect. The verifier tests `exp * 1000 < Date.now()`
+    // with no upper bound, so a millisecond expiry does not read as expired and
+    // get caught. It sails through, and mints a token good until the year
+    // 58,000. The mistake is silent, which is why it is worth a comment rather
+    // than a test: a test would pass either way.
+    exp: now + IRPCS_TOKEN_MINUTES * 60
+  };
+
+  var payloadB64 = b64UrlEncode_(Utilities.newBlob(JSON.stringify(payload)).getBytes());
+  var sig = Utilities.computeHmacSha256Signature(payloadB64, secret);
+
+  return {
+    ok: true,
+    token: payloadB64 + '.' + b64UrlEncode_(sig),
+    expires_at: payload.exp,
+    learner_id: payload.learner_id
+  };
 }
 
 /**
