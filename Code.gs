@@ -10622,6 +10622,29 @@ function b64UrlEncode_(bytes) {
  */
 var IRPCS_TOKEN_MINUTES = 15;
 
+/**
+ * Run this from the Apps Script editor when the preview says the secret is not
+ * set and you are sure you set it. Prints whether it is there, how long it is,
+ * and the names of every script property that exists. Never the values.
+ *
+ * It lists the names because the two ways this goes wrong both show up there.
+ * A property saved as 'IRPCS_TOKEN_SECRET ' with a trailing space, or as
+ * 'IRPCS_SECRET', is a name that looks right in the settings screen and is not
+ * the one getProperty asks for. And if the list comes back without
+ * REPORTS_TICKET_SECRET either, this is not the script the live web app runs
+ * from: a Sheet backup copies the bound script, so there can be more than one
+ * project that looks like the right one. The real one is whichever project's
+ * Deploy -> Manage deployments shows the /exec URL the app actually calls.
+ */
+function checkIrpcsSecret() {
+  var props = PropertiesService.getScriptProperties();
+  var v = props.getProperty('IRPCS_TOKEN_SECRET');
+  Logger.log('IRPCS_TOKEN_SECRET: ' + (v ? 'set, ' + v.length + ' characters' : 'NOT SET'));
+  Logger.log('REPORTS_TICKET_SECRET: ' + (props.getProperty('REPORTS_TICKET_SECRET') ? 'set' : 'NOT SET'));
+  Logger.log('every property name here: ' + props.getKeys().sort().join(', '));
+  Logger.log('this project deploys to: ' + ScriptApp.getService().getUrl());
+}
+
 function irpcsLearnerToken_(user) {
   var secret = PropertiesService.getScriptProperties().getProperty('IRPCS_TOKEN_SECRET');
   if (!secret) {
