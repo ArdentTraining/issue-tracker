@@ -7522,6 +7522,29 @@ function irpcsIsBody(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
+// Same value, written the same way every time, so two bodies can be compared
+// without the comparison caring about key order.
+//
+// r162: this exists because the read-back check below was comparing
+// JSON.stringify output, and jsonb does not keep the key order it was given.
+// It stores keys shortest-first, so adding one new field to a rule moved
+// "media" to the front of the object and the check reported that the save had
+// not stored what was sent. It had. Arrays keep their order in jsonb and the
+// order is meaningful here (media is shown in sequence), so only object keys
+// are sorted.
+//
+// A guard that cries wolf is worse than no guard, because the next real one
+// gets waved through.
+function irpcsCanon(v) {
+  if (Array.isArray(v)) return "[" + v.map(irpcsCanon).join(",") + "]";
+  if (v && typeof v === "object") {
+    return "{" + Object.keys(v).sort().map(function (k) {
+      return JSON.stringify(k) + ":" + irpcsCanon(v[k]);
+    }).join(",") + "}";
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
 function irpcsSave() {
   if (!irpcs.item) return;
   if (irpcs.jsonBad) { toast("Fix the JSON first."); return; }
@@ -7542,7 +7565,7 @@ function irpcsSave() {
     });
   }).then(function (res) {
     var stored = res.fresh && res.fresh.item && res.fresh.item.draft;
-    if (!irpcsIsBody(stored) || JSON.stringify(stored) !== JSON.stringify(body)) {
+    if (!irpcsIsBody(stored) || irpcsCanon(stored) !== irpcsCanon(body)) {
       irpcs.item = res.fresh.item;
       irpcs.versions = res.fresh.versions || [];
       irpcs.edited = irpcsIsBody(stored) ? JSON.parse(JSON.stringify(stored)) : {};
