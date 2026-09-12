@@ -7063,7 +7063,22 @@ function irpcsVisible() {
     if (rule && String(it.rule_number == null ? "" : it.rule_number) !== rule) return false;
     if (q && String(it.label || "").toLowerCase().indexOf(q) < 0 && String(it.item_id).toLowerCase().indexOf(q) < 0) return false;
     return true;
-  });
+  }).sort(irpcsOrder);
+}
+
+// The server orders by item_id, which is text, so "rule.10" lands between
+// "rule.1" and "rule.2" and the rules read 1, 10, 11, 12... 2, 20. Nobody
+// thinks about Rule 2 as coming after Rule 19. Sorted here by the rule NUMBER
+// instead, which also groups the questions under the rule they belong to.
+// Items with no rule (scenarios, library) keep item_id order at the end of
+// their kind.
+function irpcsOrder(a, b) {
+  if (a.kind !== b.kind) return a.kind < b.kind ? -1 : 1;
+  var an = a.rule_number, bn = b.rule_number;
+  if (an == null && bn != null) return 1;
+  if (bn == null && an != null) return -1;
+  if (an != null && bn != null && an !== bn) return an - bn;
+  return a.item_id < b.item_id ? -1 : (a.item_id > b.item_id ? 1 : 0);
 }
 
 function irpcsRenderList() {
