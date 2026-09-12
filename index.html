@@ -1731,10 +1731,12 @@
         <label for="taskRepeat" title="Leave empty for a one-off. Ticking a repeating task creates the next one.">Repeat</label>
         <select id="taskRepeat">
           <option value="">One-off</option>
-          <option value="1">Every day</option>
-          <option value="7">Every week</option>
-          <option value="14">Every fortnight</option>
-          <option value="28">Every 4 weeks</option>
+          <option value="1:day">Every day</option>
+          <option value="1:week">Every week</option>
+          <option value="2:week">Every fortnight</option>
+          <option value="1:month">Every month</option>
+          <option value="3:month">Every 3 months</option>
+          <option value="1:year">Every year</option>
         </select>
       </div>
       <button class="btn primary" onclick="tasksAdd()">Add</button>
@@ -3147,7 +3149,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r162 · 2026-09-12";  // bump this with each round, it lands on every feedback report
+var BUILD = "r163 · 2026-09-12";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6836,7 +6838,44 @@ function todayStr() {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 var TASK_PRI_LABEL = { now: "Now", soon: "Soon", someday: "Someday" };
-var TASK_REPEAT_LABEL = { 1: "daily", 7: "weekly", 14: "fortnightly", 28: "every 4 weeks" };
+
+// A repeat is a count and a unit. Months and years are calendar-based, not a
+// multiple of days, because three of the real repeating jobs run on calendar
+// months and 30 days would fire thirteen times a year and walk backwards
+// through the month. Postgres does the awkward arithmetic (31 Jan plus a month
+// is 28 Feb); this side only has to name it.
+var TASK_REPEAT_OPTIONS = [
+  ["", "One-off"], ["1:day", "Every day"], ["1:week", "Every week"],
+  ["2:week", "Every fortnight"], ["1:month", "Every month"],
+  ["3:month", "Every 3 months"], ["1:year", "Every year"]
+];
+var TASK_UNIT_WORD = { day: "daily", week: "weekly", month: "monthly", year: "yearly" };
+
+function repeatToken(t) {
+  return (t && t.repeat_every && t.repeat_unit) ? t.repeat_every + ":" + t.repeat_unit : "";
+}
+function repeatPayload(tok) {
+  if (!tok) return { repeat_every: null, repeat_unit: null };
+  var p = String(tok).split(":");
+  return { repeat_every: Number(p[0]), repeat_unit: p[1] };
+}
+function repeatWords(t) {
+  if (!t || !t.repeat_every || !t.repeat_unit) return "";
+  if (t.repeat_every === 1) return TASK_UNIT_WORD[t.repeat_unit] || ("every " + t.repeat_unit);
+  if (t.repeat_unit === "week" && t.repeat_every === 2) return "fortnightly";
+  return "every " + t.repeat_every + " " + t.repeat_unit + "s";
+}
+// A stored repeat the dropdown has no option for (every 5 days, say) would
+// otherwise silently show as the first option and be saved as that on the next
+// press, so it gets an option of its own.
+function repeatOptionsFor(tok) {
+  var opts = TASK_REPEAT_OPTIONS.slice();
+  if (tok && !opts.some(function (o) { return o[0] === tok; })) {
+    var p = String(tok).split(":");
+    opts.push([tok, "Every " + p[0] + " " + p[1] + (Number(p[0]) === 1 ? "" : "s")]);
+  }
+  return opts;
+}
 
 function taskDueChip(t) {
   var d = taskDay(t.due_date);
@@ -6899,7 +6938,7 @@ function taskRow(t) {
   var openEd = tasks.openId === t.task_id;
   var chips = [];
   if (!isDone) chips.push(taskDueChip(t));
-  if (t.repeat_days) chips.push('<span class="badge st">Repeats ' + esc(TASK_REPEAT_LABEL[t.repeat_days] || ("every " + t.repeat_days + " days")) + "</span>");
+  if (t.repeat_every) chips.push('<span class="badge st">Repeats ' + esc(repeatWords(t)) + "</span>");
   // Where it came from, but only when that is not "you typed it". Phase 2 puts
   // Bug tickets and Chatwoot threads through here and this is the line that
   // will say so.
@@ -6930,8 +6969,8 @@ function taskRow(t) {
           }).join("") + "</select></div>" +
         '<div><label for="te_due_' + t.task_id + '">Due</label><input id="te_due_' + t.task_id + '" type="date" value="' + taskDay(t.due_date) + '" /></div>' +
         '<div><label for="te_rep_' + t.task_id + '">Repeat</label><select id="te_rep_' + t.task_id + '">' +
-          [["", "One-off"], ["1", "Every day"], ["7", "Every week"], ["14", "Every fortnight"], ["28", "Every 4 weeks"]].map(function (o) {
-            return '<option value="' + o[0] + '"' + (String(t.repeat_days || "") === o[0] ? " selected" : "") + ">" + o[1] + "</option>";
+          repeatOptionsFor(repeatToken(t)).map(function (o) {
+            return '<option value="' + o[0] + '"' + (repeatToken(t) === o[0] ? " selected" : "") + ">" + o[1] + "</option>";
           }).join("") + "</select></div>" +
         '<button class="btn primary" onclick="tasksSave(\'' + t.task_id + '\')">Save</button>' +
         '<button class="btn" onclick="tasksDelete(\'' + t.task_id + '\')">Delete</button>' +
@@ -6953,12 +6992,14 @@ function tasksAdd() {
   var st = $("tasksAddStatus");
   if (!title) { st.textContent = "It needs a title first."; return; }
   st.textContent = "Adding...";
+  var rep = repeatPayload($("taskRepeat").value);
   tasksApi({
     action: "create",
     title: title,
     priority: $("taskPriority").value,
     due_date: $("taskDue").value || null,
-    repeat_days: $("taskRepeat").value || null
+    repeat_every: rep.repeat_every,
+    repeat_unit: rep.repeat_unit
   }).then(function () {
     $("taskTitle").value = "";
     $("taskDue").value = "";
@@ -6977,9 +7018,11 @@ function tasksSave(id) {
     title: ($("te_title_" + id).value || "").trim(),
     notes: $("te_notes_" + id).value || null,
     priority: $("te_pri_" + id).value,
-    due_date: $("te_due_" + id).value || null,
-    repeat_days: $("te_rep_" + id).value || null
+    due_date: $("te_due_" + id).value || null
   };
+  var rep = repeatPayload($("te_rep_" + id).value);
+  payload.repeat_every = rep.repeat_every;
+  payload.repeat_unit = rep.repeat_unit;
   if (!payload.title) { toast("A task needs a title."); return; }
   tasksApi(payload).then(function () {
     tasks.openId = "";
