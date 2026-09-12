@@ -3149,7 +3149,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r163 · 2026-09-12";  // bump this with each round, it lands on every feedback report
+var BUILD = "r164 · 2026-09-12";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7088,7 +7088,8 @@ var irpcs = {
   publishing: null, viewingVersion: null, saveMismatch: "",
   f: { kind: "all", rule: "", q: "", pending: false },
   learner: { token: "", exp: 0, error: "" },
-  previewMode: "published"
+  previewMode: "published",
+  stats: null, statsError: "", statsLoading: false
 };
 
 // Tickets last half an hour and cost an Apps Script round trip (two seconds on
@@ -7840,14 +7841,114 @@ function irpcsPreviewPopOut() {
 
 /* ---------------- results ---------------- */
 
+// r164: wired up. The numbers are only as good as the answers behind them, so
+// the attempt count is always on screen next to the percentage: "everyone gets
+// this wrong" off one attempt is not a finding, and a table that hides that
+// invites a rewrite of a question nobody has really tried yet.
 function irpcsRenderResults() {
   var host = $("irpcsResultsBody");
   if (!host) return;
-  host.innerHTML = '<div class="card">' +
-    '<div style="font-weight:700;margin-bottom:4px;">Which questions are tripping people up</div>' +
-    '<p class="small muted" style="margin:0 0 10px;">Per-question accuracy, worst first, with the wrong answer people pick most often. That pair is how a badly worded question gives itself away: a wrong option everybody reaches for is usually a wrong option that reads as true.</p>' +
-    '<p class="hint" style="margin:0;">Not wired up yet. It needs one more read on the IRPCS side, an <code>op=stats</code> over <code>irpcs.question_stats_v</code>, and there is nothing to show until the preview has put some real answers into <code>irpcs.events</code>. Both are in hand.</p>' +
-    '</div>';
+  if (!irpcs.stats && !irpcs.statsError && !irpcs.statsLoading) { irpcsLoadStats(); return; }
+
+  var head = '<div class="card" style="margin-bottom:12px;">' +
+    '<div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">' +
+      '<div style="min-width:0;">' +
+        '<div style="font-weight:700;margin-bottom:4px;">Which questions are tripping people up</div>' +
+        '<p class="small muted" style="margin:0;">Worst first, with the wrong answer people reach for most. That pair is how a badly worded question gives itself away: a wrong option everybody picks is usually one that reads as true.</p>' +
+      '</div>' +
+      '<button class="ghost small" style="padding:5px 10px;flex:0 0 auto;" onclick="irpcsLoadStats(true)">Refresh</button>' +
+    '</div></div>';
+
+  if (irpcs.statsError) {
+    host.innerHTML = head + '<div class="card"><p class="hint" style="margin:0 0 8px;">The numbers did not load.</p>' +
+      '<p class="small muted" style="margin:0 0 10px;">' + esc(irpcs.statsError) + '</p>' +
+      '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsLoadStats(true)">Try again</button></div>';
+    return;
+  }
+  if (!irpcs.stats) { host.innerHTML = head + '<div class="card"><p class="hint" style="margin:0;">Fetching...</p></div>'; return; }
+  if (!irpcs.stats.length) {
+    host.innerHTML = head + '<div class="card"><p class="hint" style="margin:0;">Nobody has answered anything yet. This fills in as students use the app, and the preview counts too.</p></div>';
+    return;
+  }
+
+  host.innerHTML = head + '<div class="card" style="padding:0;">' + irpcs.stats.map(function (s) {
+    var pct = s.pct_correct == null ? null : Math.round(Number(s.pct_correct) * 100);
+    var n = Number(s.attempts) || 0;
+    // Under five attempts the percentage is noise. Say so rather than colouring
+    // it red and sending somebody off to rewrite a question on one answer.
+    var thin = n < 5;
+    var colour = thin ? "var(--muted)" : (pct < 50 ? "var(--high)" : (pct < 80 ? "var(--medium)" : "var(--low)"));
+    return '<div class="irpcs-media-row" style="align-items:flex-start;">' +
+      '<div style="flex:0 0 64px;text-align:center;">' +
+        '<div style="font-size:19px;font-weight:700;color:' + colour + ';">' + (pct == null ? "?" : pct + "%") + '</div>' +
+        '<div class="small muted">' + n + (n === 1 ? " try" : " tries") + '</div>' +
+      '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:13px;line-height:1.4;">' + esc(s.stem || s.object_id) + '</div>' +
+        '<div class="small muted" style="margin-top:3px;">' + esc(s.object_id) +
+          (s.kind === "rule_check" ? " · rule check" : "") +
+          (s.level ? " · " + esc(s.level) : "") +
+          (thin ? " · too few answers to read much into" : "") + '</div>' +
+        (s.top_wrong_text
+          ? '<div class="small" style="margin-top:4px;color:var(--medium);">Most picked instead: "' + esc(s.top_wrong_text) + '"' +
+            (s.top_wrong_count ? " (" + Number(s.top_wrong_count) + " of " + n + ")" : "") + '</div>'
+          : (s.top_wrong_option != null
+              ? '<div class="small muted" style="margin-top:4px;">Most picked instead: option ' + esc(s.top_wrong_option) + ', which no longer matches an answer on this question.</div>'
+              : "")) +
+      '</div>' +
+      '<button class="ghost small" style="padding:3px 8px;flex:0 0 auto;" onclick="irpcsRaiseIssue(\'' + esc(s.object_id) + '\')" ' +
+        'title="Opens a new report with this question already filled in.">Raise it</button>' +
+      '</div>';
+  }).join("") + '</div>';
+}
+
+function irpcsLoadStats(force) {
+  if (irpcs.statsLoading) return;
+  if (irpcs.stats && !force) { irpcsRenderResults(); return; }
+  irpcs.statsLoading = true;
+  irpcs.statsError = "";
+  irpcsApi({ query: { op: "stats" } }).then(function (j) {
+    irpcs.stats = j.stats || [];
+  }).catch(function (e) {
+    irpcs.stats = null;
+    irpcs.statsError = String((e && e.message) || e);
+  }).then(function () {
+    irpcs.statsLoading = false;
+    irpcsRenderResults();
+  });
+}
+
+// Closes the loop: a question the numbers say is broken becomes a logged issue
+// without anyone retyping it. It lands on the normal log form rather than being
+// filed straight off, because whoever spotted it still has to say what they
+// think is wrong with it, and that sentence is the useful part.
+function irpcsRaiseIssue(objectId) {
+  var s = (irpcs.stats || []).filter(function (x) { return x.object_id === objectId; })[0] || {};
+  var pct = s.pct_correct == null ? null : Math.round(Number(s.pct_correct) * 100);
+  var lines = [
+    "IRPCS question " + objectId + " looks wrong.",
+    "",
+    s.stem ? "Question: " + s.stem : "",
+    pct == null ? "" : "Answered correctly " + pct + "% of the time, over " + Number(s.attempts) + " attempt" + (Number(s.attempts) === 1 ? "" : "s") + ".",
+    s.top_wrong_text ? 'The wrong answer people pick most is: "' + s.top_wrong_text + '"' : "",
+    "",
+    "What looks wrong about it:"
+  ].filter(function (x) { return x !== ""; });
+
+  // Only the text box is filled. The course, module and lesson fields live in
+  // the extracted-details section, which stays hidden until Extract has run, so
+  // setting them here would write into something nobody can see and the extract
+  // would overwrite them anyway. The text says "IRPCS question q.0004", which is
+  // what the extractor reads.
+  setView("instructor");
+  setTimeout(function () {
+    var box = $("rawText");
+    if (!box) { toast("Could not open the log form."); return; }
+    box.value = lines.join("\n");
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+    toast("Filled in from the numbers. Say what looks wrong, then press Extract.");
+  }, 150);
 }
 
 /* ===================== IRPCS MEDIA (r162) =====================
