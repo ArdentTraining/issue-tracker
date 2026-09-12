@@ -625,7 +625,7 @@ function setGrain(g){
 /* ------------------------------------------------------------------ load */
 function applyPayload(j, stale){
   showApp();
-  DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null, usage:j.usage || null };
+  DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null, usage:j.usage || null, questions:j.questions || null };
   renderLive();
   document.getElementById('lockReason').textContent = j.identity.reason;
   document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
@@ -673,8 +673,8 @@ async function loadAll(){
 
    The numbers and the tables themselves are exactly what they were. */
 const OPEN_KEY = 'ardr_open_v1';
-const SECTIONS = ['howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','activity','usage','health'];
-const DIRTY    = { lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, activity:true, usage:true, health:true };
+const SECTIONS = ['howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','activity','usage','questions','health'];
+const DIRTY    = { lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, activity:true, usage:true, questions:true, health:true };
 
 function readOpen(){
   try{ return JSON.parse(localStorage.getItem(OPEN_KEY) || '{}') || {}; }catch(e){ return {}; }
