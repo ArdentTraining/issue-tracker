@@ -6948,7 +6948,7 @@ var irpcs = {
   items: [], loaded: false, loading: false, error: "",
   openId: "", item: null, versions: [], itemLoading: false,
   edited: null, jsonText: "", jsonBad: false,
-  publishing: null, viewingVersion: null,
+  publishing: null, viewingVersion: null, saveMismatch: "",
   f: { kind: "all", rule: "", q: "", pending: false },
   learner: { token: "", exp: 0, error: "" },
   previewMode: "published"
@@ -7138,6 +7138,7 @@ function irpcsOpen(id) {
   irpcs.publishing = null;
   irpcs.viewingVersion = null;
   irpcs.jsonBad = false;
+  irpcs.saveMismatch = "";
   irpcs.itemLoading = true;
   irpcsRenderList();
   var host = $("irpcsEditor");
@@ -7210,6 +7211,23 @@ function irpcsRenderEditor() {
   }
 
   var it = irpcs.item, e = irpcs.edited || {};
+
+  // A body that is not an object cannot be put in a form, and drawing the form
+  // anyway is how this goes wrong quietly: every field reads empty, which looks
+  // exactly like an item nobody has written yet. Say what is actually true, and
+  // point at the way out, which is the history below.
+  if (!irpcsIsBody(it.draft)) {
+    host.innerHTML = '<div class="card" style="border-color:var(--high);">' +
+      '<div style="font-weight:700;margin-bottom:4px;">This item is stored wrongly</div>' +
+      '<p class="small muted" style="margin:0 0 8px;">' + esc(it.kind) + ' &middot; ' + esc(it.item_id) +
+      '. The draft is not an item, it is ' + esc(typeof it.draft) +
+      ', so there is nothing a form could show. This is a fault in how it was saved, not something you did.</p>' +
+      '<p class="small muted" style="margin:0 0 8px;">The published version is untouched, so students are seeing the right thing. ' +
+      (irpcs.versions.length ? 'Restore a version below to put a real draft back.' : 'There is no published version to restore from, so this one needs a hand.') +
+      '</p></div>' + irpcsVersionPanel();
+    return;
+  }
+
   var head =
     '<div class="card" style="margin-bottom:12px;">' +
       '<div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">' +
@@ -7232,7 +7250,15 @@ function irpcsRenderEditor() {
   else if (it.kind === "question") body = irpcsQuestionForm(e);
   else body = irpcsJsonForm(e);
 
-  host.innerHTML = head + (irpcs.publishing ? irpcsPublishPanel() : "") + body + irpcsVersionPanel();
+  var warn = irpcs.saveMismatch
+    ? '<div class="card" style="margin-bottom:12px;border-color:var(--high);">' +
+      '<div style="font-weight:700;margin-bottom:4px;">The last save did not store what was sent</div>' +
+      '<p class="small muted" style="margin:0;">' + esc(irpcs.saveMismatch) +
+      '. What you can see below is what the row actually holds now, read back fresh. ' +
+      'Nothing published has changed, so students are unaffected. Worth saying something before editing this one again.</p></div>'
+    : "";
+
+  host.innerHTML = head + warn + (irpcs.publishing ? irpcsPublishPanel() : "") + body + irpcsVersionPanel();
   irpcsMarkDirty();
 }
 
@@ -7362,6 +7388,13 @@ function irpcsBodyForSave() {
   return out;
 }
 
+// A body is an object. Not a string, not an array, not null. Worth its own
+// function because two places now have to ask, and because the answer being
+// "no" is a real thing that happened rather than a theoretical one.
+function irpcsIsBody(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
 function irpcsSave() {
   if (!irpcs.item) return;
   if (irpcs.jsonBad) { toast("Fix the JSON first."); return; }
@@ -7370,14 +7403,38 @@ function irpcsSave() {
   var body = irpcsBodyForSave();
   var id = irpcs.item.item_id;
   irpcsApi({ body: { op: "save", item_id: id, body: body } }).then(function (j) {
-    irpcs.item.draft = body;
-    irpcs.item.draft_updated_at = (j.saved && j.saved.draft_updated_at) || new Date().toISOString();
-    irpcs.item.draft_updated_by = (j.saved && j.saved.draft_updated_by) || irpcs.item.draft_updated_by;
-    // Keep the row in the left-hand list honest about the unpublished marker,
-    // without a second round trip for the whole list.
+    // Read it back before saying it saved.
+    //
+    // This is not belt and braces. The first real save this editor ever made
+    // returned a cheerful ok and stored a double-encoded STRING instead of the
+    // object, and the only symptom was an empty form the next time anyone
+    // opened the item. An "ok" from a write is a statement about the request,
+    // not about what is now in the row, and the difference is the whole bug.
+    return irpcsApi({ query: { op: "item", id: id } }).then(function (fresh) {
+      return { saved: j.saved, fresh: fresh };
+    });
+  }).then(function (res) {
+    var stored = res.fresh && res.fresh.item && res.fresh.item.draft;
+    if (!irpcsIsBody(stored) || JSON.stringify(stored) !== JSON.stringify(body)) {
+      irpcs.item = res.fresh.item;
+      irpcs.versions = res.fresh.versions || [];
+      irpcs.edited = irpcsIsBody(stored) ? JSON.parse(JSON.stringify(stored)) : {};
+      irpcs.saveMismatch = !irpcsIsBody(stored)
+        ? "it came back as " + (stored === null ? "nothing" : "a " + (Array.isArray(stored) ? "list" : typeof stored)) + " rather than an item"
+        : "what came back is not what was sent";
+      toast("That did not save properly. Nothing has been lost, but do not keep editing this item.", 9000);
+      irpcsRenderList();
+      irpcsRenderEditor();
+      return;
+    }
+    irpcs.saveMismatch = "";
+    irpcs.item = res.fresh.item;
+    irpcs.versions = res.fresh.versions || irpcs.versions;
+    irpcs.edited = JSON.parse(JSON.stringify(stored));
+    irpcs.jsonText = JSON.stringify(irpcs.edited, null, 2);
     var row = irpcs.items.filter(function (x) { return x.item_id === id; })[0];
     if (row) {
-      row.pending = !!(j.saved && j.saved.pending);
+      row.pending = !!(res.saved && res.saved.pending);
       row.draft_updated_by = irpcs.item.draft_updated_by;
     }
     toast("Draft saved. Nothing has reached a student yet.");
