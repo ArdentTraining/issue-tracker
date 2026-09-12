@@ -4314,14 +4314,17 @@ window.addEventListener("scroll", scheduleSaveBar, true);
 window.addEventListener("resize", scheduleSaveBar);
 
 // Show only the pages this user has permission for, and land them on the first.
-function applyPerms(user) {
-  // Remember the real login the first time through (and whenever we're not
-  // simulating), so the view-as bar can always find its way back.
-  if (!state.viewAs) state.realUser = user;
-  state.user = user;
-  state.perms = (user && user.perms) || {};
-  state.prefs = (user && user.prefs) || {};
-  var p = state.perms;
+// r161.3: which chrome this account may see, and nothing else.
+//
+// Split out of applyPerms so it can be run again on its own. applyPerms also
+// picks a landing view, which must NOT happen on a background refresh or it
+// throws somebody back to their default tab mid-job. The gating has no such
+// problem, and it was the half that was going stale: an admin granting you a
+// permission changed state.perms but left every rail item exactly as it was
+// drawn, so the new section stayed invisible until a second page load. Nothing
+// said so, which is the worst part. See permsKey_ below.
+function applyPermGates() {
+  var p = state.perms || {};
   $("tabInstructor").style.display = p.log ? "" : "none";
   $("tabActions").style.display = p.log ? "" : "none";
   $("tabLive").style.display = p.log ? "" : "none";
@@ -4341,15 +4344,75 @@ function applyPerms(user) {
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
   // The divider only earns its place if there is something on both sides.
   if ($("railDiv")) $("railDiv").style.display = (p.dev || p.course || p.analytics || p.users || p.irpcs) ? "" : "none";
-  // FB-0263: an admin sees the fix queues without being a name in them. The
-  // "developer" and "course" permissions now mean "can be assigned work here",
-  // and nothing else; visibility rides on being an admin.
 
   // Everybody gets to say whether a student is behind this report (Edd,
   // FB-0206). It used to be an admins-only "internal task" switch, which left
   // every instructor logging their own spotted bugs down the student-support
   // path and being handed things to try with a student who does not exist.
   if ($("field_mode")) $("field_mode").classList.toggle("hidden", !p.log);
+}
+
+// A stable fingerprint of a permission set, so "did this change?" is one
+// comparison rather than six. Sorted, because the key order in the object is
+// not ours to rely on.
+function permsKey_(p) {
+  p = p || {};
+  return Object.keys(p).sort().map(function (k) { return k + ":" + (p[k] === true ? 1 : 0); }).join(",");
+}
+
+// Which rail button belongs to which view. Used only to notice that the view
+// somebody is sitting on has just been taken away from them; the gating above
+// is still the single source of what is visible, and this reads its result
+// rather than repeating the rule.
+var VIEW_RAIL_ = {
+  instructor: "railNew", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
+  edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
+  irpcs: "railIrpcs", reports: "railReports", analytics: "railStats", users: "railUsers"
+};
+
+// Called when a refresh brings a different permission set than the one the
+// screen was drawn with. Re-gates, says so, and moves anyone who is standing
+// on a view that has just gone.
+function permsChanged_(before, after) {
+  applyPermGates();
+
+  var words = {};
+  PERM_LABELS.forEach(function (x) { words[x.k] = x.label; });
+  var gained = [], lost = [];
+  Object.keys(words).forEach(function (k) {
+    if (after[k] === true && before[k] !== true) gained.push(words[k]);
+    if (before[k] === true && after[k] !== true) lost.push(words[k]);
+  });
+
+  // A rail item appearing or vanishing on its own is confusing, so name it.
+  var msg = [];
+  if (gained.length) msg.push("You have been given " + gained.join(" and "));
+  if (lost.length) msg.push((msg.length ? "and lost " : "You no longer have ") + lost.join(" and "));
+  if (msg.length) toast(msg.join(", ") + ".", 6000);
+
+  // Standing on a page that is no longer yours: the backend refuses every
+  // action from here anyway, so leaving somebody looking at it only means they
+  // find out one failed click at a time.
+  var railId = VIEW_RAIL_[state.view];
+  var el = railId ? $(railId) : null;
+  if (el && el.style.display === "none") {
+    if (state.detailId) closeDetail();
+    setView((state.perms || {}).log ? "live" : "instructor");
+  }
+}
+
+function applyPerms(user) {
+  // Remember the real login the first time through (and whenever we're not
+  // simulating), so the view-as bar can always find its way back.
+  if (!state.viewAs) state.realUser = user;
+  state.user = user;
+  state.perms = (user && user.perms) || {};
+  state.prefs = (user && user.prefs) || {};
+  var p = state.perms;
+  applyPermGates();
+  // FB-0263: an admin sees the fix queues without being a name in them. The
+  // "developer" and "course" permissions now mean "can be assigned work here",
+  // and nothing else; visibility rides on being an admin.
 
   var name = (user && (user.name || user.email)) || "";
   state.selectedInstructor = name;
@@ -4505,7 +4568,17 @@ function loadIssues(isRetry) {
       // On every later refresh it must NOT, or a background reload would
       // throw the person back to their default tab mid-job.
       if (!state._permsApplied) { applyPerms(res.user); state._permsApplied = true; }
-      else if (!state.viewAs) { state.user = res.user; state.perms = res.user.perms || {}; state.prefs = res.user.prefs || {}; }
+      else if (!state.viewAs) {
+        var permsBefore = state.perms || {};
+        state.user = res.user; state.perms = res.user.perms || {}; state.prefs = res.user.prefs || {};
+        // r161.3: the data was already being refreshed here. The CHROME was
+        // not, so a permission granted while somebody had the app open stayed
+        // invisible to them until they loaded the page a second time, with
+        // nothing on screen to say a second load was needed. Re-gate only when
+        // the set has actually moved, so an ordinary background refresh still
+        // costs nothing and still cannot move anybody's view.
+        if (permsKey_(permsBefore) !== permsKey_(state.perms)) permsChanged_(permsBefore, state.perms);
+      }
     }
     state._fromCache = false;
     applyBootstrap(res);
