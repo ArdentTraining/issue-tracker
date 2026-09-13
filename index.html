@@ -1256,6 +1256,15 @@
            pasted thread with it. The form now keeps its own draft as you type,
            and offers it back rather than filling itself in behind you - the
            person opening this form may well be starting something new. -->
+      <!-- r168. Measured 13 Sep: a 16,207-char thread extracts in 61 seconds;
+           a 21,138-char one with eight separate conversations on it burns
+           three minutes and then says it could not finish. The second case is
+           real and a single call cannot do it, so the least we can do is say so
+           before the wait rather than after it. Advisory only - length is a
+           loose proxy for "how many separate problems are in here", which is
+           what actually decides it, so this never blocks a paste. -->
+      <div id="longPasteNote" class="small muted hidden" style="margin:-4px 0 10px;color:var(--medium);"></div>
+
       <div id="draftBar" class="batch hidden" style="margin-bottom:10px;border-color:var(--accent);">
         <strong>There's an unfinished report here</strong>
         <div class="small muted" id="draftBarWhen" style="margin:3px 0 8px;"></div>
@@ -3219,7 +3228,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r168 · 2026-09-13";  // bump this with each round, it lands on every feedback report
+var BUILD = "r168.1 · 2026-09-13";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11547,6 +11556,19 @@ function captureDraft() {
   if (!String(d.fields.rawText || "").trim() && !String(d.fields.f_summary || "").trim()) return null;
   return d;
 }
+// Advisory, and deliberately not a block: the thing that decides whether an
+// extraction fits is how many SEPARATE problems the thread holds, and length
+// is only a loose stand-in for that. A long thread about one fault reads fine.
+var LONG_PASTE_CHARS = 18000;
+function noteLongPaste() {
+  var el = $("longPasteNote"), box = $("rawText");
+  if (!el || !box) return;
+  var n = String(box.value || "").length;
+  if (n < LONG_PASTE_CHARS) { el.classList.add("hidden"); return; }
+  el.textContent = "That is a long paste (" + Math.round(n / 1000) + "k characters). Extract will take a couple of minutes, and if the thread holds a lot of separate problems it may not finish at all. Splitting it into a couple of pastes is quicker and files them better.";
+  el.classList.remove("hidden");
+}
+
 function saveDraftNow() {
   // Editing an existing issue is not a draft: that work already has a row of
   // its own, and restoring it into a blank form later would file a duplicate.
@@ -11624,6 +11646,7 @@ function restoreDraft() {
   renderRequestKind();
   renderFormChecklist();
   $("draftBar").classList.add("hidden");
+  noteLongPaste();
   toast("Picked it back up. Nothing has been logged yet - it is still just on the form.", 7000);
   if ($("rawText")) $("rawText").focus();
 }
@@ -11638,7 +11661,7 @@ function restoreDraft() {
     var t = e && e.target;
     return !!(t && t.closest && t.closest("#instructorView"));
   };
-  document.addEventListener("input", function (e) { if (inForm(e)) saveDraftSoon(); }, true);
+  document.addEventListener("input", function (e) { if (inForm(e)) { saveDraftSoon(); noteLongPaste(); } }, true);
   document.addEventListener("change", function (e) { if (inForm(e)) saveDraftSoon(); }, true);
   // The debounce is the whole risk: a tab closed inside 900ms of the last
   // keystroke would lose that last bit. This is the flush.
