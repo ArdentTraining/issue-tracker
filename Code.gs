@@ -616,6 +616,7 @@ function doPost(e) {
     if (action === 'listLiveCases') return jsonOut(listLiveCases_(body));
     if (action === 'caseBrief') return jsonOut(caseBrief_(body));
     if (action === 'caseCheckReply') return jsonOut(caseCheckReply_(body));
+    if (action === 'caseNote') return jsonOut(caseNote_(body));
     if (action === 'caseDraftReply') return jsonOut(caseDraftReply_(body));
     if (action === 'caseCheckpoint') return jsonOut(caseCheckpoint_(body));
     if (action === 'caseClose') return jsonOut(caseClose_(body));
@@ -840,7 +841,8 @@ function reqPerm_(action) {
     // The Live Case workspace (Round 45): visible to every instructor-level
     // user, and cases are shared - anyone can pick one up and carry on.
     case 'listLiveCases': case 'caseBrief': case 'caseCheckReply': case 'caseDraftReply':
-    case 'caseCheckpoint': case 'caseClose': case 'caseTouch': case 'caseIgnoreLog': case 'batchStudentDrafts': return 'log';
+    case 'caseCheckpoint': case 'caseClose': case 'caseTouch': case 'caseIgnoreLog': case 'batchStudentDrafts':
+    case 'caseNote': return 'log';
     // Saying "this suggestion was wrong here" belongs to whoever was shown it,
     // so it sits at the same tier as the case. Approving the correction, and
     // therefore changing a corpus row, is Edd's alone (FB-0231).
@@ -1921,7 +1923,32 @@ function addIssue_(data) {
       var ra142 = new Date(data.resolved_at || '');
       data.resolved_at = isNaN(ra142.getTime()) ? '' : ra142.toISOString();
     } else if (rs142 === 'tbc') {
-      data.tbc = true;
+      // FB-0372 (Edd): "Things are getting suggested as resolved TBC but actually
+      // it isn't resolved. It is resolved in the sense that the student is up and
+      // running again, but the underlying cause has not been identified. This one
+      // I think should be logged as parked. Not worth dev attention right now but
+      // if we get lots more reports it becomes a high priority open issue."
+      //
+      // That is park's definition, word for word, and the live-case path has
+      // worked this way since 19 Aug (the autoParked block in caseCheckpoint_):
+      // sorted for this student, fault not confirmed fixed, so park it and let
+      // the next report wake it up. The form path never learned the same thing,
+      // because a workaround and a real-fix-awaiting-confirmation both arrived
+      // as the single word "tbc". The extraction now separates them.
+      //
+      // A report that merges onto an existing issue never gets here as a park:
+      // addReportToIssue_ deliberately leaves the issue it joins alone, because
+      // one student being sorted is no reason to stop work for everybody else
+      // on the row. So this only ever parks a first, standalone report - which
+      // is the one thing park assumes.
+      var workaround142 = data.unblocked_by_workaround === true || data.unblocked_by_workaround === 'true';
+      if (workaround142) {
+        data.parked = true;
+        data.resolution_note = String(data.resolution_note || '') +
+          '\n\n[Parked rather than Resolved - TBC: the student is going again on a workaround, but nothing here says what was actually wrong, so there is no fix to confirm. It stays on the record for the next report to be linked to, and a second report lifts it back out.]';
+      } else {
+        data.tbc = true;
+      }
     }
   }
   var sorted142 = !!(data.resolved || data.tbc ||
@@ -2540,8 +2567,29 @@ function issueScore_(rec) {
 }
 // Severe is ALWAYS high, however few people have hit it: one person unable to
 // get into a course they paid for does not become less urgent for being alone.
+//
+// FB-0358 (Edd, on an issue sitting at high and with_dev): "This is a relatively
+// minor thing and only affecting one student. And it works for Charlie. I don't
+// think this should be high or passed on to Devs yet."
+//
+// The rule above was written for someone who is STUCK, and it was firing for
+// someone who was not: a slide that would not zoom until a hard refresh, once,
+// for one person, working fine for everybody else. Severe reads the fault at its
+// worst moment and takes no account of the student already being on their way
+// again. So the one exception: a single report, and that report already sorted
+// by a way round it. A second person reporting the same thing removes the
+// exception on the spot and it is high again, which is the behaviour Edd
+// described wanting - "if we get lots more reports it becomes a high priority
+// open issue". Nothing here downgrades anybody who is still blocked.
+function oneOffOnAWorkaround_(rec) {
+  if (!rec) return false;
+  if (Math.max(1, Number(rec.report_count || 1)) > 1) return false;
+  var st = String(rec.status || '').toLowerCase();
+  var sorted = rec.student_sorted === true || String(rec.student_sorted) === 'true';
+  return st === 'parked' || st === 'resolved_tbc' || sorted;
+}
 function priorityFromScore_(rec) {
-  if (severityOf_(rec) === 'severe') return 'high';
+  if (severityOf_(rec) === 'severe') return oneOffOnAWorkaround_(rec) ? 'medium' : 'high';
   var sc = issueScore_(rec);
   return sc >= SCORE_HIGH ? 'high' : (sc >= SCORE_MEDIUM ? 'medium' : 'low');
 }
@@ -4237,6 +4285,41 @@ function chatwootNote_(convId, issue, appUrl) {
   } catch (e) {
     Logger.log('chatwootNote_ failed twice on conversation ' + convId + ': ' + e);
     return { ok: false, why: String(e).slice(0, 200) };
+  }
+}
+
+// FB-0364 (Edd): "could do with an 'add an update' option here. For example I
+// just tried logging in as the student and found it all worked for me. So I
+// want to add that as an update."
+//
+// On a case that has been filed, an update has an obvious home and goes on the
+// issue (addUpdate). On one that has NOT been filed there was nowhere at all to
+// put what you just found out, so it stayed in the instructor's head. It goes
+// on the conversation as a private note: that is where the case lives, it is
+// what the next person reads, and it survives this tab being closed.
+//
+// Private, so the student never sees it - the same message_type/private pair
+// chatwootNote_ uses, and the same one retry, because a Chatwoot write that
+// fails once often posts on the second go (r152.5).
+function caseNote_(data) {
+  var convId = String((data && data.conversation_id) || '').trim();
+  var text = String((data && data.text) || '').trim();
+  if (!convId) return { ok: false, error: 'no conversation id' };
+  if (!text) return { ok: false, error: 'nothing to note' };
+  var cfg = chatwootCfg_();
+  if (!cfg.token || !cfg.account) return { ok: false, error: 'Chatwoot is not configured' };
+  var who = (data && data.user_name) ? String(data.user_name) : 'someone';
+  var body = 'Note from Bugs (' + who + '): ' + text;
+  var post = function () {
+    chatwootCall_('/conversations/' + convId + '/messages', 'post', {
+      content: body, message_type: 'outgoing', private: true
+    });
+  };
+  try {
+    try { post(); } catch (e1) { Utilities.sleep(1500); post(); }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e).slice(0, 200) };
   }
 }
 
@@ -6629,6 +6712,7 @@ function extractionStaticPrompt_() {
     '- priority_reason: one sentence explaining the priority',
     '- resolution_status: "resolved" if the pasted conversation shows this problem was ALREADY sorted out in the chat itself (an instructor gave a definitive answer or fix, the thread says "Conversation was marked resolved by ...", or the student confirms it works now, e.g. "that solved it", "thanks, working now", "all good"). "tbc" if a fix or answer was given but the student has not yet confirmed it worked. "open" if it is still unresolved, or was only logged to hand to the developers. When in doubt, "open".',
     '- IMPORTANT exception to the above: a WORKAROUND is not a fix. If the only thing that got the student going was a way round the fault rather than a correction of it (switching browser, incognito or private mode, clearing cache or cookies, disabling extensions, reinstalling the app, switching device, switching to mobile data), return "tbc" even when the student confirms it works now. The student is unblocked but the fault is still there, and someone needs to decide whether it was a one-off or is hitting everyone. This does NOT apply to a support question that was simply answered, or to a change that genuinely corrected the cause (a corrected username, an account re-enrolled, a lesson republished, a payment taken): those stay "resolved".',
+    '- unblocked_by_workaround: true when resolution_status is "tbc" for the reason in the exception above - the student is going again only because of a way ROUND the fault (another browser, incognito, clearing cache, a hard refresh, another device, mobile data, reinstalling) and nothing in the conversation identifies what was actually wrong. false when the tbc is the ordinary kind: a real fix or answer was given and we are simply waiting for the student to confirm it worked. false when resolution_status is not "tbc".',
     '- resolution_note: when resolution_status is "resolved" or "tbc", one or two sentences stating the actual answer or fix that was given (what resolved it), otherwise null.',
     '- student_sorted: true when THIS student has everything they need and nobody has to go back to them, even though the fault itself is still there for the developers. Typical shape: the instructor worked around it by hand (extended the account manually because the Extend button was missing, enrolled them themselves, sent the file directly), or the student is happily using another route that works. It is about the person, not the bug, so it can be true while resolution_status is still "open". Return false when the student is still waiting on us, is still blocked, or was promised an update.',
     '- resolved_by: the staff member who resolved it or gave the answer (from "marked resolved by X", or whoever replied with the fix), or null.',
@@ -6843,7 +6927,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r163 · 2026-09-12';
+var CODE_STAMP = 'r165 · 2026-09-13';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

@@ -503,7 +503,13 @@
 
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--line); padding: 12px 18px; border-radius: 10px; z-index: 100; display: none; }
   .toast.show { display: block; }
-  .fab { position: fixed; bottom: 20px; right: 20px; z-index: 60; background: var(--accent); color: #fff; font-weight: 600; border-radius: 999px; padding: 11px 18px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: none; }
+  .fab { position: fixed; bottom: 20px; right: 20px; z-index: 60; background: var(--accent); color: #fff; font-weight: 600; border-radius: 999px; padding: 11px 18px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: none; transition: bottom .12s ease; }
+  /* FB-0373 (Edd): "The feedback button is getting hidden." The log form's
+     submit row is sticky at the bottom and was given z-index 65 back in July so
+     it would never hide behind the view-as bar - which put it in front of the
+     feedback button instead, and the save bar (70) sits over both. So the
+     button steps up out of the way, the same lift the view-as bar already had. */
+  .fab.lifted { bottom: 96px; }
 
   /* Course fixes filter dropdowns: a single wrapping row, not a stack */
   /* Course fixes filters: a tidy auto-fitting grid rather than one long row
@@ -1556,6 +1562,7 @@
     <select id="flt_sort" onchange="renderAdmin()">
       <option value="">Sort: priority</option>
       <option value="longest">Sort: longest open</option>
+      <option value="activity">Sort: recent activity</option>
       <option value="newest">Sort: newest</option>
       <option value="reports">Sort: most reported</option>
       <option value="oldest">Sort: oldest first</option>
@@ -1974,6 +1981,21 @@
           <option value="question">Questions</option>
           <option value="scenario">Scenarios</option>
           <option value="library">Library</option>
+        </select>
+        <!-- FB-0377 (Edd): "It would be good if I could filter by level as well
+             (day skipper or yachtmaster)." The level is already on every list row
+             (irpcs-editor sends it, defaulting to DS for questions written before
+             the ladder existed), so this only ever needed asking for. Essential
+             Navigation joined the ladder in r162, so it is here too.
+             It reads the stored value - "asked from this level on" - rather than
+             "a student at this level sees it", because the ladder is cumulative
+             and the second reading would make every filter include the ones
+             below it. -->
+        <select id="irpcsLevel" onchange="irpcsFilter('level', this.value)" title="The level a question is asked from. Rules, scenarios and library items do not carry one.">
+          <option value="all">All levels</option>
+          <option value="EN">Asked from: Essential Navigation</option>
+          <option value="DS">Asked from: Day Skipper</option>
+          <option value="YM">Asked from: Yachtmaster</option>
         </select>
         <input id="irpcsRule" style="width:120px;" placeholder="Rule no." inputmode="numeric"
                oninput="irpcsFilter('rule', this.value)" title="Rule number. Questions are matched on their first rule reference." />
@@ -3149,7 +3171,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r164 · 2026-09-12";  // bump this with each round, it lands on every feedback report
+var BUILD = "r165 · 2026-09-13";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3494,11 +3516,18 @@ function renderFormChecklist() {
   // admins are told on Slack; the backend makes the same distinction, so a
   // hand-built request cannot route itself.
   var canFastTrack = !!(state.perms && state.perms.users);
-  var fastTrackHtml = '<label style="display:flex;gap:8px;align-items:flex-start;margin:0 0 10px;font-size:13px;color:var(--text);">' +
-    '<input type="checkbox" id="f_fast_track" style="margin-top:2px;"' + (state._fastTrack ? ' checked' : '') + ' onchange="state._fastTrack=this.checked">' +
-    (canFastTrack
-      ? '<span>Fast-track to the developers<br><span class="small muted">Skips the troubleshooting gate - for something clearly platform-side. Otherwise a high-priority issue reaches the developers once the relevant checks below have been tried.</span></span>'
-      : '<span>Ask an admin to fast-track this<br><span class="small muted">For something clearly platform-side that should skip the troubleshooting gate. An admin is told on Slack and decides; until then the checks below still apply.</span></span>') +
+  // FB-0374 (Edd): "the Fast-track to the developers tick box should be left
+  // aligned. It is hard to see the connection between the description and the
+  // tick box... the extra info could be a tool tip on mouseover, always
+  // preferred to permanent clutter." Two lines of explanation sat between the
+  // box and the next thing, so the box read as belonging to nothing. One line,
+  // box then words, and the why waits on hover.
+  var ftWhy = canFastTrack
+    ? "Skips the troubleshooting gate - for something clearly platform-side. Otherwise a high-priority issue reaches the developers once the relevant checks below have been tried."
+    : "For something clearly platform-side that should skip the troubleshooting gate. An admin is told on Slack and decides; until then the checks below still apply.";
+  var fastTrackHtml = '<label title="' + esc(ftWhy) + '" style="display:flex;gap:8px;align-items:center;justify-content:flex-start;margin:0 0 10px;font-size:13px;color:var(--text);cursor:help;">' +
+    '<input type="checkbox" id="f_fast_track" style="margin:0;flex:none;"' + (state._fastTrack ? ' checked' : '') + ' onchange="state._fastTrack=this.checked">' +
+    '<span>' + (canFastTrack ? 'Fast-track to the developers' : 'Ask an admin to fast-track this') + '</span>' +
     '</label>';
   panel.innerHTML = fastTrackHtml +
     '<div class="h">Before the developers: troubleshooting checklist</div>' +
@@ -3594,7 +3623,21 @@ function apiPost(payload) {
       body: JSON.stringify(payload)
     }).then(function (r) { return r.text(); }).then(function (txt) {
       try { return JSON.parse(txt); }
-      catch (e) { var err = new Error("backend returned a page, not JSON"); err.aitNotJson = true; err.aitBody = String(txt).slice(0, 200); throw err; }
+      catch (e) {
+        // FB-0367 (Edd): "got an error message when logging this issue." The
+        // message was "backend returned a page, not JSON", which is true and
+        // useless: it says nothing about the only question he had, which is
+        // whether the thing he pressed actually filed. On a WRITE we genuinely
+        // cannot tell - the request ran for 71 seconds and Google answered with
+        // a page, and the script may well have finished the job on the far side
+        // of that. The one thing that must not happen is pressing it again and
+        // filing twice (which is why writes are off the retry list below), so
+        // the message says look first.
+        var err = new Error(RETRYABLE_READS[action]
+          ? "backend returned a page, not JSON"
+          : "That ran too long and the backend answered with a page instead of an answer, so there is no way to tell from here whether it saved. Refresh and look before sending it again - sending it twice would file it twice.");
+        err.aitNotJson = true; err.aitBody = String(txt).slice(0, 200); throw err;
+      }
     });
   }
   return send().catch(function (e) {
@@ -4202,7 +4245,7 @@ var viewAsLiftQueued = false;
 function scheduleViewAsLift() {
   if (viewAsLiftQueued) return;
   viewAsLiftQueued = true;
-  requestAnimationFrame(function () { viewAsLiftQueued = false; positionViewAsBar(); });
+  requestAnimationFrame(function () { viewAsLiftQueued = false; positionViewAsBar(); positionFab(); });
 }
 function positionViewAsBar() {
   var bar = $("viewAsBar");
@@ -4213,6 +4256,27 @@ function positionViewAsBar() {
   var b = bar.getBoundingClientRect(), r = row.getBoundingClientRect();
   if (r.bottom > b.top && r.top < b.bottom && r.left < b.right && r.right > b.left) {
     bar.classList.add("lifted");
+  }
+}
+// The feedback button has exactly the same problem as the view-as bar, against
+// exactly the same two things, so it is measured in the same frame rather than
+// growing a second scheduler that could disagree with this one.
+function positionFab() {
+  var fab = $("fbBtn");
+  if (!fab || fab.style.display === "none") return;
+  fab.classList.remove("lifted");
+  var f = fab.getBoundingClientRect();
+  var blockers = [];
+  var row = document.querySelector("#detailsSection .submit-row");
+  if (row && row.offsetParent) blockers.push(row);
+  var sb = $("saveBar");
+  if (sb && sb.classList.contains("on")) blockers.push(sb);
+  for (var n = 0; n < blockers.length; n++) {
+    var r = blockers[n].getBoundingClientRect();
+    if (r.bottom > f.top && r.top < f.bottom && r.left < f.right && r.right > f.left) {
+      fab.classList.add("lifted");
+      return;
+    }
   }
 }
 window.addEventListener("scroll", scheduleViewAsLift, true);
@@ -4286,23 +4350,41 @@ function saveBarPick() {
       top = 0; bottom = window.innerHeight; left = railW; right = window.innerWidth;
       floor = saveBarFloor();
     }
-    var b = btn.getBoundingClientRect();
-    if (b.bottom > top && b.top < bottom - floor - SAVE_BAR_H) continue;   // the real button is there to be pressed
     var sr = surface.getBoundingClientRect();
     if (sr.top > bottom - 80 || sr.bottom < top + 80) continue;            // not at this pane yet, or past it
-    return { spec: spec, btn: btn, left: left, width: right - left, floor: floor, page: !sc };
+    // This pane qualifies, so its clearance is reserved from here on whether
+    // or not the bar ends up showing. See saveBarApply for why.
+    var hold = { spec: spec, btn: btn, left: left, width: right - left, floor: floor, page: !sc };
+    var b = btn.getBoundingClientRect();
+    if (b.bottom > top && b.top < bottom - floor - SAVE_BAR_H) return { bar: null, hold: hold };  // the real button is there to be pressed
+    return { bar: hold, hold: hold };
   }
-  return null;
+  return { bar: null, hold: null };
 }
 
 function saveBarApply() {
   var bar = $("saveBar");
   if (!bar) return;
-  var pick = saveBarPick();
+  var got = saveBarPick(), pick = got.bar, hold = got.hold;
+  // FB-0368 (Edd): "I can't scroll down... it keeps flicking back up."
+  //
+  // The clearance below is 80px of padding, and it used to go on only while
+  // the bar was showing. At the bottom of a pane that is exactly what starts a
+  // loop: the bar appears, 80px of padding appears under the content, the
+  // content sits 80px higher, the real save button comes into view, the bar
+  // decides it is not needed, the padding goes, the browser clamps the scroll
+  // back to the new bottom, the button leaves view again - and round it goes,
+  // once per frame, for as long as you hold the scroll there.
+  //
+  // So the room is reserved by the PANE qualifying, not by the bar showing. The
+  // height stops changing, and with it the flick. Same trick as the view-as bar
+  // (positionViewAsBar): measure in a frame the thing being measured cannot move.
+  document.body.classList.toggle("savebar-page", !!(hold && hold.page));
+  document.body.classList.toggle("savebar-drawer", !!(hold && !hold.page));
   if (!pick) {
     bar.classList.remove("on");
     state._saveBarBtn = null;
-    document.body.classList.remove("savebar-drawer", "savebar-page");
+    positionFab();
     return;
   }
   state._saveBarBtn = pick.btn;
@@ -4312,8 +4394,7 @@ function saveBarApply() {
   bar.style.width = pick.width + "px";
   bar.style.bottom = pick.floor + "px";
   bar.classList.add("on");
-  document.body.classList.toggle("savebar-page", !!pick.page);
-  document.body.classList.toggle("savebar-drawer", !pick.page);
+  positionFab();
 }
 // It presses the real button, so there is one save path and not two.
 function saveBarGo() {
@@ -4544,7 +4625,14 @@ function renderCurrentView() {
   else if (state.view === "analytics") renderAnalytics();
   else if (state.view === "dev") renderDev();
   else if (state.view === "course") renderCourse();
-  else if (state.view === "live") renderLive();
+  // FB-0370 (Edd): "pressing the student told button doesn't seem to do
+  // anything." It did: the write landed and the row was patched. But Today is
+  // the live view with the ACTION list folded into it (applyShell moves those
+  // nodes into todayActionsSlot), and this function only ever redrew the live
+  // half, so the card the button sits on never changed. setView drew it once
+  // on the way in and nothing redrew it again. Every Today action button read
+  // as dead for the same reason, not just this one.
+  else if (state.view === "live") { renderLive(); renderActions(); }
 }
 
 // Draw from the cache immediately, then swap in the fresh copy. Keeps the
@@ -5299,7 +5387,15 @@ function renderActions() {
       // FB-0333 (Edd): "check the chat history to see if the student has been
       // informed." Reads what we actually sent them after the fix; only a
       // message that really says it is sorted counts, and it ticks itself off.
-      (i.chatwoot_conversation_id ? ' <button class="ghost small" style="padding:5px 12px;" title="Reads the Chatwoot conversation for a message from us, after the fix, telling them it is sorted." onclick="' + stop + 'checkAlreadyTold(\'' + id + '\')">Already told?</button>' : '');
+      // FB-0371 (Edd): "If we check chatwoot the student has confirmed
+      // everything is fixed... so they don't need to be here with a 'tell the
+      // student' prompt." The check behind this button has read the STUDENT's
+      // side since r146 and marks the job done on their own "that's working
+      // now" - but the button only appeared when the row carried a conversation
+      // id, while studentToldCheck_ will find the conversation from a CONTACT id
+      // too (r146.1). So on the rows that came in from a chat import, the one
+      // control that could have answered the question was hidden.
+      ((i.chatwoot_conversation_id || i.chatwoot_contact_id) ? ' <button class="ghost small" style="padding:5px 12px;" title="Reads the Chatwoot conversation from the report onwards. Counts either us telling them it is fixed, or the student saying it is working now - and ticks the job off if it finds one." onclick="' + stop + 'checkAlreadyTold(\'' + id + '\')">Already sorted?</button>' : '');
     else if (r.kind === "followup") btn = (r.nudged ? '' :
       '<button class="primary small fu-nudge" style="padding:5px 12px;" title="Opens a ready-written check-in asking if the fix worked. Send it, press the sent marker, and the 7-day clock keeps running." onclick="' + stop + 'nudgeStudent(\'' + id + '\')">Nudge the student</button> ') +
       '<button class="' + (r.nudged ? 'primary' : 'ghost') + ' small" style="padding:5px 12px;" title="The workaround held, or the fix has since landed. Closes it for good - same as Resolved everywhere else." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Resolved</button>' +
@@ -5811,10 +5907,32 @@ function renderLiveDetail() {
     '<div class="small muted" style="margin-bottom:10px;">' +
       (c.student_contact ? esc(c.student_contact) : '') +
       (b.link ? ' · <a href="' + esc(b.link) + '" target="_blank" style="color:var(--accent);">open in Chatwoot</a>' : '') +
-      // Edd, 19 Aug 2026: three buttons on the row, not five. These two are
-      // housekeeping rather than decisions - one re-reads, one walks away - so
-      // they sit up here with the other small print instead of competing with
-      // the three things you actually came to do.
+      // Edd, 19 Aug 2026: three buttons on the row, not five. These are
+      // housekeeping rather than decisions - they read, re-read, or walk away -
+      // so they sit up here with the other small print instead of competing
+      // with the things you actually came to do.
+      //
+      // FB-0365 (Edd): "we could have one more option 'open full report'." What
+      // the full thing IS depends on whether this case has been filed, so the
+      // label says which rather than one word meaning two things.
+      ' · <a href="#" onclick="event.preventDefault();' +
+        (c.issue_id ? 'liveOpenIssue(\'' + esc(c.issue_id) + '\');' : 'liveOpenTranscript();') +
+        '" style="color:var(--accent);" title="' +
+        (c.issue_id ? 'Opens the issue filed from this conversation, with every report and screenshot on it.'
+                    : 'Opens the whole conversation, rather than the summary of it above.') + '">' +
+        (c.issue_id ? 'open full report' : 'read the conversation') + '</a>' +
+      // FB-0369 (Edd): "Could do with a button to get it to check chatwoot for
+      // updates." Refresh at the top re-reads the LIST; this asks whether this
+      // one conversation has moved on, which is the question you have when you
+      // are looking at a case.
+      ' · <a href="#" onclick="event.preventDefault();liveCheckUpdates();" style="color:var(--accent);"' +
+        ' title="Asks Chatwoot whether anything new has come in on this conversation since we last looked. Free, no AI.">check for updates</a>' +
+      // FB-0364 (Edd): somewhere to put what you just found out.
+      ' · <a href="#" onclick="event.preventDefault();liveAddUpdate();" style="color:var(--accent);"' +
+        ' title="' + (c.issue_id
+          ? 'Adds a line to the issue filed from this conversation - what you tried, what you found.'
+          : 'Nothing is filed yet, so this goes on the Chatwoot conversation as a private note. The student never sees it.') +
+        '">add an update</a>' +
       ' · <a href="#" onclick="event.preventDefault();liveRefreshBrief();" style="color:var(--accent);"' +
         ' title="Re-reads the whole conversation and rewrites the summary below. This one costs an AI call, which is why it is not the Refresh at the top.">refresh the brief</a>' +
       ' · <a href="#" onclick="event.preventDefault();liveCloseCase();" style="color:var(--muted);"' +
@@ -5827,10 +5945,15 @@ function renderLiveDetail() {
   if (c.issue_id) {
     html += '<div class="small" style="margin-bottom:10px;">' +
       '<span class="badge chat-badge">issue filed</span> ' +
-      (linkedIssue
-        ? '<a href="#" onclick="liveOpenIssue(\'' + esc(c.issue_id) + '\');return false;" style="color:var(--accent);">' + esc(shortId(linkedIssue)) + '</a> ' +
-          statusBadge(linkedIssue.status, linkedIssue) + ' ' + priBadge(linkedIssue.priority)
-        : '') +
+      // FB-0362 (Edd): "if it's already been logged and has an open case, can we
+      // have a link to it here." There was one, but only when the issue happened
+      // to be in the list this tab had loaded - and a filed case whose issue was
+      // filtered out, or logged since the last refresh, showed the "issue filed"
+      // badge with nothing to click. The link is what the line is for, so it is
+      // drawn from the id we already have and the badges join it when we know them.
+      '<a href="#" onclick="liveOpenIssue(\'' + esc(c.issue_id) + '\');return false;" style="color:var(--accent);">' +
+        esc(linkedIssue ? shortId(linkedIssue) : String(c.issue_id).slice(0, 8)) + '</a> ' +
+      (linkedIssue ? statusBadge(linkedIssue.status, linkedIssue) + ' ' + priBadge(linkedIssue.priority) : '') +
       (c.chat_still_open ? ' <span class="badge chat-badge">chat still open in Chatwoot</span>' : '') +
     '</div>';
   }
@@ -5903,13 +6026,73 @@ function renderLiveDetail() {
       }).join("") + '</div></details>';
   }
   if (b.transcript) {
-    html += '<details class="acc" style="margin-top:8px;"><summary>The conversation</summary>' +
+    html += '<details class="acc" id="liveTranscript" style="margin-top:8px;"><summary>The conversation</summary>' +
       '<div style="white-space:pre-wrap;font-size:13px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;">' + esc(b.transcript) + '</div></details>';
   }
   html += '</div>';
   dock.innerHTML = html;
 }
 function liveOpenIssue(id) { openIssueById(id, false); }
+
+// FB-0365. The whole conversation is already on the brief, in a fold at the
+// very bottom of a pane taller than the screen - which is the FB-0334 problem
+// again: opening it changes nothing you can see. So the link opens it AND puts
+// it where it can be read.
+function liveOpenTranscript() {
+  var d = $("liveTranscript");
+  if (!d) { toast("No conversation on this brief yet - press refresh the brief."); return; }
+  d.open = true;
+  try { d.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {}
+}
+
+// FB-0369. Whether THIS conversation has moved on. caseCheckReply is the same
+// call the log flow makes before filing ("the conversation has usually moved on
+// since the draft"), so this is that check on its own, on demand.
+function liveCheckUpdates() {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  busyShow("Asking Chatwoot whether anything new has come in…");
+  apiPost({ action: "caseCheckReply", conversation_id: String(c.conversation_id) }).then(function (res) {
+    if (!res || !res.ok) { busyHide(); toast("Could not check: " + ((res && res.error) || "unknown"), 8000); return; }
+    return loadLiveCases().then(function () {
+      busyHide();
+      renderLive();
+      renderLiveDetail();
+      // Say which of the two happened. "Checked" on its own leaves you wondering
+      // whether it found nothing or failed quietly (the r158/159 rule).
+      toast(res.found
+        ? "Something new has come in - the case below is up to date."
+        : (res.message || "Nothing new since we last looked."), 7000);
+    });
+  }).catch(function (e) { busyHide(); toastErr("Checking that conversation", e); });
+}
+
+// FB-0364. Where an update goes depends on whether this case has been filed:
+// onto the issue if there is one, onto the conversation as a private note if
+// there is not. Either way it is written down somewhere the next person looks,
+// which is the whole ask.
+function liveAddUpdate() {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  var note = prompt(c.issue_id
+    ? "Add an update to the issue filed from this conversation.\n\nWhat happened, or what did you find?"
+    : "Nothing is filed from this conversation yet, so this goes on the Chatwoot conversation as a private note.\n\nWhat happened, or what did you find?");
+  note = String(note == null ? "" : note).trim();
+  if (!note) return;
+  var call = c.issue_id
+    ? { action: "addUpdate", issue_id: c.issue_id, raw_text: note, keep_status: true,
+        summary: "Update added from the live case", app_url: APP_URL }
+    : { action: "caseNote", conversation_id: String(c.conversation_id), text: note,
+        user_name: (state.user && state.user.name) || "" };
+  busyShow("Writing it down…");
+  apiPost(call).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast("That didn't save: " + ((res && res.error) || "unknown"), 8000); return; }
+    toast(c.issue_id ? "Added to the issue." : "Noted on the conversation, privately.");
+    if (c.issue_id) loadIssues();
+    else loadLiveCases().then(function () { renderLive(); renderLiveDetail(); });
+  }).catch(function (e) { busyHide(); toastErr("That note", e); });
+}
 
 // ---- corpus corrections (Round 65, FB-0231) --------------------------------
 // Edd was offered a fix that "only applied to really old day skipper accounts.
@@ -7086,7 +7269,7 @@ var irpcs = {
   openId: "", item: null, versions: [], itemLoading: false,
   edited: null, jsonText: "", jsonBad: false,
   publishing: null, viewingVersion: null, saveMismatch: "",
-  f: { kind: "all", rule: "", q: "", pending: false },
+  f: { kind: "all", rule: "", q: "", pending: false, level: "all" },
   learner: { token: "", exp: 0, error: "" },
   previewMode: "published",
   stats: null, statsError: "", statsLoading: false
@@ -7217,6 +7400,7 @@ function irpcsVisible() {
   var rule = String(f.rule || "").trim();
   return irpcs.items.filter(function (it) {
     if (f.kind !== "all" && it.kind !== f.kind) return false;
+    if (f.level && f.level !== "all" && String(it.level || "") !== f.level) return false;
     if (f.pending && !it.pending) return false;
     if (rule && String(it.rule_number == null ? "" : it.rule_number) !== rule) return false;
     if (q && String(it.label || "").toLowerCase().indexOf(q) < 0 && String(it.item_id).toLowerCase().indexOf(q) < 0) return false;
@@ -8453,6 +8637,19 @@ function irpcsMediaMove(i, d) {
 // the dev/course pages show) and their own feedback that has moved on from
 // "new". One list, one count (the r60 rule), cleared item by item.
 var FEEDBACK_ACTED_ = { needs_testing: "Built - please try it", done: "Done", fixed: "Fixed", closed: "Closed" };
+// FB-0375 (Edd): "I am getting way too many notifications! I don't need
+// notifications for things I have done (submitted feedback). Keep them minimal
+// and only essentials that demand our attention."
+//
+// The bell had been ringing for every status change on every piece of feedback
+// he had ever sent, which on 377 of them is a counter reading 91 and nothing
+// worth opening. A status moving on its own is news about our work, not a job
+// for him, and the Feedback tab lists it with a count already. What does demand
+// him is a person writing back. So the bell now carries replies - to a question
+// he asked, or written onto his feedback - and nothing else.
+function feedbackRings_(f) {
+  return !!String(f && f.reply || "").trim();
+}
 function bellItems() {
   var out = [];
   myNewReplies().forEach(function (x) {
@@ -8463,6 +8660,7 @@ function bellItems() {
   (state.myFeedback || []).forEach(function (f) {
     var st = String(f.status || "").toLowerCase();
     if (!FEEDBACK_ACTED_[st]) return;
+    if (!feedbackRings_(f)) return;
     if (seen[f.id] === st) return;
     out.push({ kind: "feedback", key: "f:" + f.id, date: f.created_at, title: (f.ref ? f.ref + " · " : "") + FEEDBACK_ACTED_[st],
       body: f.reply || "", sub: 'You sent: "' + String(f.message || "").slice(0, 160) + '"', fb_id: f.id, fb_status: st });
@@ -8500,7 +8698,7 @@ document.addEventListener("click", function (e) {
 function renderBell() {
   var items = bellItems();
   var p = $("bellPanel");
-  if (!items.length) { p.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">Nothing waiting</div><div class="small muted">Replies to your questions, and feedback you sent that has been acted on, show up here.</div>'; return; }
+  if (!items.length) { p.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">Nothing waiting</div><div class="small muted">Replies to your questions, and answers written onto feedback you sent, show up here. Feedback that has simply been built or closed is counted on the Feedback tab instead.</div>'; return; }
   p.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">For you (' + items.length + ')</div>' + items.map(function (x) {
     var open = x.issue_id ? '<button class="primary small" style="padding:4px 10px;" onclick="closeBell();openIssueFromBell(\'' + esc(x.issue_id) + '\')">Open</button> ' : '';
     var got = x.kind === "reply"
@@ -9540,14 +9738,35 @@ function requestTroubleshoot(checklistOnly) {
 // Note the Round 54 limit: raw_text in the list projection is the first 900
 // characters of a report, so a phrase buried deep in a long thread will not be
 // found here. The fix, if it ever bites, is a server-side search.
+// FB-0376 (Edd): "this report wasn't appearing when I searched toro's name."
+// It was on the row, as the SECOND report - repeat reports merge onto one
+// issue, and each keeps its own student in reports_json - but the haystack
+// only ever read the row's primary student_name. So the first person to report
+// a fault was findable and everybody after them was not, which is exactly
+// backwards for a search whose job is "which issue is this student on".
+// The trail is already in the list projection (issueListRow_ keeps it, clipped),
+// so this costs no extra fetch.
+//
+// Built once per issue object and kept on it. loadIssues rebuilds these objects
+// from JSON every time, so the cache cannot go stale; non-enumerable so it
+// stays out of the boot cache written to localStorage.
 function searchHay(i) {
-  return ((i.lesson_code || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
+  if (i._hay) return i._hay;
+  var trail = "";
+  parseReports(i).forEach(function (rp) {
+    trail += " " + (rp.student_name || "") + " " + (rp.student_contact || "") +
+             " " + (rp.instructor_name || "") + " " + (rp.summary || "") + " " + (rp.raw_text || "");
+  });
+  var hay = ((i.lesson_code || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
           " " + (i.lesson || "") + " " + (i.module || "") + " " + (i.device_info || "") +
           " " + (i.resolution_note || "") + " " + (i.student_contact || "") +
           " " + (i.instructor_name || "") + " " + (i.assignee || "") +
           " " + (i.section || "") + " " + (i.dev_notes || "") +
           " " + shortId(i) + " " + (i.issue_id || "") +
-          " " + (i.raw_text || "")).toLowerCase();
+          " " + (i.raw_text || "") + trail).toLowerCase();
+  try { Object.defineProperty(i, "_hay", { value: hay, enumerable: false, configurable: true }); }
+  catch (e) { i._hay = hay; }
+  return hay;
 }
 function tokensOf(s) {
   var stop = { this: 1, that: 1, with: 1, from: 1, when: 1, then: 1, does: 1, not: 1, the: 1, and: 1, for: 1, are: 1, was: 1, has: 1, have: 1, been: 1, student: 1, issue: 1, page: 1 };
@@ -11515,8 +11734,22 @@ function issueCardHtml(i) {
 // Default order is triage order (priority, then how many reports, then
 // newest); the sort dropdown swaps that for a simple ordering when you're
 // scanning by date or by who logged things.
+// The last time anything actually happened on an issue, as opposed to when it
+// was first logged: a new report, a status change, an update, a reply. Every
+// write bumps updated_at, so that is the honest reading, with the filing date
+// standing in for the rows old enough never to have been touched since.
+function lastActivityAt(i) {
+  var t = new Date(i.updated_at || 0).getTime() || 0;
+  var f = new Date(i.submitted_at || 0).getTime() || 0;
+  return Math.max(t, f);
+}
 function sortIssueList(list, fsort) {
-  if (fsort === "newest") {
+  // FB-0366/FB-0359 (Edd): "I understand sorting by newest... however, we could
+  // do with a 'most recently updated' sorting." Newest sorts by when a thing was
+  // FILED, which buries a two-week-old issue the student replied to an hour ago.
+  if (fsort === "activity") {
+    list.sort(function (a, b) { return lastActivityAt(b) - lastActivityAt(a); });
+  } else if (fsort === "newest") {
     list.sort(function (a, b) { return new Date(b.submitted_at) - new Date(a.submitted_at); });
   } else if (fsort === "longest") {
     // Longest open is not the same as oldest: something logged in March and
