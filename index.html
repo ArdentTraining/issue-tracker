@@ -1251,6 +1251,18 @@
         <div class="small muted" id="cwStatus" style="margin-top:4px;"></div>
       </div>
 
+      <!-- r167 (Edd): a half-written report used to die with the tab. Nothing
+           saved it, so a reload, a crash, or a mis-clicked close took the
+           pasted thread with it. The form now keeps its own draft as you type,
+           and offers it back rather than filling itself in behind you - the
+           person opening this form may well be starting something new. -->
+      <div id="draftBar" class="batch hidden" style="margin-bottom:10px;border-color:var(--accent);">
+        <strong>There's an unfinished report here</strong>
+        <div class="small muted" id="draftBarWhen" style="margin:3px 0 8px;"></div>
+        <button type="button" class="primary small" style="padding:5px 12px;" onclick="restoreDraft()">Pick it back up</button>
+        <button type="button" class="ghost small" style="padding:5px 12px;" onclick="discardDraft()">Throw it away</button>
+      </div>
+
       <div class="field">
         <!-- The ? sits on the label, not under the box (Edd, FB-0218). The
              dot is inline so it lands next to the words; its text block still
@@ -3207,7 +3219,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r166 · 2026-09-13";  // bump this with each round, it lands on every feedback report
+var BUILD = "r167 · 2026-09-13";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6873,6 +6885,7 @@ function setView(v) {
   if (state._ctlNode) ctlClose();    // and a control block belongs to its own view
   state.view = v;
   $("tabInstructor").classList.toggle("active", v === "instructor");
+  if (v === "instructor") offerDraft();   // r167: is there something half-written waiting?
   $("tabActions").classList.toggle("active", v === "actions");
   $("tabLive").classList.toggle("active", v === "live");
   $("tabAdmin").classList.toggle("active", v === "admin");
@@ -11495,7 +11508,145 @@ function submitIssue() {
   });
 }
 
+// ===================== r167: KEEP THE HALF-WRITTEN REPORT =====================
+// Edd, 13 Sep: "save the half written report". There was no beforeunload guard
+// and no autosave, so a reload or a closed tab lost a pasted thread outright -
+// silently, and usually the long ones, because the long ones are the ones you
+// go and check something in the middle of writing.
+//
+// Deliberately an autosave and NOT a "you have unsaved changes" nag. Once the
+// work is actually safe there is nothing to warn anybody about, and a dialog
+// that fires every time you close a tab teaches people to click through it.
+//
+// It lives in localStorage on this origin, per person, like the boot cache -
+// same place, same exposure, and it is their own half-typed thing rather than
+// anything shared. It goes when they log out, for the same reason the boot
+// cache does: a shared machine must not hand one person's work to the next.
+var DRAFT_PREFIX = "ait_draft_v1:";
+var DRAFT_MAX = 200000;          // a pasted thread, not a mail archive
+var DRAFT_TEXT_IDS = ["rawText", "f_student_name", "f_student_contact", "f_device_info",
+  "f_module", "f_lesson", "f_lesson_code", "f_summary", "f_priority_reason", "f_outcome",
+  "f_course", "f_section", "f_issue_type", "f_priority"];
+var DRAFT_TICK_IDS = ["f_plat_browser", "f_plat_app", "f_student_sorted"];
+
+function draftKey() {
+  var u = state.realUser || state.user || null;
+  return DRAFT_PREFIX + String((u && (u.email || u.name)) || "?");
+}
+// What is on the form right now, or null if there is nothing worth keeping.
+// "Worth keeping" is something typed into one of the two boxes a report cannot
+// exist without: a blank form with a category picked is not a lost draft.
+function captureDraft() {
+  if (!$("rawText")) return null;
+  var d = { at: new Date().toISOString(), fields: {}, ticks: {},
+            category: state.category, formMode: state.formMode,
+            requestKind: state.requestKind, noStudent: !!state.noStudent,
+            checklist: state.checklist || {} };
+  DRAFT_TEXT_IDS.forEach(function (id) { if ($(id)) d.fields[id] = $(id).value; });
+  DRAFT_TICK_IDS.forEach(function (id) { if ($(id)) d.ticks[id] = !!$(id).checked; });
+  if (!String(d.fields.rawText || "").trim() && !String(d.fields.f_summary || "").trim()) return null;
+  return d;
+}
+function saveDraftNow() {
+  // Editing an existing issue is not a draft: that work already has a row of
+  // its own, and restoring it into a blank form later would file a duplicate.
+  if (state.editingId || state.updateTargetId) return;
+  var d = captureDraft();
+  if (!d) { localDel(draftKey()); return; }
+  var s = JSON.stringify(d);
+  if (s.length > DRAFT_MAX) {
+    // Keep the fields and as much of the paste as fits, rather than keeping
+    // nothing. Half a thread beats none of it.
+    d.fields.rawText = String(d.fields.rawText || "").slice(0, DRAFT_MAX - 4000);
+    d.clipped = true;
+    s = JSON.stringify(d);
+  }
+  localSet(draftKey(), s);
+}
+var draftTimer = null;
+function saveDraftSoon() {
+  if (draftTimer) clearTimeout(draftTimer);
+  draftTimer = setTimeout(function () { draftTimer = null; saveDraftNow(); }, 900);
+}
+function readDraft() {
+  try { var d = JSON.parse(localGet(draftKey()) || "null"); return (d && d.fields) ? d : null; }
+  catch (e) { return null; }
+}
+function clearDraft() {
+  if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+  localDel(draftKey());
+  if ($("draftBar")) $("draftBar").classList.add("hidden");
+}
+function discardDraft() {
+  clearDraft();
+  toast("Thrown away.");
+}
+// Offered, never applied behind somebody's back: whoever just opened this form
+// may be starting something new, and silently filling it with yesterday's text
+// is its own kind of losing your work.
+function offerDraft() {
+  var bar = $("draftBar");
+  if (!bar) return;
+  var d = readDraft();
+  if (!d || state.editingId || state.updateTargetId) { bar.classList.add("hidden"); return; }
+  // Nothing to offer if the form already holds it, or holds something newer.
+  if (String(($("rawText") && $("rawText").value) || "").trim()) { bar.classList.add("hidden"); return; }
+  var raw = String(d.fields.rawText || "").replace(/\s+/g, " ").trim();
+  $("draftBarWhen").textContent = "Left " + fmtWhen(d.at) + (d.clipped ? ", and it was long enough that the end of the paste was trimmed" : "") +
+    (raw ? '. It starts "' + raw.slice(0, 90) + (raw.length > 90 ? '…' : '') + '"' : ".");
+  bar.classList.remove("hidden");
+}
+// "3 minutes ago", "yesterday" - a timestamp answers a question nobody asked.
+function fmtWhen(iso) {
+  var t = new Date(iso || 0).getTime();
+  if (!t) return "earlier";
+  var mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 2) return "a moment ago";
+  if (mins < 60) return mins + " minutes ago";
+  var hrs = Math.round(mins / 60);
+  if (hrs < 24) return hrs === 1 ? "an hour ago" : hrs + " hours ago";
+  var days = Math.round(hrs / 24);
+  return days === 1 ? "yesterday" : days + " days ago";
+}
+function restoreDraft() {
+  var d = readDraft();
+  if (!d) { $("draftBar").classList.add("hidden"); return; }
+  // Category and mode first: setCategory and setFormMode redraw the fields
+  // these values are about to go into, so filling them the other way round
+  // puts the text in and then wipes it.
+  if (d.formMode) setFormMode(d.formMode);
+  if (d.category) setCategory(d.category);
+  DRAFT_TEXT_IDS.forEach(function (id) { if ($(id) && d.fields[id] != null) $(id).value = d.fields[id]; });
+  DRAFT_TICK_IDS.forEach(function (id) { if ($(id) && d.ticks) $(id).checked = !!d.ticks[id]; });
+  state.requestKind = d.requestKind || "fix";
+  state.noStudent = !!d.noStudent;
+  state.checklist = d.checklist || {};
+  renderRequestKind();
+  renderFormChecklist();
+  $("draftBar").classList.add("hidden");
+  toast("Picked it back up. Nothing has been logged yet - it is still just on the form.", 7000);
+  if ($("rawText")) $("rawText").focus();
+}
+// One listener on the form, rather than one per field: a field added in a
+// later round is covered without anybody remembering to come back here.
+(function () {
+  // Bound to the document and filtered when it fires, rather than to
+  // #instructorView at parse time. A listener attached to an element that does
+  // not exist yet binds to nothing and says nothing about it, which is the
+  // failure shape this app keeps turning up (r158/r159).
+  var inForm = function (e) {
+    var t = e && e.target;
+    return !!(t && t.closest && t.closest("#instructorView"));
+  };
+  document.addEventListener("input", function (e) { if (inForm(e)) saveDraftSoon(); }, true);
+  document.addEventListener("change", function (e) { if (inForm(e)) saveDraftSoon(); }, true);
+  // The debounce is the whole risk: a tab closed inside 900ms of the last
+  // keystroke would lose that last bit. This is the flush.
+  window.addEventListener("beforeunload", function () { saveDraftNow(); });
+})();
+
 function resetForm() {
+  clearDraft();   // it has been filed; there is nothing half-written any more
   state.editingId = null;
   state.attachedImages = [];
   state.checklist = {};
@@ -14864,6 +15015,7 @@ function doLogout() {
   apiPost({ action: "logout" }).catch(function () {});
   clearToken();
   clearBootCache();   // never show one person's board to the next on a shared machine
+  clearDraft();       // r167: and never their half-written report either
   state.issues = []; state._issuesLoaded = false; state._scans = null; state.liveCases = [];
   state._permsApplied = false;
   state.user = null; state.perms = {};
