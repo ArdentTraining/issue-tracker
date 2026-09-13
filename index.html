@@ -2791,16 +2791,52 @@
 
 <div id="bellPanel" class="hidden"></div>
 
-<!-- PREFERENCES (FB-0340) - the small how-it-behaves-for-me things -->
+<!-- PREFERENCES (FB-0340) - the small how-it-behaves-for-me things.
+     r166: the same modal is also the one-time introduction (openPrefs(true)).
+     One set of controls and one save path: a second copy would be a second set
+     of ids on the page and two places to keep in step. -->
 <div class="modal-bg" id="prefsModal">
   <div class="modal">
-    <h3>Preferences</h3>
-    <p class="small muted">Just for you. They follow your login, so they hold on your phone too.</p>
+    <h3 id="prefsTitle">Preferences</h3>
+    <p class="small muted" id="prefsIntro">Just for you. They follow your login, so they hold on your phone too.</p>
     <label style="display:block;font-size:13px;color:var(--text);margin:10px 0;">
       <input type="checkbox" id="pref_open_after_log" style="width:auto;margin-right:6px;vertical-align:-1px;">
       After logging an issue, open it so I can check it over
     </label>
-    <div class="btns"><button class="primary" onclick="savePrefs()">Save</button><button class="ghost" onclick="closePrefs()">Cancel</button></div>
+    <!-- r166. The bell carries replies only now (FB-0375), which is right for
+         somebody who files a lot of feedback and wrong for somebody who files
+         one thing and wants to know it was picked up. So it is a choice. -->
+    <label style="display:block;font-size:13px;color:var(--text);margin:10px 0;">
+      <input type="checkbox" id="pref_bell_on_feedback_built" style="width:auto;margin-right:6px;vertical-align:-1px;">
+      Tell me when feedback I sent has been built
+      <span class="small muted" style="display:block;margin-left:22px;">Off, the Feedback tab still counts them. Replies always come through either way.</span>
+    </label>
+    <label style="display:block;font-size:13px;color:var(--text);margin:10px 0;">
+      <input type="checkbox" id="pref_keep_chat_after_filing" style="width:auto;margin-right:6px;vertical-align:-1px;">
+      After filing from a chat, keep the conversation on my list
+      <span class="small muted" style="display:block;margin-left:22px;">For when you usually carry on talking to the student. You can still change it per case.</span>
+    </label>
+    <div class="fld" style="margin:12px 0;">
+      <label for="pref_default_sort">Sort the Issues list by, to start with</label>
+      <select id="pref_default_sort">
+        <option value="">Priority (as now)</option>
+        <option value="activity">Recent activity</option>
+        <option value="newest">Newest</option>
+        <option value="longest">Longest open</option>
+        <option value="reports">Most reported</option>
+        <option value="oldest">Oldest first</option>
+        <option value="reporter">Reported by (A-Z)</option>
+      </select>
+    </div>
+    <div class="fld" style="margin:12px 0;">
+      <label for="pref_landing_view">When I open the app, take me to</label>
+      <select id="pref_landing_view">
+        <option value="">Today (as now)</option>
+        <option value="admin">Issues</option>
+        <option value="instructor">Log an issue</option>
+      </select>
+    </div>
+    <div class="btns"><button class="primary" onclick="savePrefs()">Save</button><button class="ghost" id="prefsCancelBtn" onclick="closePrefs()">Cancel</button></div>
     <div id="prefsMsg" class="small muted" style="margin-top:6px;"></div>
   </div>
 </div>
@@ -3171,7 +3207,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r165 · 2026-09-13";  // bump this with each round, it lands on every feedback report
+var BUILD = "r166 · 2026-09-13";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4533,11 +4569,25 @@ function applyPerms(user) {
   // anywhere, so anyone who can log lands on Waiting on me instead.
   // Round 67: ?view=reports opens straight into Reports, so a bookmark of the
   // old standalone page still lands somewhere sensible once it is redirected.
+  // r166: a starting sort of their own. Set on the control rather than held in
+  // a second piece of state, so there is one place the sort is read from and
+  // changing it on screen still just works.
+  var prefSort = (state.prefs || {}).default_sort || "";
+  if (prefSort && $("flt_sort")) $("flt_sort").value = prefSort;
+
   var wantView = null;
   try { wantView = new URLSearchParams(window.location.search).get("view"); } catch (e) {}
+  // r166: and a landing page of their own, where they have the permission for
+  // it. A ?view= in the URL still wins - that is somebody following a link.
+  var prefView = (state.prefs || {}).landing_view || "";
+  var prefViewOk = (prefView === "admin" && (p.manage || p.log)) ||
+                   (prefView === "instructor" && p.log) ||
+                   (prefView === "live" && (p.log || p.users));
   if (wantView === "reports" && p.analytics) { setView("reports"); }
+  else if (prefView && prefViewOk) { setView(prefView); }
   else if (SHELL_ON && (p.log || p.users)) { setView("live"); }   // FB-0315 (Edd): the tracker opens on Today, not Issues
   else setView(first);
+  maybeIntroducePrefs();
   updateViewAsBar();
 }
 
@@ -6336,7 +6386,9 @@ function liveLogIssue() {
   if (!c) return;
   $("liveOutcomeTitle").textContent = c.issue_id ? "Update the issue from this conversation" : "Log this issue";
   $("liveOutcomeNote").value = "";
-  if ($("liveKeepChat")) $("liveKeepChat").checked = false;
+  // r166: starts where this person usually leaves it, and is still theirs to
+  // change on the case in front of them.
+  if ($("liveKeepChat")) $("liveKeepChat").checked = !!(state.prefs || {}).keep_chat_after_filing;
   state._liveOutcomePre = "";
   setLiveOutcome("resolved");
   $("liveOutcomeModal").classList.add("show");
@@ -6748,15 +6800,59 @@ function openJustLogged() {
   state._openAfterLog = null;
   openIssueById(id, false);
 }
-function openPrefs() {
+// r166 (Edd, after Holly asked for something that already existed): the
+// preferences were real, useful and invisible - Holly asked for the issue to
+// open after logging, which has been a tick box since FB-0340. Nobody goes
+// looking in a menu for a thing they do not know is there, so everyone is shown
+// it once. `intro` is the same modal with a different heading and a way out
+// that does not look like cancelling a form they never opened.
+function openPrefs(intro) {
   var p = state.prefs || {};
   $("pref_open_after_log").checked = !!p.open_after_log;
+  $("pref_bell_on_feedback_built").checked = !!p.bell_on_feedback_built;
+  $("pref_keep_chat_after_filing").checked = !!p.keep_chat_after_filing;
+  $("pref_default_sort").value = p.default_sort || "";
+  $("pref_landing_view").value = p.landing_view || "";
+  $("prefsTitle").textContent = intro ? "A few things you can set" : "Preferences";
+  $("prefsIntro").textContent = intro
+    ? "These are new, and they are just for you - they follow your login, so they hold on your phone too. You can change them any time under your name, Preferences."
+    : "Just for you. They follow your login, so they hold on your phone too.";
+  $("prefsCancelBtn").textContent = intro ? "Not now" : "Cancel";
+  state._prefsIntro = !!intro;
   $("prefsMsg").textContent = "";
   $("prefsModal").classList.add("show");
 }
-function closePrefs() { $("prefsModal").classList.remove("show"); }
+// Shown once, on the first load after this went out. Marking it seen is a
+// write, so it is done on the way out rather than on the way in: if the write
+// fails the worst case is seeing it twice, where the other way round the worst
+// case is never seeing it at all.
+function maybeIntroducePrefs() {
+  if (!state.user || state.viewAs) return;             // not at a simulated board
+  if ((state.prefs || {}).prefs_intro_seen) return;
+  setTimeout(function () {
+    if ($("prefsModal").classList.contains("show")) return;
+    openPrefs(true);
+  }, 1200);
+}
+function closePrefs() {
+  $("prefsModal").classList.remove("show");
+  // "Not now" is still "I have seen it". Showing it again next time would be
+  // the same popup nagging somebody who has already answered it.
+  if (state._prefsIntro) {
+    state._prefsIntro = false;
+    state.prefs = Object.assign({}, state.prefs || {}, { prefs_intro_seen: true });
+    apiPost({ action: "setPrefs", prefs: { prefs_intro_seen: true } }).catch(function () {});
+  }
+}
 function savePrefs() {
-  var prefs = { open_after_log: $("pref_open_after_log").checked };
+  var prefs = {
+    open_after_log: $("pref_open_after_log").checked,
+    bell_on_feedback_built: $("pref_bell_on_feedback_built").checked,
+    keep_chat_after_filing: $("pref_keep_chat_after_filing").checked,
+    default_sort: $("pref_default_sort").value,
+    landing_view: $("pref_landing_view").value
+  };
+  if (state._prefsIntro) prefs.prefs_intro_seen = true;
   $("prefsMsg").textContent = "Saving…";
   apiPost({ action: "setPrefs", prefs: prefs }).then(function (res) {
     if (!res || !res.ok) { $("prefsMsg").textContent = "Could not save: " + ((res && res.error) || "unknown"); return; }
@@ -8647,8 +8743,12 @@ var FEEDBACK_ACTED_ = { needs_testing: "Built - please try it", done: "Done", fi
 // for him, and the Feedback tab lists it with a count already. What does demand
 // him is a person writing back. So the bell now carries replies - to a question
 // he asked, or written onto his feedback - and nothing else.
+// r166: and the person who wants the old behaviour can have it. Somebody who
+// files one thing a month and wants to know it was picked up is not the same
+// person as somebody sitting on 377 of them.
 function feedbackRings_(f) {
-  return !!String(f && f.reply || "").trim();
+  if (String(f && f.reply || "").trim()) return true;
+  return !!(state.prefs || {}).bell_on_feedback_built;
 }
 function bellItems() {
   var out = [];

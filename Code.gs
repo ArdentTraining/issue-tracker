@@ -906,7 +906,15 @@ function prefsOf_(user) {
 }
 // Merge the caller's own preferences. Only known keys, only booleans, only
 // their own row: there is nothing here worth a permission beyond being logged in.
-var PREF_KEYS = ['open_after_log'];
+var PREF_KEYS = ['open_after_log', 'bell_on_feedback_built', 'keep_chat_after_filing', 'prefs_intro_seen'];
+// r166: preferences that hold a CHOICE rather than a yes/no. Whitelisted
+// rather than stored as typed, because these end up driving a view switch and
+// a sort, and an unknown value there is a blank screen somebody has to explain.
+// An empty string is a real answer in both: "no preference, behave as before".
+var PREF_TEXT_KEYS = {
+  default_sort:  ['', 'activity', 'newest', 'longest', 'oldest', 'reporter', 'reports'],
+  landing_view:  ['', 'live', 'admin', 'instructor']
+};
 // r145: replies_seen = { issue_id: answer date } - the dev/course page's
 // "New replies" hides a reply once its reader presses Got it. Capped so a
 // busy account cannot grow the cell without limit.
@@ -919,6 +927,11 @@ function setPrefs_(body) {
   var cur = prefsOf_(f.user);
   var inc = (body.prefs && typeof body.prefs === 'object') ? body.prefs : {};
   PREF_KEYS.forEach(function (k) { if (inc.hasOwnProperty(k)) cur[k] = (inc[k] === true || inc[k] === 'true'); });
+  Object.keys(PREF_TEXT_KEYS).forEach(function (k) {
+    if (!inc.hasOwnProperty(k)) return;
+    var v = String(inc[k] == null ? '' : inc[k]);
+    if (PREF_TEXT_KEYS[k].indexOf(v) > -1) cur[k] = v;
+  });
   PREF_MAP_KEYS.forEach(function (k) {
     if (!inc.hasOwnProperty(k) || !inc[k] || typeof inc[k] !== 'object') return;
     var m = {}, keys = Object.keys(inc[k]).slice(-200);
@@ -6927,7 +6940,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r165 · 2026-09-13';
+var CODE_STAMP = 'r166 · 2026-09-13';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
