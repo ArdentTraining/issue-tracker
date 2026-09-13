@@ -5800,6 +5800,34 @@ function attachImages_(data) {
 
 // ---- Anthropic extraction (server-side) -----------------------------------
 
+// Fields a sub-issue takes from the headline problem when it does not say
+// otherwise. All of them describe WHERE the fault is and WHO hit it, which is
+// the same across the entries in one thread nearly every time.
+var SUB_INHERIT_ = ['category', 'likely_internal', 'section', 'student_name', 'student_contact',
+  'device_info', 'course', 'module', 'lesson', 'lesson_code', 'issue_type', 'request_kind',
+  'media_kind', 'impact', 'priority', 'priority_reason'];
+// And the ones it must never take. Each of these says the thread is FINISHED
+// with, and carrying "resolved" across from the headline problem onto a second
+// one that is still live is the mistake here that loses a student. Silence
+// means open: that costs us a second look, where the other way costs a fault.
+var SUB_NEVER_ = { resolution_status: 'open', resolution_note: null, resolved_by: null,
+  resolved_at: null, student_sorted: false, unblocked_by_workaround: false };
+function fillSubIssues_(fields) {
+  if (!fields || !fields.sub_issues || !fields.sub_issues.length) return fields;
+  fields.sub_issues = fields.sub_issues.map(function (sub) {
+    var out = {}, k;
+    for (k in sub) { if (Object.prototype.hasOwnProperty.call(sub, k)) out[k] = sub[k]; }
+    SUB_INHERIT_.forEach(function (key) {
+      if (out[key] === undefined || out[key] === null || out[key] === '') out[key] = fields[key];
+    });
+    Object.keys(SUB_NEVER_).forEach(function (key) {
+      if (out[key] === undefined) out[key] = SUB_NEVER_[key];
+    });
+    return out;
+  });
+  return fields;
+}
+
 function extract_(data) {
   var rawText = data.raw_text || '';
   if (!rawText) return { ok: false, error: 'extract needs raw_text' };
@@ -5827,7 +5855,18 @@ function extract_(data) {
       'Extract ONLY that issue into the top-level fields and return sub_issues as null. ' +
       'Every other topic in the thread is background, not an issue: do not summarise it, and do not let it set the category, lesson, or resolution.'
     : '';
-  var call = anthropicCachedFetch_(EXTRACTION_MODEL, extractionStaticPrompt_(), rawText + '\n"""' + tail, 8192);
+  // FB-0367 (Edd, "got an error message when logging this issue"). Measured
+  // 13 Sep, live, on two real threads:
+  //   16,207 chars -> succeeded on 6,831 output tokens of 8,192. 83% full.
+  //   21,138 chars -> stop_reason "max_tokens" at 97 seconds. Cut off.
+  // The INPUT was never the problem - 6,367 input tokens against a 200k
+  // window. It is the answer that ran out of room, because EXTRACTION_MODEL is
+  // sonnet-5, which reasons before it replies and spends the thinking from
+  // this same budget. The comment above EXTRACTION_MODEL says exactly that,
+  // and says to raise max_tokens if a stronger model is ever used here. The
+  // model was upgraded; this number was not. The priority check on the same
+  // model already runs at 16000 after 4000 burned the lot thinking (9 Aug).
+  var call = anthropicCachedFetch_(EXTRACTION_MODEL, extractionStaticPrompt_(), rawText + '\n"""' + tail, 16000);
   if (!call.res) return { ok: false, error: 'Anthropic call failed: ' + (call.why || 'unknown') };
   var res = call.res;
 
@@ -5863,12 +5902,29 @@ function extract_(data) {
     // past it, rather than the opaque "could not parse". stop_reason is passed
     // back either way so a genuinely garbled (not truncated) reply is diagnosable.
     if (parsed.stop_reason === 'max_tokens') {
+      // The old wording here blamed the length of the PASTE, which sent people
+      // off to split reports that were never too long to read. What runs out
+      // is the room for the answer.
       return { ok: false, stop_reason: parsed.stop_reason, raw: text,
-        error: 'That report was too long to read in one go, so the extraction got cut off. Try splitting it into a couple of separate pastes, or trim it down a bit.' };
+        error: 'The reading ran past the room it has to answer in, so it got cut off part-way. That usually means a lot of separate problems in one thread. Splitting it into a couple of pastes will get it through.' };
     }
     return { ok: false, stop_reason: parsed.stop_reason, raw: text,
       error: 'Could not parse model output as JSON' };
   }
+
+  // Put back what the prompt just stopped asking for. Sub-issues now carry only
+  // what DIFFERS from the top-level answer, which is most of the saving on a
+  // long thread - the student, device, course, module and lesson are the same
+  // in nearly every entry and were being written out again for each one. The
+  // full shape is rebuilt here, at the one point everything downstream reads,
+  // so the split modal, the submit path and the filing code are untouched.
+  //
+  // Four fields are deliberately NOT inherited. Each of them says the thread is
+  // FINISHED with, and inheriting "resolved" from the headline problem onto a
+  // second one that is still live is the one mistake here that loses a student.
+  // Silence means open, which is the direction that costs us a second look
+  // rather than a dropped fault.
+  fillSubIssues_(fields);
 
   // How long it took and whether the cache actually did anything, so a slow
   // extraction can be looked at rather than guessed about.
@@ -6730,7 +6786,8 @@ function extractionStaticPrompt_() {
     '- student_sorted: true when THIS student has everything they need and nobody has to go back to them, even though the fault itself is still there for the developers. Typical shape: the instructor worked around it by hand (extended the account manually because the Extend button was missing, enrolled them themselves, sent the file directly), or the student is happily using another route that works. It is about the person, not the bug, so it can be true while resolution_status is still "open". Return false when the student is still waiting on us, is still blocked, or was promised an update.',
     '- resolved_by: the staff member who resolved it or gave the answer (from "marked resolved by X", or whoever replied with the fix), or null.',
     '- resolved_at: the date the resolution happened if it can be read from the text (ISO 8601 if possible, otherwise the date as written), or null.',
-    '- sub_issues: a single pasted thread can hold SEVERAL separate problems raised over time (different pages, features, slides, or topics, each fixed independently, and each possibly at a different date or already resolved). If it holds more than one, return an array with one FULL entry per distinct problem, each carrying the SAME fields as above (category, likely_internal, section, student_name, student_contact, device_info, course, module, lesson, lesson_code, issue_type, request_kind, media_kind, impact, summary, priority, priority_reason, resolution_status, resolution_note, resolved_by, resolved_at, student_sorted). Put the primary or most urgent problem in the top-level fields AND as the FIRST array entry, so the array is the complete set. If it is really one problem (or one problem with knock-on effects), return null. Never split a single problem, and never blend unrelated topics into one entry.',
+    '- sub_issues: a single pasted thread can hold SEVERAL separate problems raised over time (different pages, features, slides, or topics, each fixed independently, and each possibly at a different date or already resolved). If it holds more than one, return an array with one entry per distinct problem. Put the primary or most urgent problem in the top-level fields AND as the FIRST array entry, so the array is the complete set. If it is really one problem (or one problem with knock-on effects), return null. Never split a single problem, and never blend unrelated topics into one entry.',
+    '- Each sub_issues entry must ALWAYS carry: summary, priority, resolution_status, and (when resolution_status is "resolved" or "tbc") resolution_note, student_sorted and unblocked_by_workaround. Every OTHER field (category, likely_internal, section, student_name, student_contact, device_info, course, module, lesson, lesson_code, issue_type, request_kind, media_kind, impact, priority_reason, resolved_by, resolved_at) should be given ONLY where it differs from the top-level answer - leave it out and it is taken from there, which is right far more often than not. Do not repeat a value that is the same. This keeps the answer short enough to finish.',
     '',
     'What counts as a SEPARATE issue for sub_issues, so nothing gets dropped:',
     '- A distinct bug, error, or confusing piece of content counts even when it is only mentioned in passing inside a longer message (for example a login email field that auto-capitalises the first letter). Give it its own entry rather than absorbing it into a bigger one.',
@@ -6940,7 +6997,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r166 · 2026-09-13';
+var CODE_STAMP = 'r168 · 2026-09-13';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
