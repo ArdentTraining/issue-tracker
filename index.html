@@ -3251,7 +3251,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r171 · 2026-09-14";  // bump this with each round, it lands on every feedback report
+var BUILD = "r172 · 2026-09-14";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3605,9 +3605,19 @@ function renderFormChecklist() {
   var ftWhy = canFastTrack
     ? "Skips the troubleshooting gate - for something clearly platform-side. Otherwise a high-priority issue reaches the developers once the relevant checks below have been tried."
     : "For something clearly platform-side that should skip the troubleshooting gate. An admin is told on Slack and decides; until then the checks below still apply.";
-  var fastTrackHtml = '<label title="' + esc(ftWhy) + '" style="display:flex;gap:8px;align-items:center;justify-content:flex-start;margin:0 0 10px;font-size:13px;color:var(--text);cursor:help;">' +
-    '<input type="checkbox" id="f_fast_track" style="margin:0;flex:none;"' + (state._fastTrack ? ' checked' : '') + ' onchange="state._fastTrack=this.checked">' +
-    '<span>' + (canFastTrack ? 'Fast-track to the developers' : 'Ask an admin to fast-track this') + '</span>' +
+  // FB-0378/0379 (Edd): "has gotten even worse. It just needs to be a little
+  // tickbox and text." It had, and it was mine. The stylesheet sets
+  // `input, select, textarea { width: 100% }`, which is why every other check
+  // box in this file carries `width:auto` to escape it - and r165 gave this one
+  // `flex:none` instead. flex:none is flex-shrink:0, so the box could no longer
+  // shrink out of that 100% and took the whole row, squeezing the words it was
+  // supposed to sit beside. It now matches the house pattern exactly, with no
+  // flex container at all, and the tooltip sits on the WORDS rather than on a
+  // full-width invisible hover target.
+  var fastTrackHtml = '<label style="display:block;margin:0 0 10px;font-size:13px;color:var(--text);">' +
+    '<input type="checkbox" id="f_fast_track" style="width:auto;margin-right:6px;vertical-align:-1px;"' + (state._fastTrack ? ' checked' : '') + ' onchange="state._fastTrack=this.checked">' +
+    '<span title="' + esc(ftWhy) + '" style="cursor:help;border-bottom:1px dotted var(--muted);">' +
+      (canFastTrack ? 'Fast-track to the developers' : 'Ask an admin to fast-track this') + '</span>' +
     '</label>';
   panel.innerHTML = fastTrackHtml +
     '<div class="h">Before the developers: troubleshooting checklist</div>' +
@@ -13627,8 +13637,10 @@ function renderDevScoreboard() {
   };
   var h = '<div class="card" style="padding:12px 14px;margin-bottom:12px;">' +
     '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px;">' +
-      '<strong>Scoreboard</strong>' +
-      '<span class="small muted">the developers as a team, not by person</span>' +
+      // FB-0380 (Edd): "lets not call it scoreboard... it sounds judgy... let's
+      // have something less accusational." Name the work, not the people.
+      '<strong>How the fix queue is moving</strong>' +
+      '<span class="small muted">team totals, not individuals</span>' +
       '<span class="grow"></span>' +
       '<a href="#" class="small" style="color:var(--accent);" onclick="loadDevMetrics(true);return false;">refresh</a>' +
       '<a href="#" class="small" style="color:var(--accent);" onclick="devMonthlyPack();return false;">monthly pack</a>' +
@@ -13636,7 +13648,7 @@ function renderDevScoreboard() {
 
   // --- how long things take, against what we said we expect
   h += '<div class="bar-wrap" style="margin-bottom:10px;"><table class="mini" style="width:100%;border-collapse:collapse;font-size:12.5px;">' +
-    '<tr style="color:var(--muted);text-align:left;"><th style="padding:3px 0;">Priority</th><th>Target</th><th>Typical</th><th>Slowest 1 in 10</th><th>Fixed</th><th>Open</th><th>Past target</th></tr>' +
+    '<tr style="color:var(--muted);text-align:left;"><th style="padding:3px 0;">Priority</th><th>Agreed</th><th>Typical</th><th>Slowest 1 in 10</th><th>Fixed</th><th>Open</th><th>Over</th></tr>' +
     m.by_priority.map(function (p) {
       var bad = p.past_target > 0;
       return '<tr><td style="padding:3px 0;text-transform:capitalize;">' + esc(p.priority) + '</td>' +
@@ -13654,7 +13666,7 @@ function renderDevScoreboard() {
       row("Open with the developers", String(q.open)) +
       row("Typical age", devDays(q.age_days.median)) +
       row("Oldest", devDays(q.age_days.worst)) +
-      row("Past its target", String(q.past_target), q.past_target ? "needs chasing" : "") +
+      row("Over the agreed time", String(q.past_target), q.past_target ? "worth a nudge" : "") +
     '</div>' +
     '<div style="flex:1;min-width:200px;">' +
       '<div class="small muted" style="margin-bottom:2px;">How long they have been waiting</div>' +
@@ -13664,7 +13676,7 @@ function renderDevScoreboard() {
       row("Over 3 months", String(q.bands.over_90)) +
     '</div>' +
     '<div style="flex:1;min-width:200px;">' +
-      '<div class="small muted" style="margin-bottom:2px;">Fairness checks</div>' +
+      '<div class="small muted" style="margin-bottom:2px;">So the figures are fair</div>' +
       row("Time waiting on us", devDays(m.blocked_on_us.total_days), "taken off every figure above") +
       row("Questions open to us", String(m.blocked_on_us.open_now), m.blocked_on_us.open_now ? "ours to answer" : "") +
       row("Sized at handover", String(m.sizing.small + m.sizing.medium + m.sizing.large) + " of " +
@@ -13692,7 +13704,7 @@ function renderDevScoreboard() {
   // --- and the specific ones somebody has to ask about
   if (q.oldest && q.oldest.length) {
     h += '<div style="margin-top:12px;">' +
-      '<div class="small muted" style="margin-bottom:4px;">Past target, oldest first</div>' +
+      '<div class="small muted" style="margin-bottom:4px;">Waiting longest</div>' +
       q.oldest.map(function (o) {
         return '<div class="small" style="padding:3px 0;border-top:1px solid var(--line);">' +
           '<a href="#" style="color:var(--accent);" onclick="openIssueById(\'' + esc(o.issue_id) + '\', false);return false;">' + esc(o.short) + '</a> &middot; ' +

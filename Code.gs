@@ -3482,10 +3482,13 @@ function devTargetSweep() {
   var q = m.queue;
   if (!q.past_target) return;   // nothing late: say nothing
   var T = m.targets;
-  var lines = ['*' + q.past_target + (q.past_target === 1 ? ' issue is' : ' issues are') + ' past target*',
-    '_Targets: high ' + T.high + 'd, medium ' + T.medium + 'd, low ' + T.low + 'd. Time spent waiting on an answer from Ardent is not counted._', ''];
+  // FB-0380 (Edd): "it sounds judgy... let's have something less accusational."
+  // This is the line the developers themselves read, so it matters most here.
+  // Same facts, said as a list of work rather than a charge sheet.
+  var lines = ['*' + q.past_target + (q.past_target === 1 ? ' issue has' : ' issues have') + ' been open longer than we agreed*',
+    '_Agreed: high ' + T.high + 'd, medium ' + T.medium + 'd, low ' + T.low + 'd. Time spent waiting on an answer from Ardent is not counted._', ''];
   q.oldest.forEach(function (o) {
-    lines.push('• *' + o.over_by_days + 'd over* (' + o.priority + ', target ' + o.target_days + 'd) — ' +
+    lines.push('• *' + o.over_by_days + 'd over* (' + o.priority + ', agreed ' + o.target_days + 'd) — ' +
       o.summary + '  `' + o.short + '`' +
       (String(o.fix_size) === 'ask' ? '  _(we asked you to size this one)_' : ''));
   });
@@ -7239,7 +7242,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r170 · 2026-09-14';
+var CODE_STAMP = 'r172 · 2026-09-14';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
