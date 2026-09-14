@@ -3251,7 +3251,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r174.1 · 2026-09-14";  // bump this with each round, it lands on every feedback report
+var BUILD = "r174.2 · 2026-09-14";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8404,12 +8404,21 @@ function irpcsMediaLoad(force) {
   });
 }
 
-// Anything still transcoding gets asked about every few seconds until it
-// settles. One timer per item, cleared when it does, so leaving the tab open
-// overnight does not accumulate them.
+// Anything still uploading gets asked about every few seconds until it settles.
+// One timer per item, cleared when it does, so leaving the tab open overnight
+// does not accumulate them.
+//
+// r174.2: and it gives up after forty passes, about two minutes. A row whose
+// file never reached the bucket stays pending for good, and an upload abandoned
+// halfway leaves exactly that. Before this cap, one such row set the whole panel
+// redrawing every three seconds for as long as the tab was open. A poll with no
+// end is a poll that will eventually be doing something nobody wants.
+var IRPCS_POLL_GIVE_UP = 40;
 function irpcsPollPending() {
   irpcs.media.items.filter(function (m) { return m.status === "pending"; }).forEach(function (m) {
     if (irpcs._poll[m.media_id]) return;
+    m._polls = (m._polls || 0) + 1;
+    if (m._polls > IRPCS_POLL_GIVE_UP) return;
     irpcs._poll[m.media_id] = setTimeout(function () {
       delete irpcs._poll[m.media_id];
       irpcsMediaApi({ body: { op: "confirm", media_id: m.media_id } }).then(function (j) {
@@ -8421,7 +8430,7 @@ function irpcsPollPending() {
           row.reason = j.reason || row.reason;
           row.progress = j.progress == null ? null : Number(j.progress);
         }
-        if (irpcs.tab === "media") irpcsRenderMedia();
+        if (irpcs.tab === "media") irpcsRenderMedia(true);
         irpcsPollPending();
       }).catch(function () {
         // Leave it pending and try again on the next pass rather than marking
@@ -8432,9 +8441,24 @@ function irpcsPollPending() {
   });
 }
 
-function irpcsRenderMedia() {
+function irpcsRenderMedia(listOnly) {
   var host = $("irpcsMediaBody");
   if (!host) return;
+
+  // r174.2: a background poll must never redraw a form somebody is typing into.
+  //
+  // irpcsPollPending asks about every pending row every three seconds, and it
+  // called straight through to here, which replaces the whole panel's innerHTML.
+  // With an upload form open that meant the title, the description and the
+  // chosen file were torn out and rebuilt every three seconds while Edd was
+  // filling them in, and because the inputs sit in a page with no <form> element
+  // the browser read the constant removal as a login being submitted and started
+  // offering to save his password.
+  //
+  // It only surfaced because a row was stuck pending forever, so the poll never
+  // stopped. Both halves are fixed: the poll gives up (below), and it no longer
+  // touches the form at all.
+  if (listOnly && irpcs.media.form) return;
 
   var form = irpcs.media.form ? irpcsMediaForm() : "";
   var busy = irpcs.media.busy ? irpcsMediaBusy() : "";
@@ -8653,11 +8677,16 @@ function irpcsMediaForm() {
     (isImg
       ? '<div class="fld"><label for="irpcsMediaAlt">Describe the diagram</label>' +
         '<p class="small muted" style="margin:0 0 4px;">Required, and this is the only moment anyone is going to write it. Somebody using a screen reader gets this instead of the picture, so say what it shows rather than naming it: "two boats crossing, red to red" rather than "crossing diagram".</p>' +
-        '<input id="irpcsMediaAlt" type="text" oninput="irpcsMediaField(\'alt\', this.value)"></div>'
+        // value=, not an empty box. The state already held what was typed, so a
+        // redraw looked like the app had thrown the work away when it had not,
+        // which is a worse kind of bug than losing it outright: nothing to
+        // report, and no reason to trust the next attempt.
+        '<input id="irpcsMediaAlt" type="text" autocomplete="off" value="' + esc(f.alt || "") + '" ' +
+        'oninput="irpcsMediaField(\'alt\', this.value)"></div>'
       : "") +
     '<div class="fld"><label for="irpcsMediaTitle">Title</label>' +
-      '<input id="irpcsMediaTitle" type="text" placeholder="' + (isImg ? "e.g. Crossing, red to red" : "e.g. Crossing, explained") + '" ' +
-      'oninput="irpcsMediaField(\'title\', this.value)"></div>' +
+      '<input id="irpcsMediaTitle" type="text" autocomplete="off" placeholder="' + (isImg ? "e.g. Crossing, red to red" : "e.g. Crossing, explained") + '" ' +
+      'value="' + esc(f.title || "") + '" oninput="irpcsMediaField(\'title\', this.value)"></div>' +
     '<div class="fld"><label for="irpcsMediaPick">The file</label>' +
       // Narrow rather than image/* and video/*. Our storage hands back exactly
       // what it was given, so a .mov that the picker happily offered would
@@ -8675,10 +8704,22 @@ function irpcsMediaForm() {
           ? IRPCS_IMAGE_TYPES.join(",") + ",.png,.jpg,.jpeg,.jfif,.webp,.svg,.gif"
           : IRPCS_VIDEO_TYPES.join(",") + ",.mp4,.m4v,.webm") +
         '" onchange="irpcsMediaFile(this)">' +
-      '<div class="small muted" id="irpcsMediaFileName" style="margin-top:4px;">no file chosen</div></div>' +
-      '<p class="small" id="irpcsMediaFileWarn" style="margin:-6px 0 12px;color:var(--high);"></p>' +
+      // A file input cannot be refilled from script, so on a redraw it goes
+      // blank whatever we do. The state still holds the File, so say which one
+      // rather than "no file chosen": the upload will use it, and telling
+      // somebody they have chosen nothing when they have is how they end up
+      // picking it twice.
+      '<div class="small muted" id="irpcsMediaFileName" style="margin-top:4px;">' +
+        (f.file ? esc(f.file.name) + " (" + Math.round(f.file.size / 1048576) + " MB)" : "no file chosen") +
+      '</div></div>' +
+      '<p class="small" id="irpcsMediaFileWarn" style="margin:-6px 0 12px;color:var(--high);">' +
+        esc(irpcsFileProblem(f.kind, f.file)) + '</p>' +
     '<div class="row" style="gap:8px;">' +
-      '<button class="small" id="irpcsMediaGo" style="padding:5px 10px;" onclick="irpcsMediaUpload()" disabled>Start the upload</button>' +
+      // Computed, not hardcoded disabled. A redraw used to rebuild this button
+      // in its initial state, so a form that was complete a moment ago came back
+      // with the upload greyed out and nothing to click.
+      '<button class="small" id="irpcsMediaGo" style="padding:5px 10px;" onclick="irpcsMediaUpload()"' +
+        (irpcsMediaReady() ? "" : " disabled") + '>Start the upload</button>' +
       '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaCancel()">Cancel</button>' +
     '</div></div>';
 }
