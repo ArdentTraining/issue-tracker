@@ -906,7 +906,12 @@ function prefsOf_(user) {
 }
 // Merge the caller's own preferences. Only known keys, only booleans, only
 // their own row: there is nothing here worth a permission beyond being logged in.
-var PREF_KEYS = ['open_after_log', 'bell_on_feedback_built', 'keep_chat_after_filing', 'prefs_intro_seen'];
+// r169: keep_chat_after_filing lasted one round. Edd: "I think this one should
+// stay not being a preference... it needs to stay until resolved in chatwoot or
+// intentionally closed by the instructor." A rule with a defined ending beats a
+// per-person default, so the behaviour moved into listLiveCases_ and the
+// preference went. Any row still carrying the key is simply ignored.
+var PREF_KEYS = ['open_after_log', 'bell_on_feedback_built', 'prefs_intro_seen'];
 // r166: preferences that hold a CHOICE rather than a yes/no. Whitelisted
 // rather than stored as typed, because these end up driving a view switch and
 // a sort, and an unknown value there is a blank screen somebody has to explain.
@@ -5991,7 +5996,8 @@ function suggestFix_(data) {
     'suggestion by an instructor, so hold an even higher bar for it.\n\n' +
     'NEW issue:\n' + JSON.stringify(newIssue) + '\n\n' +
     'PAST resolved issues (summary + how it was fixed, most relevant first):\n' + JSON.stringify(candidates) + '\n\n' +
-    'Return ONLY JSON: {"found": true or false, "fix": "<the recommendation, or empty string>", "based_on": "<short reference to the matching past issue, or empty string>", "corpus_id": "<the corpus_id of the entry you based it on, if it had one, else empty string>", "applies_when": "<the condition the instructor must check before using this, or empty string when there is none>"}. No prose, no markdown fences.';
+    'One more judgement, and be strict about it. is_workaround is TRUE when the recommendation gets this STUDENT moving without correcting what is actually wrong - a different browser, incognito, clearing the cache, another device, another network, entering a placeholder value and fixing it by hand afterwards, us doing something manually on their behalf, or anything you would describe alongside "and flag it to the developers". It is FALSE only when following it corrects the cause, so the next person will not hit it: a wrong username put right, an account re-enrolled, a lesson republished, a payment taken, a setting corrected. If the recommendation contains both, it is TRUE. When in doubt, TRUE - saying a live fault is fixed is far worse than asking somebody to check.\n\n' +
+    'Return ONLY JSON: {"found": true or false, "fix": "<the recommendation, or empty string>", "based_on": "<short reference to the matching past issue, or empty string>", "corpus_id": "<the corpus_id of the entry you based it on, if it had one, else empty string>", "applies_when": "<the condition the instructor must check before using this, or empty string when there is none>", "is_workaround": true or false}. No prose, no markdown fences.';
 
   var res;
   try {
@@ -6016,7 +6022,16 @@ function suggestFix_(data) {
   return { ok: true, found: true, fix: String(out.fix), based_on: String(out.based_on || ''),
     // Which corpus entry this came from, so "this suggestion was wrong here"
     // has something to point at, and the caveat that has to be checked first.
-    corpus_id: String(out.corpus_id || ''), applies_when: String(out.applies_when || '') };
+    corpus_id: String(out.corpus_id || ''), applies_when: String(out.applies_when || ''),
+    // r169 (Edd, 14 Sep, on the Surat Thani city-dropdown suggestion): "this was
+    // not a resolved case. Even if we get the student through, the underlying
+    // bug still exists and needs fixing. So resolved TBC should not have been
+    // offered." The fix it offered was a placeholder city corrected by hand
+    // plus "flag this to tech as the recurring bug" - which is the definition
+    // of a workaround, and the popup offered to close the issue on it anyway.
+    // Same rule as FB-0372, in the other place it was being broken. Defaults
+    // TRUE on a missing or unparsed answer, for the reason the prompt gives.
+    is_workaround: out.is_workaround !== false };
 }
 
 // Pull a JSON object out of a model reply. Requiring the WHOLE reply to parse
@@ -6997,7 +7012,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r168 · 2026-09-13';
+var CODE_STAMP = 'r169 · 2026-09-14';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

@@ -2832,11 +2832,6 @@
       Tell me when feedback I sent has been built
       <span class="small muted" style="display:block;margin-left:22px;">Off, the Feedback tab still counts them. Replies always come through either way.</span>
     </label>
-    <label style="display:block;font-size:13px;color:var(--text);margin:10px 0;">
-      <input type="checkbox" id="pref_keep_chat_after_filing" style="width:auto;margin-right:6px;vertical-align:-1px;">
-      After filing from a chat, keep the conversation on my list
-      <span class="small muted" style="display:block;margin-left:22px;">For when you usually carry on talking to the student. You can still change it per case.</span>
-    </label>
     <div class="fld" style="margin:12px 0;">
       <label for="pref_default_sort">Sort the Issues list by, to start with</label>
       <select id="pref_default_sort">
@@ -2958,17 +2953,11 @@
     <label class="small" for="liveOutcomeNote" id="liveOutcomeLabel" style="display:block;margin-bottom:4px;">What actually sorted it?</label>
     <textarea id="liveOutcomeNote" rows="4" style="width:100%;font-size:13px;"></textarea>
     <div class="small muted" id="liveOutcomePrefill" style="margin-top:4px;"></div>
-    <!-- FB-0356 (Edd, 10 Sep 2026): "it would be better if the options were
-         resolved or still open. Not chat is done, issue is not fixed. So
-         people can log an issue without the chat having to be done." The two
-         buttons above are about the FAULT. Whether the conversation is
-         finished is a different question, and it belongs here: unticked, the
-         case leaves the chat list as it has since FB-0251; ticked, it stays
-         put because there is still something to say to the student. -->
-    <label style="display:block;margin-top:10px;font-size:13px;color:var(--text);">
-      <input type="checkbox" id="liveKeepChat" style="width:auto;margin-right:6px;vertical-align:-1px;">
-      I am not finished with the student, keep this chat on my list
-    </label>
+    <!-- FB-0356 asked for these two buttons to be about the FAULT only, and
+         added a tick for "I am not finished with the student". r169 removed the
+         tick: the case no longer closes on filing at all, so there is nothing
+         left for it to opt out of. The chat stays until Chatwoot resolves it,
+         the issue finishes, or somebody closes the case by hand. -->
     <div class="btns" style="margin-top:12px;">
       <button class="primary" id="liveOutcomeGo" onclick="liveOutcomeSubmit()">Log it</button>
       <button class="ghost" onclick="closeLiveOutcome()">Cancel</button>
@@ -3228,7 +3217,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r168.1 · 2026-09-13";  // bump this with each round, it lands on every feedback report
+var BUILD = "r169 · 2026-09-14";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6376,23 +6365,25 @@ function liveCheckpoint(decision) {
     if (res.note_error) setTimeout(function () {
       toast("Filed, but the private note did not reach Chatwoot (" + res.note_error + "). Worth pasting the link on by hand.", 9000);
     }, 1400);
-    if (res.merged) { loadLiveCasesThenRender(); loadIssues(); return; }
-    // FB-0356: still talking to them, so the case stays on the list. The issue
-    // is filed either way, which is the whole point of the change.
-    if (state._liveKeepChat) {
-      state._liveKeepChat = false;
-      toast("Filed, and the chat stays on your list.", 6000);
-      loadLiveCasesThenRender(); loadIssues();
-      return;
-    }
-    var conv = c.conversation_id;
-    apiPost({ action: "caseClose", conversation_id: conv, app_url: APP_URL })
-      .catch(function () {})
-      .then(function () {
-        if (String(state.liveSelected) === String(conv)) { state.liveSelected = null; hideLiveDetail(); }
-        loadLiveCasesThenRender();
-        loadIssues();
-      });
+    // r169 (Edd, 14 Sep): "it needs to stay until resolved in chatwoot or
+    // intentionally closed by the instructor."
+    //
+    // Filing used to end the case here on its own (FB-0251), and r166 briefly
+    // made that a preference. Both were wrong about what this list IS: it
+    // tracks live CONVERSATIONS, and filing a report says nothing about
+    // whether the student has stopped talking to us. So nothing closes here
+    // any more. The three endings that remain all live on the server, in
+    // listLiveCases_, where they can see the state this function cannot:
+    //   - the Chatwoot conversation is resolved (one-directional; open never
+    //     holds a case alive, and a deliberate human open is honoured 24h),
+    //   - the issue reaches a finished state - resolved, tbc, parked, past or
+    //     student_sorted (FB-0279, which Edd raised three times and which he
+    //     confirmed on 14 Sep should survive this change),
+    //   - somebody presses "close case".
+    // So filing as STILL OPEN keeps the chat, and filing as resolved or parked
+    // still ends it on the next list load. That is the difference this makes.
+    loadLiveCasesThenRender();
+    loadIssues();
   }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
 
@@ -6407,9 +6398,6 @@ function liveLogIssue() {
   if (!c) return;
   $("liveOutcomeTitle").textContent = c.issue_id ? "Update the issue from this conversation" : "Log this issue";
   $("liveOutcomeNote").value = "";
-  // r166: starts where this person usually leaves it, and is still theirs to
-  // change on the case in front of them.
-  if ($("liveKeepChat")) $("liveKeepChat").checked = !!(state.prefs || {}).keep_chat_after_filing;
   state._liveOutcomePre = "";
   setLiveOutcome("resolved");
   $("liveOutcomeModal").classList.add("show");
@@ -6468,7 +6456,6 @@ function liveOutcomeSubmit() {
     $("liveOutcomeNote").focus();
     return;
   }
-  state._liveKeepChat = !!($("liveKeepChat") && $("liveKeepChat").checked);
   closeLiveOutcome();
   // "open" carries no outcome flag, which is the original checkpoint behaviour:
   // file it and leave it live. The note still rides along as the update text.
@@ -6831,7 +6818,6 @@ function openPrefs(intro) {
   var p = state.prefs || {};
   $("pref_open_after_log").checked = !!p.open_after_log;
   $("pref_bell_on_feedback_built").checked = !!p.bell_on_feedback_built;
-  $("pref_keep_chat_after_filing").checked = !!p.keep_chat_after_filing;
   $("pref_default_sort").value = p.default_sort || "";
   $("pref_landing_view").value = p.landing_view || "";
   $("prefsTitle").textContent = intro ? "A few things you can set" : "Preferences";
@@ -6869,7 +6855,6 @@ function savePrefs() {
   var prefs = {
     open_after_log: $("pref_open_after_log").checked,
     bell_on_feedback_built: $("pref_bell_on_feedback_built").checked,
-    keep_chat_after_filing: $("pref_keep_chat_after_filing").checked,
     default_sort: $("pref_default_sort").value,
     landing_view: $("pref_landing_view").value
   };
@@ -9713,7 +9698,7 @@ function requestSuggestion() {
     lesson_code: getField("f_lesson_code")
   };
   apiPost({ action: "suggestFix", new_issue: newIssue, candidates: candidates, course: newIssue.course }).then(function (res) {
-    if (res && res.ok && res.found && res.fix) showSuggestion(res.fix, res.based_on, res.applies_when, res.corpus_id);
+    if (res && res.ok && res.found && res.fix) showSuggestion(res.fix, res.based_on, res.applies_when, res.corpus_id, res.is_workaround !== false);
   }).catch(function (e) { console.error(e); });
 }
 
@@ -9731,8 +9716,9 @@ function wizardClosed() {
   if (next) setTimeout(function () { $(next).classList.add("show"); }, 150);
 }
 
-function showSuggestion(fix, basedOn, appliesWhen, corpusId) {
+function showSuggestion(fix, basedOn, appliesWhen, corpusId, isWorkaround) {
   state.suggestedFix = fix;
+  state.suggestedIsWorkaround = isWorkaround !== false;
   $("suggestPanel").innerHTML =
     '<div class="h">Suggested fix from a past issue</div>' +
     '<div>' + esc(fix) + '</div>' +
@@ -9744,9 +9730,19 @@ function showSuggestion(fix, basedOn, appliesWhen, corpusId) {
       JSON.stringify(String(corpusId || "")) + ',' + JSON.stringify(String(fix)) + ',"",' +
       JSON.stringify(String(getField("f_summary") || "")) + ');return false;">This doesn\'t apply here</a></div>' +
     '<div class="small" style="margin-top:8px;">Still submit this so we can track how many people hit it.</div>' +
-    '<label style="display:block;margin-top:6px;font-size:13px;color:var(--text);">' +
-      '<input type="checkbox" id="tbcApplied" style="width:auto;margin-right:6px;vertical-align:-1px;">' +
-      'I\'ve given the student this fix - mark Resolved (TBC)</label>' +
+    // r169 (Edd): a suggestion that only gets the student past the fault must
+    // not offer to close the issue on it. "Even if we get the student through,
+    // the underlying bug still exists and needs fixing." So the tick says what
+    // is actually true in each case: a real correction can close it, a way
+    // round it ticks the student off and leaves the fault open for the team.
+    (state.suggestedIsWorkaround
+      ? '<div class="small" style="margin-top:8px;color:var(--medium);">This gets the student moving, it does not fix the fault - so the issue stays open for the team either way.</div>' +
+        '<label style="display:block;margin-top:6px;font-size:13px;color:var(--text);">' +
+          '<input type="checkbox" id="sortedApplied" style="width:auto;margin-right:6px;vertical-align:-1px;">' +
+          'I\'ve given the student this - they are sorted, the fault is not</label>'
+      : '<label style="display:block;margin-top:6px;font-size:13px;color:var(--text);">' +
+          '<input type="checkbox" id="tbcApplied" style="width:auto;margin-right:6px;vertical-align:-1px;">' +
+          'I\'ve given the student this fix - mark Resolved (TBC)</label>') +
     '<div class="row" style="margin-top:10px;">' +
       '<button class="primary" onclick="closeSuggestModal()">Got it</button>' +
       '<button class="ghost" onclick="hideSuggestion()">Dismiss</button></div>';
@@ -9758,8 +9754,9 @@ function closeSuggestModal() {
   $("suggestModal").classList.remove("show");
   var n = $("suggestNote");
   if (n && state.suggestedFix) {
-    var ticked = $("tbcApplied") && $("tbcApplied").checked;
-    n.innerHTML = 'Suggested fix from a past issue' + (ticked ? ' (marking Resolved - TBC on submit)' : '') +
+    var ticked = ($("tbcApplied") && $("tbcApplied").checked) || ($("sortedApplied") && $("sortedApplied").checked);
+    n.innerHTML = 'Suggested fix from a past issue' +
+      (ticked ? (state.suggestedIsWorkaround ? ' (student sorted, issue stays open, on submit)' : ' (marking Resolved - TBC on submit)') : '') +
       ' - <a href="#" onclick="wizardShow(\'suggestModal\');return false;" style="color:var(--accent);">view</a>';
     n.classList.remove("hidden");
   }
@@ -11237,6 +11234,7 @@ function submitIssue() {
   var btn = $("submitBtn");
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> saving…';
   var wasTbc = false, wasUpdate = false, wasResolvedUpdate = false, wasResolvedNew = false, wasParked = false;
+  var wasStudentSorted = false;   // r169: sorted the student, left the fault open
   // A resolution the extractor read out of the pasted chat (edited note if the
   // instructor touched it), applied at submit unless they unticked it.
   var resNoteVal = $("resNote") ? $("resNote").value.trim() : "";
@@ -11439,6 +11437,15 @@ function submitIssue() {
       if (tbcEl && tbcEl.checked && state.suggestedFix) {
         data.tbc = true; data.resolution_note = state.suggestedFix; wasTbc = true;
       }
+      // r169: the workaround half of the same tick. The student is dealt with;
+      // the fault is not, so the issue is filed OPEN with what they were given
+      // written down, and student_sorted carries the half that is true.
+      var sortedEl = $("sortedApplied");
+      if (sortedEl && sortedEl.checked && state.suggestedFix) {
+        data.student_sorted = true;
+        data.resolution_note = state.suggestedFix;
+        wasStudentSorted = true;
+      }
     }
     request = apiPost(data);
   }
@@ -11467,7 +11474,11 @@ function submitIssue() {
     else if (res.merged) toast("Already reported - added to the existing one (now " + (res.report_count || "") + " reports)." + (wasTbc ? " Marked Resolved - TBC." : ""));
     else toast(wasResolvedNew ? "Logged as Resolved."
       : wasParked ? "Logged as Parked. It'll wake up on its own if anyone else reports it."
-      : (wasTbc ? "Logged as Resolved - TBC." : (state.editingId ? "Issue updated." : "Issue logged.")));
+      : wasTbc ? "Logged as Resolved - TBC."
+      // r169: the outcome has two halves and the toast says both, or the open
+      // issue reads as the tick not having worked.
+      : wasStudentSorted ? "Logged, and the student is ticked off as sorted. The issue stays OPEN - the fault is still there for the team."
+      : (state.editingId ? "Issue updated." : "Issue logged."));
     // FB-0357: the private note is how the chat and the log stay joined up, so
     // one that never arrived is worth saying rather than leaving as a gap
     // somebody finds days later. Second, so it is the line left on screen.
