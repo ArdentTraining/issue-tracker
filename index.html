@@ -1785,8 +1785,12 @@
     <div class="stat" style="cursor:pointer;" onclick="setDevFilter('todo')"><div class="n" id="devStatQueue">–</div><div class="l">Queued</div></div>
     <div class="stat" style="cursor:pointer;" onclick="setDevFilter('todo')"><div class="n" id="devStatProg">–</div><div class="l">In progress</div></div>
     <div class="stat" style="cursor:pointer;" onclick="setDevFilter('fixed')"><div class="n" id="devStatFixed">–</div><div class="l">Completed</div></div>
-    <div class="stat"><div class="n" id="devStatAvg">–</div><div class="l">Average time to fix</div></div>
+    <!-- r170: the mean went. Measured 14 Sep, the median was 2.9 days against a
+         mean of 7 - a handful of long tails were dragging it, so the one number
+         on the page made the team look twice as slow as the typical case. -->
+    <div class="stat"><div class="n" id="devStatAvg">–</div><div class="l">Typical time to fix</div></div>
   </div>
+  <div id="devScoreboard"></div>
   <div class="area-toggle">
     <div class="seg" id="devSeg">
       <button type="button" id="dev_todo" class="active" onclick="setDevFilter('todo')">To do</button>
@@ -2986,6 +2990,36 @@
 
 <!-- FB-0231: a known fix that was offered where it did not apply. Goes to Edd
      as a correction to approve; it never rewrites the corpus entry on its own. -->
+<!-- r170: asked at handover, because it is the one moment somebody is thinking
+     about the job. Four answers, and "ask them" is a real one. -->
+<!-- r170: the monthly pack, as plain text because plain text is what gets
+     pasted into an email. -->
+<div class="modal-bg" id="packModal">
+  <div class="modal" style="max-width:680px;">
+    <h3 id="packTitle">Developer pack</h3>
+    <p class="small muted">Team-level figures, with time spent waiting on us already taken off. Check it before it goes anywhere.</p>
+    <textarea id="packText" rows="22" style="width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;"></textarea>
+    <div class="btns"><button class="primary" onclick="copyPack()">Copy it</button><button class="ghost" onclick="closePack()">Close</button></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="passDevModal">
+  <div class="modal">
+    <h3>Handing this to the developers</h3>
+    <p class="small muted">How big is this, roughly? It is for sorting the queue and for telling a slow fix from a big one later, not for holding anyone to an estimate.</p>
+    <div class="field">
+      <select id="passDevSize" style="width:100%;">
+        <option value="">Don't record a size</option>
+        <option value="small">Small &middot; under a day</option>
+        <option value="medium">Medium &middot; a few days</option>
+        <option value="large">Large &middot; a week or more</option>
+        <option value="ask">Not sure &mdash; ask them to size it</option>
+      </select>
+    </div>
+    <div class="btns"><button class="primary" onclick="passDevGo()">Pass it over</button><button class="ghost" onclick="passDevCancel()">Cancel</button></div>
+  </div>
+</div>
+
 <div class="modal-bg" id="kfFlagModal">
   <div class="modal" style="max-width:560px;">
     <h3>This suggestion was wrong here</h3>
@@ -3217,7 +3251,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r169 · 2026-09-14";  // bump this with each round, it lands on every feedback report
+var BUILD = "r170 · 2026-09-14";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6915,7 +6949,7 @@ function setView(v) {
   if (v === "live") { renderLive(); loadLiveCases(); loadOpenChats(); renderActions(); }
   if (v === "admin") renderAdmin();
   if (v === "analytics") renderAnalytics();
-  if (v === "dev") renderDev();
+  if (v === "dev") { renderDev(); loadDevMetrics(); }   // r170: the scoreboard, fetched once per visit
   if (v === "edd") renderEdd();
   if (v === "course") renderCourse();
   if (v === "users") renderUsers();
@@ -13503,6 +13537,196 @@ function renderAnalytics() {
   }).join("") : '<p class="muted small">Nothing with a platform section yet.</p>';
 }
 
+// ============ r170: THE SCOREBOARD ============
+// Edd: "I want lots of metrics and some way to hold them sort of accountable."
+// Every number here comes from devMetrics_ on the server, which is also what
+// the weekly breach post and the monthly pack read - one computation, three
+// surfaces, so a badge and its list can never disagree (the r60 rule).
+// Team level only, at Edd's instruction: no per-developer breakdown anywhere.
+function loadDevMetrics(force) {
+  if (state._devMetrics && !force) { renderDevScoreboard(); return Promise.resolve(); }
+  if (state._devMetricsBusy) return Promise.resolve();
+  state._devMetricsBusy = true;
+  return apiPost({ action: "devMetrics" }).then(function (res) {
+    state._devMetricsBusy = false;
+    // Say which it is rather than drawing an empty board (the r158/r159 rule).
+    state._devMetrics = (res && res.ok) ? res : null;
+    state._devMetricsError = (res && res.ok) ? "" : ((res && res.error) || "the call came back empty");
+    renderDevScoreboard();
+  }).catch(function (e) {
+    state._devMetricsBusy = false;
+    state._devMetricsError = String((e && e.message) || e);
+    renderDevScoreboard();
+  });
+}
+function devDays(v) { return v === null || v === undefined ? "–" : (v + (v === 1 ? " day" : " days")); }
+function renderDevScoreboard() {
+  var host = $("devScoreboard");
+  if (!host) return;
+  var m = state._devMetrics;
+  if (!m) {
+    host.innerHTML = state._devMetricsError
+      ? '<div class="card" style="padding:10px 12px;"><span class="small muted">The scoreboard did not load: ' + esc(state._devMetricsError) +
+        ' <a href="#" onclick="loadDevMetrics(true);return false;" style="color:var(--accent);">Try again</a></span></div>'
+      : '<div class="card" style="padding:10px 12px;"><span class="small muted"><span class="spinner"></span> working the numbers out…</span></div>';
+    return;
+  }
+  var q = m.queue, T = m.targets;
+  var row = function (label, value, note) {
+    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;">' +
+      '<span class="small">' + esc(label) + '</span><span class="small" style="font-weight:600;">' + esc(value) +
+      (note ? ' <span class="muted" style="font-weight:400;">' + esc(note) + '</span>' : '') + '</span></div>';
+  };
+  var h = '<div class="card" style="padding:12px 14px;margin-bottom:12px;">' +
+    '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px;">' +
+      '<strong>Scoreboard</strong>' +
+      '<span class="small muted">the developers as a team, not by person</span>' +
+      '<span class="grow"></span>' +
+      '<a href="#" class="small" style="color:var(--accent);" onclick="loadDevMetrics(true);return false;">refresh</a>' +
+      '<a href="#" class="small" style="color:var(--accent);" onclick="devMonthlyPack();return false;">monthly pack</a>' +
+    '</div>';
+
+  // --- how long things take, against what we said we expect
+  h += '<div class="bar-wrap" style="margin-bottom:10px;"><table class="mini" style="width:100%;border-collapse:collapse;font-size:12.5px;">' +
+    '<tr style="color:var(--muted);text-align:left;"><th style="padding:3px 0;">Priority</th><th>Target</th><th>Typical</th><th>Slowest 1 in 10</th><th>Fixed</th><th>Open</th><th>Past target</th></tr>' +
+    m.by_priority.map(function (p) {
+      var bad = p.past_target > 0;
+      return '<tr><td style="padding:3px 0;text-transform:capitalize;">' + esc(p.priority) + '</td>' +
+        '<td>' + p.target_days + 'd</td>' +
+        '<td>' + (p.median_days === null ? "–" : p.median_days + "d") + '</td>' +
+        '<td>' + (p.p90_days === null ? "–" : p.p90_days + "d") + '</td>' +
+        '<td>' + p.fixed + '</td><td>' + p.open + '</td>' +
+        '<td' + (bad ? ' style="color:var(--high);font-weight:600;"' : '') + '>' + p.past_target + '</td></tr>';
+    }).join("") + '</table></div>';
+
+  // --- the queue as it stands
+  h += '<div class="row" style="gap:18px;flex-wrap:wrap;align-items:flex-start;">' +
+    '<div style="flex:1;min-width:200px;">' +
+      '<div class="small muted" style="margin-bottom:2px;">The queue now</div>' +
+      row("Open with the developers", String(q.open)) +
+      row("Typical age", devDays(q.age_days.median)) +
+      row("Oldest", devDays(q.age_days.worst)) +
+      row("Past its target", String(q.past_target), q.past_target ? "needs chasing" : "") +
+    '</div>' +
+    '<div style="flex:1;min-width:200px;">' +
+      '<div class="small muted" style="margin-bottom:2px;">How long they have been waiting</div>' +
+      row("Under a week", String(q.bands.under_7)) +
+      row("1 to 4 weeks", String(q.bands.d7_30)) +
+      row("1 to 3 months", String(q.bands.d30_90)) +
+      row("Over 3 months", String(q.bands.over_90)) +
+    '</div>' +
+    '<div style="flex:1;min-width:200px;">' +
+      '<div class="small muted" style="margin-bottom:2px;">Fairness checks</div>' +
+      row("Time waiting on us", devDays(m.blocked_on_us.total_days), "taken off every figure above") +
+      row("Questions open to us", String(m.blocked_on_us.open_now), m.blocked_on_us.open_now ? "ours to answer" : "") +
+      row("Sized at handover", String(m.sizing.small + m.sizing.medium + m.sizing.large) + " of " +
+          String(m.sizing.small + m.sizing.medium + m.sizing.large + m.sizing.asked + m.sizing.unsized)) +
+      row("Sizing asked of them", String(m.sizing.asked)) +
+    '</div>' +
+  '</div>';
+
+  // --- is the pile growing? Two numbers cannot say; twelve weeks can.
+  var tr = m.trend || [], maxT = Math.max(1, Math.max.apply(null, tr.map(function (w) { return Math.max(w.handed, w.fixed); })));
+  var netTotal = tr.reduce(function (a, w) { return a + (w.fixed - w.handed); }, 0);
+  h += '<div style="margin-top:12px;">' +
+    '<div class="small muted" style="margin-bottom:4px;">In and out, twelve weeks &middot; ' +
+      (netTotal === 0 ? "holding level" : netTotal > 0 ? ("queue shrank by " + netTotal) : ("queue grew by " + Math.abs(netTotal))) + '</div>' +
+    '<div style="display:flex;gap:3px;align-items:flex-end;height:46px;">' +
+    tr.map(function (w) {
+      var hIn = Math.round(w.handed / maxT * 40), hOut = Math.round(w.fixed / maxT * 40);
+      return '<div title="' + esc(w.week_ending) + ': ' + w.handed + ' in, ' + w.fixed + ' fixed" style="flex:1;display:flex;gap:1px;align-items:flex-end;">' +
+        '<div style="flex:1;height:' + Math.max(1, hIn) + 'px;background:var(--medium);opacity:.75;"></div>' +
+        '<div style="flex:1;height:' + Math.max(1, hOut) + 'px;background:var(--low);"></div></div>';
+    }).join("") + '</div>' +
+    '<div class="small muted" style="margin-top:3px;"><span style="color:var(--medium);">&#9632;</span> handed over &nbsp; <span style="color:var(--low);">&#9632;</span> fixed</div>' +
+  '</div>';
+
+  // --- and the specific ones somebody has to ask about
+  if (q.oldest && q.oldest.length) {
+    h += '<div style="margin-top:12px;">' +
+      '<div class="small muted" style="margin-bottom:4px;">Past target, oldest first</div>' +
+      q.oldest.map(function (o) {
+        return '<div class="small" style="padding:3px 0;border-top:1px solid var(--line);">' +
+          '<a href="#" style="color:var(--accent);" onclick="openIssueById(\'' + esc(o.issue_id) + '\', false);return false;">' + esc(o.short) + '</a> &middot; ' +
+          '<span style="text-transform:capitalize;">' + esc(o.priority) + '</span> &middot; ' +
+          '<strong>' + esc(String(o.over_by_days)) + 'd over</strong> the ' + o.target_days + 'd target' +
+          (o.fix_size ? ' &middot; ' + esc(o.fix_size === "ask" ? "sizing asked of them" : o.fix_size) : ' &middot; not sized') +
+          '<div class="muted" style="margin-top:1px;">' + esc(o.summary) + '</div></div>';
+      }).join("") + '</div>';
+  }
+
+  host.innerHTML = h + '</div>';
+}
+
+// r170: the pack Edd can put in front of Aureus. Same numbers as the board,
+// laid out as something you would send rather than something you would scan,
+// and dated - a figure with no window on it invites an argument about which
+// window it was. Copyable as plain text, because that is what actually gets
+// pasted into an email or a Slack message.
+function devMonthlyPack() {
+  var m = state._devMetrics;
+  if (!m) { toast("The numbers are still loading - try again in a moment."); loadDevMetrics(true); return; }
+  var now = new Date();
+  var from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  var to = new Date(now.getFullYear(), now.getMonth(), 0);
+  busyShow("Putting the pack together…");
+  apiPost({ action: "devMetrics", since: from.toISOString(), until: new Date(to.getTime() + 86399000).toISOString() })
+    .then(function (p) {
+      busyHide();
+      if (!p || !p.ok) { toast("Could not build it: " + ((p && p.error) || "unknown")); return; }
+      var month = from.toLocaleString("en-GB", { month: "long", year: "numeric" });
+      var L = [];
+      L.push("Ardent -> developers  |  " + month);
+      L.push("");
+      L.push("Handed over   " + p.flow.handed_over);
+      L.push("Fixed         " + p.flow.fixed);
+      L.push("Net           " + (p.flow.net > 0 ? "+" + p.flow.net + " (queue shrank)" : p.flow.net < 0 ? p.flow.net + " (queue grew)" : "0 (level)"));
+      L.push("");
+      L.push("Time to fix, against target");
+      p.by_priority.forEach(function (x) {
+        L.push("  " + (x.priority + "      ").slice(0, 7) +
+          "target " + x.target_days + "d   typical " + (x.median_days === null ? "-" : x.median_days + "d") +
+          "   slowest 1 in 10 " + (x.p90_days === null ? "-" : x.p90_days + "d") +
+          "   fixed " + x.fixed + "   past target " + x.past_target);
+      });
+      L.push("");
+      L.push("Still open   " + p.queue.open + "   (typical age " + (p.queue.age_days.median === null ? "-" : p.queue.age_days.median + "d") +
+             ", oldest " + (p.queue.age_days.worst === null ? "-" : p.queue.age_days.worst + "d") + ")");
+      L.push("  over a month  " + (p.queue.bands.d30_90 + p.queue.bands.over_90));
+      L.push("  past target   " + p.queue.past_target);
+      if (p.queue.oldest && p.queue.oldest.length) {
+        L.push("");
+        L.push("Past target, oldest first");
+        p.queue.oldest.forEach(function (o) {
+          L.push("  " + o.short + "  " + o.priority + "  " + o.over_by_days + "d over the " + o.target_days + "d target" +
+            (o.fix_size ? "  [" + (o.fix_size === "ask" ? "sizing asked of them" : o.fix_size) + "]" : "  [not sized]") +
+            "\n      " + o.summary);
+        });
+      }
+      L.push("");
+      L.push("Fairness notes, so these figures stand up");
+      L.push("  Time any issue spent waiting on an answer from Ardent has been");
+      L.push("  subtracted from every figure above: " + (p.blocked_on_us.total_days || 0) + " days across " + p.blocked_on_us.issues + " issues.");
+      L.push("  Questions currently open to Ardent: " + p.blocked_on_us.open_now + ".");
+      var sizedN = p.sizing.small + p.sizing.medium + p.sizing.large;
+      L.push("  Sized at handover: " + sizedN + " of " + (sizedN + p.sizing.asked + p.sizing.unsized) +
+             (p.sizing.unsized ? "  (" + p.sizing.unsized + " unsized, so \"it was a big one\" cannot be checked on those)" : ""));
+      L.push("");
+      L.push("Figures are team-level. Typical = median. Generated " + new Date().toISOString().slice(0, 16).replace("T", " ") + ".");
+      var text = L.join("\n");
+      $("packText").value = text;
+      $("packTitle").textContent = "Developer pack - " + month;
+      $("packModal").classList.add("show");
+    }).catch(function (e) { busyHide(); toastErr("That pack", e); });
+}
+function copyPack() {
+  var el = $("packText");
+  el.select();
+  try { document.execCommand("copy"); toast("Copied."); }
+  catch (e) { toast("Select it and copy by hand - the browser refused."); }
+}
+function closePack() { $("packModal").classList.remove("show"); }
+
 // ============================ DEVELOPER VIEW ============================
 function devQueue(cats) {
   // cats can be one category or a list: the Developers queue carries both tech
@@ -13604,6 +13828,7 @@ function renderDev() {
     .filter(function (d) { return d >= 0; });
   var avg = durations.length ? durations.reduce(function (a, b) { return a + b; }, 0) / durations.length : null;
   $("devStatAvg").textContent = avg == null ? "–" : fmtDuration(avg);
+  renderDevScoreboard();
 
   var statusPool = all.filter(function (i) {
     var s = (i.status || "").toLowerCase();
@@ -13628,7 +13853,7 @@ function renderDev() {
     if (state.devType !== "all" && String(i.issue_type || "other").toLowerCase() !== state.devType) return false;
     if (state.devSize !== "all") {
       var sz = String(i.fix_size || "").toLowerCase();
-      if (state.devSize === "unsized") { if (sz) return false; }
+      if (state.devSize === "unsized") { if (sz && sz !== "ask") return false; }   // r170: an ask is still unsized
       else if (sz !== state.devSize) return false;
     }
     return true;
@@ -13678,7 +13903,7 @@ function renderDev() {
       var sub = [];
       sub.push(shortId(i));
       if (i.section) sub.push(SECTION_LABEL[i.section] || i.section);
-      if (i.fix_size) sub.push(String(i.fix_size).toLowerCase() + " fix");
+      if (i.fix_size) sub.push(String(i.fix_size).toLowerCase() === "ask" ? "size requested" : String(i.fix_size).toLowerCase() + " fix");
       if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
       var days = Math.floor((Date.now() - new Date(i.dev_passed_at || i.submitted_at)) / 864e5);
       if (days >= 1) sub.push(days + (days === 1 ? " day" : " days") + (fixed ? "" : " open"));
@@ -14483,9 +14708,14 @@ function openDevDetail(id) {
   // How big a job does the fix look? (Edd, FB-0164.) Rough is fine - it's for
   // sorting and filtering the queue, not for holding anyone to an estimate.
   var curSize = String(issue.fix_size || "").toLowerCase();
+  // r170: 'ask' means Ardent deliberately did not guess and wants this team's
+  // own estimate. Said plainly, because an unanswered ask that looks like a
+  // blank box is an ask nobody sees.
+  var sizeAsked = curSize === "ask";
   html += '<h3>Estimated size of fix</h3>' +
+    (sizeAsked ? '<div class="small" style="color:var(--medium);margin-bottom:4px;">Ardent has asked you to size this one - they did not want to guess at it.</div>' : '') +
     '<div class="field" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><select id="devSizeSel" style="width:auto;" onchange="devSetSize(\'' + esc(issue.issue_id) + '\')">' +
-      '<option value=""' + (curSize ? "" : " selected") + '>Not sized yet</option>' +
+      '<option value=""' + (curSize && !sizeAsked ? "" : " selected") + '>' + (sizeAsked ? "Not sized yet - over to you" : "Not sized yet") + '</option>' +
       ["small", "medium", "large"].map(function (z) {
         return '<option value="' + z + '"' + (z === curSize ? " selected" : "") + '>' + z.charAt(0).toUpperCase() + z.slice(1) + '</option>';
       }).join("") + '</select>' +
@@ -14816,13 +15046,30 @@ function askLoggerFromTrack(id) {
   }).catch(function (e) { toastErr("That", e); });
 }
 
+// r170. fix_size has existed since FB-0164 and was filled on NONE of the 124
+// issues ever handed over, because nothing ever asked. Without it, "was that
+// one slow because it was hard?" has no answer, which is the first thing said
+// about any number a supplier does not like. Handover is the one moment
+// somebody is thinking about the job, so it is asked here - and "ask them"
+// is a first-class answer, because their estimate is worth more than ours.
 function adminPassToDev(id) {
-  apiPost({ action: "passToDev", issue_id: id }).then(function (res) {
+  state._passDevId = id;
+  var sel = $("passDevSize"); if (sel) sel.value = "";
+  $("passDevModal").classList.add("show");
+}
+function passDevGo() {
+  var id = state._passDevId, size = $("passDevSize") ? $("passDevSize").value : "";
+  if (!id) return;
+  $("passDevModal").classList.remove("show");
+  apiPost({ action: "passToDev", issue_id: id, fix_size: size }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Passed to developers.");
+    toast(size === "ask"
+      ? "Passed to developers, with a request to size it themselves."
+      : size ? "Passed to developers, sized " + size + "." : "Passed to developers.");
     closeDetail(); loadIssues();
   }).catch(function (e) { toastErr("That", e); });
 }
+function passDevCancel() { $("passDevModal").classList.remove("show"); state._passDevId = null; }
 
 // Admin replies to a developer's/course team's question (see openDetail).
 // Clears the flag on send, so the pending badge drops off the card.

@@ -55,6 +55,11 @@ var SLACK_NOTICES = {
   dev_queue_low:     { on: true,  to: 'SLACK_ADMINS' },              // r129: falls back to the main channel until the private admin channel is wired
   unrouted_digest:   { on: true,  to: 'SLACK_BUSINESS_MGMT' },       // r140 (Edd): Tuesday 09:00, what nobody has picked up -> Business Management
   shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
+  // r170 (Edd): "some way to hold them sort of accountable". A number nobody
+  // looks at holds nobody to anything, so the breaches come to the channel the
+  // developers are already in, once a week, naming the specific items rather
+  // than posting a score. Same channel as the answers to their questions.
+  dev_targets:       { on: true,  to: 'SLACK_AUREUS_TECH' },
   // Off for good (Edd, 19 Aug 2026). All five still exist in the tracker.
   feedback:          { on: false, to: '' },
   weekly_digest:     { on: false, to: '' },
@@ -426,7 +431,16 @@ var HEADERS = [
   // r151 (Edd): fast-track is an admin call. An instructor can ASK, and the
   // ask lives here as "Name · ISO time" until an admin passes it or clears it.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'fast_track_request'         // BE
+  'fast_track_request',        // BE
+  // r170 (Edd, 14 Sep 2026: "I want lots of metrics and some way to hold them
+  // sort of accountable"). Any number we put in front of the developers has to
+  // survive the first thing anyone says about a number they dislike, which is
+  // "we were waiting on you". So the waiting is measured: every time a question
+  // of theirs is answered, the hours it sat unanswered are added here, and the
+  // scoreboard subtracts it before reporting a time to fix. Blank or 0 means
+  // they were never blocked on us, which is the usual case.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'dev_blocked_ms'             // BF cumulative ms an issue spent waiting on an answer from Ardent
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -617,6 +631,7 @@ function doPost(e) {
     if (action === 'caseBrief') return jsonOut(caseBrief_(body));
     if (action === 'caseCheckReply') return jsonOut(caseCheckReply_(body));
     if (action === 'caseNote') return jsonOut(caseNote_(body));
+    if (action === 'devMetrics') return jsonOut(devMetrics_(body));
     if (action === 'caseDraftReply') return jsonOut(caseDraftReply_(body));
     if (action === 'caseCheckpoint') return jsonOut(caseCheckpoint_(body));
     if (action === 'caseClose') return jsonOut(caseClose_(body));
@@ -843,6 +858,9 @@ function reqPerm_(action) {
     case 'listLiveCases': case 'caseBrief': case 'caseCheckReply': case 'caseDraftReply':
     case 'caseCheckpoint': case 'caseClose': case 'caseTouch': case 'caseIgnoreLog': case 'batchStudentDrafts':
     case 'caseNote': return 'log';
+    // r170: the scoreboard reads the same queue the dev page already shows, so
+    // it sits at the same tier rather than inventing a new one.
+    case 'devMetrics': return 'log';
     // Saying "this suggestion was wrong here" belongs to whoever was shown it,
     // so it sits at the same tier as the case. Approving the correction, and
     // therefore changing a corpus row, is Edd's alone (FB-0231).
@@ -3298,11 +3316,202 @@ function linkIssues_(data) {
 // ---- Developer handoff ----------------------------------------------------
 
 // Manually hand an issue to the developers (from the admin view).
+// ===================== r170: DEVELOPER METRICS =====================
+// Edd, 14 Sep 2026: "how are we tracking the developers progress resolving
+// bugs? I want lots of metrics and some way to hold them sort of accountable."
+// The answer was two boxes on the Dev page - a count and one mean - so this is
+// the whole picture, computed ONCE here and read by all three things that show
+// it: the scoreboard, the weekly breach post, and the monthly pack. Three
+// surfaces computing their own numbers is how a badge and its list end up
+// disagreeing (the r60 rule).
+//
+// TEAM LEVEL ONLY, at Edd's instruction. Per-assignee is deliberately not
+// returned - the queue has named people on it, and he made the same call on
+// usage telemetry in r150.
+//
+// Two honesty rules baked in, because a number a supplier will accept is worth
+// more than a number that is merely true:
+//   1. Time waiting on US is subtracted (dev_blocked_ms). "We were waiting on
+//      you" is the first thing said about a number somebody dislikes, and it
+//      should be answered before it is raised, not after.
+//   2. The median leads, not the mean. Measured 14 Sep: median 2.9 days
+//      against a mean of 7, because a handful of long tails drag it - the mean
+//      made them look twice as slow as the typical case actually is.
+var DEV_TARGET_DEFAULTS = { high: 3, medium: 10, low: 30 };   // working expectation, in days
+function devTargets_() {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty('DEV_TARGETS');
+    if (raw) {
+      var t = JSON.parse(raw);
+      return { high: Number(t.high) || DEV_TARGET_DEFAULTS.high,
+               medium: Number(t.medium) || DEV_TARGET_DEFAULTS.medium,
+               low: Number(t.low) || DEV_TARGET_DEFAULTS.low };
+    }
+  } catch (e) {}
+  return DEV_TARGET_DEFAULTS;
+}
+// Linear interpolation between ranks (the R-7 method, the one Excel and numpy
+// use), NOT nearest-rank. On an even count nearest-rank returns the lower of
+// the two middle values, which on a time-to-fix metric quietly reports the
+// faster one - a systematic flatter in the developers' favour, and exactly the
+// kind of thing that makes a number indefensible when somebody checks it.
+// Caught by the unit test rather than in front of a supplier.
+function pct_(arr, p) {
+  if (!arr.length) return null;
+  var s = arr.slice().sort(function (a, b) { return a - b; });
+  if (s.length === 1) return s[0];
+  var pos = (s.length - 1) * (p / 100);
+  var lo = Math.floor(pos), hi = Math.ceil(pos);
+  if (lo === hi) return s[lo];
+  return s[lo] + (s[hi] - s[lo]) * (pos - lo);
+}
+var DAY_MS_ = 24 * 3600 * 1000;
+function devMetrics_(data) {
+  data = data || {};
+  var all = (data._issues || getIssues_().issues || []);
+  var now = Date.now();
+  var since = data.since ? new Date(data.since).getTime() : 0;
+  var until = data.until ? new Date(data.until).getTime() : now;
+  var T = devTargets_();
+  var ms = function (v) { var t = v ? new Date(v).getTime() : 0; return isNaN(t) ? 0 : t; };
+  var pri = function (i) { var p = String(i.priority || 'low').toLowerCase(); return T[p] ? p : 'low'; };
+  // The clock that counts: handed over to marked fixed, less any time it sat
+  // waiting on an answer from us.
+  var effective = function (i) {
+    var raw = ms(i.dev_fixed_at) - ms(i.dev_passed_at);
+    if (raw < 0) return null;
+    return Math.max(0, raw - (Number(i.dev_blocked_ms) || 0));
+  };
+
+  var passed = all.filter(function (i) { return i.dev_passed_at; });
+  var openNow = passed.filter(function (i) {
+    return !i.dev_fixed_at && String(i.status || '').toLowerCase() === 'with_dev';
+  });
+  var fixedIn = passed.filter(function (i) {
+    var t = ms(i.dev_fixed_at);
+    return t && t >= since && t <= until;
+  });
+  var handedIn = passed.filter(function (i) {
+    var t = ms(i.dev_passed_at);
+    return t && t >= since && t <= until;
+  });
+
+  // --- how long the finished ones took
+  var times = fixedIn.map(effective).filter(function (d) { return d !== null; });
+  var byPriTime = {}, byPriBreach = {};
+  ['high', 'medium', 'low'].forEach(function (p) { byPriTime[p] = []; byPriBreach[p] = 0; });
+  fixedIn.forEach(function (i) {
+    var d = effective(i); if (d === null) return;
+    var p = pri(i);
+    byPriTime[p].push(d);
+    if (d > T[p] * DAY_MS_) byPriBreach[p]++;
+  });
+
+  // --- the queue as it stands, and what is past its target right now
+  var ageOf = function (i) { return Math.max(0, now - ms(i.dev_passed_at) - (Number(i.dev_blocked_ms) || 0)); };
+  var ages = openNow.map(ageOf);
+  var pastTarget = openNow.filter(function (i) { return ageOf(i) > T[pri(i)] * DAY_MS_; })
+    .sort(function (a, b) { return ageOf(b) - ageOf(a); });
+  var band = function (lo, hi) {
+    return ages.filter(function (a) { return a >= lo * DAY_MS_ && (hi === null || a < hi * DAY_MS_); }).length;
+  };
+
+  var days1 = function (v) { return v === null || v === undefined ? null : Math.round(v / DAY_MS_ * 10) / 10; };
+  var openByPri = { high: 0, medium: 0, low: 0 };
+  openNow.forEach(function (i) { openByPri[pri(i)]++; });
+
+  // --- twelve weeks of flow, so the queue's direction is visible rather than
+  // inferred from two numbers. A queue that is growing is the finding.
+  var trend = [];
+  for (var w = 11; w >= 0; w--) {
+    var wEnd = now - w * 7 * DAY_MS_, wStart = wEnd - 7 * DAY_MS_;
+    trend.push({
+      week_ending: new Date(wEnd).toISOString().slice(0, 10),
+      handed: passed.filter(function (i) { var t = ms(i.dev_passed_at); return t >= wStart && t < wEnd; }).length,
+      fixed: passed.filter(function (i) { var t = ms(i.dev_fixed_at); return t && t >= wStart && t < wEnd; }).length
+    });
+  }
+
+  var blockedIssues = passed.filter(function (i) { return (Number(i.dev_blocked_ms) || 0) > 0; });
+  var sized = { small: 0, medium: 0, large: 0, asked: 0, unsized: 0 };
+  openNow.concat(fixedIn).forEach(function (i) {
+    var z = String(i.fix_size || '').toLowerCase();
+    if (z === 'small' || z === 'medium' || z === 'large') sized[z]++;
+    else if (z === 'ask') sized.asked++;
+    else sized.unsized++;
+  });
+
+  return { ok: true,
+    generated_at: new Date().toISOString(),
+    window: { since: data.since || '', until: data.until || '' },
+    targets: T,
+    flow: { handed_over: handedIn.length, fixed: fixedIn.length, net: fixedIn.length - handedIn.length },
+    time_to_fix_days: { median: days1(pct_(times, 50)), p90: days1(pct_(times, 90)),
+                        worst: days1(times.length ? Math.max.apply(null, times) : null), n: times.length },
+    by_priority: ['high', 'medium', 'low'].map(function (p) {
+      return { priority: p, target_days: T[p], fixed: byPriTime[p].length,
+               median_days: days1(pct_(byPriTime[p], 50)), p90_days: days1(pct_(byPriTime[p], 90)),
+               past_target: byPriBreach[p], open: openByPri[p] };
+    }),
+    queue: { open: openNow.length, by_priority: openByPri,
+             age_days: { median: days1(pct_(ages, 50)), p90: days1(pct_(ages, 90)),
+                         worst: days1(ages.length ? Math.max.apply(null, ages) : null) },
+             bands: { under_7: band(0, 7), d7_30: band(7, 30), d30_90: band(30, 90), over_90: band(90, null) },
+             past_target: pastTarget.length,
+             oldest: pastTarget.slice(0, 10).map(function (i) {
+               return { issue_id: i.issue_id, short: String(i.issue_id || '').slice(0, 8),
+                        priority: pri(i), target_days: T[pri(i)], age_days: days1(ageOf(i)),
+                        over_by_days: days1(ageOf(i) - T[pri(i)] * DAY_MS_),
+                        fix_size: String(i.fix_size || ''),
+                        summary: String(i.summary || '').slice(0, 120) };
+             }) },
+    blocked_on_us: { issues: blockedIssues.length,
+                     total_days: days1(blockedIssues.reduce(function (a, i) { return a + (Number(i.dev_blocked_ms) || 0); }, 0)),
+                     open_now: passed.filter(function (i) { return i.dev_query_at && !i.dev_fixed_at; }).length },
+    sizing: sized,
+    trend: trend };
+}
+
+// r170. Once a week, only when something is actually past its target, and it
+// names the items rather than posting a grade - a list somebody can work
+// through beats a number somebody can dispute. Silence means nothing is late,
+// which is the message worth being able to trust.
+function devTargetSweep() {
+  var m = devMetrics_({});
+  if (!m || !m.ok) return;
+  var q = m.queue;
+  if (!q.past_target) return;   // nothing late: say nothing
+  var T = m.targets;
+  var lines = ['*' + q.past_target + (q.past_target === 1 ? ' issue is' : ' issues are') + ' past target*',
+    '_Targets: high ' + T.high + 'd, medium ' + T.medium + 'd, low ' + T.low + 'd. Time spent waiting on an answer from Ardent is not counted._', ''];
+  q.oldest.forEach(function (o) {
+    lines.push('• *' + o.over_by_days + 'd over* (' + o.priority + ', target ' + o.target_days + 'd) — ' +
+      o.summary + '  `' + o.short + '`' +
+      (String(o.fix_size) === 'ask' ? '  _(we asked you to size this one)_' : ''));
+  });
+  if (q.past_target > q.oldest.length) lines.push('…and ' + (q.past_target - q.oldest.length) + ' more.');
+  if (m.blocked_on_us.open_now) {
+    lines.push('');
+    lines.push('_' + m.blocked_on_us.open_now + ' of the queue ' + (m.blocked_on_us.open_now === 1 ? 'is' : 'are') +
+      ' waiting on an answer from us — those clocks are paused._');
+  }
+  lines.push('');
+  lines.push(getAppUrl_());
+  slackPost_('dev_targets', lines.join('\n'));
+}
+
 function passToDev_(data) {
   var found = findRow_(data.issue_id);
   if (!found) return { ok: false, error: 'No issue found with id ' + data.issue_id };
   if (found.record.fast_track_request) found.record.fast_track_request = '';   // r151: the ask is answered
   var rec = found.record;
+  // r170: fix_size has existed since FB-0164 and was filled on NONE of the 124
+  // issues ever handed over, because nothing ever asked for it. Handover is the
+  // one moment somebody is thinking about the job, so it is asked here. 'ask'
+  // means we did not want to guess and the developers are being asked to size
+  // it themselves - which is the stronger answer anyway, being theirs.
+  var sz = String((data && data.fix_size) || '').toLowerCase();
+  if (sz === 'small' || sz === 'medium' || sz === 'large' || sz === 'ask') rec.fix_size = sz;
   if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
   rec.dev_fixed_at = '';            // if it was previously fixed and is going back
   rec.status = 'with_dev';
@@ -3584,6 +3793,16 @@ function answerQuery_(data) {
   rec.report_count = realReportCount_(reps);
 
   var asker = rec.dev_query_by || '';
+  // r170: the clock on OUR side of the conversation, banked before it is
+  // cleared. Counted whoever the question was aimed at - admins or the
+  // instructor who logged it - because from the developers' seat both are
+  // Ardent not answering. Guarded against a clock that runs backwards.
+  if (rec.dev_query_at) {
+    var blockedFor = new Date(now).getTime() - new Date(rec.dev_query_at).getTime();
+    if (blockedFor > 0 && blockedFor < 365 * 24 * 3600 * 1000) {
+      rec.dev_blocked_ms = (Number(rec.dev_blocked_ms) || 0) + blockedFor;
+    }
+  }
   rec.dev_query = '';
   rec.dev_query_at = '';
   rec.dev_query_by = '';
@@ -5160,6 +5379,7 @@ function ensureTriggers_() {
   var haveUnrouted = false;   // r140
   var haveTold = false;       // r146
   var haveEnrich = false;     // r152
+  var haveDevTargets = false; // r170
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -5171,6 +5391,7 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'unroutedDigest') haveUnrouted = true;
     if (t.getHandlerFunction() === 'studentToldSweep') haveTold = true;
     if (t.getHandlerFunction() === 'enrichContacts') haveEnrich = true;
+    if (t.getHandlerFunction() === 'devTargetSweep') haveDevTargets = true;
   });
   if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
   if (!haveEnrich) ScriptApp.newTrigger('enrichContacts').timeBased().everyDays(1).atHour(19).create();   // r152: end of the working day
@@ -5193,6 +5414,12 @@ function ensureTriggers_() {
   // rather than one that lands in the Monday pile-up.
   if (!haveUnrouted) {
     ScriptApp.newTrigger('unroutedDigest').timeBased().onWeekDay(ScriptApp.WeekDay.TUESDAY).atHour(9).create();
+  }
+  // r170: Thursday, deliberately not Monday. A list of late work landing in the
+  // Monday pile-up gets skimmed; mid-week there is still time to do something
+  // about it before the week is written off.
+  if (!haveDevTargets) {
+    ScriptApp.newTrigger('devTargetSweep').timeBased().onWeekDay(ScriptApp.WeekDay.THURSDAY).atHour(9).create();
   }
   if (!haveScan) {
     ScriptApp.newTrigger('scanChatwoot').timeBased().everyDays(1).atHour(5).create();
@@ -7012,7 +7239,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r169 · 2026-09-14';
+var CODE_STAMP = 'r170 · 2026-09-14';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
