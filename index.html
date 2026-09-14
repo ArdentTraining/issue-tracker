@@ -3251,7 +3251,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r170 · 2026-09-14";  // bump this with each round, it lands on every feedback report
+var BUILD = "r171 · 2026-09-14";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4590,7 +4590,26 @@ function applyPerms(user) {
   if (!state.viewAs) state.realUser = user;
   state.user = user;
   state.perms = (user && user.perms) || {};
-  state.prefs = (user && user.prefs) || {};
+  // r171 (Edd: the preferences box "showing up over and over again as I change
+  // my 'view as' or device").
+  //
+  // View-as hands this function a preset - { email, name, perms } - with NO
+  // prefs key at all, and "no prefs key" was being read as "prefs are empty".
+  // So every switch wiped the lot, and prefs_intro_seen went with them, and the
+  // introduction fired again. Coming BACK to full access did it too, because
+  // that path passes state.realUser, captured at login, which never learned
+  // about the save. Absence read as a negative answer, which is the same shape
+  // as the r160 trail bug.
+  //
+  // It is also just wrong on its own terms: view-as simulates what somebody
+  // ELSE can see. It does not make your own sort order or landing page
+  // somebody else's. So prefs are only replaced when the caller actually
+  // carries them, and are otherwise left exactly as they were.
+  if (user && Object.prototype.hasOwnProperty.call(user, "prefs")) {
+    state.prefs = user.prefs || {};
+  } else if (!state.prefs) {
+    state.prefs = {};
+  }
   var p = state.perms;
   applyPermGates();
   // FB-0263: an admin sees the fix queues without being a name in them. The
@@ -6867,13 +6886,38 @@ function openPrefs(intro) {
 // write, so it is done on the way out rather than on the way in: if the write
 // fails the worst case is seeing it twice, where the other way round the worst
 // case is never seeing it at all.
+//
+// r171: "once" now means three things at once, because applyPerms runs on far
+// more than a login - the boot cache, the fresh bootstrap, and every view-as
+// switch in both directions all call it.
+//   1. once per page, whatever calls applyPerms (prefsIntroShown);
+//   2. never while simulating somebody else;
+//   3. once per person per browser, so a server write that fails cannot turn
+//      into a popup on every load of that device.
+var prefsIntroShown = false;
+function prefsIntroKey() {
+  var u = state.realUser || state.user || null;
+  return "ait_prefs_intro:" + String((u && (u.email || u.name)) || "?");
+}
 function maybeIntroducePrefs() {
+  if (prefsIntroShown) return;
   if (!state.user || state.viewAs) return;             // not at a simulated board
   if ((state.prefs || {}).prefs_intro_seen) return;
+  if (localGet(prefsIntroKey())) return;
+  prefsIntroShown = true;
   setTimeout(function () {
     if ($("prefsModal").classList.contains("show")) return;
     openPrefs(true);
   }, 1200);
+}
+// Wherever the answer is recorded, record it everywhere it is read from -
+// state.prefs for now, realUser.prefs so a view-as round trip keeps it, and
+// this browser so a failed write to the server cannot nag again here.
+function markPrefsIntroSeen() {
+  state.prefs = Object.assign({}, state.prefs || {}, { prefs_intro_seen: true });
+  if (state.realUser) state.realUser.prefs = Object.assign({}, state.realUser.prefs || {}, { prefs_intro_seen: true });
+  if (state.user && state.user !== state.realUser) state.user.prefs = Object.assign({}, state.user.prefs || {}, { prefs_intro_seen: true });
+  localSet(prefsIntroKey(), "1");
 }
 function closePrefs() {
   $("prefsModal").classList.remove("show");
@@ -6881,7 +6925,7 @@ function closePrefs() {
   // the same popup nagging somebody who has already answered it.
   if (state._prefsIntro) {
     state._prefsIntro = false;
-    state.prefs = Object.assign({}, state.prefs || {}, { prefs_intro_seen: true });
+    markPrefsIntroSeen();
     apiPost({ action: "setPrefs", prefs: { prefs_intro_seen: true } }).catch(function () {});
   }
 }
@@ -6898,6 +6942,10 @@ function savePrefs() {
     if (!res || !res.ok) { $("prefsMsg").textContent = "Could not save: " + ((res && res.error) || "unknown"); return; }
     state.prefs = res.prefs || prefs;
     if (state.user) state.user.prefs = state.prefs;
+    // r171: realUser is what a view-as round trip restores from, so it has to
+    // learn about the save as well or the next switch back loses it.
+    if (state.realUser) state.realUser.prefs = state.prefs;
+    if (prefs.prefs_intro_seen) markPrefsIntroSeen();
     closePrefs(); toast("Preferences saved.");
   }).catch(function (e) { $("prefsMsg").textContent = "Could not save."; console.error(e); });
 }
