@@ -3251,7 +3251,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r172 · 2026-09-14";  // bump this with each round, it lands on every feedback report
+var BUILD = "r173 · 2026-09-14";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8445,7 +8445,7 @@ function irpcsRenderMedia() {
         '<button class="small" style="padding:5px 10px;" onclick="irpcsMediaStart(\'video\')">Add a video</button>' +
         '<button class="small" style="padding:5px 10px;" onclick="irpcsMediaStart(\'image\')">Add a diagram</button>' +
         '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaLoad(true)">Refresh</button>' +
-        '<span class="small muted" style="flex:1;min-width:200px;">Videos up to half an hour. Nothing here is ever deleted, because a lesson published last month may still point at it.</span>' +
+        '<span class="small muted" style="flex:1;min-width:200px;">MP4 video up to 500MB, and PNG, JPEG, WebP or SVG diagrams. Nothing here is ever deleted, because an item published last month may still point at it.</span>' +
       '</div>' +
     '</div>';
 
@@ -8479,25 +8479,28 @@ function irpcsMediaRow(m) {
   var secs = m.duration_s == null ? null : Number(m.duration_s);
   var mins = secs == null ? "" : Math.floor(secs / 60) + "m " + Math.round(secs % 60) + "s";
 
+  // `url` is stored host-free (/media/vid_abc) so moving the student app to its
+  // own domain does not rewrite every row. Whoever renders it supplies the
+  // origin, which here is the app we already point the preview at.
+  var src = m.url ? (/^https?:/.test(m.url) ? m.url : IRPCS_APP_URL + m.url) : "";
   var thumb;
-  if (m.kind === "image" && m.url) {
-    thumb = '<img src="' + esc(m.url) + '" alt="" class="irpcs-thumb">';
-  } else if (m.kind === "video" && m.provider_id) {
-    // Stream's standard thumbnail path. If Cloudflare ever moves it the image
-    // simply fails and the play glyph underneath shows instead, which is why
-    // the glyph is always there rather than being swapped in.
-    thumb = '<span class="irpcs-thumb irpcs-play">▶' +
-      '<img src="https://videodelivery.net/' + esc(m.provider_id) + '/thumbnails/thumbnail.jpg" alt="" ' +
-      'onerror="this.style.display=\'none\'"></span>';
+  if (m.kind === "image" && src) {
+    thumb = '<img src="' + esc(src) + '" alt="" class="irpcs-thumb">';
   } else {
+    // No thumbnail for a video: R2 stores the file we gave it and nothing else,
+    // where Stream generated one. A poster frame would mean decoding video
+    // somewhere, which is not worth a platform.
     thumb = '<span class="irpcs-thumb irpcs-play">▶</span>';
   }
 
+  // r164: retired and failed are different things and now look different. One
+  // is finished business, the other is worth trying again, and until migration
+  // 037 they were the same value in the database.
   var status;
   if (m.status === "ready") status = '<span class="badge" style="border-color:var(--low);color:var(--low);">ready</span>';
-  else if (m.status === "pending") status = '<span class="badge" style="border-color:var(--medium);color:var(--medium);">' +
-    (m.progress != null ? "processing " + Math.round(m.progress) + "%" : "processing") + '</span>';
-  else status = '<span class="badge" style="border-color:var(--high);color:var(--high);">not usable</span>';
+  else if (m.status === "pending") status = '<span class="badge" style="border-color:var(--medium);color:var(--medium);">uploading</span>';
+  else if (m.status === "retired") status = '<span class="badge" style="border-color:var(--muted);color:var(--muted);">retired</span>';
+  else status = '<span class="badge" style="border-color:var(--high);color:var(--high);">did not upload</span>';
 
   return '<div class="irpcs-media-row">' + thumb +
     '<div style="min-width:0;flex:1;">' +
@@ -8505,9 +8508,12 @@ function irpcsMediaRow(m) {
       '<div class="small muted">' + esc(m.kind) + (mins ? " · " + esc(mins) : "") +
         (who ? " · " + esc(who) : "") + (when ? " · " + esc(when) : "") + '</div>' +
       (m.alt_text ? '<div class="small muted" style="margin-top:2px;">' + esc(m.alt_text) + '</div>' : "") +
-      (m.status !== "ready" && m.status !== "pending"
+      (m.status === "retired"
+        ? '<div class="small muted" style="margin-top:3px;">Withdrawn, so it is not offered for new items. Anything already using it still works.</div>'
+        : "") +
+      (m.status !== "ready" && m.status !== "pending" && m.status !== "retired"
         ? '<div class="small" style="margin-top:3px;color:var(--high);">' +
-          esc(m.reason || "This one cannot be used. It either failed to process, or somebody marked it unusable.") +
+          esc(m.reason || "The file never arrived, so there is nothing to show a student.") +
           ' <button class="ghost small" style="padding:2px 7px;margin-left:4px;" onclick="irpcsMediaStart(\'' +
           esc(m.kind) + '\')">Upload again</button></div>'
         : "") +
@@ -8548,12 +8554,41 @@ function irpcsMediaField(k, v) {
   var go = $("irpcsMediaGo");
   if (go) go.disabled = !irpcsMediaReady();
 }
+// The same two lists the function enforces. Held here as well so a file that
+// cannot work is refused while somebody is still looking at the picker, rather
+// than after they have waited for an upload. The function is still the rule; this
+// is only the faster way of hearing it.
+var IRPCS_VIDEO_TYPES = ["video/mp4", "video/webm"];
+var IRPCS_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/svg+xml", "image/gif"];
+var IRPCS_MAX_VIDEO_MB = 500;
+var IRPCS_MAX_IMAGE_MB = 20;
+
+function irpcsFileProblem(kind, file) {
+  if (!file) return "";
+  var isImg = kind === "image";
+  var allowed = isImg ? IRPCS_IMAGE_TYPES : IRPCS_VIDEO_TYPES;
+  var maxMb = isImg ? IRPCS_MAX_IMAGE_MB : IRPCS_MAX_VIDEO_MB;
+  var type = String(file.type || "").toLowerCase();
+  if (allowed.indexOf(type) < 0) {
+    return isImg
+      ? "That is " + (type || "a file of unknown type") + ". PNG, JPEG, WebP or SVG please."
+      : "That is " + (type || "a file of unknown type") + ", and a browser will not play it. Save it as MP4 (H.264) and try again. Our storage hands back exactly what it is given, so nothing converts it on the way.";
+  }
+  if (file.size > maxMb * 1048576) {
+    return "That is " + Math.round(file.size / 1048576) + "MB and the limit is " + maxMb + "MB." +
+      (isImg ? "" : " A two or three minute explanation at 720p should be well under it, so this looks like a raw camera file.");
+  }
+  return "";
+}
+
 function irpcsMediaFile(input) {
   if (!irpcs.media.form) return;
   var f = input.files && input.files[0];
   irpcs.media.form.file = f || null;
   var nm = $("irpcsMediaFileName");
   if (nm) nm.textContent = f ? f.name + " (" + Math.round(f.size / 1048576) + " MB)" : "no file chosen";
+  var warn = $("irpcsMediaFileWarn");
+  if (warn) warn.textContent = irpcsFileProblem(irpcs.media.form.kind, f);
   // A sensible default title saves a step, and the filename is usually what
   // the person would have typed anyway.
   if (f && !irpcs.media.form.title) {
@@ -8568,6 +8603,7 @@ function irpcsMediaReady() {
   if (!f || !f.file) return false;
   if (!String(f.title || "").trim()) return false;
   if (f.kind === "image" && !String(f.alt || "").trim()) return false;
+  if (irpcsFileProblem(f.kind, f.file)) return false;
   return true;
 }
 
@@ -8584,8 +8620,14 @@ function irpcsMediaForm() {
       '<input id="irpcsMediaTitle" type="text" placeholder="' + (isImg ? "e.g. Crossing, red to red" : "e.g. Crossing, explained") + '" ' +
       'oninput="irpcsMediaField(\'title\', this.value)"></div>' +
     '<div class="fld"><label for="irpcsMediaPick">The file</label>' +
-      '<input id="irpcsMediaPick" type="file" accept="' + (isImg ? "image/*" : "video/*") + '" onchange="irpcsMediaFile(this)">' +
+      // Narrow rather than image/* and video/*. Our storage hands back exactly
+      // what it was given, so a .mov that the picker happily offered would
+      // reach a student as a blank rectangle.
+      '<input id="irpcsMediaPick" type="file" accept="' +
+        (isImg ? IRPCS_IMAGE_TYPES.join(",") : IRPCS_VIDEO_TYPES.join(",")) +
+        '" onchange="irpcsMediaFile(this)">' +
       '<div class="small muted" id="irpcsMediaFileName" style="margin-top:4px;">no file chosen</div></div>' +
+      '<p class="small" id="irpcsMediaFileWarn" style="margin:-6px 0 12px;color:var(--high);"></p>' +
     '<div class="row" style="gap:8px;">' +
       '<button class="small" id="irpcsMediaGo" style="padding:5px 10px;" onclick="irpcsMediaUpload()" disabled>Start the upload</button>' +
       '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaCancel()">Cancel</button>' +
@@ -8614,19 +8656,22 @@ function irpcsMediaUpload() {
   irpcs.media.form = null;
   irpcsRenderMedia();
 
+  // The type and the size go up front so the function can refuse a file that
+  // will not play BEFORE anyone waits for it to upload. R2 hands back exactly
+  // what it was given, so this is the only check there is.
   var start = isImg
-    ? { op: "image", title: f.title, alt: f.alt }
-    : { op: "video", title: f.title };
+    ? { op: "image", title: f.title, alt: f.alt, content_type: file.type, bytes: file.size }
+    : { op: "video", title: f.title, content_type: file.type, bytes: file.size };
 
   irpcsMediaApi({ body: start }).then(function (j) {
     if (!j || !j.upload_url) throw new Error("no upload URL came back");
-    irpcs.media.busy.stage = "Sending the file. This goes straight to Cloudflare and never through us.";
+    irpcs.media.busy.stage = "Sending the file. It goes straight to our storage and never through us.";
     irpcs.media.busy.pct = 3;
     irpcsRenderMedia();
-    return irpcsPutFile(j.upload_url, file).then(function () { return j; });
+    return irpcsPutFile(j.upload_url, file, j.content_type).then(function () { return j; });
   }).then(function (j) {
     irpcs.media.busy.pct = 100;
-    irpcs.media.busy.stage = isImg ? "Fetching the delivery link..." : "Cloudflare is processing the video. This is usually a minute or two.";
+    irpcs.media.busy.stage = "Checking a student can actually fetch it...";
     irpcsRenderMedia();
     return irpcsConfirmUntilReady(j.media_id);
   }).then(function (media) {
@@ -8647,14 +8692,18 @@ function irpcsMediaUpload() {
 }
 
 // XMLHttpRequest rather than fetch, for one reason: fetch cannot report upload
-// progress, and a 300MB video behind a spinner that never moves is how somebody
+// progress, and a large video behind a spinner that never moves is how somebody
 // decides it has hung and closes the tab.
-function irpcsPutFile(uploadUrl, file) {
+//
+// r164: a signed PUT of the raw file, straight to R2, rather than the multipart
+// POST Cloudflare's direct-upload wanted. The content type is signed into the
+// URL, so it has to be sent back exactly as the function set it or the upload is
+// refused with a signature error that mentions nothing about content types.
+function irpcsPutFile(uploadUrl, file, contentType) {
   return new Promise(function (resolve, reject) {
-    var form = new FormData();
-    form.append("file", file);
     var xhr = new XMLHttpRequest();
-    xhr.open("POST", uploadUrl, true);
+    xhr.open("PUT", uploadUrl, true);
+    xhr.setRequestHeader("Content-Type", contentType || file.type || "application/octet-stream");
     xhr.upload.onprogress = function (ev) {
       if (!ev.lengthComputable || !irpcs.media.busy) return;
       irpcs.media.busy.pct = Math.round((ev.loaded / ev.total) * 100);
@@ -8664,11 +8713,12 @@ function irpcsPutFile(uploadUrl, file) {
     };
     xhr.onload = function () {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error("Cloudflare refused the file (" + xhr.status + ")"));
+      else if (xhr.status === 403) reject(new Error("the upload link was refused, which usually means it expired. Try again."));
+      else reject(new Error("the storage refused the file (" + xhr.status + ")"));
     };
     xhr.onerror = function () { reject(new Error("the connection dropped during the upload")); };
     xhr.onabort = function () { reject(new Error("the upload was cancelled")); };
-    xhr.send(form);
+    xhr.send(file);
   });
 }
 
@@ -8681,11 +8731,7 @@ function irpcsConfirmUntilReady(mediaId, tries) {
   }).then(function (j) {
     var m = j.media || {};
     if (m.status === "ready") return m;
-    if (m.status && m.status !== "pending") throw new Error(j.reason || "Cloudflare could not process that file");
-    if (irpcs.media.busy && j.progress != null) {
-      irpcs.media.busy.stage = "Cloudflare is processing the video, " + Math.round(Number(j.progress)) + "% done.";
-      irpcsRenderMedia();
-    }
+    if (m.status && m.status !== "pending") throw new Error(j.reason || "the storage could not take that file");
     if (tries >= 40) return m;   // two minutes of polling, then let the library carry on
     return irpcsConfirmUntilReady(mediaId, tries + 1);
   });
@@ -8698,7 +8744,7 @@ function irpcsMediaPanel(e) {
   var rows = list.map(function (m, i) {
     var what;
     if (m.kind === "video") what = "Video · " + (m.title || m.uid);
-    else if (m.kind === "image") what = "Diagram · " + (m.alt || m.caption || m.url);
+    else if (m.kind === "image") what = "Diagram · " + (m.alt || m.caption || m.uid || m.url);
     else what = "Vessel model · " + irpcsModelLabel(m.preset);
     return '<div class="irpcs-att">' +
       '<span class="irpcs-att-n">' + (i + 1) + '</span>' +
@@ -8794,14 +8840,18 @@ function irpcsMediaAttachEntry(entry) {
 function irpcsMediaAttach(mediaId) {
   var m = irpcs.media.items.filter(function (x) { return x.media_id === mediaId; })[0];
   if (!m) return;
+  // Both kinds carry the media id, never a URL. That is the whole reason media
+  // moved from Cloudflare Stream to our own storage without a single published
+  // item being edited, and the same reason an adaptive ladder can be added later
+  // without one either.
   if (m.kind === "video") {
-    irpcsMediaAttachEntry({ kind: "video", uid: m.provider_id, title: m.title || "" });
+    irpcsMediaAttachEntry({ kind: "video", uid: m.media_id, title: m.title || "" });
   } else {
     // alt is required by the save, and it is required for a reason, so it is
     // taken from the library row rather than left for somebody to fill in.
     var alt = String(m.alt_text || "").trim();
     if (!alt) { toast("That diagram has no description, so it cannot be attached. Upload it again with one."); return; }
-    irpcsMediaAttachEntry({ kind: "image", url: m.url, alt: alt });
+    irpcsMediaAttachEntry({ kind: "image", uid: m.media_id, alt: alt });
   }
 }
 function irpcsMediaAttachModel(preset) {
