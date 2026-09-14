@@ -3251,7 +3251,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r173 · 2026-09-14";  // bump this with each round, it lands on every feedback report
+var BUILD = "r174 · 2026-09-14";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8563,16 +8563,55 @@ var IRPCS_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/svg+xml
 var IRPCS_MAX_VIDEO_MB = 500;
 var IRPCS_MAX_IMAGE_MB = 20;
 
+// r174: the extension is the fallback, and on Windows it is often the ONLY
+// thing we have.
+//
+// The browser fills in `file.type` by looking the extension up in the operating
+// system, and on Windows that lookup comes out of the registry. If no
+// application has claimed .jpg, or something has claimed it and left no MIME
+// entry behind, `file.type` comes back as an empty string for a perfectly good
+// JPEG. It is not rare and it is not the person's fault: they picked a photo and
+// we told them it was "a file of unknown type".
+//
+// `image/jpg` is in here for the same reason. It is not a real media type, but
+// some Windows installs register it, and a browser that reports it is describing
+// an ordinary JPEG. We normalise it rather than refuse it.
+var IRPCS_EXT_TYPES = {
+  mp4: "video/mp4", m4v: "video/mp4", webm: "video/webm",
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", jfif: "image/jpeg",
+  webp: "image/webp", svg: "image/svg+xml", gif: "image/gif",
+};
+var IRPCS_TYPE_ALIASES = { "image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg", "video/x-m4v": "video/mp4" };
+
+/** What we will tell the server this file is. The browser first, the filename
+ *  second, and nothing invented: a name with no extension we recognise still
+ *  comes back empty, and the caller refuses it. */
+function irpcsGuessType(file) {
+  if (!file) return "";
+  var t = String(file.type || "").toLowerCase().split(";")[0].trim();
+  if (IRPCS_TYPE_ALIASES[t]) t = IRPCS_TYPE_ALIASES[t];
+  if (t) return t;
+  var m = String(file.name || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return (m && IRPCS_EXT_TYPES[m[1]]) || "";
+}
+
 function irpcsFileProblem(kind, file) {
   if (!file) return "";
   var isImg = kind === "image";
   var allowed = isImg ? IRPCS_IMAGE_TYPES : IRPCS_VIDEO_TYPES;
   var maxMb = isImg ? IRPCS_MAX_IMAGE_MB : IRPCS_MAX_VIDEO_MB;
-  var type = String(file.type || "").toLowerCase();
+  var type = irpcsGuessType(file);
   if (allowed.indexOf(type) < 0) {
-    return isImg
-      ? "That is " + (type || "a file of unknown type") + ". PNG, JPEG, WebP or SVG please."
-      : "That is " + (type || "a file of unknown type") + ", and a browser will not play it. Save it as MP4 (H.264) and try again. Our storage hands back exactly what it is given, so nothing converts it on the way.";
+    // Name the file and say what we were handed. "A file of unknown type" told
+    // nobody anything, least of all us: it hid the one fact that would have
+    // explained the refusal, so the same report had to be diagnosed twice.
+    var got = type
+      ? "we make that " + type
+      : (String(file.type || "") ? "your browser calls it " + file.type : "your browser did not say what it is, and the filename does not end in something we know");
+    return '"' + (file.name || "that file") + '", ' + got + ". " +
+      (isImg
+        ? "PNG, JPEG, WebP or SVG please."
+        : "A browser will not play it. Save it as MP4 (H.264) and try again. Our storage hands back exactly what it is given, so nothing converts it on the way.");
   }
   if (file.size > maxMb * 1048576) {
     return "That is " + Math.round(file.size / 1048576) + "MB and the limit is " + maxMb + "MB." +
@@ -8623,8 +8662,18 @@ function irpcsMediaForm() {
       // Narrow rather than image/* and video/*. Our storage hands back exactly
       // what it was given, so a .mov that the picker happily offered would
       // reach a student as a blank rectangle.
+      //
+      // r174: extensions as well as media types, and the extensions are the half
+      // that does the work on Windows. `accept` matches a media type by asking
+      // the operating system what the file is, so on a machine with no registry
+      // entry for .jpg the picker greys out every JPEG on the disk. The person
+      // then switches the dropdown to "All files", and we used to refuse what
+      // they picked. An extension list is matched on the name and needs nothing
+      // from the OS.
       '<input id="irpcsMediaPick" type="file" accept="' +
-        (isImg ? IRPCS_IMAGE_TYPES.join(",") : IRPCS_VIDEO_TYPES.join(",")) +
+        (isImg
+          ? IRPCS_IMAGE_TYPES.join(",") + ",.png,.jpg,.jpeg,.jfif,.webp,.svg,.gif"
+          : IRPCS_VIDEO_TYPES.join(",") + ",.mp4,.m4v,.webm") +
         '" onchange="irpcsMediaFile(this)">' +
       '<div class="small muted" id="irpcsMediaFileName" style="margin-top:4px;">no file chosen</div></div>' +
       '<p class="small" id="irpcsMediaFileWarn" style="margin:-6px 0 12px;color:var(--high);"></p>' +
@@ -8659,9 +8708,14 @@ function irpcsMediaUpload() {
   // The type and the size go up front so the function can refuse a file that
   // will not play BEFORE anyone waits for it to upload. R2 hands back exactly
   // what it was given, so this is the only check there is.
+  // irpcsGuessType, not file.type. The signed URL pins whatever we send here, and
+  // the browser hands back an empty type often enough on Windows that trusting it
+  // meant refusing real JPEGs. The function echoes the type it signed, and
+  // irpcsPutFile sends that back verbatim, so the two can never drift apart.
+  var contentType = irpcsGuessType(file);
   var start = isImg
-    ? { op: "image", title: f.title, alt: f.alt, content_type: file.type, bytes: file.size }
-    : { op: "video", title: f.title, content_type: file.type, bytes: file.size };
+    ? { op: "image", title: f.title, alt: f.alt, content_type: contentType, bytes: file.size }
+    : { op: "video", title: f.title, content_type: contentType, bytes: file.size };
 
   irpcsMediaApi({ body: start }).then(function (j) {
     if (!j || !j.upload_url) throw new Error("no upload URL came back");
