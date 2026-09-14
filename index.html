@@ -3251,7 +3251,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r174.2 · 2026-09-14";  // bump this with each round, it lands on every feedback report
+var BUILD = "r174.3 · 2026-09-15";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8822,10 +8822,25 @@ function irpcsPutFile(uploadUrl, file, contentType) {
     // wifi. Say the likely cause and where the fix lives; a genuine dropped
     // connection is the rarer case and the sentence still covers it.
     xhr.onerror = function () {
+      // Name the bucket the link actually pointed at. r174.1 said "check the
+      // CORS policy" and Edd did, correctly, and it still failed: the message
+      // asserted a cause it had no evidence for. The bucket name is the missing
+      // fact, because a CORS policy on ardent-irpcs-media does nothing for a
+      // link addressed to some other bucket, and R2_MEDIA_BUCKET is a secret
+      // nobody can read back from here.
+      //
+      // Only the origin and the first path segment: the rest of the URL carries
+      // a signature, and this text goes into bug reports.
+      var where = "";
+      try {
+        var u = new URL(uploadUrl);
+        where = u.host + "/" + u.pathname.split("/")[1];
+      } catch (e) { /* leave it out rather than guess */ }
       reject(new Error(
         xhr.status === 0 && /r2\.cloudflarestorage\.com/.test(uploadUrl)
-          ? "the browser could not reach our storage. The upload link itself was fine, so this is almost certainly the bucket's CORS policy: it has to allow PUT from " +
-            location.origin + ". Cloudflare dashboard, R2, ardent-irpcs-media, Settings, CORS Policy."
+          ? "the browser could not reach our storage, so nothing was uploaded. The link was addressed to " +
+            (where || "our bucket") + ", and that bucket needs a CORS policy allowing PUT from " +
+            location.origin + " with content-type in AllowedHeaders. If the bucket named there is not the one you set the policy on, that is the problem: it is the R2_MEDIA_BUCKET secret in Supabase."
           : "the connection dropped during the upload"));
     };
     xhr.onabort = function () { reject(new Error("the upload was cancelled")); };
