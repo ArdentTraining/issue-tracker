@@ -107,6 +107,23 @@
     padding: 9px 10px; width: 100%;
   }
   textarea { resize: vertical; }
+  /* Theming only, and worth saying so: this is NOT the fix for FB-0383. I
+     thought the blanket rule above was swallowing the native "Choose File"
+     button in dark theme, tested it side by side in the live page, and it
+     isn't - the UA style wins on the button's own background, so it renders
+     as a legible light-grey lump. What it does NOT do is look like it belongs
+     to this app, on a form where Edd could not tell there was anything to
+     click. So: our own button tokens, which follow both themes, and a pointer
+     cursor on the whole control. Three upload fields share it (the log form,
+     the feedback box and IRPCS media). */
+  input[type=file] { padding: 6px; cursor: pointer; }
+  input[type=file]::file-selector-button {
+    font-family: inherit; font-size: 13px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 12px; margin-right: 10px;
+    background: var(--surface-2); color: var(--text);
+  }
+  input[type=file]::file-selector-button:hover { filter: brightness(1.12); }
   label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 4px; }
   .field { margin-bottom: 12px; }
 
