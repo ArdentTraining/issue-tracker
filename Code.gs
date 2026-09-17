@@ -315,20 +315,41 @@ var WORKAROUND_CLOSED_ = { resolved_tbc: 1, parked: 1 };
 // r175: chasing a student who has gone quiet.
 var WAITING_CHASE_DAYS = 4;       // nothing has moved for this long
 var WAITING_RENUDGE_DAYS = 3;     // and we have not already said so this recently
-var WAITING_MAX_LISTED = 5;       // keep the message readable
-// A second, different silence: an open issue with a student on it that nobody
-// has even worked out a next step for. Simulated against live data on 17 Sep,
-// this was SEVEN issues, the oldest 28 days. They are invisible to the waiting
-// test above for the honest reason that there is nothing on them to read, which
-// is exactly why they need saying out loud. Longer fuse than a chase, because
-// "nobody has decided yet" is only worth raising once it has actually stalled.
-var WAITING_STALLED_DAYS = 7;
+var WAITING_MAX_LISTED = 3;       // r177 (Edd): 23 items is not a list, it is a wall
+var WAITING_CHECK_MAX = 12;       // Chatwoot lookups per run, so the sweep cannot run long
+
+// r177, and it is the whole point of this sweep now. Edd, on the first real
+// message: "This is too long and overwhelming for our instructor team. I think
+// you need to check what you can do automatically first?"
+//
+// He is right, and the evidence was already in this session: SIX issues in one
+// week had the answer sitting in the Chatwoot thread while the tracker showed
+// them as untouched. So before anybody is asked to chase a student, ask
+// Chatwoot whether that student has already written back. If they have, it is
+// not a chase, it is a reply nobody has read - a different job, a shorter list,
+// and one we can be certain about rather than guessing.
+//
+// The r177 cut also DELETED the "no next step worked out" section. That was
+// duplicating unroutedDigest, which has done the same job weekly since r140 and
+// carries the warning I ignored: "putting a 442-day-old row at the top is how a
+// digest gets ignored by its second week". A 68-day-old row has no business in
+// a daily message.
 
 // r175: a fault we have already closed coming back.
 var RETURNING_FAULT_DAYS = 90;        // how far back a closed issue still counts
 var RETURNING_FAULT_MIN_WORDS = 4;    // shared summary words before it is worth a look
 var RETURNING_FAULT_MIN_OVERLAP = 0.5; // and that must be half the shorter summary
 var RETURNING_FAULT_QUIET_DAYS = 7;   // shout once per closed issue per week
+// r177 (Edd): "I want you to be able to join to a resolved issue. A issue
+// marked as resolved which comes back or gets lots of new reports needs
+// reopened, though the original student doesn't need further contact."
+//
+// So resolved is a matching candidate again, which reverses the r94 rule. That
+// rule was not wrong about its risk - resurrecting ancient history - so the
+// door opens on a timer rather than all the way: a fault closed last month and
+// seen again is a regression, the same words a year later are a new issue.
+// 'past' rows (the old imported spreadsheets) stay out for good.
+var REOPEN_WINDOW_DAYS = 90;
 // Tuned against 60 real filings on 17 Sep, not guessed. The matcher's own
 // shortlist scorer (raw word hits across summary AND the whole transcript) was
 // tried first and fired on 60% of them, pairing "cannot tick an answer" with
@@ -2523,6 +2544,30 @@ function addReportToIssue_(id, data, report) {
     rec.raw_text = (rec.raw_text || '') + '\n\n--- unparked: reported again ---';
   }
 
+  // r177 (Edd): a resolved issue reported again is a fix that did not hold, so
+  // it comes back open carrying the new report, and the count and the score
+  // tell the truth instead of the fault starting again from one.
+  //
+  // The original student is NOT contacted again - Edd was explicit, and they
+  // were sorted. That falls out of the status by itself: studentToldSweep only
+  // looks at resolved and dev_fixed rows, so reopening takes this off its list.
+  // The trail says so anyway, because the next person reading it should not go
+  // back to somebody who was sorted weeks ago.
+  var reopened177 = false;
+  if (String(rec.status).toLowerCase() === 'resolved') {
+    var closedFor = Math.max(0, Math.round(
+      (Date.now() - new Date(rec.resolved_at || rec.updated_at || Date.now()).getTime()) / (24 * 3600 * 1000)));
+    rec.status = 'open';
+    rec.resolved_at = '';
+    reopened177 = true;
+    rec.raw_text = capAppend_(rec.raw_text, '\n\n--- reopened: reported again ' + closedFor +
+      ' day(s) after we closed it, so the fix did not hold. The student on the original report was ' +
+      'already sorted and does not need contacting about this. ---');
+    // The dev timestamps are deliberately left alone. They are the record of
+    // what was done and when, and a reopen does not un-happen it; the status
+    // and the note above are what say the fix did not stick.
+  }
+
   // Note: a "Submit and park" that turns out to MERGE into an existing issue
   // deliberately does not park that issue. Park means "this student went quiet
   // so I can't get to the bottom of it", and that is no reason to stop work on
@@ -2564,6 +2609,12 @@ function addReportToIssue_(id, data, report) {
       !data._suppress_slack &&
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
+  }
+
+  // r177: a fault we had closed is back. That is news whatever the priority
+  // says, because somebody decided it was finished and it was not.
+  if (reopened177 && !data._suppress_slack) {
+    try { sendReopenedSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
   if (WORKAROUND_CLOSED_[String(rec.status).toLowerCase()]) {
@@ -2778,10 +2829,17 @@ function aiMatchIssue_(data, category) {
   for (var r = 1; r < values.length; r++) {
     var row = values[r];
     if (!row[idx['issue_id']]) continue;
-    // Never merge a new report into a resolved issue, or into a "past" row
-    // imported from the old spreadsheets — that would resurrect ancient history.
+    // A "past" row is imported history from the old spreadsheets and must never
+    // be resurrected. Resolved rows ARE offered now (r177, Edd), but only ones
+    // closed inside REOPEN_WINDOW_DAYS: see the note by that constant.
     var candStatus = String(row[idx['status']]).toLowerCase();
-    if (candStatus === 'resolved' || candStatus === 'past') continue;
+    if (candStatus === 'past') continue;
+    var closedAgo = null;
+    if (candStatus === 'resolved') {
+      var closedAt = new Date(row[idx['resolved_at']] || row[idx['updated_at']] || 0).getTime();
+      if (isNaN(closedAt) || closedAt < Date.now() - REOPEN_WINDOW_DAYS * 24 * 3600 * 1000) continue;
+      closedAgo = Math.max(0, Math.round((Date.now() - closedAt) / (24 * 3600 * 1000)));
+    }
     // Tech issues and internal tasks share a sheet; never match across the two.
     if (idx['category'] != null && String(row[idx['category']] || '').toLowerCase() !== String(category).toLowerCase()) continue;
     // Course errors: only consider other errors on the same slide.
@@ -2793,6 +2851,10 @@ function aiMatchIssue_(data, category) {
       id: row[idx['issue_id']],
       summary: row[idx['summary']],
       lesson_code: row[idx['lesson_code']],
+      // r177: the model has to be able to tell a live issue from one we closed,
+      // because "the same fault came back" is a different judgement from "two
+      // people have the same fault".
+      state: closedAgo === null ? 'open' : ('we closed this ' + closedAgo + ' day(s) ago'),
       _hay: String((row[idx['summary']] || '') + ' ' + (row[idx['section']] || '') + ' ' +
                    (row[idx['lesson_code']] || '') + ' ' + (row[idx['raw_text']] || '')).toLowerCase()
     });
@@ -2852,9 +2914,17 @@ function aiMatchIssue_(data, category) {
       'Different wording, a different student, or a different device are NOT reasons to keep them apart: several people hitting one fault is exactly what this is for. ' +
       'Match when the same thing is broken in the same place. Say null when it is genuinely a different problem.';
 
+  // r177: some candidates are issues we have already closed, included on
+  // purpose. A fix that did not hold is one of the most useful things this can
+  // tell us, and until now it was the one thing it could not say.
+  var reopenNote = '\n\nSome of the existing issues carry a state saying we closed them recently. Those are included deliberately. ' +
+    'If the new report is the same fault coming back after we closed it, MATCH it - a fix that did not hold is exactly what we need to know about. ' +
+    'Judge it the same way as any other match: the same thing broken in the same place. Do not match a closed issue just because it is closed and the wording is similar.';
+
   var prompt = instruction + '\n\n' +
     'NEW report:\n' + JSON.stringify({ summary: data.summary || '', raw_text: data.raw_text || '', lesson_code: data.lesson_code || '', device: data.device_info || '' }) + '\n\n' +
-    'EXISTING open issues:\n' + JSON.stringify(candidates) + '\n\n' +
+    reopenNote + '\n\n' +
+    'EXISTING issues:\n' + JSON.stringify(candidates) + '\n\n' +
     'Return ONLY JSON: {"match_id": "<id of the matching existing issue, or null>"}. No prose, no markdown fences.';
 
   var res;
@@ -4170,25 +4240,81 @@ function sendReturningFaultSlack_(issue, best, appUrl) {
   var days = Math.round((Date.now() - best.closed.getTime()) / (24 * 3600 * 1000));
   var dn = String(old.dev_notes || '');
   var noCause = !dn.trim() || /cause:\s*(na|n\/a|none|unknown)\b/i.test(dn);
+  // r177: this used to say "a resolved issue cannot pick up a new report on its
+  // own", which stopped being true the moment the matcher was allowed to reopen
+  // one. A notice that explains the old behaviour is worse than no notice.
+  // This now fires only when the matcher looked and said NO, so it is a second
+  // opinion, not an instruction - and it says so.
   var lines = [
-    ':arrows_counterclockwise: *This looks like something we have already closed*',
-    'A report has just come in that shares a lot of its wording with one we resolved ' +
-      days + ' day' + (days === 1 ? '' : 's') + ' ago. A resolved issue cannot pick up a new report on its own, ' +
-      'so unless somebody joins these by hand the new one stays a single report at a single report\'s priority.',
+    ':arrows_counterclockwise: *Might be one we have already closed*',
+    'The matcher did not think these were the same fault, but the wording overlaps enough to be worth a glance.',
     '',
-    '*Just in:* ' + slackSummary_(issue) + (issue.lesson_code ? ' (' + issue.lesson_code + ')' : ''),
+    '*Just in:* ' + returningClip_(slackSummary_(issue)) + (issue.lesson_code ? ' (' + issue.lesson_code + ')' : ''),
     '  ' + issueLink_(issue, appUrl),
-    '*Closed ' + days + ' day' + (days === 1 ? '' : 's') + ' ago:* ' + slackSummary_(old) +
-      ' - ' + (old.report_count || 1) + ' report' + (String(old.report_count) === '1' ? '' : 's'),
+    '*Closed ' + days + 'd ago:* ' + returningClip_(slackSummary_(old)),
     '  ' + issueLink_(old, appUrl)
   ];
-  if (noCause) {
-    lines.push('');
-    lines.push('Worth knowing: that one was closed without a cause recorded, so there may never have been a fix for it to hold.');
-  }
+  if (noCause) lines.push('_That one was closed with no cause recorded, so there may never have been a fix for it to hold._');
   lines.push('');
-  lines.push('If it is the same fault, reopen the closed one and link this into it, so the count and the priority tell the truth. If it is not, leave this and it will not ask again for a week.');
+  lines.push('Same fault? Link the new one into the closed one and it reopens itself with both reports on it. Not the same? Leave it, and it will not ask again for a week.');
   slackPost_('returning_fault', lines.join('\n'));
+}
+
+function returningClip_(s) {
+  s = String(s || '').replace(/\s+/g, ' ').trim();
+  if (!s) return 'no summary on the record';
+  return s.length > 110 ? s.slice(0, 110).replace(/[\s,;:.]+\S*$/, '') + '\u2026' : s;
+}
+
+// r177: the matcher has just reopened something we had closed, on its own. Say
+// so, because somebody decided that issue was finished and it was not, and
+// that is worth knowing whatever its priority reads. Short on purpose: there is
+// nothing to do by hand, so this is a notification, not a job.
+function sendReopenedSlack_(rec, appUrl) {
+  if (!slackOn_('returning_fault')) return;
+  var n = Math.max(1, Number(rec.report_count || 1));
+  var lines = [
+    ':arrows_counterclockwise: *Reopened: a fault we had closed is back*',
+    returningClip_(slackSummary_(rec)) + (rec.lesson_code ? ' (' + rec.lesson_code + ')' : ''),
+    'A new report joined it, so it is open again with ' + n + ' report' + (n === 1 ? '' : 's') +
+      ' on it. Already done, nothing to pick up. ' + issueLink_(rec, appUrl)
+  ];
+  var dn = String(rec.dev_notes || '');
+  if (!dn.trim() || /cause:\s*(na|n\/a|none|unknown)\b/i.test(dn)) {
+    lines.push('_It was closed with no cause recorded, so there may never have been a fix for it to hold._');
+  }
+  lines.push('_The student on the original report was already sorted and does not need contacting._');
+  slackPost_('returning_fault', lines.join('\n'));
+}
+
+// Has this student already written back since we last touched the record?
+//
+// One call, per conversation, and only for issues that are otherwise about to
+// be put in front of a human. Per-conversation reads are the half of Chatwoot's
+// API that stayed up through the September index outage, so this is the safe
+// half to lean on. Never throws: a Chatwoot that will not answer means we fall
+// back to treating it as a chase, which is what we did before this existed.
+function studentRepliedSince_(convId, sinceMs) {
+  try {
+    var id = chatwootConvId_(convId);
+    if (!id) return null;
+    var msgs = chatwootCall_('/conversations/' + id + '/messages');
+    var list = (msgs && (msgs.payload || (msgs.data && msgs.data.payload))) || [];
+    var newest = 0, preview = '';
+    list.forEach(function (m) {
+      if (Number(m.message_type) !== 0) return;     // 0 = incoming, the student
+      if (m.private) return;
+      var t = Number(m.created_at || 0) * 1000;
+      if (!t || t <= newest) return;
+      newest = t;
+      preview = cleanChatwootBody_(m.content) ||
+        ((m.attachments || []).length ? '[sent a screenshot]' : '');
+    });
+    if (!newest || newest <= sinceMs) return null;
+    return { at: newest, days: Math.max(0, Math.round((Date.now() - newest) / (24 * 3600 * 1000))), preview: preview };
+  } catch (e) {
+    return null;
+  }
 }
 
 // A student who has gone quiet looks exactly like a student who is sorted.
@@ -4207,9 +4333,7 @@ function sendReturningFaultSlack_(issue, best, appUrl) {
 function waitingOnStudentSweep() {
   var now = Date.now();
   var cutoff = now - WAITING_CHASE_DAYS * 24 * 3600 * 1000;
-  var stallCutoff = now - WAITING_STALLED_DAYS * 24 * 3600 * 1000;
   var due = [];
-  var stalled = [];
 
   getIssues_().issues.forEach(function (i) {
     var st = String(i.status || '').toLowerCase();
@@ -4228,22 +4352,13 @@ function waitingOnStudentSweep() {
     if (!String(i.student_contact || '').trim() && !String(i.student_name || '').trim()) return;
 
     var moved = new Date(i.updated_at || i.submitted_at || 0).getTime();
-    if (isNaN(moved)) return;
-    var days = Math.round((now - moved) / (24 * 3600 * 1000));
-
-    if (moved <= cutoff && waitingOnStudent_(i)) { due.push({ rec: i, days: days }); return; }
-
-    // Nothing to read on it at all: no next step worked out, and nothing on the
-    // trail saying the ball is with them. Not a chase - a decision nobody has
-    // made. Kept apart from the list above because it is a different question.
-    if (moved <= stallCutoff && !String(i.next_action_json || '').trim() && !waitingOnStudent_(i)) {
-      stalled.push({ rec: i, days: days });
-    }
+    if (isNaN(moved) || moved > cutoff) return;
+    if (!waitingOnStudent_(i)) return;
+    due.push({ rec: i, days: Math.round((now - moved) / (24 * 3600 * 1000)), moved: moved });
   });
 
-  if (!due.length && !stalled.length) { Logger.log('waitingOnStudentSweep: nothing due'); return 0; }
+  if (!due.length) { Logger.log('waitingOnStudentSweep: nothing due'); return 0; }
   due.sort(function (a, b) { return b.days - a.days; });
-  stalled.sort(function (a, b) { return b.days - a.days; });
 
   // Once per issue per window, or a quiet week reposts the same three names
   // every morning until people stop reading it.
@@ -4251,21 +4366,33 @@ function waitingOnStudentSweep() {
   var log = {};
   try { log = JSON.parse(props.getProperty('WAITING_NUDGED') || '{}'); } catch (e) { log = {}; }
   var quiet = now - WAITING_RENUDGE_DAYS * 24 * 3600 * 1000;
-  var unsaid = function (d) {
+  var fresh = due.filter(function (d) {
     var last = new Date(log[String(d.rec.issue_id)] || 0).getTime();
     return !last || last < quiet;
-  };
-  var fresh = due.filter(unsaid);
-  var freshStalled = stalled.filter(unsaid);
-  if (!fresh.length && !freshStalled.length) {
-    Logger.log('waitingOnStudentSweep: ' + (due.length + stalled.length) +
-      ' due, all flagged within ' + WAITING_RENUDGE_DAYS + ' days');
+  });
+  if (!fresh.length) {
+    Logger.log('waitingOnStudentSweep: ' + due.length + ' due, all flagged within ' +
+      WAITING_RENUDGE_DAYS + ' days');
     return 0;
   }
 
-  sendWaitingOnStudentSlack_(fresh, freshStalled, getAppUrl_());
+  // THE AUTOMATIC PASS. Anything where the student has already written back is
+  // not a chase, so it comes out of that list and goes in its own, with what
+  // they said. Budgeted, and a Chatwoot that will not answer just leaves the
+  // item where it was.
+  var replied = [], chase = [], looked = 0;
+  fresh.forEach(function (d) {
+    var conv = String(d.rec.chatwoot_conversation_id || '').trim();
+    if (!conv || looked >= WAITING_CHECK_MAX) { chase.push(d); return; }
+    looked++;
+    var r = studentRepliedSince_(conv, d.moved);
+    if (r) { d.reply = r; replied.push(d); } else { chase.push(d); }
+  });
+  Logger.log('waitingOnStudentSweep: checked ' + looked + ' conversations, ' + replied.length + ' had already replied');
+
+  sendWaitingOnStudentSlack_(replied, chase, getAppUrl_());
   var stamp = new Date().toISOString();
-  fresh.concat(freshStalled).forEach(function (d) { log[String(d.rec.issue_id)] = stamp; });
+  fresh.forEach(function (d) { log[String(d.rec.issue_id)] = stamp; });
   // Keep the log from growing for ever: anything older than four windows is
   // never going to suppress anything again.
   var keepFrom = now - WAITING_RENUDGE_DAYS * 4 * 24 * 3600 * 1000;
@@ -4274,9 +4401,8 @@ function waitingOnStudentSweep() {
     if (!t || t < keepFrom) delete log[k];
   });
   props.setProperty('WAITING_NUDGED', JSON.stringify(log));
-  Logger.log('waitingOnStudentSweep: nudged ' + fresh.length + ' waiting + ' +
-    freshStalled.length + ' stalled (of ' + due.length + '/' + stalled.length + ' due)');
-  return fresh.length + freshStalled.length;
+  Logger.log('waitingOnStudentSweep: posted ' + fresh.length + ' of ' + due.length + ' due');
+  return fresh.length;
 }
 
 // True when the record itself says the ball is with the student. Two sources,
@@ -4306,41 +4432,59 @@ function waitingOnStudent_(issue) {
 }
 
 // Edd's wording, 17 Sep: no instructor names (this is a list to act on, not a
-// record of who did what), no closing lecture, one line each. The first live
-// run got the identity right and the length wrong: 23 items, several carrying a
-// 400-character summary straight off the record. Hence the clip and the cap.
-function sendWaitingOnStudentSlack_(fresh, stalled, appUrl) {
+// record of who did what), no closing lecture, one line each. Then, on the
+// first real message: "This is too long and overwhelming for our instructor
+// team. I think you need to check what you can do automatically first?"
+//
+// So this is now the SHORT end of a sweep that has already done its own
+// homework. Two lists, three each, nothing older than the chase window, and
+// the "no next step worked out" section deleted outright because unroutedDigest
+// has covered that weekly since r140.
+function sendWaitingOnStudentSlack_(replied, chase, appUrl) {
   if (!slackOn_('waiting_on_student')) return;
-  var n = fresh.length + stalled.length;
-  var lines = [':mag: *' + n + ' need' + (n === 1 ? 's' : '') + ' chasing or resolving (on bug tracker)*'];
+  var n = replied.length + chase.length;
+  if (!n) return;
+  var lines = [];
 
-  // A summary written for the record is not a summary written for a channel.
-  // Cut at a word boundary so it never ends mid-word.
   var clip = function (s, max) {
     s = String(s || '').replace(/\s+/g, ' ').trim();
     if (!s) return 'no summary on the record';
     if (s.length <= max) return s;
     return s.slice(0, max).replace(/[\s,;:.]+\S*$/, '') + '\u2026';
   };
-  var line = function (d) {
-    var who = String(d.rec.student_name || '').trim();
-    if (who === '/' || who === '-' || who === '.') who = '';
-    return '\u2022 ' + (who ? who + ' - ' : '') + clip(slackSummary_(d.rec), 95) +
-      (d.rec.lesson_code ? ' (' + d.rec.lesson_code + ')' : '') +
-      ' - ' + d.days + 'd. ' + issueLink_(d.rec, appUrl);
-  };
-  var section = function (title, list) {
-    if (!list.length) return;
-    lines.push('');
-    lines.push(title);
-    list.slice(0, WAITING_MAX_LISTED).forEach(function (d) { lines.push(line(d)); });
-    if (list.length > WAITING_MAX_LISTED) {
-      lines.push('\u2022 plus ' + (list.length - WAITING_MAX_LISTED) + ' more like this on the tracker');
-    }
+  var who = function (d) {
+    var w = String(d.rec.student_name || '').trim();
+    if (w === '/' || w === '-' || w === '.') w = '';
+    return w;
   };
 
-  section('*Waiting on the student.* We have asked and nothing has come back.', fresh);
-  section('*No next step worked out.* Nobody has decided what happens with these yet.', stalled);
+  if (replied.length) {
+    lines.push(':envelope: *' + replied.length + ' student' + (replied.length === 1 ? ' has' : 's have') +
+      ' written back and nobody has read it*');
+    replied.slice(0, WAITING_MAX_LISTED).forEach(function (d) {
+      var w = who(d);
+      lines.push('\u2022 ' + (w ? w + ' - ' : '') + clip(slackSummary_(d.rec), 70) +
+        ' - replied ' + (d.reply.days === 0 ? 'today' : d.reply.days + 'd ago') + ': "' +
+        clip(d.reply.preview, 90) + '" ' + issueLink_(d.rec, appUrl));
+    });
+    if (replied.length > WAITING_MAX_LISTED) {
+      lines.push('\u2022 plus ' + (replied.length - WAITING_MAX_LISTED) + ' more');
+    }
+  }
+
+  if (chase.length) {
+    if (lines.length) lines.push('');
+    lines.push(':mag: *' + chase.length + ' waiting on a reply that has not come*');
+    chase.slice(0, WAITING_MAX_LISTED).forEach(function (d) {
+      var w = who(d);
+      lines.push('\u2022 ' + (w ? w + ' - ' : '') + clip(slackSummary_(d.rec), 85) +
+        (d.rec.lesson_code ? ' (' + d.rec.lesson_code + ')' : '') +
+        ' - ' + d.days + 'd. ' + issueLink_(d.rec, appUrl));
+    });
+    if (chase.length > WAITING_MAX_LISTED) {
+      lines.push('\u2022 plus ' + (chase.length - WAITING_MAX_LISTED) + ' more');
+    }
+  }
   slackPost_('waiting_on_student', lines.join('\n'));
 }
 
@@ -7628,7 +7772,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r176 · 2026-09-17';
+var CODE_STAMP = 'r177 · 2026-09-17';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
