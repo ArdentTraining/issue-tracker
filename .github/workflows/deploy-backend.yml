@@ -81,17 +81,32 @@ jobs:
           # eleven phantom green deploys hid the 200-version cap on 25 Aug 2026)
           # - fail loudly. If the ping itself is unreadable, warn and stand down.
           expected=$(sed -n "s/.*CODE_STAMP = '\([^']*\)'.*/\1/p" Code.gs | head -1)
-          sleep 5
           UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-          resp=$(curl -sSL -A "$UA" "$EXEC_URL?action=ping" || true)
-          live=$(printf '%s' "$resp" | sed -n 's/.*"stamp":"\([^"]*\)".*/\1/p')
+          # r177: this used to read the ping ONCE after a 5s sleep and fail hard
+          # on a mismatch. Apps Script does not always finish repointing the live
+          # deployment that fast: r177 itself went red here reading 'r176' at
+          # 18:24:58 and was serving 'r177' a minute later. A guard that cries
+          # wolf is a guard people learn to ignore, and this one is load-bearing
+          # - it is what caught eleven phantom green deploys hiding the
+          # 200-version cap on 25 Aug 2026. So poll rather than guess a sleep,
+          # and only fail once it has genuinely had time to land.
+          live=""
+          for attempt in $(seq 1 12); do
+            resp=$(curl -sSL -A "$UA" "$EXEC_URL?action=ping" || true)
+            seen=$(printf '%s' "$resp" | sed -n 's/.*"stamp":"\([^"]*\)".*/\1/p')
+            if [ -n "$seen" ]; then
+              live="$seen"
+              if [ "$live" = "$expected" ]; then
+                echo "Verified after ~$((attempt * 8))s: the live backend is running what we shipped ($live)."
+                exit 0
+              fi
+            fi
+            sleep 8
+          done
           if [ -z "$live" ]; then
-            echo "::warning::Could not read the ping back over curl - deploy unverified."
+            echo "::warning::Could not read the ping back over curl after ~96s - deploy unverified."
             exit 0
           fi
           echo "Shipped: $expected / Live: $live"
-          if [ "$live" != "$expected" ]; then
-            echo "::error::Live backend still reports '$live' but we shipped '$expected' - the deploy DID NOT land. Check version headroom (the 200-version cap) and deployBackend's response."
-            exit 1
-          fi
-          echo "Verified: the live backend is running what we shipped."
+          echo "::error::Live backend still reports '$live' but we shipped '$expected' after ~96s of polling - the deploy DID NOT land. Check version headroom (the 200-version cap) and deployBackend's response."
+          exit 1
