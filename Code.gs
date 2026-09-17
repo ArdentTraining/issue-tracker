@@ -2069,6 +2069,11 @@ function addIssue_(data) {
     // imported twice as two people. FT.02.02 reached high, and the dev queue,
     // on one student filed three times (twice by Charlie, once by Peter).
     chatwoot_conversation_id: String(data.chatwoot_conversation_id || '').trim(),
+    // r178: and WHICH message in it, so a log can link back to the thing it was
+    // made from rather than to the student's contact card. It lives on the
+    // report and not on the issue row on purpose: a merged issue holds reports
+    // from several conversations, and each should point at its own source.
+    chatwoot_message_id: String(data.chatwoot_message_id || '').trim(),
     device_info: data.device_info || '',
     instructor_name: data.instructor_name || '',
     instructor_email: data.instructor_email || '',
@@ -4842,6 +4847,13 @@ function chatwootImport_(data) {
   }
   var lines = [];
   var attImages = [];
+  // r178 (Holly): "If a bug log could have a link directly back to the message
+  // before it was logged that would be ace! Currently the chatwoot link goes to
+  // the students contact page." This is that message: the newest one in the
+  // thread when the log was taken. Chatwoot takes ?messageId= on the
+  // conversation route and scrolls straight to it.
+  var lastMsgId = '';
+  var lastMsgAt = 0;
   list.forEach(function (m) {
     // 0 incoming (student), 1 outgoing (agent). Skip activity lines and
     // internal notes - they're noise in a transcript the AI has to read.
@@ -4860,6 +4872,8 @@ function chatwootImport_(data) {
     var when = m.created_at ? new Date(Number(m.created_at) * 1000).toISOString().slice(0, 16).replace('T', ' ') : '';
     var note = pics.length ? '[shared ' + pics.length + ' screenshot' + (pics.length > 1 ? 's' : '') + ']' : '';
     lines.push(who + (when ? ' (' + when + ')' : '') + ': ' + (body || note) + (body && note ? '\n' + note : ''));
+    var mAt = Number(m.created_at || 0);
+    if (m.id && mAt >= lastMsgAt) { lastMsgAt = mAt; lastMsgId = String(m.id); }
     pics.forEach(function (a) { attImages.push(a.data_url); });
   });
 
@@ -4894,6 +4908,8 @@ function chatwootImport_(data) {
     chatwoot_contact_id: sender.id ? String(sender.id) : '',
     transcript: lines.join('\n\n'),
     message_count: lines.length,
+    // The message the log was taken from, for a link straight back to it.
+    last_message_id: lastMsgId,
     images: savedImages,
     images_seen: attImages.length,
     link: CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/conversations/' + id
@@ -7772,7 +7788,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r177 · 2026-09-17';
+var CODE_STAMP = 'r178 · 2026-09-17';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

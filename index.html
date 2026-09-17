@@ -5135,7 +5135,8 @@ function openDraftModal(id, text, voiced) {
   setDraftActionNote("");
   var b = $("draftChatwootBtn"), c = String(i.student_contact || "");
   var cwId = String(i.chatwoot_contact_id || "");
-  if (c.indexOf("@") > 0) { b.style.display = ""; b.onclick = function () { openInChatwoot(c, cwId); }; }
+  var cwDirect = chatwootUrlForIssue(i);
+  if (c.indexOf("@") > 0 || cwDirect) { b.style.display = ""; b.onclick = function () { openInChatwoot(c, cwId, cwDirect); }; }
   else b.style.display = "none";
   // The tracker cannot see a message leave Chatwoot, so on a scan-logged issue
   // the popup offers an "I've sent it" marker (Edd, FB-0188): one click posts a
@@ -5198,7 +5199,19 @@ function draftMarkSent(id) {
 // placeholder window opens synchronously and gets pointed at the contact when
 // the URL arrives; if even the placeholder is blocked, a clickable link
 // appears instead of silence.
-function openInChatwoot(email, contactId) {
+function openInChatwoot(email, contactId, directUrl) {
+  // r178: when the log came from a live chat we already know exactly where to
+  // go, so there is nothing to look up. That also skips the 4-7 second contact
+  // search and the whole FB-0245 failure path below, which only existed because
+  // we were asking Chatwoot to find by email something we already had the id
+  // for. The lookup stays for issues pasted in by hand, which have no
+  // conversation on them.
+  if (directUrl) {
+    var w = null;
+    try { w = window.open(directUrl, "_blank"); } catch (e) {}
+    if (!w) showOpenLink(directUrl, "The popup was blocked - open the chat here:");
+    return;
+  }
   var win = null;
   try { win = window.open("", "_blank"); } catch (e) {}
   if (win) {
@@ -9866,6 +9879,9 @@ function chatwootImport(value) {
     setField("rawText", res.transcript);
     // Remember the conversation so the issue can carry a note back to it.
     state.chatwootConvId = res.conversation_id;
+    // r178 (Holly): which message the log was taken from, so the issue can link
+    // back to it rather than to the student's contact card.
+    state.chatwootMsgId = res.last_message_id || "";
     state.chatwootLink = res.link || "";
     // The contact id behind the conversation (Round 61). Stored on the issue so
     // every later "open this student in Chatwoot" is exact rather than a search.
@@ -11707,6 +11723,7 @@ function submitIssue() {
     else if (state.dupDismissed) data.no_merge = true;
     // Imported from a live chat: the backend drops an internal note back on it.
     if (state.chatwootConvId) data.chatwoot_conversation_id = state.chatwootConvId;
+    if (state.chatwootMsgId) data.chatwoot_message_id = state.chatwootMsgId;
     if (state.chatwootContactId) data.chatwoot_contact_id = state.chatwootContactId;
     if (applyRes) {
       // The pasted conversation was already sorted out in the chat, so log it as
@@ -11993,6 +12010,7 @@ function resetForm() {
   state.forcePark = null;
   state.chatwootContact = null;
   state.chatwootConvId = null;
+  state.chatwootMsgId = null;
   // Must clear with the rest of it. A contact id left behind would attach the
   // last student we imported to the next issue logged without an import, which
   // is the one mistake a student identifier must never make (Round 61).
@@ -12097,6 +12115,33 @@ function parseReports(issue) {
   try { var arr = JSON.parse(issue.reports_json); return Array.isArray(arr) ? arr : []; }
   catch (e) { return []; }
 }
+// r178: where a log actually came from. The conversation is on the issue row,
+// the message is on the report that brought it, so a merged issue links each
+// report back to its own source rather than all of them to the newest one.
+// Falls back to the conversation with no messageId for everything logged before
+// r178 and for anything pasted in by hand, which is why this is worth doing at
+// all: it improves every historic issue, not just the ones logged from now on.
+function chatwootConvUrl(conv, msg) {
+  conv = String(conv || "").trim();
+  if (!conv) return "";
+  return "https://app.chatwoot.com/app/accounts/100142/conversations/" + encodeURIComponent(conv) +
+    (msg ? "?messageId=" + encodeURIComponent(String(msg).trim()) : "");
+}
+function chatwootUrlForIssue(issue) {
+  var conv = String((issue && issue.chatwoot_conversation_id) || "").trim();
+  if (!conv) return "";
+  var msg = "";
+  parseReports(issue || {}).some(function (r) {
+    if (!r || !isReportEntry(r)) return false;
+    if (!String(r.chatwoot_message_id || "").trim()) return false;
+    var rc = String(r.chatwoot_conversation_id || "").trim();
+    if (rc && rc !== conv) return false;
+    msg = r.chatwoot_message_id;
+    return true;
+  });
+  return chatwootConvUrl(conv, msg);
+}
+
 // Same definition as the backend's isReportEntry_: a missing kind is a report,
 // and updates, nudges and the question/answer pairs are not.
 function isReportEntry(entry) {
@@ -13071,9 +13116,16 @@ function openDetail(issue) {
         (rp.date ? " · " + fmtDate(rp.date) : "") +
         (rp.student_contact ? " · " + esc(rp.student_contact) : "");
       var head = esc(rp.summary || rp.student_name || ("Entry " + (i + 1)));
+      // r178 (Holly): "struggling to find how this bug log came about". Straight
+      // to the message it was taken from, per report.
+      var rpUrl = chatwootConvUrl(rp.chatwoot_conversation_id || issue.chatwoot_conversation_id, rp.chatwoot_message_id);
+      var rpLink = rpUrl
+        ? ' <a href="' + esc(rpUrl) + '" target="_blank" rel="noopener" class="small" style="color:var(--accent);">open this in Chatwoot</a>'
+        : '';
       refHtml += '<details' + (i === reps.length - 1 ? " open" : "") + ' style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-bottom:6px;background:var(--bg);">' +
         '<summary style="cursor:pointer;">' + head + ' <span class="small muted">(' + meta + ')</span></summary>' +
         '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px;">' + esc(rp.raw_text || rp.summary || "") + clipNote(issue) + '</div>' +
+        (rpLink ? '<div style="margin-top:6px;">' + rpLink + '</div>' : '') +
       '</details>';
     });
     refHtml += '</details>';
@@ -13098,7 +13150,7 @@ function openDetail(issue) {
   // buried reference material nobody can find is worse than a long pane.
   var devFirst = !!issue.dev_query_at;
   html += (devFirst ? devHtml + ckBlock : ckBlock + devHtml) +
-    '<details class="acc"><summary>Details, reports and screenshots</summary>' +
+    '<details class="acc"><summary>The chat this came from, and the details</summary>' +
       detailsKv + refHtml +
     '</details>';
 
