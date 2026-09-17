@@ -314,8 +314,8 @@ var WORKAROUND_CLOSED_ = { resolved_tbc: 1, parked: 1 };
 
 // r175: chasing a student who has gone quiet.
 var WAITING_CHASE_DAYS = 4;       // nothing has moved for this long
-var WAITING_RENUDGE_DAYS = 7;     // and we have not already said so this recently
-var WAITING_MAX_LISTED = 8;       // keep the message readable
+var WAITING_RENUDGE_DAYS = 3;     // and we have not already said so this recently
+var WAITING_MAX_LISTED = 5;       // keep the message readable
 // A second, different silence: an open issue with a student on it that nobody
 // has even worked out a next step for. Simulated against live data on 17 Sep,
 // this was SEVEN issues, the oldest 28 days. They are invisible to the waiting
@@ -4308,31 +4308,41 @@ function waitingOnStudent_(issue) {
 }
 
 // Edd's wording, 17 Sep: no instructor names (this is a list to act on, not a
-// record of who did what), no closing lecture, one line each.
+// record of who did what), no closing lecture, one line each. The first live
+// run got the identity right and the length wrong: 23 items, several carrying a
+// 400-character summary straight off the record. Hence the clip and the cap.
 function sendWaitingOnStudentSlack_(fresh, stalled, appUrl) {
   if (!slackOn_('waiting_on_student')) return;
   var n = fresh.length + stalled.length;
+  var lines = [':mag: *' + n + ' need' + (n === 1 ? 's' : '') + ' chasing or resolving (on bug tracker)*'];
+
+  // A summary written for the record is not a summary written for a channel.
+  // Cut at a word boundary so it never ends mid-word.
+  var clip = function (s, max) {
+    s = String(s || '').replace(/\s+/g, ' ').trim();
+    if (!s) return 'no summary on the record';
+    if (s.length <= max) return s;
+    return s.slice(0, max).replace(/[\s,;:.]+\S*$/, '') + '\u2026';
+  };
   var line = function (d) {
     var who = String(d.rec.student_name || '').trim();
-    return '• ' + (who ? who + ' - ' : '') + slackSummary_(d.rec) +
+    if (who === '/' || who === '-' || who === '.') who = '';
+    return '\u2022 ' + (who ? who + ' - ' : '') + clip(slackSummary_(d.rec), 95) +
       (d.rec.lesson_code ? ' (' + d.rec.lesson_code + ')' : '') +
-      ' Nothing has moved for ' + d.days + ' days. ' + issueLink_(d.rec, appUrl);
+      ' - ' + d.days + 'd. ' + issueLink_(d.rec, appUrl);
   };
-  var lines = [
-    ':mag: *' + n + ' need' + (n === 1 ? 's' : '') + ' chasing or resolving (on bug tracker)*'
-  ];
-  if (fresh.length) {
+  var section = function (title, list) {
+    if (!list.length) return;
     lines.push('');
-    lines.push('*Waiting on the student.* We have asked, and nothing has come back.');
-    fresh.slice(0, WAITING_MAX_LISTED).forEach(function (d) { lines.push(line(d)); });
-    if (fresh.length > WAITING_MAX_LISTED) lines.push('• plus ' + (fresh.length - WAITING_MAX_LISTED) + ' more');
-  }
-  if (stalled.length) {
-    lines.push('');
-    lines.push('*No next step worked out.* Nobody has decided what happens with these yet.');
-    stalled.slice(0, WAITING_MAX_LISTED).forEach(function (d) { lines.push(line(d)); });
-    if (stalled.length > WAITING_MAX_LISTED) lines.push('• plus ' + (stalled.length - WAITING_MAX_LISTED) + ' more');
-  }
+    lines.push(title);
+    list.slice(0, WAITING_MAX_LISTED).forEach(function (d) { lines.push(line(d)); });
+    if (list.length > WAITING_MAX_LISTED) {
+      lines.push('\u2022 plus ' + (list.length - WAITING_MAX_LISTED) + ' more like this on the tracker');
+    }
+  };
+
+  section('*Waiting on the student.* We have asked and nothing has come back.', fresh);
+  section('*No next step worked out.* Nobody has decided what happens with these yet.', stalled);
   slackPost_('waiting_on_student', lines.join('\n'));
 }
 
