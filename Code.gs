@@ -2637,8 +2637,7 @@ function recentReportCount_(rec) {
   // person and is exactly what put FT.02.02 on the developers' board.
   var n = 0, seen = {};
   for (var i = 0; i < reps.length; i++) {
-    var k = String(reps[i].kind || 'report').toLowerCase();
-    if (k === 'question' || k === 'answer' || k === 'update' || k === 'nudge') continue;
+    if (!isReportEntry_(reps[i])) continue;
     var key = reportSourceKey_(reps[i]);
     if (key) { if (seen[key]) continue; seen[key] = 1; }
     var d = new Date(reps[i].date || 0).getTime();
@@ -2712,8 +2711,7 @@ function realReportCount_(reps) {
   if (!reps || !reps.length) return 0;
   var n = 0, seen = {};
   for (var i = 0; i < reps.length; i++) {
-    var k = String(reps[i].kind || 'report').toLowerCase();
-    if (k === 'question' || k === 'answer' || k === 'update' || k === 'nudge') continue;
+    if (!isReportEntry_(reps[i])) continue;
     var key = reportSourceKey_(reps[i]);
     if (key) { if (seen[key]) continue; seen[key] = 1; }
     n++;
@@ -6209,6 +6207,14 @@ function aiNeedsDeveloper_(data) {
 // AI has rolled together reports that were not actually the same issue. The
 // first report stays on the original row; the rest become fresh open rows in
 // the same sheet, each carrying its own student, priority, and text.
+// One definition of "this trail entry is a report", used everywhere that counts
+// them or splits them. A missing kind means a row from before the trail carried
+// kinds, and every one of those is a report.
+function isReportEntry_(entry) {
+  var k = String((entry && entry.kind) || 'report').toLowerCase();
+  return k !== 'question' && k !== 'answer' && k !== 'update' && k !== 'nudge';
+}
+
 function splitIssue_(data) {
   var id = data.issue_id;
   if (!id) return { ok: false, error: 'splitIssue needs an issue_id' };
@@ -6221,13 +6227,27 @@ function splitIssue_(data) {
   // wrong reason is a refusal nobody can act on.
   var tSp = readTrail_(rec);
   if (tSp.broken) return trailRefusal_(id, tSp);
-  var reports = tSp.reps;
-  if (reports.length <= 1) return { ok: false, error: 'This issue has only one report, nothing to split.' };
+
+  // r176: only REPORTS split. Everything else on the trail - updates, nudges,
+  // the dev/admin questions and their answers - is commentary on the issue as a
+  // whole and cannot be attributed to one report, so it stays on the row that
+  // keeps the id. This used to split on EVERY entry, so a record with one
+  // report and six updates came apart into six junk issues whose entire text
+  // was somebody's follow-up note. The button's own wording has always promised
+  // "one per report"; now that is what it does.
+  var reports = [], history = [];
+  tSp.reps.forEach(function (e) { (isReportEntry_(e) ? reports : history).push(e); });
+
+  if (reports.length <= 1) {
+    return { ok: false, error: history.length
+      ? 'Only one report on this issue. The rest of the trail is updates and replies, which belong to the issue as a whole, so there is nothing to split apart.'
+      : 'This issue has only one report, nothing to split.' };
+  }
 
   var now = new Date().toISOString();
   var sheet = found.sheet;
 
-  // Rebuild the original row as just the first report.
+  // Rebuild the original row as the first report, keeping the whole history.
   var first = reports[0];
   rec.student_name = first.student_name || '';
   rec.student_contact = first.student_contact || '';
@@ -6236,7 +6256,7 @@ function splitIssue_(data) {
   rec.priority = (first.priority || rec.priority || 'medium');
   rec.raw_text = first.raw_text || rec.raw_text || '';
   rec.report_count = 1;
-  rec.reports_json = JSON.stringify([first]);
+  rec.reports_json = capReports_([first].concat(history));
   rec.updated_at = now;
   sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
 
@@ -6261,18 +6281,24 @@ function splitIssue_(data) {
       summary: rep.summary || rec.summary || '',
       priority: (rep.priority || 'medium'),
       priority_reason: rec.priority_reason || '',
+      // r176: these came out blank before, which left a split row scoring off a
+      // missing severity and sitting outside its own audience and queue.
+      severity: rec.severity || '',
+      request_kind: rec.request_kind || '',
+      audience: rec.audience || '',
+      platform: rec.platform || '',
       image_urls: '',
       status: 'open',
       resolved_at: '',
       resolution_note: '',
       notified_students: false,
       report_count: 1,
-      reports_json: JSON.stringify([rep])
+      reports_json: capReports_([rep])
     };
     sheet.appendRow(recordToRow_(issue));
   }
 
-  return { ok: true, split_into: reports.length };
+  return { ok: true, split_into: reports.length, history_kept: history.length };
 }
 
 // ---- Image upload ---------------------------------------------------------
@@ -7602,7 +7628,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r175 · 2026-09-17';
+var CODE_STAMP = 'r176 · 2026-09-17';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

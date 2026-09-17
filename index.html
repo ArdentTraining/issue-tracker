@@ -12080,10 +12080,20 @@ function parseReports(issue) {
   try { var arr = JSON.parse(issue.reports_json); return Array.isArray(arr) ? arr : []; }
   catch (e) { return []; }
 }
+// Same definition as the backend's isReportEntry_: a missing kind is a report,
+// and updates, nudges and the question/answer pairs are not.
+function isReportEntry(entry) {
+  var k = String((entry && entry.kind) || "report").toLowerCase();
+  return k !== "question" && k !== "answer" && k !== "update" && k !== "nudge";
+}
+
 function reportCount(issue) {
   var n = parseInt(issue.report_count, 10);
   if (n && n > 0) return n;
-  var reps = parseReports(issue);
+  // The fallback used to count the WHOLE trail, so an issue with one report and
+  // six updates read as seven reports and offered a Split apart button that had
+  // nothing to split (r176).
+  var reps = parseReports(issue).filter(isReportEntry);
   return reps.length || 1;
 }
 
