@@ -3490,9 +3490,26 @@ function pct_(arr, p) {
   return s[lo] + (s[hi] - s[lo]) * (pos - lo);
 }
 var DAY_MS_ = 24 * 3600 * 1000;
+// r179 (Edd, 17 Sep): "we don't want course errors in this page."
+//
+// The dev queue carries both categories, but a course error is never developer
+// work. Checked every row that has ever reached the queue: the only assignee
+// ever attached to a course_error is Edd, while Khushbu, Neel and Alex only
+// ever take tech_issue. So this function was measuring the developers against a
+// queue that was 23 of 40 somebody else's, which read as a median age of 13.3
+// days against a real 7.4, and had the Thursday post overstating the overdue
+// count by three.
+//
+// Filtered HERE and not at each surface, because this is the only place any of
+// it is worked out (r170) - the scoreboard, the Thursday sweep and the monthly
+// pack all read it, so they all move together and cannot drift apart.
+var DEV_METRIC_CATEGORIES_ = { tech_issue: 1 };
+
 function devMetrics_(data) {
   data = data || {};
-  var all = (data._issues || getIssues_().issues || []);
+  var all = (data._issues || getIssues_().issues || []).filter(function (i) {
+    return DEV_METRIC_CATEGORIES_[String(i.category || '').toLowerCase()];
+  });
   var now = Date.now();
   var since = data.since ? new Date(data.since).getTime() : 0;
   var until = data.until ? new Date(data.until).getTime() : now;
@@ -7788,7 +7805,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r178 · 2026-09-17';
+var CODE_STAMP = 'r179 · 2026-09-17';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

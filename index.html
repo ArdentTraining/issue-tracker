@@ -13895,7 +13895,7 @@ function renderDevScoreboard() {
       // FB-0380 (Edd): "lets not call it scoreboard... it sounds judgy... let's
       // have something less accusational." Name the work, not the people.
       '<strong>How the fix queue is moving</strong>' +
-      '<span class="small muted">team totals, not individuals</span>' +
+      '<span class="small muted">tech issues only, team totals not individuals</span>' +
       '<span class="grow"></span>' +
       '<a href="#" class="small" style="color:var(--accent);" onclick="loadDevMetrics(true);return false;">refresh</a>' +
       '<a href="#" class="small" style="color:var(--accent);" onclick="devMonthlyPack();return false;">monthly pack</a>' +
@@ -13903,16 +13903,26 @@ function renderDevScoreboard() {
 
   // --- how long things take, against what we said we expect
   h += '<div class="bar-wrap" style="margin-bottom:10px;"><table class="mini" style="width:100%;border-collapse:collapse;font-size:12.5px;">' +
-    '<tr style="color:var(--muted);text-align:left;"><th style="padding:3px 0;">Priority</th><th>Agreed</th><th>Typical</th><th>Slowest 1 in 10</th><th>Fixed</th><th>Open</th><th>Over</th></tr>' +
+    '<tr style="color:var(--muted);text-align:left;"><th style="padding:3px 0;">Priority</th><th>Agreed</th><th>Typical</th><th>Slowest 1 in 10</th><th>Fixed</th><th>Missed</th><th>Open now</th></tr>' +
     m.by_priority.map(function (p) {
       var bad = p.past_target > 0;
       return '<tr><td style="padding:3px 0;text-transform:capitalize;">' + esc(p.priority) + '</td>' +
         '<td>' + p.target_days + 'd</td>' +
         '<td>' + (p.median_days === null ? "–" : p.median_days + "d") + '</td>' +
         '<td>' + (p.p90_days === null ? "–" : p.p90_days + "d") + '</td>' +
-        '<td>' + p.fixed + '</td><td>' + p.open + '</td>' +
-        '<td' + (bad ? ' style="color:var(--high);font-weight:600;"' : '') + '>' + p.past_target + '</td></tr>';
-    }).join("") + '</table></div>';
+        // r179: this column is byPriBreach - of the ones we FIXED, how many took
+        // longer than the target. It used to sit after Open, where "Fixed 28 /
+        // Open 5 / Over 14" read as 14 of the 5 still open, which is what made
+        // Edd doubt the whole page. Same number, next to the column it belongs
+        // to, named for what it counts.
+        '<td>' + p.fixed + '</td>' +
+        '<td' + (bad ? ' style="color:var(--high);font-weight:600;"' : '') + '>' + p.past_target + '</td>' +
+        '<td>' + p.open + '</td></tr>';
+    }).join("") + '</table></div>' +
+    // And the other half of the same confusion: the tiles above start at the
+    // 25 August handover (FB-0321) while this table is lifetime, so "24
+    // Completed" over a table reading 36 looked like an error too.
+    '<div class="small muted" style="margin:-6px 0 10px;">Fixed and Missed count every tech fix on record. The tiles above start at the 25 August handover, so they read lower.</div>';
 
   // --- the queue as it stands
   h += '<div class="row" style="gap:18px;flex-wrap:wrap;align-items:flex-start;">' +
