@@ -55,6 +55,12 @@ var SLACK_NOTICES = {
   dev_queue_low:     { on: true,  to: 'SLACK_ADMINS' },              // r129: falls back to the main channel until the private admin channel is wired
   unrouted_digest:   { on: true,  to: 'SLACK_BUSINESS_MGMT' },       // r140 (Edd): Tuesday 09:00, what nobody has picked up -> Business Management
   shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
+  // r175 (Edd, 17 Sep): the three blind spots from that morning's triage. The
+  // chase list goes where the instructors already live; "we have closed this
+  // before" goes next to the shared-workaround notice, because they are the
+  // same family of signal - several rows that are really one fault.
+  waiting_on_student: { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
+  returning_fault:   { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
   // r170 (Edd): "some way to hold them sort of accountable". A number nobody
   // looks at holds nobody to anything, so the breaches come to the channel the
   // developers are already in, once a week, naming the specific items rather
@@ -296,6 +302,44 @@ var TBC_AUTO_RESOLVE_DAYS = 7;  // aligned with what the drawer has always promi
 // and shout once when the same one keeps working.
 var SHARED_WORKAROUND_DAYS = 7;   // rolling window we look back over
 var SHARED_WORKAROUND_MIN = 3;    // how many before it stops being coincidence
+
+// r175: the statuses that mean "closed on a workaround". This used to be the
+// single string 'resolved_tbc', which quietly stopped being true on 5 Sep:
+// FB-0372 sends a workaround with NO identified cause to PARKED instead, in
+// Edd's own words ("the student is up and running again, but the underlying
+// cause has not been identified... should be logged as parked"). So the rule
+// change routed cases away from the detector built to catch them, and five
+// hard-refresh cases went by in one September week without it ever firing.
+var WORKAROUND_CLOSED_ = { resolved_tbc: 1, parked: 1 };
+
+// r175: chasing a student who has gone quiet.
+var WAITING_CHASE_DAYS = 4;       // nothing has moved for this long
+var WAITING_RENUDGE_DAYS = 7;     // and we have not already said so this recently
+var WAITING_MAX_LISTED = 8;       // keep the message readable
+// A second, different silence: an open issue with a student on it that nobody
+// has even worked out a next step for. Simulated against live data on 17 Sep,
+// this was SEVEN issues, the oldest 28 days. They are invisible to the waiting
+// test above for the honest reason that there is nothing on them to read, which
+// is exactly why they need saying out loud. Longer fuse than a chase, because
+// "nobody has decided yet" is only worth raising once it has actually stalled.
+var WAITING_STALLED_DAYS = 7;
+
+// r175: a fault we have already closed coming back.
+var RETURNING_FAULT_DAYS = 90;        // how far back a closed issue still counts
+var RETURNING_FAULT_MIN_WORDS = 4;    // shared summary words before it is worth a look
+var RETURNING_FAULT_MIN_OVERLAP = 0.5; // and that must be half the shorter summary
+var RETURNING_FAULT_QUIET_DAYS = 7;   // shout once per closed issue per week
+// Tuned against 60 real filings on 17 Sep, not guessed. The matcher's own
+// shortlist scorer (raw word hits across summary AND the whole transcript) was
+// tried first and fired on 60% of them, pairing "cannot tick an answer" with
+// "password reset link is broken" at a score of 23 - because two long pasted
+// email threads always share plenty of words. That scorer is fine for what it
+// is, a SHORTLIST feeding an AI that makes the real decision; as a decision in
+// its own right it is worthless. Comparing summaries, stemmed and normalised
+// against the shorter of the two, fires on 5%, and the hits are real ones (a
+// Samsung tablet's false "no internet" against a closed tablet "no internet"
+// fault). Precision over recall deliberately: this only has to be right often
+// enough that people keep reading it.
 
 // Column order for both issue sheets (A..V). Both tabs use the same columns
 // so the code can treat them the same.
@@ -2319,9 +2363,16 @@ function addIssue_(data) {
     try { sendSlack_(issue, data.app_url || getAppUrl_()); } catch (slackErr) {}
   }
 
+  // r175: this row filed on its own because aiMatchIssue_ found nothing OPEN to
+  // join. That is the moment to check what we have already CLOSED, because a
+  // resolved issue can never pick up a report by itself.
+  if (!data._suppress_slack) {
+    try { checkReturningFault_(issue, data.app_url || getAppUrl_()); } catch (e) {}
+  }
+
   // Closed on a workaround: see whether this is the third one this week going
   // the same way, in which case it isn't a workaround any more, it's a fault.
-  if (String(issue.status).toLowerCase() === 'resolved_tbc') {
+  if (WORKAROUND_CLOSED_[String(issue.status).toLowerCase()]) {
     try { checkSharedWorkaround_(issue, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
@@ -2515,7 +2566,7 @@ function addReportToIssue_(id, data, report) {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
-  if (String(rec.status).toLowerCase() === 'resolved_tbc') {
+  if (WORKAROUND_CLOSED_[String(rec.status).toLowerCase()]) {
     try { checkSharedWorkaround_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
@@ -3245,7 +3296,7 @@ function addUpdate_(data) {
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
-  if (String(rec.status).toLowerCase() === 'resolved_tbc') {
+  if (WORKAROUND_CLOSED_[String(rec.status).toLowerCase()]) {
     try { checkSharedWorkaround_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
   return { ok: true, issue_id: id, updated: true };
@@ -3936,7 +3987,7 @@ function checkSharedWorkaround_(rec, appUrl) {
       var row = values[r];
       var id = row[idx['issue_id']];
       if (!id || seen[id]) continue;
-      if (String(row[idx['status']]).toLowerCase() !== 'resolved_tbc') continue;
+      if (!WORKAROUND_CLOSED_[String(row[idx['status']]).toLowerCase()]) continue;
       var when = new Date(row[idx['updated_at']] || row[idx['submitted_at']]);
       if (isNaN(when.getTime()) || when.getTime() < cutoff) continue;
       if (workaroundKind_(row[idx['resolution_note']]) !== kind) continue;
@@ -3989,6 +4040,300 @@ function sendSharedWorkaroundSlack_(kind, matches, appUrl) {
   lines.push('');
   lines.push('Worth one of us reopening the clearest one and sending it to the developers, rather than waiting for the next report.');
   slackPost_('shared_workaround', lines.join('\n'));
+}
+
+// ---------------------------------------------------------------------------
+// r175 (17 Sep 2026). Three things that let a live fault look like nothing.
+//
+// The first is above: WORKAROUND_CLOSED_ widened the shared-workaround detector
+// to the PARKED status that FB-0372 actually uses. The two below are new.
+// ---------------------------------------------------------------------------
+
+// A fault we have already closed, coming back.
+//
+// aiMatchIssue_ skips any candidate that is resolved, on purpose, so an old row
+// can never be resurrected by a new report. The cost of that stays invisible
+// until a fix does not hold. Then every fresh report of a fault we closed files
+// as its own single-report row at whatever priority one report earns, and
+// nothing anywhere says we have seen this before. ea0d1f83 (assessment images
+// failing) was closed on 25 Aug with its dev notes reading "Cause: NA / Fix:
+// NA", came back through four students in early September, and sat as four
+// unconnected low rows until somebody happened to read them side by side.
+//
+// This does not change the matcher. It only makes the silence audible: when a
+// report files on its own, look at what we closed recently and say so. No AI
+// call, because the same cheap word overlap the matcher already uses to
+// shortlist is good enough to make a human look, and this runs on every filing.
+// The words a fault is actually described by. Stemmed just enough that "image"
+// and "images" are the same word, which matters more here than anywhere else
+// because a recurrence is usually described in slightly different words by a
+// different person.
+function faultWords_(text) {
+  var out = {};
+  String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
+    if (w.length <= 3) return;
+    if (FIX_STOPWORDS[w] || RETURNING_FAULT_STOPWORDS_[w]) return;
+    var s = w.replace(/ies$/, 'y').replace(/(es|s)$/, '');
+    if (s.length > 2) out[s] = true;
+  });
+  return Object.keys(out);
+}
+
+// Words every second report on this tracker contains, so they carry no signal
+// about WHICH fault this is.
+var RETURNING_FAULT_STOPWORDS_ = {
+  student: 1, students: 1, issue: 1, issues: 1, course: 1, courses: 1, lesson: 1, lessons: 1,
+  ardent: 1, training: 1, instructor: 1, please: 1, thanks: 1, hello: 1, tried: 1, still: 1,
+  reported: 1, reports: 1, report: 1, unable: 1, cannot: 1, working: 1, work: 1
+};
+
+function checkReturningFault_(issue, appUrl) {
+  try {
+    var cat = String(issue.category || '').toLowerCase();
+    if (cat !== 'tech_issue' && cat !== 'course_error') return { ok: true, skipped: 'category' };
+    // An improvement is nobody's regression.
+    if (String(issue.request_kind || 'fix').toLowerCase() === 'improvement') return { ok: true, skipped: 'improvement' };
+
+    var sheet = sheetByName_(cat === 'course_error' ? COURSE_SHEET : TECH_SHEET);
+    if (!sheet) return { ok: true, skipped: 'no sheet' };
+    var values = sheet.getDataRange().getValues();
+    if (values.length < 2) return { ok: true, skipped: 'empty' };
+    var idx = {}; values[0].forEach(function (h, i) { idx[h] = i; });
+
+    // Summary against summary. The raw transcript is deliberately NOT in here:
+    // see the note by the constants above for what happened when it was.
+    var wordKeys = faultWords_(issue.summary);
+    if (wordKeys.length < RETURNING_FAULT_MIN_WORDS) return { ok: true, skipped: 'summary too thin' };
+
+    var cutoff = Date.now() - RETURNING_FAULT_DAYS * 24 * 3600 * 1000;
+    var best = null;
+    for (var r = 1; r < values.length; r++) {
+      var row = values[r];
+      if (!row[idx['issue_id']]) continue;
+      if (row[idx['issue_id']] === issue.issue_id) continue;
+      if (String(row[idx['status']]).toLowerCase() !== 'resolved') continue;
+      // The pre-launch archive is not this year's work (r118).
+      if (idx['prelaunch'] != null && String(row[idx['prelaunch']]) === 'true') continue;
+      var closed = new Date(row[idx['resolved_at']] || row[idx['updated_at']] || 0);
+      if (isNaN(closed.getTime()) || closed.getTime() < cutoff) continue;
+
+      // A course error is only ever the same fault on the same slide, which is
+      // the rule the matcher already uses. No lesson code, nothing to say.
+      if (cat === 'course_error') {
+        var lc = String(row[idx['lesson_code']] || '').trim().toLowerCase();
+        var want = String(issue.lesson_code || '').trim().toLowerCase();
+        if (!lc || !want || lc !== want) continue;
+      }
+
+      var oldWords = faultWords_(row[idx['summary']]);
+      if (!oldWords.length) continue;
+      var have = {};
+      for (var q = 0; q < oldWords.length; q++) have[oldWords[q]] = 1;
+      var n = 0;
+      for (var k = 0; k < wordKeys.length; k++) if (have[wordKeys[k]]) n++;
+      if (n < RETURNING_FAULT_MIN_WORDS) continue;
+      // Normalised against the SHORTER summary, so a long one cannot score
+      // highly just by containing more words to hit.
+      var overlap = n / Math.min(wordKeys.length, oldWords.length);
+      if (overlap < RETURNING_FAULT_MIN_OVERLAP) continue;
+      if (!best || overlap > best.overlap) {
+        var rec = {}; HEADERS.forEach(function (h) { rec[h] = idx[h] != null ? row[idx[h]] : ''; });
+        best = { score: n, overlap: overlap, rec: rec, closed: closed };
+      }
+    }
+    if (!best) return { ok: true, matched: false };
+
+    // Once per closed issue per window. A fault coming back through six people
+    // should make us look once, not six times, or the channel learns to skip it.
+    var props = PropertiesService.getScriptProperties();
+    var log = {};
+    try { log = JSON.parse(props.getProperty('RETURNING_FAULT_PINGED') || '{}'); } catch (e) { log = {}; }
+    var key = String(best.rec.issue_id);
+    var last = new Date(log[key] || 0).getTime();
+    if (last && last >= Date.now() - RETURNING_FAULT_QUIET_DAYS * 24 * 3600 * 1000) {
+      return { ok: true, matched: true, score: best.score, closed_id: key, skipped: 'already flagged' };
+    }
+
+    sendReturningFaultSlack_(issue, best, appUrl || getAppUrl_());
+    log[key] = new Date().toISOString();
+    props.setProperty('RETURNING_FAULT_PINGED', JSON.stringify(log));
+    return { ok: true, matched: true, flagged: true, score: best.score,
+             overlap: Math.round(best.overlap * 100) / 100, closed_id: key };
+  } catch (e) {
+    // Never allowed to break a filing. A missed notice costs a day; a refused
+    // save costs the report.
+    return { ok: false, error: String(e).slice(0, 200) };
+  }
+}
+
+function sendReturningFaultSlack_(issue, best, appUrl) {
+  if (!slackOn_('returning_fault')) return;
+  var old = best.rec;
+  var days = Math.round((Date.now() - best.closed.getTime()) / (24 * 3600 * 1000));
+  var dn = String(old.dev_notes || '');
+  var noCause = !dn.trim() || /cause:\s*(na|n\/a|none|unknown)\b/i.test(dn);
+  var lines = [
+    ':arrows_counterclockwise: *This looks like something we have already closed*',
+    'A report has just come in that shares a lot of its wording with one we resolved ' +
+      days + ' day' + (days === 1 ? '' : 's') + ' ago. A resolved issue cannot pick up a new report on its own, ' +
+      'so unless somebody joins these by hand the new one stays a single report at a single report\'s priority.',
+    '',
+    '*Just in:* ' + slackSummary_(issue) + (issue.lesson_code ? ' (' + issue.lesson_code + ')' : ''),
+    '  ' + issueLink_(issue, appUrl),
+    '*Closed ' + days + ' day' + (days === 1 ? '' : 's') + ' ago:* ' + slackSummary_(old) +
+      ' - ' + (old.report_count || 1) + ' report' + (String(old.report_count) === '1' ? '' : 's'),
+    '  ' + issueLink_(old, appUrl)
+  ];
+  if (noCause) {
+    lines.push('');
+    lines.push('Worth knowing: that one was closed without a cause recorded, so there may never have been a fix for it to hold.');
+  }
+  lines.push('');
+  lines.push('If it is the same fault, reopen the closed one and link this into it, so the count and the priority tell the truth. If it is not, leave this and it will not ask again for a week.');
+  slackPost_('returning_fault', lines.join('\n'));
+}
+
+// A student who has gone quiet looks exactly like a student who is sorted.
+//
+// When we send troubleshooting steps the ball is with the student, and if they
+// never write back, nothing on the record changes: same status, same priority,
+// same place in the queue as one that is actually moving. Two of the ten issues
+// reviewed on 17 Sep had been sitting that way for eight and nine days with
+// nobody chasing, and neither looked any different from the rest.
+//
+// The signal for "we are waiting on them" already exists in two places, so this
+// invents no new rule and adds no new column: the next-action read stores
+// waiting_on_student, and an instructor marking their reply stores waiting on
+// the trail entry (FB-0188). Either counts. Only the sweep that reads them was
+// missing.
+function waitingOnStudentSweep() {
+  var now = Date.now();
+  var cutoff = now - WAITING_CHASE_DAYS * 24 * 3600 * 1000;
+  var stallCutoff = now - WAITING_STALLED_DAYS * 24 * 3600 * 1000;
+  var due = [];
+  var stalled = [];
+
+  getIssues_().issues.forEach(function (i) {
+    var st = String(i.status || '').toLowerCase();
+    // Parked and the resolved family are all endings; with_dev stays in,
+    // because a developer waiting on one answer from a student is the case
+    // that hurts most (Christopher's incognito test, 17 Sep).
+    if (st !== 'open' && st !== 'with_dev') return;
+    // An improvement is not blocking anybody by definition, so it never earns
+    // a chase however long it sits (r59).
+    if (String(i.request_kind || 'fix').toLowerCase() === 'improvement') return;
+    // Sorted for this student means there is nobody left to chase, whatever
+    // the fault is still doing to everybody else (r154).
+    if (String(i.student_sorted) === 'true') return;
+    // Nobody on the report means nothing student-facing (r56).
+    if (String(i.student_involved) === 'false') return;
+    if (!String(i.student_contact || '').trim() && !String(i.student_name || '').trim()) return;
+
+    var moved = new Date(i.updated_at || i.submitted_at || 0).getTime();
+    if (isNaN(moved)) return;
+    var days = Math.round((now - moved) / (24 * 3600 * 1000));
+
+    if (moved <= cutoff && waitingOnStudent_(i)) { due.push({ rec: i, days: days }); return; }
+
+    // Nothing to read on it at all: no next step worked out, and nothing on the
+    // trail saying the ball is with them. Not a chase - a decision nobody has
+    // made. Kept apart from the list above because it is a different question.
+    if (moved <= stallCutoff && !String(i.next_action_json || '').trim() && !waitingOnStudent_(i)) {
+      stalled.push({ rec: i, days: days });
+    }
+  });
+
+  if (!due.length && !stalled.length) { Logger.log('waitingOnStudentSweep: nothing due'); return 0; }
+  due.sort(function (a, b) { return b.days - a.days; });
+  stalled.sort(function (a, b) { return b.days - a.days; });
+
+  // Once per issue per window, or a quiet week reposts the same three names
+  // every morning until people stop reading it.
+  var props = PropertiesService.getScriptProperties();
+  var log = {};
+  try { log = JSON.parse(props.getProperty('WAITING_NUDGED') || '{}'); } catch (e) { log = {}; }
+  var quiet = now - WAITING_RENUDGE_DAYS * 24 * 3600 * 1000;
+  var unsaid = function (d) {
+    var last = new Date(log[String(d.rec.issue_id)] || 0).getTime();
+    return !last || last < quiet;
+  };
+  var fresh = due.filter(unsaid);
+  var freshStalled = stalled.filter(unsaid);
+  if (!fresh.length && !freshStalled.length) {
+    Logger.log('waitingOnStudentSweep: ' + (due.length + stalled.length) +
+      ' due, all flagged within ' + WAITING_RENUDGE_DAYS + ' days');
+    return 0;
+  }
+
+  sendWaitingOnStudentSlack_(fresh, freshStalled, getAppUrl_());
+  var stamp = new Date().toISOString();
+  fresh.concat(freshStalled).forEach(function (d) { log[String(d.rec.issue_id)] = stamp; });
+  // Keep the log from growing for ever: anything older than four windows is
+  // never going to suppress anything again.
+  var keepFrom = now - WAITING_RENUDGE_DAYS * 4 * 24 * 3600 * 1000;
+  Object.keys(log).forEach(function (k) {
+    var t = new Date(log[k] || 0).getTime();
+    if (!t || t < keepFrom) delete log[k];
+  });
+  props.setProperty('WAITING_NUDGED', JSON.stringify(log));
+  Logger.log('waitingOnStudentSweep: nudged ' + fresh.length + ' waiting + ' +
+    freshStalled.length + ' stalled (of ' + due.length + '/' + stalled.length + ' due)');
+  return fresh.length + freshStalled.length;
+}
+
+// True when the record itself says the ball is with the student. Two sources,
+// both written by something else already, so this reads and never guesses.
+function waitingOnStudent_(issue) {
+  try {
+    var na = issue.next_action_json;
+    if (na) {
+      var obj = typeof na === 'string' ? JSON.parse(na) : na;
+      if (obj && obj.waiting_on_student === true) return true;
+    }
+  } catch (e) {}
+  try {
+    var t = readTrail_(issue);
+    if (!t.broken && t.reps.length) {
+      for (var i = t.reps.length - 1; i >= 0; i--) {
+        var e2 = t.reps[i];
+        if (!e2) continue;
+        // Our own check-in is not the student writing back, so it neither
+        // proves nor disproves that we are still waiting - look past it.
+        if (e2.kind === 'nudge') continue;
+        return e2.waiting === true;
+      }
+    }
+  } catch (e) {}
+  return false;
+}
+
+// Edd's wording, 17 Sep: no instructor names (this is a list to act on, not a
+// record of who did what), no closing lecture, one line each.
+function sendWaitingOnStudentSlack_(fresh, stalled, appUrl) {
+  if (!slackOn_('waiting_on_student')) return;
+  var n = fresh.length + stalled.length;
+  var line = function (d) {
+    var who = String(d.rec.student_name || '').trim();
+    return '• ' + (who ? who + ' - ' : '') + slackSummary_(d.rec) +
+      (d.rec.lesson_code ? ' (' + d.rec.lesson_code + ')' : '') +
+      ' Nothing has moved for ' + d.days + ' days. ' + issueLink_(d.rec, appUrl);
+  };
+  var lines = [
+    ':mag: *' + n + ' need' + (n === 1 ? 's' : '') + ' chasing or resolving (on bug tracker)*'
+  ];
+  if (fresh.length) {
+    lines.push('');
+    lines.push('*Waiting on the student.* We have asked, and nothing has come back.');
+    fresh.slice(0, WAITING_MAX_LISTED).forEach(function (d) { lines.push(line(d)); });
+    if (fresh.length > WAITING_MAX_LISTED) lines.push('• plus ' + (fresh.length - WAITING_MAX_LISTED) + ' more');
+  }
+  if (stalled.length) {
+    lines.push('');
+    lines.push('*No next step worked out.* Nobody has decided what happens with these yet.');
+    stalled.slice(0, WAITING_MAX_LISTED).forEach(function (d) { lines.push(line(d)); });
+    if (stalled.length > WAITING_MAX_LISTED) lines.push('• plus ' + (stalled.length - WAITING_MAX_LISTED) + ' more');
+  }
+  slackPost_('waiting_on_student', lines.join('\n'));
 }
 
 // Kept only so any leftover daily trigger from the first Round 13 deploy
@@ -5383,6 +5728,7 @@ function ensureTriggers_() {
   var haveTold = false;       // r146
   var haveEnrich = false;     // r152
   var haveDevTargets = false; // r170
+  var haveWaiting = false;    // r175
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -5395,7 +5741,11 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'studentToldSweep') haveTold = true;
     if (t.getHandlerFunction() === 'enrichContacts') haveEnrich = true;
     if (t.getHandlerFunction() === 'devTargetSweep') haveDevTargets = true;
+    if (t.getHandlerFunction() === 'waitingOnStudentSweep') haveWaiting = true;
   });
+  // r175: 08:00, so the chase list is sitting there when the day starts rather
+  // than arriving on top of whatever else the morning brings.
+  if (!haveWaiting) ScriptApp.newTrigger('waitingOnStudentSweep').timeBased().everyDays(1).atHour(8).create();
   if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
   if (!haveEnrich) ScriptApp.newTrigger('enrichContacts').timeBased().everyDays(1).atHour(19).create();   // r152: end of the working day
   if (!haveMonthly) {
@@ -5626,7 +5976,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1 };
+var RUNNABLE_JOBS_ = { unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -7242,7 +7592,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r172 · 2026-09-14';
+var CODE_STAMP = 'r175 · 2026-09-17';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
