@@ -1143,12 +1143,20 @@ function renderAttention(){
   const byLesson = (f.by_lesson || []).filter(r => r.fault_class === 'delivery');
   if(byLesson.length){
     const hit = byLesson.reduce((a, r) => a + (Number(r.visits_affected) || 0), 0);
-    const all = (DATA.stats || []).reduce((a, s) => a + (Number(s.started_visits) || Number(s.sessions) || 0), 0);
+    /* ALL visits, look-and-leaves included, and the label says so.
+       courses_lesson_stats carries no started-visit column yet, so this is
+       the raw count while the fault RULES above are measured against started
+       visits. Two definitions of a visit on one page is precisely the thing
+       this redesign is meant to remove, and the honest interim is to name
+       which one a number used rather than let a fallback pick quietly.
+       Unified when the course-progress screen lands. */
+    const all = (DATA.stats || []).reduce((a, s) => a + (Number(s.sessions) || 0), 0);
     const pct = all ? (100 * hit / all) : 0;
     html += '<div class="note" style="margin-top:16px">Background: <b>' + pct.toFixed(1) +
             '%</b> of visits lose a file somewhere (' + hit + ' of ' + all.toLocaleString('en-GB') +
-            ' across the whole course). That is connection loss rather than ' +
-            'anything broken, and it is here so a change in it would show.</div>';
+            ' visits across the whole course, quick look-and-leaves included). ' +
+            'That is connection loss rather than anything broken, and it is ' +
+            'here so a change in it would show.</div>';
   }
 
   el.innerHTML = html;
