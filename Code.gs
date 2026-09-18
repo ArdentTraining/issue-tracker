@@ -12721,3 +12721,163 @@ function customsFetch_(data) {
   }
   return { ok: false, error: 'No invoice ' + no + '.' };
 }
+
+/* ===========================================================================
+ * FAULT SWEEP (18 Sep 2026)
+ *
+ * Lessons can now report that they are broken. This is the bit that turns the
+ * ones worth a person's time into tracker issues.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO
+ *
+ * It does not file every fault. Seven days of lesson_error showed 43 lessons
+ * reporting something, which looked like 43 broken lessons and was not: of 71
+ * visits that hit a load failure, 60 hit exactly one, spread across nearly
+ * every lesson and every hour. That is a student's connection, and filing it
+ * would put dozens of issues in the queue for one cause that nobody can fix.
+ *
+ * The judgement lives in the DATABASE, in public.courses_fault_candidates, not
+ * here. That matters: the dashboard reads the same view, so the page and the
+ * queue can never disagree about what counts as a fault. Changing the rule is
+ * a migration, not an edit in two places.
+ *
+ * Each candidate is one CAUSE, not one lesson and not one file. The iSpring
+ * player bug touches six lessons and is worded differently by Chrome and
+ * Safari; it arrives here as a single row and becomes a single issue.
+ *
+ * DEDUPE, and its honest weakness
+ *
+ * The signature is written as the first line of raw_text, as
+ *   [fault] script in player.js
+ * and the sweep looks there before filing. raw_text is the original report and
+ * nothing in the tracker rewrites it, which is why it is the key rather than
+ * the summary. If somebody does edit that line out, the next sweep files a
+ * second issue. That is the failure mode; it is bounded and visible.
+ *
+ * DRY RUN BY DEFAULT. It logs what it would file and files nothing until the
+ * script property ARDENT_FAULT_SWEEP_LIVE is set to 'true'. This has never run
+ * against the live sheet, and a sweep that creates issues is not the place to
+ * find out it was wrong about something.
+ * =========================================================================== */
+
+var FAULT_SWEEP_URL = 'https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/courses';
+var FAULT_SWEEP_MARK = '[fault] ';
+var FAULT_SWEEP_MAX = 5;   // per run, so a bad rule cannot flood the queue
+
+function faultSweep() {
+  var live = String(PropertiesService.getScriptProperties()
+                     .getProperty('ARDENT_FAULT_SWEEP_LIVE') || '') === 'true';
+
+  // The sweep is not a person, but the endpoint wants a ticket carrying the
+  // analytics permission. Minted for a named service identity rather than
+  // borrowing somebody's login, so the reason a row appeared is traceable.
+  var t = mintPortalTicket_({
+    email: 'fault-sweep@ardent-training.com',
+    name: 'Fault sweep',
+    perms: { analytics: true }
+  }, 'analytics');
+  if (!t.ok) { Logger.log('faultSweep: no ticket (' + t.error + ')'); return; }
+
+  var res;
+  try {
+    res = UrlFetchApp.fetch(FAULT_SWEEP_URL, {
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + t.ticket },
+      muteHttpExceptions: true
+    });
+  } catch (e) {
+    Logger.log('faultSweep: fetch failed ' + e);
+    return;
+  }
+  if (res.getResponseCode() !== 200) {
+    Logger.log('faultSweep: HTTP ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+    return;
+  }
+
+  var body = JSON.parse(res.getContentText());
+  var faults = body.faults || {};
+  if (faults.error) { Logger.log('faultSweep: faults block errored: ' + faults.error); return; }
+  var candidates = faults.candidates || [];
+  Logger.log('faultSweep: ' + candidates.length + ' candidate(s) from the view');
+
+  // Everything already filed by a previous sweep, open or not. A resolved one
+  // is left alone: a fault that comes back rejoins through the tracker's own
+  // reopen path rather than arriving as a second issue.
+  var seen = {};
+  getIssues_().issues.forEach(function (i) {
+    var first = String(i.raw_text || '').split('\n')[0];
+    if (first.indexOf(FAULT_SWEEP_MARK) === 0) {
+      seen[first.slice(FAULT_SWEEP_MARK.length).trim()] = i;
+    }
+  });
+
+  var filed = 0, skipped = 0;
+  candidates.forEach(function (c) {
+    if (filed >= FAULT_SWEEP_MAX) return;
+    var sig = String(c.signature || '').trim();
+    if (!sig) return;
+    if (seen[sig]) {
+      skipped++;
+      Logger.log('faultSweep: already filed as ' + seen[sig].issue_id + ' -> ' + sig);
+      return;
+    }
+
+    var lessons = (c.lessons || []).join(', ');
+    var lines = [
+      FAULT_SWEEP_MARK + sig,
+      '',
+      'Filed automatically from lesson telemetry. ' + (c.reason || ''),
+      '',
+      'Class:    ' + c.fault_class,
+      'Visits:   ' + c.visits_affected + ' affected',
+      'Lessons:  ' + c.lessons_affected + (lessons ? ' (' + lessons + ')' : ''),
+      'Last hit: ' + String(c.last_seen || '').slice(0, 16).replace('T', ' ')
+    ];
+    if (c.worst_repeat_in_a_visit > 1) {
+      lines.push('Worst:    ' + c.worst_repeat_in_a_visit + ' times inside one visit');
+    }
+    if (c.example_stack) lines.push('', 'Stack:    ' + c.example_stack);
+    if (c.example_detail) lines.push('', 'Detail:   ' + c.example_detail);
+    lines.push('', 'No student is identified in any of this: lesson telemetry is ' +
+                   'anonymous and carries a random per-visit id only.');
+
+    // An authoring fault is a course-content job; the other two are platform.
+    // Severity stays moderate on purpose. These are real and none of them is
+    // stopping a student finishing, and a sweep that files everything as
+    // severe teaches people to ignore severe.
+    var data = {
+      category: c.fault_class === 'authoring' ? 'course_error' : 'tech_issue',
+      audience: 'student',
+      section: 'course_player',
+      request_kind: 'fix',
+      instructor_name: 'Fault sweep',
+      summary: (c.fault_class === 'authoring'
+                 ? 'Slide layout: ' : 'Lesson fault: ') + sig,
+      raw_text: lines.join('\n'),
+      lesson_code: c.lessons_affected === 1 ? (c.lessons || [''])[0] : '',
+      severity: 'moderate',
+      media_kind: c.fault_class === 'authoring' ? 'text' : 'other',
+      // Nobody told us; a machine measured it. Saying otherwise would put a
+      // student in the notify queue who never existed.
+      student_involved: 'no',
+      double_checked: 'true'
+    };
+
+    if (!live) {
+      Logger.log('faultSweep DRY RUN would file: ' + data.summary + '  [' + (c.reason || '') + ']');
+      filed++;
+      return;
+    }
+    try {
+      var r = addIssue_(data);
+      filed++;
+      Logger.log('faultSweep filed ' + (r && r.issue_id ? r.issue_id : '?') + ': ' + data.summary);
+    } catch (e) {
+      Logger.log('faultSweep: addIssue_ failed for ' + sig + ': ' + e);
+    }
+  });
+
+  Logger.log('faultSweep: ' + (live ? 'filed ' : 'DRY RUN, would file ') + filed +
+             ', already filed ' + skipped +
+             (live ? '' : '. Set ARDENT_FAULT_SWEEP_LIVE=true to arm it.'));
+}
