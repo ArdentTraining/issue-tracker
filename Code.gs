@@ -12828,11 +12828,20 @@ function faultSweep() {
   // Everything already filed by a previous sweep, open or not. A resolved one
   // is left alone: a fault that comes back rejoins through the tracker's own
   // reopen path rather than arriving as a second issue.
+  //
+  // Searched ANYWHERE in raw_text rather than only on the first line. The
+  // marker is written as the first line, but a merge (ours, or a human
+  // merging two issues by hand) appends one issue's text into the middle of
+  // another's, and a first-line-only match would then miss it and file the
+  // same fault again every single run.
   var seen = {};
   getIssues_().issues.forEach(function (i) {
-    var first = String(i.raw_text || '').split('\n')[0];
-    if (first.indexOf(FAULT_SWEEP_MARK) === 0) {
-      seen[first.slice(FAULT_SWEEP_MARK.length).trim()] = i;
+    var text = String(i.raw_text || '');
+    var at = text.indexOf(FAULT_SWEEP_MARK);
+    while (at >= 0) {
+      var line = text.slice(at + FAULT_SWEEP_MARK.length).split('\n')[0].trim();
+      if (line) seen[line] = i;
+      at = text.indexOf(FAULT_SWEEP_MARK, at + 1);
     }
   });
 
@@ -12885,7 +12894,15 @@ function faultSweep() {
       // Nobody told us; a machine measured it. Saying otherwise would put a
       // student in the notify queue who never existed.
       student_involved: 'no',
-      double_checked: 'true'
+      double_checked: 'true',
+      // addIssue_ runs aiMatchIssue_ unless this is set, and a merge here
+      // would be wrong twice over. A fault we measured is not the same thing
+      // as a student's report of a symptom, however similar the words look to
+      // a matcher. And a merge appends our text into the middle of the
+      // master's raw_text, which buries the [fault] marker the dedupe reads,
+      // so the next sweep would file it again, and the one after that.
+      // It also saves an AI call per filing.
+      no_merge: true
     };
 
     if (!live) {
@@ -12896,7 +12913,9 @@ function faultSweep() {
     try {
       var r = addIssue_(data);
       filed++;
-      Logger.log('faultSweep filed ' + (r && r.issue_id ? r.issue_id : '?') + ': ' + data.summary);
+      var id = (r && r.issue && r.issue.issue_id) || (r && r.issue_id) || '?';
+      Logger.log('faultSweep filed ' + id + (r && r.merged ? ' (MERGED - check the dedupe)' : '') +
+                 ': ' + data.summary);
     } catch (e) {
       Logger.log('faultSweep: addIssue_ failed for ' + sig + ': ' + e);
     }

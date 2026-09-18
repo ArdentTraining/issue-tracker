@@ -1135,14 +1135,19 @@ function renderAttention(){
   }
 
   /* The background rate, as context rather than as a task. */
+  /* The denominator has to be EVERY started visit, not the visits to the
+     lessons that happened to have a fault. Dividing by the affected lessons
+     alone reported 1.2% and called it "across the course", when across the
+     course it is half that: the lessons with no fault at all were missing
+     from the bottom of the fraction. */
   const byLesson = (f.by_lesson || []).filter(r => r.fault_class === 'delivery');
   if(byLesson.length){
-    const hit    = byLesson.reduce((a, r) => a + (Number(r.visits_affected) || 0), 0);
-    const visits = byLesson.reduce((a, r) => a + (Number(r.visits) || 0), 0);
-    const pct    = visits ? (100 * hit / visits) : 0;
+    const hit = byLesson.reduce((a, r) => a + (Number(r.visits_affected) || 0), 0);
+    const all = (DATA.stats || []).reduce((a, s) => a + (Number(s.started_visits) || Number(s.sessions) || 0), 0);
+    const pct = all ? (100 * hit / all) : 0;
     html += '<div class="note" style="margin-top:16px">Background: <b>' + pct.toFixed(1) +
-            '%</b> of visits lose a file somewhere (' + hit + ' of ' + visits +
-            '), spread across the course. That is connection loss rather than ' +
+            '%</b> of visits lose a file somewhere (' + hit + ' of ' + all.toLocaleString('en-GB') +
+            ' across the whole course). That is connection loss rather than ' +
             'anything broken, and it is here so a change in it would show.</div>';
   }
 
