@@ -2310,7 +2310,8 @@ function addIssue_(data) {
   // lesson should be directed to me. The lesson just needs reuploaded." The
   // asset is missing from storage, so it is neither a code fix nor a content
   // rewrite - it is a re-upload, and only Edd does those.
-  var missingAsset = /nosuchkey|specified key does not exist/i.test(String(data.raw_text || '') + ' ' + String(data.summary || '')) &&
+  // r180 (Edd): the same missing upload now shows the student "Invalid key".
+  var missingAsset = /nosuchkey|specified key does not exist|invalid key/i.test(String(data.raw_text || '') + ' ' + String(data.summary || '')) &&
                      !!(issue.lesson_code || issue.lesson || category === 'course_error');
   // FB-0305: a 404 on lesson content is a content/packaging fault before it is
   // a platform one - the course team sees it first. Fast-track overrides.
@@ -4806,6 +4807,73 @@ function chatwootCall_(path, method, payload) {
   if (code < 200 || code >= 300) throw new Error('Chatwoot ' + code + ': ' + body.slice(0, 200));
   return body ? JSON.parse(body) : {};
 }
+// r180: several GETs in one go. UrlFetchApp.fetchAll sends them together, so
+// two reads cost one round trip instead of two. Same error shape as
+// chatwootCall_, so a caller cannot tell the difference except in the time.
+function chatwootCallAll_(paths) {
+  var cfg = chatwootCfg_();
+  if (!cfg.token || !cfg.account) throw new Error('Chatwoot is not configured yet.');
+  var base = CHATWOOT_BASE + '/api/v1/accounts/' + cfg.account;
+  var res = UrlFetchApp.fetchAll(paths.map(function (path) {
+    return { url: base + path, method: 'get', headers: { api_access_token: cfg.token }, muteHttpExceptions: true };
+  }));
+  return res.map(function (r) {
+    var code = r.getResponseCode(), body = r.getContentText();
+    if (code < 200 || code >= 300) throw new Error('Chatwoot ' + code + ': ' + body.slice(0, 200));
+    return body ? JSON.parse(body) : {};
+  });
+}
+
+// r180: copy a chat's screenshots into our own storage once, not once per
+// brief. Every re-brief used to download each screenshot from Chatwoot and
+// store a fresh copy, one after another, so a chat with five pictures paid ten
+// slow calls each time and left duplicates behind. Now each copy is remembered
+// for six hours against the address it came from (CacheService's ceiling), and
+// the ones still needed download together.
+var CW_IMG_CACHE_S = 21600;
+function chatwootImgKey_(u) {
+  var d = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(u || ''));
+  return 'cwimg:' + d.map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
+}
+function copyChatwootImages_(convId, urls) {
+  urls = (urls || []).slice(0, 5);
+  if (!urls.length) return [];
+  var cache = CacheService.getScriptCache();
+  var keys = urls.map(chatwootImgKey_);
+  var hit = {};
+  try { hit = cache.getAll(keys) || {}; } catch (e) { hit = {}; }
+  var need = [];
+  urls.forEach(function (u, n) { if (!hit[keys[n]]) need.push(n); });
+  var got = {};
+  if (need.length) {
+    var tok = chatwootCfg_().token;
+    var reqs = need.map(function (n) { return { url: urls[n], muteHttpExceptions: true, followRedirects: true, headers: { api_access_token: tok } }; });
+    var resps;
+    try { resps = UrlFetchApp.fetchAll(reqs); }
+    catch (e) {
+      // One bad address fails the whole batch, so fall back to one at a time
+      // rather than lose every picture over one.
+      resps = reqs.map(function (r) { try { return UrlFetchApp.fetch(r.url, r); } catch (e2) { return null; } });
+    }
+    resps.forEach(function (res, j) {
+      var n = need[j];
+      try {
+        if (!res || res.getResponseCode() < 200 || res.getResponseCode() >= 300) return;
+        var blob = res.getBlob();
+        var ct = String(blob.getContentType() || '');
+        if (ct.indexOf('image/') !== 0) return;
+        if (blob.getBytes().length > 6 * 1024 * 1024) return;
+        var up = uploadImage_({ base64: Utilities.base64Encode(blob.getBytes()), mimeType: ct,
+          filename: 'chatwoot-' + convId + '-' + (n + 1) });
+        if (up && up.ok && up.url) { got[n] = up.url; try { cache.put(keys[n], up.url, CW_IMG_CACHE_S); } catch (e3) {} }
+      } catch (e4) {}
+    });
+  }
+  var out = [];
+  urls.forEach(function (u, n) { var v = hit[keys[n]] || got[n]; if (v) out.push(v); });
+  return out;
+}
+
 // Accepts a full conversation URL, or just the number.
 function chatwootConvId_(input) {
   // FB-0319/0320 (Peter via Edd): Chatwoot shows the number as "#123456", so
@@ -4843,9 +4911,11 @@ function chatwootImport_(data) {
   var id = chatwootConvId_(data.conversation);
   if (!id) return { ok: false, error: 'Paste a Chatwoot conversation link or number.' };
   var conv, msgs;
+  // r180: the two reads go out together. Each is a full round trip to
+  // Chatwoot, and nothing in the second depends on the first.
   try {
-    conv = chatwootCall_('/conversations/' + id);
-    msgs = chatwootCall_('/conversations/' + id + '/messages');
+    var both = chatwootCallAll_(['/conversations/' + id, '/conversations/' + id + '/messages']);
+    conv = both[0]; msgs = both[1];
   } catch (e) { return { ok: false, error: String(e.message || e) }; }
 
   var list = (msgs && (msgs.payload || msgs.data && msgs.data.payload)) || [];
@@ -4901,21 +4971,11 @@ function chatwootImport_(data) {
   // Capped at 5 (matching the form) and a sane size; a failed copy never
   // costs the transcript. The backtest passes skip_images so a 500-conversation
   // sweep doesn't fill Drive with copies nobody asked for (r46).
-  var savedImages = [];
-  var cwTok = chatwootCfg_().token;
-  (data.skip_images ? [] : attImages.slice(0, 5)).forEach(function (u, n) {
-    try {
-      var res = UrlFetchApp.fetch(u, { muteHttpExceptions: true, followRedirects: true, headers: { api_access_token: cwTok } });
-      if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return;
-      var blob = res.getBlob();
-      var ct = String(blob.getContentType() || '');
-      if (ct.indexOf('image/') !== 0) return;
-      if (blob.getBytes().length > 6 * 1024 * 1024) return;
-      var up = uploadImage_({ base64: Utilities.base64Encode(blob.getBytes()), mimeType: ct,
-        filename: 'chatwoot-' + id + '-' + (n + 1) });
-      if (up && up.ok && up.url) savedImages.push(up.url);
-    } catch (e) {}
-  });
+  // r180: copyChatwootImages_ fetches them in parallel and remembers each
+  // copy, so a re-brief of the same chat no longer downloads and re-stores the
+  // same five screenshots every time. skip_images hands the urls back instead,
+  // for a caller that only wants to copy them if it turns out to need them.
+  var savedImages = data.skip_images ? [] : copyChatwootImages_(id, attImages.slice(0, 5));
 
   return {
     ok: true,
@@ -4930,6 +4990,7 @@ function chatwootImport_(data) {
     // The message the log was taken from, for a link straight back to it.
     last_message_id: lastMsgId,
     images: savedImages,
+    image_urls: attImages.slice(0, 5),
     images_seen: attImages.length,
     link: CHATWOOT_BASE + '/app/accounts/' + chatwootCfg_().account + '/conversations/' + id
   };
@@ -5269,7 +5330,16 @@ var SCAN_STATS = {};
 // pages per press so one button can't run away with the AI bill. Conversations
 // already in the Scans sheet are dropped by the free filter before any AI call,
 // so pressing it twice costs almost nothing.
+// r180 (Edd): "build the briefs when the 0500 scan is done". The nightly
+// trigger hands a trigger event in as opts, which is how a scheduled run is
+// told apart from someone pressing Scan now in the day - only the scheduled
+// one sets off the early briefs, so a daytime scan never spends on them.
 function scanChatwoot(opts) {
+  var scheduled = !!(opts && opts.triggerUid);
+  try { return scanChatwootRun_(opts && opts.triggerUid ? {} : opts); }
+  finally { if (scheduled) { try { prebriefSchedule_(); } catch (e) { Logger.log('prebrief schedule failed: ' + e); } } }
+}
+function scanChatwootRun_(opts) {
   opts = opts || {};
   var back = !!opts.back;
   var started = Date.now();
@@ -6163,7 +6233,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1 };
+var RUNNABLE_JOBS_ = { prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -6904,7 +6974,7 @@ var DEFAULT_PLAYBOOK = [
   '- A 500 or another server error is ours, not yours, so log it either way. Note the exact time, what you were doing, and whether a hard refresh cleared it, because that is what narrows it down.',
   '',
   'STRAIGHT TO A BOSS, DO NOT WORK THE LIST FIRST:',
-  '- A 404 "page not found" on a lesson. Edd or Stu need to know immediately; Edd is happy to be WhatsApped about this one even on his days off.',
+  '- An "Invalid key" error when a lesson will not load (this is what used to show as a 404 "page not found"). Log it straight away; Edd needs to know immediately and is happy to be WhatsApped about this one even on his days off.',
   '- Anything that looks like it is hitting every student rather than one (a page, video host, or the site itself down or erroring for everyone). User-side steps cannot fix a server that is down.'
 ].join('\n');
 
@@ -6930,6 +7000,7 @@ var SCOPE_SHAPED_RE = new RegExp(
   // of the five it fired on across the open log before this line was tightened.
   '(^|[^0-9a-z.])404([^0-9a-z]|$)' +
   '|page (not found|cannot be found|could not be found|does ?n.?t exist)' +
+  '|invalid key' +   // r180: what a missing lesson upload shows now, instead of a 404
   '|(error|not found) page' +
   // Bounded on purpose: a bare "500" is a price or a student count far more
   // often than it is a status code, so it only counts next to a word that makes
@@ -7569,7 +7640,7 @@ function extractionStaticPrompt_() {
     '- category: "shipping" if the problem is with a physical delivery to a student: a student pack, charts, almanac or plotter that has not arrived, arrived damaged or incomplete, was never dispatched, is stuck in customs, went to the wrong address, or was returned to sender. Emails from a courier (DHL, Royal Mail, UPS, FedEv, Parcelforce) about a consignment are shipping. Note that a student who cannot ACCESS online material is NOT shipping, that is a tech issue.',
     '- courier: for shipping only, the carrier name as written (e.g. "DHL", "Royal Mail"), or null.',
     '- tracking_number: for shipping only, the consignment or tracking reference exactly as it appears (couriers quote it in every email, so look for a long alphanumeric code). Return null if none appears. This is how we join several email threads about the same parcel, so it matters more than anything else in a shipping report.',
-    '- category: "course_error" if the problem is with the lesson content or teaching material itself (wrong information, a confusing or incorrect explanation, a typo in a lesson, a mislabelled diagram, a quiz answer being wrong, OR a specific lesson that will not open / shows a 404 / page not found, which usually means that lesson was not uploaded properly and the course team needs to re-upload it). "tech_issue" if the problem is with the platform, website or app generally: video or audio not playing, login or access problems, a button that does not work, progress not saving, or anything device or browser specific.',
+    '- category: "course_error" if the problem is with the lesson content or teaching material itself (wrong information, a confusing or incorrect explanation, a typo in a lesson, a mislabelled diagram, a quiz answer being wrong, OR a specific lesson that will not open / shows an "Invalid key" error / shows a 404 / page not found, which usually means that lesson was not uploaded properly and the course team needs to re-upload it). "tech_issue" if the problem is with the platform, website or app generally: video or audio not playing, login or access problems, a button that does not work, progress not saving, or anything device or browser specific.',
     '- likely_internal: true if this is NOT a student-facing problem at all but an internal one: instructors talking to each other about the instructor portal, the partner portal, admin tools, or company systems, with no student blocked from learning. A conversation between staff about wrong data shown in the instructor portal is internal. A student unable to watch a video is not. Return false when in doubt.',
     '- section: which part of the platform the problem lives in: one of ["website", "instructor_portal", "partner_portal", "course_player", "app", "other"], or null if unclear. "website" is the public ardent-training.com site, "course_player" is where students take lessons, "app" is the mobile app.',
     '- platform: for tech issues, where the trouble is actually happening, one of ["browser", "app", "both"], or null if the text gives no clue. Go by the words the student uses about what they were looking at. Talk of the "website", the "site", a "web page", a "link", a "tab", a browser by name (Chrome, Safari, Firefox, Edge), or a laptop, PC or Mac means "browser". Talk of "the app", downloading or updating or reinstalling it, or the App Store or Play Store means "app". Choose "both" only when they say they tried it both ways and it failed both ways. A phone or tablet on its own is not enough, because plenty of students use a browser on a tablet, so return null unless they say which they were in.',
@@ -7807,7 +7878,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r180 · 2026-09-18';
+var CODE_STAMP = 'r181 · 2026-09-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -9070,7 +9141,11 @@ function caseBriefCore_(imp, cutoffIso, issueId) {
 function caseBrief_(data) {
   var id = chatwootConvId_(data.conversation || data.conversation_id);
   if (!id) return { ok: false, error: 'Pass a Chatwoot conversation link or number.' };
-  var imp = chatwootImport_({ conversation: id });
+  // r180: rough timings on every brief, so "it's slow" can be answered with
+  // which part was slow rather than a guess.
+  var T0 = Date.now(), TM = {};
+  var imp = chatwootImport_({ conversation: id, skip_images: true });
+  TM.chatwoot = Date.now() - T0;
   if (!imp || !imp.ok) return { ok: false, error: (imp && imp.error) || 'Could not read that conversation.' };
   if (!imp.message_count) return { ok: false, error: 'That conversation has no readable messages.' };
 
@@ -9091,7 +9166,22 @@ function caseBrief_(data) {
   // the Open a case path) and not otherwise.
   if (isNew || data.reopen === true || data.reopen === 'true') rec.status = 'open';
 
-  var core = caseBriefCore_(imp, null, rec.issue_id || '');
+  // r180 (Edd): a brief built by the early-morning run is used as it is,
+  // provided nothing has been said in the chat since. Only for a chat with no
+  // issue on it yet, because that is all the early run knew about.
+  var pre = rec.issue_id ? null : prebriefTake_(id, imp.last_message_id);
+  var core;
+  if (pre) {
+    core = { bj: pre };
+    TM.prebrief = true;
+  } else {
+    var t1 = Date.now();
+    imp.images = copyChatwootImages_(id, imp.image_urls);
+    TM.images = Date.now() - t1;
+    t1 = Date.now();
+    core = caseBriefCore_(imp, null, rec.issue_id || '');
+    TM.ai = Date.now() - t1;
+  }
   if (core.error) return { ok: false, error: core.error };
   var prev = caseBriefJson_(rec);
   core.bj.note_posted = !!prev.note_posted;
@@ -9111,9 +9201,142 @@ function caseBrief_(data) {
   rec.unread = false;
   rec.brief_json = JSON.stringify(core.bj);
   liveCaseSave_(rec);
+  TM.total = Date.now() - T0;
+  try { Logger.log('caseBrief ' + id + ' ' + JSON.stringify(TM)); } catch (e) {}
   return { ok: true, conversation_id: id, brief: core.bj,
     student_name: rec.student_name || '', student_contact: rec.student_contact || '',
-    issue_id: rec.issue_id || '', opened_by: rec.opened_by || '', last_touched_by: who };
+    issue_id: rec.issue_id || '', opened_by: rec.opened_by || '', last_touched_by: who, timings: TM };
+}
+
+// ============================ r180: EARLY BRIEFS ============================
+// Edd, 18 Sep 2026, after Luke found the chat briefs slow in the team meeting:
+// "Let's build the briefs when the 0500 scan is done and monitor the increased
+// cost." So once the nightly scan finishes, every chat open in Chatwoot that
+// nobody has opened as a case yet gets its brief built there and then. When an
+// instructor opens one in the morning, caseBrief_ checks nothing new has been
+// said since, and if so hands the ready brief straight over, with no AI wait.
+// A chat that has moved on since gets a fresh brief, exactly as before.
+//
+// The cost is the point to watch. Every early brief is a full brief (the read
+// plus the known-fix lookup, both with their thinking kept), and one nobody
+// opens before the student writes again is money spent for nothing. So each
+// day records how many were built, how many got used, how many went stale
+// first, and the tokens they took, in PREBRIEF_STATS, and backendInfo_ (ping)
+// reports the last week of it.
+var PREBRIEF_SHEET = 'Prebriefs';
+var PREBRIEF_HEADERS = ['conversation_id', 'last_message_id', 'built_at', 'brief_json', 'in_tokens', 'out_tokens', 'used_at'];
+var PREBRIEF_MAX = 25;                    // chats per morning, a ceiling on the bill
+var PREBRIEF_BUDGET_MS = 5 * 60 * 1000;   // inside the six-minute trigger limit
+var PREBRIEF_MAX_AGE_H = 20;              // yesterday morning's brief is not today's
+
+function prebriefSheet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName(PREBRIEF_SHEET);
+  if (!sh) { sh = ss.insertSheet(PREBRIEF_SHEET); sh.setFrozenRows(1); }
+  if (sh.getLastRow() < 1) sh.getRange(1, 1, 1, PREBRIEF_HEADERS.length).setValues([PREBRIEF_HEADERS]);
+  return sh;
+}
+function prebriefRows_(sh) {
+  var n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  return sh.getRange(2, 1, n, PREBRIEF_HEADERS.length).getValues().map(function (r, i) {
+    return { row: i + 2, conversation_id: String(r[0]), last_message_id: String(r[1]), built_at: String(r[2]),
+      brief_json: String(r[3] || ''), used_at: String(r[6] || '') };
+  });
+}
+function prebriefStat_(field, n) {
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(5000); } catch (e) { return; }
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var st = {}; try { st = JSON.parse(p.getProperty('PREBRIEF_STATS') || '{}') || {}; } catch (e) { st = {}; }
+    var day = Utilities.formatDate(new Date(), 'Europe/London', 'yyyy-MM-dd');
+    st[day] = st[day] || { built: 0, used: 0, stale: 0, in_tokens: 0, out_tokens: 0 };
+    st[day][field] = (Number(st[day][field]) || 0) + (Number(n) || 0);
+    var days = Object.keys(st).sort();
+    while (days.length > 45) delete st[days.shift()];
+    p.setProperty('PREBRIEF_STATS', JSON.stringify(st));
+  } finally { lock.releaseLock(); }
+}
+// The last seven days, for ping. Cost is left to whoever reads it, in tokens,
+// because the price per token is not ours to hard-code.
+function prebriefSummary_() {
+  var st = {}; try { st = JSON.parse(PropertiesService.getScriptProperties().getProperty('PREBRIEF_STATS') || '{}') || {}; } catch (e) { st = {}; }
+  var days = Object.keys(st).sort().slice(-7), tot = { built: 0, used: 0, stale: 0, in_tokens: 0, out_tokens: 0 };
+  days.forEach(function (d) { Object.keys(tot).forEach(function (k) { tot[k] += Number(st[d][k]) || 0; }); });
+  var out = { days: {}, last7: tot };
+  days.forEach(function (d) { out.days[d] = st[d]; });
+  return out;
+}
+// A one-off trigger a minute after the scan, so the briefs get a fresh six
+// minutes of their own rather than whatever the scan left over.
+function prebriefSchedule_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'prebriefOpenChats') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('prebriefOpenChats').timeBased().after(60 * 1000).create();
+}
+function prebriefOpenChats() {
+  // Clear our own one-off trigger, so they never pile up against the cap.
+  try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'prebriefOpenChats') ScriptApp.deleteTrigger(t); }); } catch (e) {}
+  var started = Date.now();
+  var list = chatwootList_({ status: 'open' });
+  if (!list || !list.ok) { Logger.log('prebrief: could not list open chats: ' + (list && list.error)); return { ok: false, error: list && list.error }; }
+  var sh = prebriefSheet_();
+  // Clear out anything past its useful life first, so the sheet stays small.
+  var rows = prebriefRows_(sh);
+  var cutoff = Date.now() - 48 * 3600 * 1000;
+  for (var i = rows.length - 1; i >= 0; i--) {
+    var at = Date.parse(rows[i].built_at);
+    if (isNaN(at) || at < cutoff) sh.deleteRow(rows[i].row);
+  }
+  rows = prebriefRows_(sh);
+  var have = {};
+  rows.forEach(function (r) { have[r.conversation_id] = r; });
+  var liveOpen = {};
+  try { liveCaseRows_().forEach(function (r) { if (String(r.status || '') === 'open') liveOpen[String(r.conversation_id)] = true; }); } catch (e) {}
+
+  var built = 0, skipped = 0;
+  var convs = (list.conversations || []).slice(0, PREBRIEF_MAX);
+  for (var c = 0; c < convs.length; c++) {
+    if (Date.now() - started > PREBRIEF_BUDGET_MS) break;
+    var id = String(convs[c].id);
+    // Already a case on Today: it has its own brief, and opening it costs nothing.
+    if (liveOpen[id]) { skipped++; continue; }
+    var imp = chatwootImport_({ conversation: id, skip_images: true });
+    if (!imp || !imp.ok || !imp.message_count) { skipped++; continue; }
+    var old = have[id];
+    if (old && old.last_message_id === String(imp.last_message_id) && !old.used_at) { skipped++; continue; }
+    var before = { i: AI_TALLY.in_tokens, o: AI_TALLY.out_tokens };
+    imp.images = copyChatwootImages_(id, imp.image_urls);
+    var core = caseBriefCore_(imp, null, '');
+    var tin = AI_TALLY.in_tokens - before.i, tout = AI_TALLY.out_tokens - before.o;
+    prebriefStat_('in_tokens', tin); prebriefStat_('out_tokens', tout);
+    if (core.error) { skipped++; continue; }
+    var vals = [[id, String(imp.last_message_id), new Date().toISOString(), JSON.stringify(core.bj).slice(0, 49000), tin, tout, '']];
+    if (old) sh.getRange(old.row, 1, 1, PREBRIEF_HEADERS.length).setValues(vals);
+    else sh.appendRow(vals[0]);
+    built++;
+  }
+  prebriefStat_('built', built);
+  Logger.log('prebrief: built ' + built + ', skipped ' + skipped + ' in ' + Math.round((Date.now() - started) / 1000) + 's');
+  return { ok: true, built: built, skipped: skipped };
+}
+// Hand over a ready brief if nothing has been said in the chat since it was
+// built. Marks it used either way, so the stats count each one once: used, or
+// stale because the student wrote again first.
+function prebriefTake_(convId, lastMessageId) {
+  var sh;
+  try { sh = prebriefSheet_(); } catch (e) { return null; }
+  var r = null;
+  prebriefRows_(sh).forEach(function (x) { if (x.conversation_id === String(convId)) r = x; });
+  if (!r || r.used_at) return null;
+  var fresh = r.last_message_id === String(lastMessageId || '') &&
+              Date.now() - Date.parse(r.built_at) < PREBRIEF_MAX_AGE_H * 3600 * 1000;
+  sh.getRange(r.row, 7).setValue((fresh ? '' : 'stale ') + new Date().toISOString());
+  prebriefStat_(fresh ? 'used' : 'stale', 1);
+  if (!fresh) return null;
+  try { return JSON.parse(r.brief_json); } catch (e) { return null; }
 }
 
 // "Check for new reply": re-read the case's own conversation. Anything new
@@ -9126,12 +9349,14 @@ function caseCheckReply_(data) {
   var rec = liveCaseFind_(id);
   if (!rec) return { ok: false, error: 'No live case for that conversation.' };
   var prev = caseBriefJson_(rec);
-  var imp = chatwootImport_({ conversation: id });
+  var imp = chatwootImport_({ conversation: id, skip_images: true });
   if (!imp || !imp.ok) return { ok: false, error: (imp && imp.error) || 'Could not read the conversation.' };
   var before = Number(prev.message_count) || 0;
   if (imp.message_count <= before) {
     return { ok: true, found: false, message: 'Nothing new from ' + (rec.student_name || 'the student') + ' yet.' };
   }
+  // r180: "nothing new" is most presses, and it no longer copies screenshots.
+  imp.images = copyChatwootImages_(id, imp.image_urls);
 
   var who = (data._user && data._user.name) || '';
   var core = caseBriefCore_(imp, null, rec.issue_id || '');
@@ -9746,6 +9971,8 @@ function backendInfo_() {
     version: p.getProperty('BACKEND_VERSION') || '',
     deployed_at: p.getProperty('BACKEND_DEPLOYED_AT') || '',
     note: p.getProperty('BACKEND_NOTE') || '',
+    // r180: the early briefs' last week - built, used, gone stale, tokens.
+    prebrief: (function () { try { return prebriefSummary_(); } catch (e) { return { error: String(e) }; } })(),
     // What is allowed to reach Slack and where it goes, so it can be checked
     // without opening the code. Muting something and being unable to confirm it
     // is how a channel quietly starts up again. Reports whether each

@@ -2643,7 +2643,7 @@
 <section id="man-course" data-perm="course,users" data-title="The course-fix queue">
   <h3>The course-fix queue</h3>
   <p>A wrong diagram or a clumsy question is written, not coded, so it goes to the course team and no developer ever sees it. <span class="ui">Course</span> is where those land.</p>
-  <p>It fills differently from the developer queue: a course error turns up here the moment it is logged, including the old imported ones that were never routed anywhere. So this queue is everything reported, not everything triaged. One deliberate redirect adds to it - a student hitting a 404 on lesson content files here rather than with the developers, because a missing page is nearly always the content or its packaging rather than the platform. Fast-tracking a report overrides that when it really is the platform.</p>
+  <p>It fills differently from the developer queue: a course error turns up here the moment it is logged, including the old imported ones that were never routed anywhere. So this queue is everything reported, not everything triaged. One deliberate redirect adds to it - a student hitting a 404 on lesson content files here rather than with the developers (an "Invalid key" error, which is what a missing lesson upload shows now, goes to Edd instead, because the fix is uploading it again), because a missing page is nearly always the content or its packaging rather than the platform. Fast-tracking a report overrides that when it really is the platform.</p>
   <h4>The queue</h4>
   <p>Three tiles. <span class="ui">In the course-fix queue</span>, <span class="ui">Fixed / done</span>, and <span class="ui">Average time to fix</span>. Three pages beside the rail, <span class="ui">To do</span>, <span class="ui">Fixed / done</span>, and <span class="ui">All</span>.</p>
   <p>These are cards rather than rows, and there is no fix button on the card itself, so opening one is the way in. The card carries the priority, the report count, the lesson, and the summary. It does not say "course error" anywhere, because everything in here is one.</p>
@@ -3299,7 +3299,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r180 · 2026-09-18";  // bump this with each round, it lands on every feedback report
+var BUILD = "r181 · 2026-09-18";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9182,6 +9182,8 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 27, date: "2026-09-18", text: "Students now get an \"Invalid key\" error where a missing lesson used to show a 404. The tracker knows the new wording and sends those straight to Edd, since the lesson needs uploading again." },
+  { n: 26, date: "2026-09-18", text: "Chat briefs are quicker. The ones already open in Chatwoot first thing get their brief written after the early-morning scan, so opening one is instant as long as the student has not written again. Screenshots are copied once rather than every time a brief is rebuilt." },
   { n: 25, date: "2026-09-18", text: "What's new lives here now. When this turns coral there is something we have not read yet, and opening it clears the colour." },
   { n: 24, date: "2026-09-17", text: "A report logged from a Chatwoot chat now links straight back to the message it came from, rather than to the student's contact card." },
   { n: 23, date: "2026-09-17", text: "A resolved issue can come back to life. If the same fault turns up again within 90 days, adding the new report reopens the old issue instead of starting a second one, so the history stays in one place." },
@@ -12760,6 +12762,7 @@ function setDetailChecklist(issueId, itemId, val) {
 var SCOPE_SHAPED = new RegExp(
   '(^|[^0-9a-z.])404([^0-9a-z]|$)' +
   '|page (not found|cannot be found|could not be found|does ?n.?t exist)' +
+  '|invalid key' +   // r180: what a missing lesson upload shows now, instead of a 404
   '|(error|not found) page' +
   '|\\b50[0234]\\b\\s*(error|status|response|page)|(error|status|http)\\s*(code\\s*)?50[0234]\\b' +
   '|server error' +
