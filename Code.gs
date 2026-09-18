@@ -677,6 +677,11 @@ function doPost(e) {
     if (action === 'rateExtraction') return jsonOut(rateExtraction_(body));
     if (action === 'chatwootImport') return jsonOut(chatwootImport_(body));
     if (action === 'chatwootList') return jsonOut(chatwootList_(body));
+    if (action === 'customsPacks') return jsonOut(customsPacks_());
+    if (action === 'customsPrefill') return jsonOut(customsPrefill_(body));
+    if (action === 'customsGenerate') return jsonOut(customsGenerate_(body));
+    if (action === 'customsList') return jsonOut(customsList_());
+    if (action === 'customsFetch') return jsonOut(customsFetch_(body));
     if (action === 'chatScanList') return jsonOut(chatScanList_());
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
@@ -899,6 +904,9 @@ function reqPerm_(action) {
     case 'flagQuery': case 'answerQuery': return 'work';
     case 'requestRecheck': case 'rateExtraction': return 'log';
     case 'chatwootImport': case 'chatwootList': return 'log';
+    // r182: customs invoices. Anybody who logs issues can make one; it is the
+    // same instructor job as chasing the parcel in the first place.
+    case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': return 'log';
     // The scan queue is visible to every instructor (Edd, 26 Jul) - the team
     // is small and whoever spots it first should be able to act. Kicking off a
     // manual scan stays with the admins.
@@ -1837,6 +1845,9 @@ var READ_ONLY_ACTIONS = {
   // Reads open issues and answers a question; writes nothing, so the cached
   // list projection survives it (the Round 54 invalidation rule).
   sameIssue: 1,
+  // r182: customs invoices live in their own three tabs and never touch an
+  // issue row, so the cached issue list is still true after any of them.
+  customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1,
   caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
   // nextAction DOES write one cell (its own cached answer), and it still
   // belongs here. The list projection leaves next_action_json out entirely, so
@@ -7878,7 +7889,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r181 · 2026-09-18';
+var CODE_STAMP = 'r182 · 2026-09-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -11901,4 +11912,654 @@ function testReportsTicket() {
   Logger.log('sample ticket length: ' + ticket.length);
   Logger.log('payload decodes to: ' + Utilities.newBlob(
     Utilities.base64DecodeWebSafe(b64)).getDataAsString());
+}
+
+// ===================== CUSTOMS INVOICES (r182, 18 Sep 2026) =====================
+// Edd: "One shipping issue we sometimes get is customs asking for a new invoice
+// showing precisely the pack contents. They already get this on the parcel, but
+// sometimes they ask again." This used to mean opening last time's Word file,
+// retyping a student's address over somebody else's, and hoping every total
+// still added up. Now it is a page: pull what we can from the chat (address,
+// phone, waybill, which pack), ask the instructor for whatever is missing, and
+// hand back a PDF to send and a Word copy to edit, both kept in Drive.
+//
+// Where things live:
+//   CustomsPacks      one row per pack (course, total weight, reason for export)
+//   CustomsPackItems  the lines on each pack's invoice, in order. Prices and HS
+//                     codes change when the RYA's do, so they live in the
+//                     Sheet where Edd can edit them, not in this file.
+//   CustomsInvoices   one row per invoice made, with everything needed to make
+//                     it again byte for byte (data_json), so "customs asked
+//                     again" is a download, not a redo.
+// The three tabs create themselves on first use and seed the packs from the
+// invoices Edd sent over (DS, EN, YM). Fast Track starts empty on purpose:
+// there was no example to copy, and a made-up price on a customs declaration
+// is worse than a blank one. The page refuses to generate an empty pack.
+
+var CUSTOMS_PACKS_SHEET = 'CustomsPacks';
+var CUSTOMS_ITEMS_SHEET = 'CustomsPackItems';
+var CUSTOMS_LOG_SHEET = 'CustomsInvoices';
+var CUSTOMS_PACK_HEADERS = ['pack', 'course', 'title', 'total_weight_kg', 'reason_for_export', 'notes'];
+var CUSTOMS_ITEM_HEADERS = ['pack', 'order', 'description', 'hs_code', 'qty', 'unit_value_gbp', 'origin'];
+var CUSTOMS_LOG_HEADERS = ['invoice_no', 'created_at', 'created_by', 'pack', 'student_name', 'student_email', 'country',
+  'waybill', 'total_gbp', 'conversation_id', 'issue_id', 'pdf_file_id', 'docx_file_id', 'data_json'];
+// Columns that are identifiers made of digits. Left alone, Sheets turns a
+// waybill into a number and a long one into scientific notation (the same
+// trap the tracking_number column hit in Round 26), so they are pinned to text.
+var CUSTOMS_TEXT_COLS_ = { waybill: 1, conversation_id: 1, invoice_no: 1, hs_code: 1, issue_id: 1 };
+
+// The exporter block, as it appears on every invoice we have sent. Company
+// identifiers only (VAT and EORI are printed on every parcel we ship); no
+// student data ever goes in this file, the repo is public.
+var CUSTOMS_SENDER = {
+  company: 'Ardent Sailing Ltd',
+  contact: 'Edd Hewett',
+  building: 'Taigh Solais',
+  street: 'Ledaig',
+  city: 'Tobermory',
+  postcode: 'PA75 6NR',
+  country: 'United Kingdom',
+  phone: '0044 1688325025',
+  email: 'info@ardent-training.com',
+  vat: 'GB423152926',
+  eori: 'GB085210823000',
+  signatory: 'Edward Hewett',
+  signatory_title: 'Mr'
+};
+
+var CUSTOMS_SEED_PACKS_ = [
+  ['DS', 'Day Skipper', 'RYA Day Skipper student pack', '2.57', 'A pack to assist with training', ''],
+  ['EN', 'Essential Navigation', 'Essential Navigation student pack', '0.818', 'A pack to assist with training', ''],
+  ['YM', 'Yachtmaster', 'RYA Yachtmaster student pack', '1.21', 'A pack to assist with training', ''],
+  ['FT', 'Fast Track', 'Fast Track student pack', '', 'A pack to assist with training', 'Add the Fast Track lines in CustomsPackItems before using this pack.']
+];
+var CUSTOMS_SEED_ITEMS_ = [
+  ['DS', 1, 'RYA Day Skipper Student Pack (containing 2x RYA Training Charts). A sealed pack of RYA Training charts, intended for use as training material in a navigation course. This is sealed at manufacture and the items inside do not have individual values as they are not available individually. Each item is designed to be read. The pack and all its contents are of average quality and in the sealed packaging from manufacture.', 'HS 49019900', 1, 9.09, 'UK'],
+  ['DS', 2, 'RYA Training Almanac Book. The same as above, but not in the same sealed pack. Made of paper and intended for use as training material in a navigation course. It is designed to be read. It is of average quality.', 'HS 49019900', 1, 6.29, 'UK'],
+  ['DS', 3, '2B Mechanical Pencil - A pencil with 2B lead to be used to complete graphical calculations. It is of average quality.\nEraser - an eraser to help correct errors made in the calculations completed using the 2B pencil. It is of average quality.', 'HS 960840', 1, 2.07, 'UK'],
+  ['DS', 4, 'Blundell Harling Portland Plotter and Dividers kit - Sealed from the factory, navigation stationery used for completing graphical calculations on the charts. Made of plastic and brass. Standard quality for this item.', 'HS 9017.20', 1, 21.29, 'UK'],
+  ['DS', 5, 'Polyester/nylon practice Marlow rope sample (1 m). Non safety critical, not suitable for climbing or lifting. Short sample length of braided polyester/nylon rope, new and unused. Intended use: educational training material for nautical courses (rope handling and knot practice). Not personal protective equipment and not for industrial use. Quantity: 1 piece (1 metre length). Condition: new.', '5607.50.00', 1, 2.06, 'UK'],
+
+  ['EN', 1, 'Plastic Wallet - An A4 plastic wallet with a zip to hold the other materials included. It is of average quality.', 'HS 3926 10 00', 1, 0.82, 'UK'],
+  ['EN', 2, 'RYA Training Almanac Book. Made of paper and intended for use as training material in a navigation course. It is designed to be read. It is of average quality.', 'HS 49019900', 1, 6.29, 'UK'],
+  ['EN', 3, 'Essential Nav Stationery Set: 2B Mechanical Pencil - A pencil with 2B lead to be used to complete graphical calculations. It is of average quality. Eraser - an eraser to help correct errors made in the calculations completed using the 2B pencil. It is of average quality.\nMaths compass - Weems and Plath Ultralight Dividers - Sealed from the factory, navigation stationery used for completing graphical calculations on the charts. Made of metal and plastic. Standard quality for this item.\nProtractor - Plastic school protractor / mathematical drawing instrument.', '9608.10.00', 1, 9.49, 'UK'],
+  ['EN', 4, 'Charts - hydrographic training charts - paper - for training.', '4905900090', 1, 9.09, 'UK'],
+  ['EN', 5, 'Essential Navigation and Seamanship Shorebased Notes - printed training book - printed paper / bound book - educational marine navigation training/reference book - training materials.', '4901.99', 1, 3.99, 'UK'],
+
+  ['YM', 1, 'RYA Yachtmaster Student Pack (containing 2x RYA Training Charts, 3x RYA Course Booklets, 1x RYA Yachtmaster Shorebased Notes Book). A sealed pack of RYA Training charts, booklets, and a revision notes book made of paper and intended for use as training material in a navigation course. This is sealed at manufacture and the items inside do not have individual values as they are not available individually. Each item is designed to be read. The pack and all its contents are of average quality and in the sealed packaging from manufacture.', 'HS 49019900', 1, 22.12, 'UK'],
+  ['YM', 2, 'RYA Training Almanac Book. The same as above, but not in the same sealed pack. Made of paper and intended for use as training material in a navigation course. It is designed to be read. It is of average quality.', 'HS 49019900', 1, 6.29, 'UK'],
+  ['YM', 3, '2B Mechanical Pencil - A pencil with 2B lead to be used to complete graphical calculations. It is of average quality.', 'HS 960840', 1, 1.08, 'UK'],
+  ['YM', 4, 'Eraser - an eraser to help correct errors made in the calculations completed using the 2B pencil. It is of average quality.', 'HS 4016920000', 1, 0.59, 'UK'],
+  ['YM', 5, 'Plastic Wallet - An A4 plastic wallet with a zip to hold the other materials included. It is of average quality.', 'HS 482030', 1, 0.82, 'UK'],
+  ['YM', 6, 'Bookmark - A small strip of card used to mark a page in a book. Ideally used to mark a page in one of the books listed above. It is of average quality.', 'HS 48209090', 1, 0.18, 'UK'],
+  ['YM', 7, 'Printouts - Informational documents, created by us on a home computer. Their use is to provide step-by-step instructions to assist the user in navigational calculations. They are made of paper and printed on a domestic printer. They are not available to purchase anywhere, but can be downloaded for free on our website, so they have no value beyond the paper and ink they are made of. There are 6 pieces of A4 paper. They may be read, or a student may annotate them if they wish. They are of average quality.', 'HS 4821109000', 6, 0.05, 'UK']
+];
+
+// One of the three tabs, created with its header row the first time it is
+// asked for. Headers are topped up by appending, never inserted.
+function customsSheet_(name, headers) {
+  var ss = ss_();
+  var sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    if (sh.getMaxColumns() < headers.length) sh.insertColumnsAfter(sh.getMaxColumns(), headers.length - sh.getMaxColumns());
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    headers.forEach(function (h, i) {
+      if (CUSTOMS_TEXT_COLS_[h]) sh.getRange(1, i + 1, sh.getMaxRows(), 1).setNumberFormat('@');
+    });
+    return sh;
+  }
+  var width = Math.max(1, sh.getLastColumn());
+  var head = sh.getRange(1, 1, 1, width).getValues()[0].map(function (h) { return String(h || ''); });
+  var missing = headers.filter(function (h) { return head.indexOf(h) < 0; });
+  if (missing.length) {
+    if (sh.getMaxColumns() < head.length + missing.length) sh.insertColumnsAfter(sh.getMaxColumns(), head.length + missing.length - sh.getMaxColumns());
+    sh.getRange(1, head.length + 1, 1, missing.length).setValues([missing]).setFontWeight('bold');
+  }
+  return sh;
+}
+function customsRows_(sh) {
+  var v = sh.getDataRange().getValues();
+  if (v.length < 2) return [];
+  var head = v[0].map(String);
+  return v.slice(1).filter(function (r) { return r.join('') !== ''; }).map(function (r) {
+    var o = {}; head.forEach(function (h, i) { o[h] = r[i]; }); return o;
+  });
+}
+// Seeds the packs once. Only ever writes into an EMPTY tab, so an edited
+// price is never overwritten by a later deploy.
+function customsSeed_() {
+  var ps = customsSheet_(CUSTOMS_PACKS_SHEET, CUSTOMS_PACK_HEADERS);
+  var is = customsSheet_(CUSTOMS_ITEMS_SHEET, CUSTOMS_ITEM_HEADERS);
+  if (ps.getLastRow() < 2) ps.getRange(2, 1, CUSTOMS_SEED_PACKS_.length, CUSTOMS_PACK_HEADERS.length).setValues(CUSTOMS_SEED_PACKS_);
+  if (is.getLastRow() < 2) {
+    is.getRange(2, 4, CUSTOMS_SEED_ITEMS_.length, 1).setNumberFormat('@');   // hs_code: '4901.99' must not become 4901.99
+    is.getRange(2, 1, CUSTOMS_SEED_ITEMS_.length, CUSTOMS_ITEM_HEADERS.length).setValues(CUSTOMS_SEED_ITEMS_);
+  }
+  return { packs: ps, items: is };
+}
+
+function customsNum_(v) {
+  var n = Number(String(v == null ? '' : v).replace(/[£,\s]/g, ''));
+  return isFinite(n) ? n : 0;
+}
+function customsMoney_(n) { return (Math.round(customsNum_(n) * 100) / 100).toFixed(2); }
+
+// Every pack with its lines, for the page's pack picker.
+function customsPacksData_() {
+  var sh = customsSeed_();
+  var items = customsRows_(sh.items);
+  var packs = customsRows_(sh.packs).map(function (p) {
+    var code = String(p.pack || '').trim().toUpperCase();
+    var lines = items.filter(function (it) { return String(it.pack || '').trim().toUpperCase() === code; })
+      .sort(function (a, b) { return customsNum_(a.order) - customsNum_(b.order); })
+      .map(function (it) {
+        return { description: String(it.description || ''), hs_code: String(it.hs_code || ''),
+                 qty: customsNum_(it.qty) || 1, unit_value: customsNum_(it.unit_value_gbp), origin: String(it.origin || 'UK') };
+      });
+    return { pack: code, course: String(p.course || ''), title: String(p.title || ''),
+             total_weight_kg: p.total_weight_kg === '' ? '' : String(p.total_weight_kg),
+             reason_for_export: String(p.reason_for_export || ''), notes: String(p.notes || ''), items: lines };
+  }).filter(function (p) { return p.pack; });
+  return packs;
+}
+function customsPacks_() {
+  return { ok: true, packs: customsPacksData_(), sender: CUSTOMS_SENDER, sheet_url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID };
+}
+
+// Which pack a course name points at. The tracker writes courses by their full
+// name ("Day Skipper"); chats say all sorts.
+function customsPackForCourse_(course) {
+  var c = String(course || '').toLowerCase();
+  if (!c) return '';
+  if (/fast ?track|\bft\b/.test(c)) return 'FT';
+  if (/yacht ?master|\bym\b|coastal|offshore/.test(c)) return 'YM';
+  if (/day ?skipper|\bds\b/.test(c)) return 'DS';
+  if (/essential|\ben\b/.test(c)) return 'EN';
+  return '';
+}
+
+// ---- Pre-fill: everything we can find before asking the instructor ----------
+//
+// Order of trust, highest first: what the instructor typed, the issue record,
+// what the student wrote in the chat, the Chatwoot contact card, and last time
+// we made this student an invoice. Every field comes back with where it came
+// from, and anything still blank is listed in `missing` - that list is the
+// page's "ask the student" prompt, so it must never claim a field it guessed.
+var CUSTOMS_FIELDS_ = ['name', 'company', 'address1', 'address2', 'district', 'city', 'postcode', 'country', 'phone', 'email', 'waybill', 'pack'];
+var CUSTOMS_REQUIRED_ = ['name', 'address1', 'city', 'postcode', 'country', 'phone', 'waybill', 'pack'];
+
+function customsPrefill_(data) {
+  data = data || {};
+  var out = {}, src = {}, notes = [];
+  function put(k, v, from) {
+    v = v == null ? '' : String(v).trim();
+    if (!v || out[k]) return;
+    out[k] = v; src[k] = from;
+  }
+  var convId = chatwootConvId_(data.conversation || '');
+  var issue = null;
+
+  if (data.issue_id) {
+    var got = getIssueFull_({ issue_id: data.issue_id });
+    if (got && got.ok) {
+      issue = got.issue;
+      put('name', issue.student_name, 'issue');
+      var contact = String(issue.student_contact || '');
+      if (/@/.test(contact)) put('email', contact, 'issue'); else put('phone', contact, 'issue');
+      // A DHL waybill is 10 digits. Other couriers' references are left for
+      // the instructor, because customs only ever ask about the DHL one.
+      var tr = normaliseTracking_(issue.tracking_number);
+      if (/^\d{10}$/.test(tr)) put('waybill', tr, 'issue');
+      put('pack', customsPackForCourse_(issue.course), 'issue');
+      if (!convId && issue.chatwoot_conversation_id) convId = chatwootConvId_(issue.chatwoot_conversation_id);
+    } else notes.push('Could not read that issue (' + ((got && got.error) || 'no reply') + ').');
+  }
+
+  var transcript = '';
+  if (convId) {
+    var imp = chatwootImport_({ conversation: convId, skip_images: true });
+    if (imp && imp.ok) {
+      transcript = imp.transcript || '';
+      put('name', imp.student_name, 'chat');
+      if (/@/.test(imp.student_contact || '')) put('email', imp.student_contact, 'chat');
+      if (imp.chatwoot_contact_id) {
+        try {
+          var c = chatwootCall_('/contacts/' + imp.chatwoot_contact_id);
+          var cp = (c && (c.payload || c)) || {};
+          var extra = cp.additional_attributes || {};
+          // Held back until after the chat has been read: the contact card is
+          // what the student typed once, months ago, and a chat saying "I've
+          // moved" should beat it. So these are remembered, not put, yet.
+          data._card = { phone: cp.phone_number || '', email: cp.email || '', city: extra.city || '', country: extra.country || '' };
+        } catch (e) { notes.push('Could not read the Chatwoot contact card.'); }
+      }
+    } else notes.push('Could not read that chat: ' + ((imp && imp.error) || 'no reply') + '.');
+  }
+
+  var ai = null;
+  if (transcript) {
+    ai = customsExtract_(transcript);
+    if (ai.ok) {
+      var a = ai.fields || {};
+      ['name', 'company', 'address1', 'address2', 'district', 'city', 'postcode', 'country', 'phone', 'email', 'waybill'].forEach(function (k) {
+        put(k, a[k], 'chat');
+      });
+      put('pack', customsPackForCourse_(a.course), 'chat');
+      if (a.customs_request) notes.push('What customs asked: ' + a.customs_request);
+    } else notes.push('Reading the address out of the chat did not work (' + ai.why + '), so fill it in by hand.');
+  }
+
+  if (data._card) {
+    put('phone', data._card.phone, 'contact card');
+    put('email', data._card.email, 'contact card');
+    put('city', data._card.city, 'contact card');
+    put('country', data._card.country, 'contact card');
+  }
+
+  // Last time: an address we already sent a parcel to is a good guess, and
+  // flagged as a guess, because people move.
+  var email = out.email || '';
+  if (email || out.name) {
+    try {
+      var logs = customsRows_(customsSheet_(CUSTOMS_LOG_SHEET, CUSTOMS_LOG_HEADERS)).reverse();
+      for (var i = 0; i < logs.length; i++) {
+        var same = (email && String(logs[i].student_email || '').toLowerCase() === email.toLowerCase()) ||
+                   (!email && out.name && String(logs[i].student_name || '').toLowerCase() === out.name.toLowerCase());
+        if (!same) continue;
+        var d = {}; try { d = JSON.parse(logs[i].data_json || '{}'); } catch (e) {}
+        var r = d.receiver || {};
+        ['company', 'address1', 'address2', 'district', 'city', 'postcode', 'country', 'phone'].forEach(function (k) {
+          put(k, r[k], 'invoice ' + logs[i].invoice_no);
+        });
+        notes.push('We made ' + (out.name || 'this student') + ' an invoice before (' + logs[i].invoice_no + '), so anything missing was filled from that. Check they have not moved.');
+        break;
+      }
+    } catch (e) {}
+  }
+
+  var missing = CUSTOMS_REQUIRED_.filter(function (k) { return !out[k]; });
+  return {
+    ok: true, fields: out, sources: src, missing: missing, notes: notes,
+    conversation_id: convId || '', issue_id: issue ? String(issue.issue_id) : '',
+    read_chat: !!transcript, ai_why: ai && !ai.ok ? ai.why : ''
+  };
+}
+
+// The address, phone and waybill as the student actually wrote them. Sonnet,
+// with room for its thinking (the max_tokens trap has bitten this file four
+// times). Told plainly to leave a blank rather than guess: a wrong postcode on a
+// customs form is worse than an empty box the instructor notices.
+function customsExtract_(transcript) {
+  var text = String(transcript || '');
+  if (text.length > 14000) text = text.slice(-14000);   // the newest part is where the address and the customs email sit
+  var prompt =
+    'This is a support conversation between a sailing school (Ardent Training, in the UK) and one of its students about a parcel ' +
+    '(a course pack) sent by DHL. Customs in the student\'s country may have asked for a commercial invoice.\n\n' +
+    'Pull out the DELIVERY details for the student, exactly as written in the conversation. Rules:\n' +
+    '- Only use what is written. If something is not stated, return an empty string. Never guess a postcode, city or country.\n' +
+    '- If the address appears more than once, use the most recent one.\n' +
+    '- address1 is the building/street line, address2 anything else before the city (flat, apartment, building name).\n' +
+    '- country is the full English country name.\n' +
+    '- phone should include the international dialling code if the student gave one.\n' +
+    '- waybill is the DHL waybill / tracking number (normally 10 digits). Digits only.\n' +
+    '- course: which of our courses the pack is for, from Essential Navigation, Day Skipper, Yachtmaster, Fast Track. Empty if not said.\n' +
+    '- customs_request: one short plain sentence on what customs or DHL asked for, if the conversation says. Empty if not.\n\n' +
+    'Reply with only this JSON object:\n' +
+    '{"name":"","company":"","address1":"","address2":"","district":"","city":"","postcode":"","country":"","phone":"","email":"","waybill":"","course":"","customs_request":""}\n\n' +
+    'CONVERSATION:\n' + text;
+  var r = anthropicRaw_(ANTHROPIC_MODEL, prompt, 8000);
+  if (!r.json) return { ok: false, why: r.why || 'no answer' };
+  var f = r.json;
+  if (f.waybill) f.waybill = String(f.waybill).replace(/\D/g, '');
+  return { ok: true, fields: f };
+}
+
+// ---- Building the invoice --------------------------------------------------
+
+// Cleans and totals what the page sent. The server does the maths, so a total
+// on a customs declaration can never be whatever the browser happened to add
+// up. Returns { ok, model } or { ok:false, error, missing }.
+function customsModel_(data) {
+  var r = data.receiver || {};
+  var receiver = {};
+  CUSTOMS_FIELDS_.forEach(function (k) { if (k !== 'waybill' && k !== 'pack') receiver[k] = String(r[k] == null ? '' : r[k]).trim(); });
+  var waybill = String(data.waybill || '').replace(/\s+/g, '');
+  var lines = (data.items || []).map(function (it) {
+    var qty = customsNum_(it.qty) || 0, unit = customsNum_(it.unit_value);
+    return { description: String(it.description || '').trim(), hs_code: String(it.hs_code || '').trim(), qty: qty,
+             unit_value: Math.round(unit * 100) / 100, subtotal: Math.round(qty * unit * 100) / 100,
+             origin: String(it.origin || 'UK').trim() || 'UK' };
+  }).filter(function (it) { return it.description; });
+
+  var missing = [];
+  ['name', 'address1', 'city', 'postcode', 'country', 'phone'].forEach(function (k) { if (!receiver[k]) missing.push(k); });
+  if (!waybill) missing.push('waybill');
+  if (!lines.length) missing.push('items');
+  var badLine = lines.filter(function (it) { return !it.qty || !it.unit_value || !it.hs_code; })[0];
+  if (missing.length || badLine) {
+    return { ok: false, missing: missing,
+      error: badLine ? 'Every line needs a quantity, a value and an HS code ("' + badLine.description.slice(0, 50) + '…" is short of one).'
+                     : 'Still needed: ' + missing.join(', ') + '.' };
+  }
+  var goods = lines.reduce(function (s, it) { return s + it.subtotal; }, 0);
+  var freight = customsNum_(data.freight);
+  var units = lines.reduce(function (s, it) { return s + it.qty; }, 0);
+  var weight = customsNum_(data.weight_kg);
+  return { ok: true, model: {
+    invoice_no: String(data.invoice_no || ''),
+    date: String(data.date || Utilities.formatDate(new Date(), 'Europe/London', 'dd/MM/yyyy')),
+    waybill: waybill, pack: String(data.pack || ''),
+    shipment_ref: String(data.shipment_ref || '').trim(),
+    remarks: String(data.remarks || '').trim(),
+    reason: String(data.reason || 'A pack to assist with training').trim(),
+    terms: String(data.terms || '').trim(),
+    receiver: receiver, sender: CUSTOMS_SENDER, lines: lines,
+    goods: Math.round(goods * 100) / 100, freight: Math.round(freight * 100) / 100,
+    total: Math.round((goods + freight) * 100) / 100,
+    units: units, weight_kg: weight ? String(weight) : '', currency: 'GBP'
+  } };
+}
+
+function customsEsc_(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function customsReceiverLines_(r) {
+  return [
+    ['Company Name', r.company], ['Contact Name', r.name], ['Address', r.address1], ['Address 2', r.address2],
+    ['District', r.district], ['Postcode', r.postcode], ['City', r.city], ['Country', r.country],
+    ['Business/Private', r.company ? 'Business' : 'Private'], ['Phone Nr.', r.phone], ['Email', r.email],
+    ['Tax ID/VAT No.', ''], ['EORI', '']
+  ];
+}
+function customsSenderLines_(s) {
+  return [
+    ['Company Name', s.company], ['Contact Name', s.contact], ['Building Name', s.building], ['Street Name', s.street],
+    ['Postcode', s.postcode], ['City', s.city], ['Country', s.country], ['Business/Private', 'Business'],
+    ['Phone Nr.', s.phone], ['Email', s.email], ['Tax ID/VAT No.', s.vat], ['EORI', s.eori]
+  ];
+}
+
+// The PDF. Apps Script turns HTML into a PDF itself, but only understands
+// plain tables and inline-ish CSS (no flex, no grid), so the layout is tables
+// all the way down. It follows the DHL template the team has been using, with
+// an invoice number added: DHL's own guidance asks for one, and the old
+// template had nowhere to put it.
+function customsHtml_(m) {
+  var e = customsEsc_;
+  function block(title, rows) {
+    return '<div class="bt">' + e(title) + '</div><table class="kv">' + rows.map(function (x) {
+      return '<tr><td class="k">' + e(x[0]) + ':</td><td>' + e(x[1] || '') + '</td></tr>';
+    }).join('') + '</table>';
+  }
+  var goods = m.lines.map(function (it) {
+    return '<tr><td class="desc">' + e(it.description).replace(/\n/g, '<br>') + '</td><td>' + e(it.hs_code) + '</td>' +
+      '<td class="n">' + e(it.qty) + '</td><td class="n">' + customsMoney_(it.unit_value) + '</td><td class="n">' + customsMoney_(it.subtotal) + '</td>' +
+      '<td>' + e(it.origin) + '</td></tr>';
+  }).join('');
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
+    '@page{size:A4;margin:12mm;}' +
+    'body{font-family:Arial,Helvetica,sans-serif;font-size:8.5pt;color:#000;margin:0;}' +
+    'table{border-collapse:collapse;width:100%;}' +
+    'td,th{vertical-align:top;padding:2px 4px;font-family:Arial,Helvetica,sans-serif;font-size:8.5pt;}' +
+    '.box{border:1px solid #000;}' +
+    '.box > tbody > tr > td{border:1px solid #000;padding:5px 6px;}' +
+    'h1{font-size:15pt;margin:0 0 2px 0;}' +
+    '.bt{font-weight:bold;font-size:9pt;margin:0 0 3px 0;}' +
+    '.kv td{padding:0 3px 1px 0;}' +
+    '.kv td.k{width:40%;color:#333;white-space:nowrap;}' +
+    '.goods th{border:1px solid #000;background:#e8e8e8;font-size:8pt;text-align:left;padding:3px 4px;}' +
+    '.goods td{border:1px solid #000;font-size:8pt;padding:3px 4px;}' +
+    '.goods td.n,.goods th.n{text-align:right;white-space:nowrap;}' +
+    '.goods td.desc{width:52%;}' +
+    '.tot td{padding:1px 4px;}' +
+    '.tot td.v{text-align:right;font-weight:bold;}' +
+    '.small{font-size:7.5pt;color:#333;}' +
+    '</style></head><body>' +
+    '<table class="box"><tr>' +
+      '<td style="width:50%;">' + block('Sender', customsSenderLines_(m.sender)) + '</td>' +
+      '<td style="width:50%;"><h1>Commercial Invoice</h1>' +
+        '<table class="kv">' +
+          '<tr><td class="k">Invoice Number:</td><td><b>' + e(m.invoice_no) + '</b></td></tr>' +
+          '<tr><td class="k">Date:</td><td>' + e(m.date) + '</td></tr>' +
+          '<tr><td class="k">Waybill Number:</td><td><b>' + e(m.waybill) + '</b></td></tr>' +
+          '<tr><td class="k">Shipment Reference:</td><td>' + e(m.shipment_ref) + '</td></tr>' +
+          '<tr><td class="k">Exporter EORI:</td><td>' + e(m.sender.eori) + '</td></tr>' +
+          '<tr><td class="k">Other Remarks:</td><td>' + e(m.remarks) + '</td></tr>' +
+        '</table></td>' +
+    '</tr><tr>' +
+      '<td>' + block('Receiver', customsReceiverLines_(m.receiver)) + '</td>' +
+      '<td>' + block('Billed to (Importer of Record) if different from Receiver', [['Contact Name', ''], ['Address', ''], ['Country', '']]) + '</td>' +
+    '</tr></table>' +
+    '<br><table class="goods"><tr><th>Full Description of Goods</th><th>Commodity Code (Import)</th><th class="n">Qty</th>' +
+      '<th class="n">Unit Value</th><th class="n">Sub-total Value</th><th>Country of Origin</th></tr>' + goods + '</table><br>' +
+    '<table class="box"><tr>' +
+      '<td style="width:50%;"><table class="tot">' +
+        '<tr><td>Total Goods Value:</td><td class="v">' + customsMoney_(m.goods) + '</td></tr>' +
+        '<tr><td>Total line items:</td><td class="v">' + m.lines.length + '</td></tr>' +
+        '<tr><td>Total units:</td><td class="v">' + m.units + '</td></tr>' +
+        '<tr><td>Reason for Export:</td><td class="v">' + e(m.reason) + '</td></tr>' +
+        '<tr><td>Terms of Trade:</td><td class="v">' + e(m.terms) + '</td></tr>' +
+        '<tr><td>Freight cost (if paid by sender):</td><td class="v">' + (m.freight ? customsMoney_(m.freight) : '') + '</td></tr>' +
+        '<tr><td>Total Invoice Amount:</td><td class="v">' + customsMoney_(m.total) + '</td></tr>' +
+      '</table></td>' +
+      '<td style="width:50%;"><table class="tot">' +
+        '<tr><td>Total Net Weight:</td><td class="v">' + (m.weight_kg ? e(m.weight_kg) + ' kg' : '') + '</td></tr>' +
+        '<tr><td>Total Gross Weight:</td><td class="v">' + (m.weight_kg ? e(m.weight_kg) + ' kg' : '') + '</td></tr>' +
+        '<tr><td>Currency code:</td><td class="v">' + e(m.currency) + '</td></tr>' +
+        '<tr><td>Carrier:</td><td class="v">DHL</td></tr>' +
+      '</table></td>' +
+    '</tr></table><br>' +
+    '<div>I/we certify the information on this invoice is true and correct and that the contents of this shipment are as stated above.</div><br>' +
+    '<table><tr><td style="width:34%;">Name: ' + e(m.sender.signatory) + '</td><td style="width:22%;">Title: ' + e(m.sender.signatory_title) + '</td>' +
+      '<td>Date: ' + e(m.date) + '</td></tr>' +
+    '<tr><td>E-mail: ' + e(m.sender.email) + '</td><td colspan="2">Signature: ______________________________</td></tr></table>' +
+    '</body></html>';
+}
+
+// The Word copy, written as raw WordprocessingML and zipped by Apps Script.
+// Hand-rolled on purpose: turning a Google Doc into .docx needs a new OAuth
+// scope, which means a re-authorisation in the editor that CI cannot do, and
+// the whole point of the Word copy is only that somebody can fix a typo in it.
+function customsDocxXml_(m) {
+  function x(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function run(t, o) {
+    o = o || {};
+    var rpr = '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/>' + (o.b ? '<w:b/>' : '') + '<w:sz w:val="' + (o.sz || 17) + '"/></w:rPr>';
+    return String(t == null ? '' : t).split('\n').map(function (part, i) {
+      return (i ? '<w:r>' + rpr + '<w:br/></w:r>' : '') + '<w:r>' + rpr + '<w:t xml:space="preserve">' + x(part) + '</w:t></w:r>';
+    }).join('');
+  }
+  function para(t, o) {
+    o = o || {};
+    return '<w:p><w:pPr><w:spacing w:before="0" w:after="' + (o.after == null ? 40 : o.after) + '"/>' +
+      (o.right ? '<w:jc w:val="right"/>' : '') + '</w:pPr>' + run(t, o) + '</w:p>';
+  }
+  function cell(content, w, o) {
+    o = o || {};
+    return '<w:tc><w:tcPr><w:tcW w:w="' + w + '" w:type="dxa"/>' + (o.shade ? '<w:shd w:val="clear" w:color="auto" w:fill="E8E8E8"/>' : '') +
+      (o.span ? '<w:gridSpan w:val="' + o.span + '"/>' : '') + '</w:tcPr>' + (content || para('')) + '</w:tc>';
+  }
+  function table(widths, rows, borders) {
+    var b = borders === false ? 'nil' : 'single';
+    return '<w:tbl><w:tblPr><w:tblW w:w="' + widths.reduce(function (s, w) { return s + w; }, 0) + '" w:type="dxa"/>' +
+      '<w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(function (s) {
+        return '<w:' + s + ' w:val="' + b + '" w:sz="4" w:space="0" w:color="000000"/>';
+      }).join('') + '</w:tblBorders><w:tblLayout w:type="fixed"/>' +
+      '<w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr>' +
+      '<w:tblGrid>' + widths.map(function (w) { return '<w:gridCol w:w="' + w + '"/>'; }).join('') + '</w:tblGrid>' +
+      rows.map(function (r) { return '<w:tr>' + r.join('') + '</w:tr>'; }).join('') + '</w:tbl>';
+  }
+  function kv(title, rows) {
+    return para(title, { b: true, sz: 18 }) + rows.map(function (r) { return para(r[0] + ': ' + (r[1] || ''), { after: 0 }); }).join('');
+  }
+  var W = 10466, half = 5233;
+  var head = table([half, half], [[
+    cell(kv('Sender', customsSenderLines_(m.sender)), half),
+    cell(para('Commercial Invoice', { b: true, sz: 30, after: 80 }) +
+      para('Invoice Number: ' + m.invoice_no, { b: true, after: 0 }) + para('Date: ' + m.date, { after: 0 }) +
+      para('Waybill Number: ' + m.waybill, { b: true, after: 0 }) + para('Shipment Reference: ' + m.shipment_ref, { after: 0 }) +
+      para('Exporter EORI: ' + m.sender.eori, { after: 0 }) + para('Other Remarks: ' + m.remarks, { after: 0 }), half)
+  ], [
+    cell(kv('Receiver', customsReceiverLines_(m.receiver)), half),
+    cell(kv('Billed to (Importer of Record) if different from Receiver', [['Contact Name', ''], ['Address', ''], ['Country', '']]), half)
+  ]]);
+  var gw = [4700, 1400, 600, 1100, 1300, 1366];
+  var goodsRows = [['Full Description of Goods', 'Commodity Code (Import)', 'Qty', 'Unit Value', 'Sub-total Value', 'Country of Origin'].map(function (h, i) {
+    return cell(para(h, { b: true, sz: 16 }), gw[i], { shade: true });
+  })];
+  m.lines.forEach(function (it) {
+    goodsRows.push([
+      cell(para(it.description, { sz: 16 }), gw[0]), cell(para(it.hs_code, { sz: 16 }), gw[1]),
+      cell(para(String(it.qty), { sz: 16, right: true }), gw[2]), cell(para(customsMoney_(it.unit_value), { sz: 16, right: true }), gw[3]),
+      cell(para(customsMoney_(it.subtotal), { sz: 16, right: true }), gw[4]), cell(para(it.origin, { sz: 16 }), gw[5])
+    ]);
+  });
+  var tot = table([half, half], [[
+    cell(['Total Goods Value: ' + customsMoney_(m.goods), 'Total line items: ' + m.lines.length, 'Total units: ' + m.units,
+          'Reason for Export: ' + m.reason, 'Terms of Trade: ' + m.terms,
+          'Freight cost (if paid by sender): ' + (m.freight ? customsMoney_(m.freight) : ''),
+          'Total Invoice Amount: ' + customsMoney_(m.total)].map(function (t, i) { return para(t, { after: 0, b: i === 6 }); }).join(''), half),
+    cell(['Total Net Weight: ' + (m.weight_kg ? m.weight_kg + ' kg' : ''), 'Total Gross Weight: ' + (m.weight_kg ? m.weight_kg + ' kg' : ''),
+          'Currency code: ' + m.currency, 'Carrier: DHL'].map(function (t) { return para(t, { after: 0 }); }).join(''), half)
+  ]]);
+  var sign = table([3500, 2400, 4566], [
+    [cell(para('Name: ' + m.sender.signatory), 3500), cell(para('Title: ' + m.sender.signatory_title), 2400), cell(para('Date: ' + m.date), 4566)],
+    [cell(para('E-mail: ' + m.sender.email), 3500), cell(para('Signature: ______________________________'), 6966, { span: 2 })]
+  ], false);
+  var body = head + para('') + table(gw, goodsRows) + para('') + tot + para('') +
+    para('I/we certify the information on this invoice is true and correct and that the contents of this shipment are as stated above.') +
+    para('') + sign;
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + body +
+    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>' +
+    '</w:body></w:document>';
+}
+var CUSTOMS_DOCX_PARTS_ = {
+  '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+  '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'
+};
+function customsDocxBlob_(m, name) {
+  var blobs = [
+    Utilities.newBlob(CUSTOMS_DOCX_PARTS_['[Content_Types].xml'], 'application/xml', '[Content_Types].xml'),
+    Utilities.newBlob(CUSTOMS_DOCX_PARTS_['_rels/.rels'], 'application/xml', '_rels/.rels'),
+    Utilities.newBlob(customsDocxXml_(m), 'application/xml', 'word/document.xml')
+  ];
+  var zip = Utilities.zip(blobs, name);
+  return Utilities.newBlob(zip.getBytes(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', name);
+}
+function customsPdfBlob_(m, name) {
+  return Utilities.newBlob(customsHtml_(m), 'text/html', 'invoice.html').getAs('application/pdf').setName(name);
+}
+function customsFileName_(m, ext) {
+  var who = String(m.receiver.name || 'student').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+  return 'Commercial Invoice ' + m.invoice_no + ' ' + who + ' ' + m.waybill + '.' + ext;
+}
+
+// Kept in the tracker's Drive folder, NOT shared with anyone-with-the-link the
+// way screenshots are: these carry a home address. The download goes straight
+// back to the browser, so nobody needs the Drive link to get the file.
+function customsSaveFile_(blob) {
+  try {
+    return { ok: true, id: DriveApp.getFolderById(DRIVE_FOLDER_ID).createFile(blob).getId() };
+  } catch (e) {
+    var boundary = '----aitCustoms' + new Date().getTime();
+    var meta = JSON.stringify({ name: blob.getName(), parents: [DRIVE_FOLDER_ID] });
+    var head = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta +
+      '\r\n--' + boundary + '\r\nContent-Type: ' + blob.getContentType() + '\r\n\r\n';
+    var body = Utilities.newBlob(head).getBytes().concat(blob.getBytes()).concat(Utilities.newBlob('\r\n--' + boundary + '--\r\n').getBytes());
+    try {
+      var res = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true', {
+        method: 'post', contentType: 'multipart/related; boundary=' + boundary, payload: body,
+        headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true
+      });
+      var id = res.getResponseCode() < 300 ? (JSON.parse(res.getContentText()).id || '') : '';
+      return id ? { ok: true, id: id } : { ok: false, error: 'Drive said HTTP ' + res.getResponseCode() };
+    } catch (e2) { return { ok: false, error: String(e2).slice(0, 160) }; }
+  }
+}
+
+function customsNextNo_(sh) {
+  var ids = customsRows_(sh).map(function (r) { return String(r.invoice_no || ''); });
+  var max = 0;
+  ids.forEach(function (id) { var m = /^ACI-(\d+)$/.exec(id); if (m) max = Math.max(max, Number(m[1])); });
+  return 'ACI-' + ('0000' + (max + 1)).slice(-4);
+}
+
+function customsGenerate_(data) {
+  var built = customsModel_(data || {});
+  if (!built.ok) return built;
+  var m = built.model;
+  var user = data._user || {};
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (e) { return { ok: false, error: 'The tracker is busy, try again in a moment.' }; }
+  var sh, row;
+  try {
+    sh = customsSheet_(CUSTOMS_LOG_SHEET, CUSTOMS_LOG_HEADERS);
+    m.invoice_no = customsNextNo_(sh);
+    row = { invoice_no: m.invoice_no, created_at: new Date().toISOString(), created_by: user.name || user.email || '',
+            pack: m.pack, student_name: m.receiver.name, student_email: m.receiver.email, country: m.receiver.country,
+            waybill: m.waybill, total_gbp: customsMoney_(m.total),
+            conversation_id: String(data.conversation_id || ''), issue_id: String(data.issue_id || ''),
+            pdf_file_id: '', docx_file_id: '', data_json: JSON.stringify(m) };
+    var head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+    sh.appendRow(head.map(function (h) { return row[h] == null ? '' : row[h]; }));
+    row._at = sh.getLastRow();
+    row._head = head;
+  } finally { lock.releaseLock(); }
+
+  var pdf = customsPdfBlob_(m, customsFileName_(m, 'pdf'));
+  var docx = customsDocxBlob_(m, customsFileName_(m, 'docx'));
+  // A Drive hiccup must not cost the instructor the invoice, and must not be
+  // silent either: the page says "not saved to Drive" when this fails.
+  var sp = customsSaveFile_(pdf), sd = customsSaveFile_(docx);
+  try {
+    var h = row._head;
+    if (sp.ok) sh.getRange(row._at, h.indexOf('pdf_file_id') + 1).setValue(sp.id);
+    if (sd.ok) sh.getRange(row._at, h.indexOf('docx_file_id') + 1).setValue(sd.id);
+  } catch (e) {}
+  var saveErr = [sp, sd].filter(function (s) { return !s.ok; }).map(function (s) { return s.error; }).join('; ');
+  return {
+    ok: true, invoice_no: m.invoice_no, total: customsMoney_(m.total),
+    pdf: { name: pdf.getName(), b64: Utilities.base64Encode(pdf.getBytes()), drive_id: sp.ok ? sp.id : '' },
+    docx: { name: docx.getName(), b64: Utilities.base64Encode(docx.getBytes()), drive_id: sd.ok ? sd.id : '' },
+    saved: !saveErr, save_error: saveErr
+  };
+}
+
+// The last 40 invoices, newest first, for the page's history list.
+function customsList_() {
+  var rows = customsRows_(customsSheet_(CUSTOMS_LOG_SHEET, CUSTOMS_LOG_HEADERS)).reverse().slice(0, 40);
+  return { ok: true, invoices: rows.map(function (r) {
+    return { invoice_no: String(r.invoice_no), created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || ''),
+             created_by: String(r.created_by || ''), pack: String(r.pack || ''), student_name: String(r.student_name || ''),
+             country: String(r.country || ''), waybill: String(r.waybill || ''), total_gbp: customsMoney_(r.total_gbp),
+             conversation_id: String(r.conversation_id || ''), issue_id: String(r.issue_id || ''),
+             pdf_file_id: String(r.pdf_file_id || ''), docx_file_id: String(r.docx_file_id || '') };
+  }) };
+}
+
+// "Customs asked again": the same invoice, rebuilt from what was stored when it
+// was made, so it is identical down to the number and the date. Also hands the
+// stored details back so the page can start a corrected copy from them.
+function customsFetch_(data) {
+  var no = String((data && data.invoice_no) || '');
+  var rows = customsRows_(customsSheet_(CUSTOMS_LOG_SHEET, CUSTOMS_LOG_HEADERS));
+  for (var i = rows.length - 1; i >= 0; i--) {
+    if (String(rows[i].invoice_no) !== no) continue;
+    var m; try { m = JSON.parse(rows[i].data_json); } catch (e) { return { ok: false, error: 'That invoice was saved without its details.' }; }
+    var pdf = customsPdfBlob_(m, customsFileName_(m, 'pdf'));
+    var docx = customsDocxBlob_(m, customsFileName_(m, 'docx'));
+    return { ok: true, invoice_no: no, model: m,
+      pdf: { name: pdf.getName(), b64: Utilities.base64Encode(pdf.getBytes()) },
+      docx: { name: docx.getName(), b64: Utilities.base64Encode(docx.getBytes()) } };
+  }
+  return { ok: false, error: 'No invoice ' + no + '.' };
 }

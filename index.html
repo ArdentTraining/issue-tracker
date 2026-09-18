@@ -1121,6 +1121,12 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     <span class="ri-word">New</span>
   </button>
+  <!-- r182 (Edd): customs invoices, for when customs ask again for one
+       showing exactly what is in the pack. Anyone who logs issues. -->
+  <button type="button" class="rail-item" id="railCustoms" onclick="railGo('customs')" title="Customs invoice - make a commercial invoice for a student's pack">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><polyline points="15 3 15 7 19 7"/><line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
+    <span class="ri-word">Customs</span>
+  </button>
   <div class="rail-div" id="railDiv"></div>
   <button type="button" class="rail-item" id="railMore" onclick="railMoreToggle(event)" title="More sections">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
@@ -1819,6 +1825,108 @@
   <div id="tasksList" style="margin-top:16px;"></div>
 </div>
 
+<!-- r182 (Edd): customs invoices. When customs ask again for a commercial
+     invoice showing exactly what is in the pack. Start from the chat (or a
+     shipping issue), let the tracker find the address, phone and waybill,
+     fill whatever it could not, and get a PDF to send plus a Word copy. Pack
+     lines and prices live in the CustomsPacks / CustomsPackItems tabs of the
+     Sheet so they can change without a code round. -->
+<style>
+  #customsView .cu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 14px; }
+  #customsView .cu-grid .wide { grid-column: 1 / -1; }
+  #customsView .cu-src { font-size: 11px; color: var(--muted); margin-top: 3px; min-height: 13px; }
+  #customsView .cu-miss input, #customsView .cu-miss select { border-color: var(--coral); box-shadow: 0 0 0 1px var(--coral) inset; }
+  #customsView .cu-miss .cu-src { color: var(--coral); }
+  #customsView table.cu-items { width: 100%; border-collapse: collapse; }
+  #customsView table.cu-items th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 4px 6px; }
+  #customsView table.cu-items td { padding: 4px 6px; vertical-align: top; border-top: 1px solid var(--line); }
+  #customsView table.cu-items textarea { min-height: 96px; font-size: 12.5px; resize: vertical; }
+  #customsView table.cu-items input { font-size: 13px; }
+  #customsView .cu-num { text-align: right; white-space: nowrap; }
+  #customsView table.cu-items td.cu-num:not(:has(input)) { padding-top: 12px; }
+  #customsView .cu-notes { margin: 10px 0 0; padding-left: 18px; }
+  #customsView .cu-notes li { margin: 3px 0; }
+  #customsView .cu-hist td { padding: 6px; border-top: 1px solid var(--line); font-size: 13px; vertical-align: middle; }
+  @media (max-width: 760px) {
+    #customsView table.cu-items thead { display: none; }
+    #customsView table.cu-items tr { display: block; border-top: 1px solid var(--line); padding: 6px 0; }
+    #customsView table.cu-items td { display: block; border: 0; padding: 3px 0; }
+  }
+</style>
+<div id="customsView" class="wrap hidden">
+  <h2 style="margin-top:0;">Customs invoice</h2>
+  <p class="hint" style="margin-top:-6px;">For when customs ask again for an invoice showing exactly what is in the pack. Start from the chat and the tracker finds what it can. Anything highlighted is still missing, so ask the student for it.</p>
+
+  <div class="card">
+    <label for="cu_conv">Start from a Chatwoot chat</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <input id="cu_conv" placeholder="Chat link or number" autocomplete="off" style="flex:1;min-width:200px;"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();customsPrefill();}" />
+      <button class="primary" id="cu_pull" onclick="customsPrefill()">Pull the details</button>
+      <button class="ghost" onclick="customsReset()">Start again</button>
+    </div>
+    <div id="cu_from" class="hint" style="margin-top:6px;"></div>
+    <ul id="cu_notes" class="cu-notes small muted"></ul>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h2>Who it went to</h2>
+    <div class="cu-grid">
+      <div class="field" id="cuf_name"><label for="cu_name">Name</label><input id="cu_name" autocomplete="off" oninput="customsTouched('name')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_company"><label for="cu_company">Company (if a business address)</label><input id="cu_company" autocomplete="off" oninput="customsTouched('company')" /><div class="cu-src"></div></div>
+      <div class="field wide" id="cuf_address1"><label for="cu_address1">Street address</label><input id="cu_address1" autocomplete="off" oninput="customsTouched('address1')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_address2"><label for="cu_address2">Flat, building (optional)</label><input id="cu_address2" autocomplete="off" oninput="customsTouched('address2')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_district"><label for="cu_district">District or region (optional)</label><input id="cu_district" autocomplete="off" oninput="customsTouched('district')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_city"><label for="cu_city">City</label><input id="cu_city" autocomplete="off" oninput="customsTouched('city')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_postcode"><label for="cu_postcode">Postcode</label><input id="cu_postcode" autocomplete="off" oninput="customsTouched('postcode')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_country"><label for="cu_country">Country</label><input id="cu_country" autocomplete="off" oninput="customsTouched('country')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_phone"><label for="cu_phone">Phone, with country code</label><input id="cu_phone" autocomplete="off" oninput="customsTouched('phone')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_email"><label for="cu_email">Email</label><input id="cu_email" autocomplete="off" oninput="customsTouched('email')" /><div class="cu-src"></div></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h2>The shipment</h2>
+    <div class="cu-grid">
+      <div class="field" id="cuf_waybill"><label for="cu_waybill">DHL waybill number</label><input id="cu_waybill" autocomplete="off" inputmode="numeric" oninput="customsTouched('waybill')" /><div class="cu-src"></div></div>
+      <div class="field" id="cuf_pack"><label for="cu_pack">Which pack</label><select id="cu_pack" onchange="customsTouched('pack');customsLoadPack()"></select><div class="cu-src"></div></div>
+      <div class="field"><label for="cu_date">Invoice date</label><input id="cu_date" type="date" /><div class="cu-src">Usually today. Use the posting date if customs want that.</div></div>
+      <div class="field"><label for="cu_weight">Total weight (kg)</label><input id="cu_weight" autocomplete="off" inputmode="decimal" /><div class="cu-src">From the pack settings.</div></div>
+      <div class="field"><label for="cu_terms">Terms of trade (optional)</label>
+        <select id="cu_terms"><option value="">Leave blank</option><option value="DAP">DAP (student pays any duty)</option><option value="DDP">DDP (we paid the duty)</option></select><div class="cu-src"></div></div>
+      <div class="field"><label for="cu_freight">Postage we paid, £ (optional)</label><input id="cu_freight" autocomplete="off" inputmode="decimal" oninput="customsTotals()" /><div class="cu-src"></div></div>
+      <div class="field wide"><label for="cu_reason">Reason for export</label><input id="cu_reason" autocomplete="off" /></div>
+      <div class="field wide"><label for="cu_remarks">Other remarks (optional)</label><input id="cu_remarks" autocomplete="off" placeholder="e.g. replaces invoice sent with the parcel" /></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h2>What is in the parcel</h2>
+    <p class="hint" style="margin-top:-8px;">These come from the pack settings. Change them here if this parcel was different (a missing item, a replacement). To change the pack for good, edit the <a id="cu_sheetlink" target="_blank" rel="noopener" href="#">CustomsPackItems tab</a> in the Sheet.</p>
+    <table class="cu-items">
+      <thead><tr><th style="width:50%;">Description</th><th>HS code</th><th class="cu-num">Qty</th><th class="cu-num">Each £</th><th class="cu-num">Total £</th><th></th></tr></thead>
+      <tbody id="cu_items"></tbody>
+    </table>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap;">
+      <button class="ghost small" onclick="customsAddLine()">Add a line</button>
+      <div><span class="muted">Total value</span> <b id="cu_total">£0.00</b></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button class="primary" id="cu_go" onclick="customsGenerate()">Make the invoice</button>
+      <span id="cu_status" class="hint"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h2>Made recently</h2>
+    <p class="hint" style="margin-top:-8px;">If customs ask again, download the same invoice here. "Copy" starts a new one from its details, for when something has changed.</p>
+    <div id="cu_hist" class="small muted">Loading…</div>
+  </div>
+</div>
+
 <div id="devView" class="wrap hidden">
   <div class="summary-row">
     <!-- FB-0248 (Charlie): Queued / In Progress / Completed, the three stages
@@ -2236,6 +2344,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="log"><td><span class="ui">Customs</span></td><td>Make a commercial invoice for a student's pack when customs ask for one again.</td></tr>
     <tr data-perm="dev,users"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
     <tr data-perm="users"><td><span class="ui">RCA</span></td><td>Private diagnostic records on promoted issues, for a fault that needs investigating rather than just fixing.</td></tr>
     <tr data-perm="course,users"><td><span class="ui">Course</span></td><td>The course-fix queue, which is every course error that has been logged.</td></tr>
@@ -2547,6 +2656,15 @@
   <p>Sometimes an amber box says <span class="ui">Before you send, do this:</span> and names something on our side, like a password reset or a course assignment. The draft is written as though it has already been done, so it needs doing before the message goes.</p>
   <p>There is no send button in here. <span class="ui">Copy</span> takes the text and <span class="ui">Open in Chatwoot</span> takes you to the student, and the message goes from there. Some drafts then carry a marker to say you have sent it, which flips the issue from Scanned to Waiting on the Today list so nobody chases the same student twice.</p>
   <p>For a fix that affected several people, <span class="ui">Draft "it's fixed" messages to all</span> in the issue detail writes one message per student, up to ten at a time. Nothing sends itself there either, so each one gets copied across and tweaked as you like.</p>
+</section>
+
+<section id="man-customs" data-perm="log" data-title="Customs invoices">
+  <h3>Customs invoices</h3>
+  <p>Every pack goes out with a commercial invoice on the parcel, but every so often customs in the student's country ask for it again. <span class="ui">Customs</span> on the rail makes a fresh one, so nobody has to open last time's Word file and type one student's address over another's.</p>
+  <p>Paste the Chatwoot chat link and press <span class="ui">Pull the details</span>. The tracker reads the chat for the address, phone number, waybill and which pack it was, and checks the student's contact card and any invoice we have made them before. Under each box it says where the answer came from. Anything it could not find is highlighted in coral, and that is the list to ask the student for. On a shipping issue, the <span class="ui">Customs invoice</span> button does the same starting from the issue.</p>
+  <p>The contents fill in from the pack. If this parcel was different, a missing item or a replacement, change the lines here and it only affects this invoice. Prices, HS codes and weights for good live in the CustomsPacks and CustomsPackItems tabs of the tracker's Google Sheet, so when the RYA change a price it gets changed there once.</p>
+  <p><span class="ui">Make the invoice</span> downloads a PDF to send and a Word copy in case something needs tweaking, and saves both in the tracker's Drive folder. The totals are added up by the tracker, not typed, so they always match the lines.</p>
+  <p>Everything made shows under <span class="ui">Made recently</span>. If customs ask a second time, <span class="ui">Download</span> gives the identical invoice again, same number and date. <span class="ui">Copy</span> starts a new one from its details, for when the address or contents have changed.</p>
 </section>
 
 <section id="man-dev" data-perm="dev,users" data-title="Fixing what comes through">
@@ -3299,7 +3417,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r181 · 2026-09-18";  // bump this with each round, it lands on every feedback report
+var BUILD = "r182 · 2026-09-18";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4577,7 +4695,7 @@ function applyPermGates() {
   // Round 60: the rail is gated by exactly the same permissions the tabs
   // were, one line each, so nothing can drift apart.
   applyShell();
-  var railGate = [["railNew", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
+  var railGate = [["railNew", p.log], ["railCustoms", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railIrpcs", p.irpcs],
                   ["railReports", p.analytics], ["railStats", p.analytics],
@@ -4606,7 +4724,7 @@ function permsKey_(p) {
 // is still the single source of what is visible, and this reads its result
 // rather than repeating the rule.
 var VIEW_RAIL_ = {
-  instructor: "railNew", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
+  instructor: "railNew", customs: "railCustoms", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
   edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
   irpcs: "railIrpcs", reports: "railReports", analytics: "railStats", users: "railUsers"
 };
@@ -7059,6 +7177,8 @@ function setView(v) {
   if ($("rcaView")) $("rcaView").classList.toggle("hidden", v !== "rca");
   if ($("tasksView")) $("tasksView").classList.toggle("hidden", v !== "tasks");
   if ($("irpcsView")) $("irpcsView").classList.toggle("hidden", v !== "irpcs");
+  if ($("customsView")) $("customsView").classList.toggle("hidden", v !== "customs");
+  if (v === "customs") renderCustoms();
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "rca") renderRcaHome();
@@ -7131,7 +7251,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railCustoms", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -7167,6 +7287,7 @@ function railGo(v) {
   if (v === "rca" && !(state.perms || {}).users) return;   // dev access returns once Edd has put RCA through its paces
   if (v === "tasks" && !isEddUser()) return;               // Phase 1 is solo; the endpoint scopes by ticket regardless
   if (v === "irpcs" && !(state.perms || {}).irpcs) return; // and the Edge Function checks the same key on every call
+  if (v === "customs" && !(state.perms || {}).log) return;  // r182: the backend refuses the same people anyway
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -7181,7 +7302,7 @@ function updateRail() {
   if (!$("rail")) return;
   var v = state.view;
   var onIssues = (v === "actions" || v === "admin");
-  var pairs = [["railNew", v === "instructor"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
+  var pairs = [["railNew", v === "instructor"], ["railCustoms", v === "customs"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
                ["railIrpcs", v === "irpcs"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
@@ -7201,6 +7322,214 @@ function updateRail() {
 // Two badges, and only two. Chats counts the open conversations. Issues
 // counts the things waiting on somebody, NOT the size of the log - a number
 // that only means work is a number worth looking at.
+// ===================== CUSTOMS INVOICES (r182) =====================
+// The page behind the Customs rail item. Everything that matters happens on
+// the server (the totals, the invoice number, the files); this only collects
+// the details, shows where each one came from, and highlights what is still
+// missing so the instructor knows exactly what to ask the student for.
+var CUSTOMS_FIELDS = ["name", "company", "address1", "address2", "district", "city", "postcode", "country", "phone", "email", "waybill", "pack"];
+var CUSTOMS_NEEDED = ["name", "address1", "city", "postcode", "country", "phone", "waybill", "pack"];
+var CUSTOMS_SRC_WORDS = { chat: "From the chat", issue: "From the issue", "contact card": "From their Chatwoot contact card" };
+var customs = { packs: null, sheetUrl: "", items: [], convId: "", issueId: "", missing: [], sources: {}, loaded: false };
+
+function renderCustoms() {
+  if (!$("cu_date").value) $("cu_date").value = new Date().toISOString().slice(0, 10);
+  if (!customs.loaded) {
+    customs.loaded = true;
+    apiPost({ action: "customsPacks" }).then(function (r) {
+      if (!r || !r.ok) { $("cu_status").textContent = "Could not load the packs: " + ((r && r.error) || "no reply"); return; }
+      customs.packs = r.packs; customs.sheetUrl = r.sheet_url;
+      $("cu_sheetlink").href = r.sheet_url;
+      $("cu_pack").innerHTML = '<option value="">Choose…</option>' + r.packs.map(function (p) {
+        return '<option value="' + esc(p.pack) + '">' + esc(p.pack + " · " + (p.title || p.course)) + (p.items.length ? "" : " (no lines yet)") + "</option>";
+      }).join("");
+      if (customs.pendingPack) { $("cu_pack").value = customs.pendingPack; customs.pendingPack = ""; customsLoadPack(); }
+      customsMarkMissing();
+    }).catch(function () { $("cu_status").textContent = "Could not load the packs."; customs.loaded = false; });
+  }
+  customsHistory();
+}
+
+function customsReset() {
+  CUSTOMS_FIELDS.forEach(function (k) { var el = $("cu_" + k); if (el) el.value = ""; });
+  ["cu_conv", "cu_freight", "cu_remarks", "cu_weight", "cu_reason"].forEach(function (id) { $(id).value = ""; });
+  $("cu_terms").value = "";
+  $("cu_date").value = new Date().toISOString().slice(0, 10);
+  customs.items = []; customs.convId = ""; customs.issueId = ""; customs.sources = {}; customs.missing = [];
+  $("cu_from").textContent = ""; $("cu_notes").innerHTML = ""; $("cu_status").textContent = "";
+  customsDrawItems(); customsMarkMissing(); customsSources();
+}
+
+// From a shipping issue's drawer: straight here, with the issue as the start.
+function openCustomsFromIssue(id) {
+  railGo("customs");
+  customsReset();
+  customs.issueId = id;
+  customsPrefill();
+}
+
+function customsPrefill() {
+  var conv = $("cu_conv").value.trim();
+  if (!conv && !customs.issueId) { $("cu_status").textContent = ""; $("cu_from").textContent = "Paste a chat link or number first."; return; }
+  $("cu_from").innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px;"></span> Reading the ' + (conv ? "chat" : "issue") + " and looking for the address, phone and waybill…";
+  $("cu_notes").innerHTML = "";
+  $("cu_pull").disabled = true;
+  apiPost({ action: "customsPrefill", conversation: conv, issue_id: customs.issueId }).then(function (r) {
+    $("cu_pull").disabled = false;
+    if (!r || !r.ok) { $("cu_from").textContent = "Could not pull the details: " + ((r && r.error) || "no reply") + ". Fill them in by hand."; return; }
+    customs.convId = r.conversation_id || ""; customs.issueId = r.issue_id || customs.issueId;
+    if (customs.convId && !conv) $("cu_conv").value = customs.convId;
+    var f = r.fields || {}, filled = 0;
+    CUSTOMS_FIELDS.forEach(function (k) {
+      if (!f[k]) return;
+      var el = $("cu_" + k); if (!el || el.value) return;   // never overwrite something typed
+      if (k === "pack") {
+        if (customs.packs) { el.value = f[k]; customsLoadPack(); } else customs.pendingPack = f[k];
+      } else el.value = f[k];
+      customs.sources[k] = r.sources[k] || "";
+      filled++;
+    });
+    customsSources();
+    customsMarkMissing();
+    var gap = customs.missing.map(customsWord);
+    $("cu_from").textContent = (r.read_chat ? "Read the chat. " : "") + (filled ? "Filled " + filled + " detail" + (filled === 1 ? "" : "s") + ". " : "Found nothing to fill. ") +
+      (gap.length ? "Still need: " + gap.join(", ") + "." : "Everything needed is there, check it over.");
+    $("cu_notes").innerHTML = (r.notes || []).map(function (n) { return "<li>" + esc(n) + "</li>"; }).join("");
+  }).catch(function (e) { $("cu_pull").disabled = false; $("cu_from").textContent = "Could not pull the details (" + String(e && e.message || e) + ")."; });
+}
+
+function customsWord(k) {
+  return ({ name: "name", address1: "street address", city: "city", postcode: "postcode", country: "country", phone: "phone", waybill: "waybill number", pack: "which pack" })[k] || k;
+}
+function customsTouched(k) { customs.sources[k] = "typed"; customsSources(); customsMarkMissing(); }
+function customsSources() {
+  CUSTOMS_FIELDS.forEach(function (k) {
+    var box = $("cuf_" + k); if (!box) return;
+    var s = box.querySelector(".cu-src"); if (!s) return;
+    var src = customs.sources[k] || "", val = ($("cu_" + k).value || "").trim();
+    if (!val) s.textContent = CUSTOMS_NEEDED.indexOf(k) > -1 ? "Not found, ask the student" : "";
+    else if (src === "typed" || !src) s.textContent = "";
+    else if (/^invoice /.test(src)) s.textContent = "From our " + src.replace(/^invoice /, "invoice ") + ", check they have not moved";
+    else s.textContent = CUSTOMS_SRC_WORDS[src] || src;
+  });
+}
+function customsMarkMissing() {
+  customs.missing = CUSTOMS_NEEDED.filter(function (k) { return !($("cu_" + k).value || "").trim(); });
+  CUSTOMS_NEEDED.forEach(function (k) { var box = $("cuf_" + k); if (box) box.classList.toggle("cu-miss", customs.missing.indexOf(k) > -1); });
+  customsSources();
+}
+
+function customsPack(code) { return (customs.packs || []).filter(function (p) { return p.pack === code; })[0] || null; }
+function customsLoadPack() {
+  var p = customsPack($("cu_pack").value);
+  if (!p) { customs.items = []; customsDrawItems(); return; }
+  customs.items = p.items.map(function (it) { return { description: it.description, hs_code: it.hs_code, qty: it.qty, unit_value: it.unit_value, origin: it.origin || "UK" }; });
+  $("cu_weight").value = p.total_weight_kg || "";
+  $("cu_reason").value = p.reason_for_export || "A pack to assist with training";
+  customsDrawItems();
+  if (!p.items.length) $("cu_status").textContent = "The " + p.pack + " pack has no lines yet. " + (p.notes || "Add them in the CustomsPackItems tab, or add them below for this one.");
+  else $("cu_status").textContent = "";
+}
+function customsDrawItems() {
+  $("cu_items").innerHTML = customs.items.map(function (it, i) {
+    return "<tr>" +
+      '<td><textarea oninput="customsEdit(' + i + ',\'description\',this.value)">' + esc(it.description) + "</textarea></td>" +
+      '<td><input value="' + esc(it.hs_code) + '" oninput="customsEdit(' + i + ',\'hs_code\',this.value)" style="min-width:110px;" /></td>' +
+      '<td class="cu-num"><input value="' + esc(it.qty) + '" inputmode="numeric" oninput="customsEdit(' + i + ',\'qty\',this.value)" style="width:56px;text-align:right;" /></td>' +
+      '<td class="cu-num"><input value="' + esc(Number(it.unit_value || 0).toFixed(2)) + '" inputmode="decimal" oninput="customsEdit(' + i + ',\'unit_value\',this.value)" style="width:78px;text-align:right;" /></td>' +
+      '<td class="cu-num" id="cu_sub' + i + '"></td>' +
+      '<td><button class="ghost small" title="Remove this line" onclick="customsRemoveLine(' + i + ')">Remove</button></td>' +
+    "</tr>";
+  }).join("") || '<tr><td colspan="6" class="muted">Choose a pack to fill this in.</td></tr>';
+  customsTotals();
+}
+function customsEdit(i, k, v) { if (customs.items[i]) customs.items[i][k] = v; customsTotals(); }
+function customsAddLine() { customs.items.push({ description: "", hs_code: "", qty: 1, unit_value: 0, origin: "UK" }); customsDrawItems(); }
+function customsRemoveLine(i) { customs.items.splice(i, 1); customsDrawItems(); }
+function customsNum(v) { var n = Number(String(v == null ? "" : v).replace(/[£,\s]/g, "")); return isFinite(n) ? n : 0; }
+function customsTotals() {
+  var t = 0;
+  customs.items.forEach(function (it, i) {
+    var s = Math.round(customsNum(it.qty) * customsNum(it.unit_value) * 100) / 100; t += s;
+    var el = $("cu_sub" + i); if (el) el.textContent = s.toFixed(2);
+  });
+  t += customsNum($("cu_freight").value);
+  $("cu_total").textContent = "£" + t.toFixed(2);
+}
+
+function customsDownload(file, mime) {
+  var bin = atob(file.b64), bytes = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  var a = document.createElement("a"); a.href = url; a.download = file.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+}
+var CUSTOMS_PDF = "application/pdf", CUSTOMS_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+function customsGenerate() {
+  customsMarkMissing();
+  if (customs.missing.length) { $("cu_status").textContent = "Still need: " + customs.missing.map(customsWord).join(", ") + ". Ask the student, or fill them in."; return; }
+  var d = $("cu_date").value || new Date().toISOString().slice(0, 10);
+  var receiver = {};
+  ["name", "company", "address1", "address2", "district", "city", "postcode", "country", "phone", "email"].forEach(function (k) { receiver[k] = $("cu_" + k).value.trim(); });
+  var payload = {
+    action: "customsGenerate", receiver: receiver, waybill: $("cu_waybill").value.trim(), pack: $("cu_pack").value,
+    date: d.slice(8, 10) + "/" + d.slice(5, 7) + "/" + d.slice(0, 4),
+    weight_kg: $("cu_weight").value.trim(), terms: $("cu_terms").value, freight: $("cu_freight").value.trim(),
+    reason: $("cu_reason").value.trim(), remarks: $("cu_remarks").value.trim(),
+    items: customs.items, conversation_id: customs.convId, issue_id: customs.issueId
+  };
+  $("cu_go").disabled = true;
+  $("cu_status").textContent = "Making the invoice…";
+  apiPost(payload).then(function (r) {
+    $("cu_go").disabled = false;
+    if (!r || !r.ok) { $("cu_status").textContent = (r && r.error) || "That did not work."; return; }
+    customsDownload(r.pdf, CUSTOMS_PDF);
+    customsDownload(r.docx, CUSTOMS_DOCX);
+    $("cu_status").textContent = "Done: " + r.invoice_no + ", £" + r.total + ". The PDF and Word copy have downloaded." +
+      (r.saved ? " Both are saved in the tracker's Drive folder too." : " They could NOT be saved to Drive (" + r.save_error + "), so keep the downloads.");
+    toast("Invoice " + r.invoice_no + " made.");
+    customsHistory();
+  }).catch(function (e) { $("cu_go").disabled = false; $("cu_status").textContent = "That did not work (" + String(e && e.message || e) + ")."; });
+}
+
+function customsHistory() {
+  apiPost({ action: "customsList" }).then(function (r) {
+    if (!r || !r.ok) { $("cu_hist").textContent = "Could not load the list: " + ((r && r.error) || "no reply"); return; }
+    if (!r.invoices.length) { $("cu_hist").textContent = "None yet."; return; }
+    $("cu_hist").innerHTML = '<table class="cu-hist" style="width:100%;border-collapse:collapse;">' + r.invoices.map(function (x) {
+      return "<tr><td><b>" + esc(x.invoice_no) + "</b><br><span class=\"muted\">" + esc(fmtDate(x.created_at)) + (x.created_by ? " · " + esc(x.created_by) : "") + "</span></td>" +
+        "<td>" + esc(x.student_name) + "<br><span class=\"muted\">" + esc(x.country) + "</span></td>" +
+        "<td>" + esc(x.pack) + "<br><span class=\"muted\">" + esc(x.waybill) + "</span></td>" +
+        '<td class="cu-num">£' + esc(x.total_gbp) + "</td>" +
+        '<td class="cu-num"><button class="ghost small" onclick="customsAgain(\'' + esc(x.invoice_no) + '\',false)">Download</button> ' +
+        '<button class="ghost small" onclick="customsAgain(\'' + esc(x.invoice_no) + '\',true)">Copy</button></td></tr>';
+    }).join("") + "</table>";
+  }).catch(function () { $("cu_hist").textContent = "Could not load the list."; });
+}
+
+// Download: the same invoice again, same number and date. Copy: its details
+// into the form for a fresh one (new number), for when something has changed.
+function customsAgain(no, copy) {
+  $("cu_status").textContent = (copy ? "Loading " : "Fetching ") + no + "…";
+  apiPost({ action: "customsFetch", invoice_no: no }).then(function (r) {
+    if (!r || !r.ok) { $("cu_status").textContent = (r && r.error) || "That did not work."; return; }
+    if (!copy) { customsDownload(r.pdf, CUSTOMS_PDF); customsDownload(r.docx, CUSTOMS_DOCX); $("cu_status").textContent = no + " downloaded again."; return; }
+    var m = r.model || {};
+    customsReset();
+    Object.keys(m.receiver || {}).forEach(function (k) { var el = $("cu_" + k); if (el) { el.value = m.receiver[k] || ""; customs.sources[k] = "invoice " + no; } });
+    $("cu_waybill").value = m.waybill || ""; customs.sources.waybill = "invoice " + no;
+    $("cu_pack").value = m.pack || "";
+    customs.items = (m.lines || []).map(function (it) { return { description: it.description, hs_code: it.hs_code, qty: it.qty, unit_value: it.unit_value, origin: it.origin }; });
+    $("cu_weight").value = m.weight_kg || ""; $("cu_terms").value = m.terms || ""; $("cu_freight").value = m.freight || "";
+    $("cu_reason").value = m.reason || ""; $("cu_remarks").value = m.remarks || "";
+    customsDrawItems(); customsMarkMissing();
+    $("cu_status").textContent = "Copied from " + no + ". Change what you need, then make the invoice.";
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }).catch(function () { $("cu_status").textContent = "That did not work."; });
+}
+
 // ===================== TASKS (10 Sep 2026) =====================
 // The one part of this app whose data does not live in the Sheet. Tasks sits
 // in Postgres (schema tasks.*, migrations 022-024) behind its own Edge
@@ -9182,6 +9511,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 28, date: "2026-09-18", text: "Customs invoices have their own page (Customs on the rail, or the Customs invoice button on a shipping issue). Paste the chat and it finds the address, phone and waybill, highlights anything missing to ask the student for, and makes a PDF and a Word copy. Every one is kept, so if customs ask again it is one click." },
   { n: 27, date: "2026-09-18", text: "Students now get an \"Invalid key\" error where a missing lesson used to show a 404. The tracker knows the new wording and sends those straight to Edd, since the lesson needs uploading again." },
   { n: 26, date: "2026-09-18", text: "Chat briefs are quicker. The ones already open in Chatwoot first thing get their brief written after the early-morning scan, so opening one is instant as long as the student has not written again. Screenshots are copied once rather than every time a brief is rebuilt." },
   { n: 25, date: "2026-09-18", text: "What's new lives here now. When this turns coral there is something we have not read yet, and opening it clears the colour." },
@@ -13096,6 +13426,7 @@ function openDetail(issue) {
     (kindOf(issue) === "improvement" ? kv("Impact", issue.impact) : "") +
     (catOf(issue) === "shipping" ? kv("Courier", issue.courier) : "") +
     (catOf(issue) === "shipping" ? kv("Tracking", issue.tracking_number) : "") +
+    (catOf(issue) === "shipping" && (state.perms || {}).log ? '<div class="k">Customs</div><div><button class="ghost small" onclick="openCustomsFromIssue(\'' + esc(issue.issue_id) + '\')">Customs invoice</button></div>' : "") +
     (catOf(issue) === "shipping" && issue.chase_at ? kv("Chase on", String(issue.chase_at).slice(0, 10)) : "") +
     kv("Affects", audienceOf(issue) === "internal" ? "Us (internal)" : "Students") +
     (audienceOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "—") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
