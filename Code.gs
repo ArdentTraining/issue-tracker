@@ -12771,10 +12771,20 @@ function faultSweep() {
   // The sweep is not a person, but the endpoint wants a ticket carrying the
   // analytics permission. Minted for a named service identity rather than
   // borrowing somebody's login, so the reason a row appeared is traceable.
+  // perms_json, NOT perms. permsOf_ reads the raw sheet column and JSON.parses
+  // it; publicUser_ is what turns that into the `perms` object further down.
+  // Handing it a ready-made `perms` looks right, is ignored, and comes back as
+  // "forbidden" with nothing to say which of the two names was wrong.
+  //
+  // The sweep is not a person, but the endpoint wants a ticket carrying the
+  // analytics permission. Minted for a named service identity rather than
+  // borrowing somebody's login, so the reason a row appeared is traceable.
+  // Nothing is looked up: the ticket is signed from what is passed here, and
+  // the only thing it can reach is the read-only reporting endpoint.
   var t = mintPortalTicket_({
     email: 'fault-sweep@ardent-training.com',
     name: 'Fault sweep',
-    perms: { analytics: true }
+    perms_json: JSON.stringify({ analytics: true })
   }, 'analytics');
   if (!t.ok) { Logger.log('faultSweep: no ticket (' + t.error + ')'); return; }
 
