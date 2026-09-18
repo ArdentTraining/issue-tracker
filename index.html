@@ -1121,17 +1121,18 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     <span class="ri-word">New</span>
   </button>
-  <!-- r182 (Edd): customs invoices, for when customs ask again for one
-       showing exactly what is in the pack. Anyone who logs issues. -->
-  <button type="button" class="rail-item" id="railCustoms" onclick="railGo('customs')" title="Customs invoice - make a commercial invoice for a student's pack">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><polyline points="15 3 15 7 19 7"/><line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
-    <span class="ri-word">Customs</span>
-  </button>
   <div class="rail-div" id="railDiv"></div>
   <button type="button" class="rail-item" id="railMore" onclick="railMoreToggle(event)" title="More sections">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
     <span class="ri-word">More</span>
     <span class="rail-badge" id="railBadgeMore"></span>
+  </button>
+  <!-- r182 (Edd): customs invoices, for when customs ask again for one
+       showing exactly what is in the pack. Below the line with the other
+       occasional tools (Edd, 18 Sep); instructors only, i.e. 'log'. -->
+  <button type="button" class="rail-item" id="railCustoms" onclick="railGo('customs')" title="Customs invoice - make a commercial invoice for a student's pack">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><polyline points="15 3 15 7 19 7"/><line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
+    <span class="ri-word">Customs</span>
   </button>
   <button type="button" class="rail-item" id="railEdd" onclick="railGo('edd')" title="With Edd - the tools you build yourself">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4.6 4.6 0 0 0-6.1 5.6L3 17.5V21h3.5l5.6-5.6a4.6 4.6 0 0 0 6.1-6.1l-3 3-2.2-.4-.4-2.2 3-3a4.6 4.6 0 0 0-.9-.4z"/></svg>
@@ -4702,7 +4703,7 @@ function applyPermGates() {
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
   // The divider only earns its place if there is something on both sides.
-  if ($("railDiv")) $("railDiv").style.display = (p.dev || p.course || p.analytics || p.users || p.irpcs) ? "" : "none";
+  if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs) ? "" : "none";
 
   // Everybody gets to say whether a student is behind this report (Edd,
   // FB-0206). It used to be an admins-only "internal task" switch, which left
@@ -7488,7 +7489,8 @@ function customsGenerate() {
     customsDownload(r.pdf, CUSTOMS_PDF);
     customsDownload(r.docx, CUSTOMS_DOCX);
     $("cu_status").textContent = "Done: " + r.invoice_no + ", £" + r.total + ". The PDF and Word copy have downloaded." +
-      (r.saved ? " Both are saved in the tracker's Drive folder too." : " They could NOT be saved to Drive (" + r.save_error + "), so keep the downloads.");
+      (r.saved ? " Both are saved in the tracker's Drive folder too." : " They could NOT be saved to Drive (" + r.save_error + "), so keep the downloads.") +
+      (r.signed ? "" : " It is NOT signed: no signature is on file, so sign the printed copy by hand.");
     toast("Invoice " + r.invoice_no + " made.");
     customsHistory();
   }).catch(function (e) { $("cu_go").disabled = false; $("cu_status").textContent = "That did not work (" + String(e && e.message || e) + ")."; });

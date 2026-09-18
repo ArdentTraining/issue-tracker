@@ -682,6 +682,7 @@ function doPost(e) {
     if (action === 'customsGenerate') return jsonOut(customsGenerate_(body));
     if (action === 'customsList') return jsonOut(customsList_());
     if (action === 'customsFetch') return jsonOut(customsFetch_(body));
+    if (action === 'setCustomsSignature') return jsonOut(setCustomsSignature_(body));
     if (action === 'chatScanList') return jsonOut(chatScanList_());
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
@@ -907,6 +908,7 @@ function reqPerm_(action) {
     // r182: customs invoices. Anybody who logs issues can make one; it is the
     // same instructor job as chasing the parcel in the first place.
     case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': return 'log';
+    case 'setCustomsSignature': return 'users';   // and Edd only, checked inside
     // The scan queue is visible to every instructor (Edd, 26 Jul) - the team
     // is small and whoever spots it first should be able to act. Kicking off a
     // manual scan stays with the admins.
@@ -7889,7 +7891,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r182.2 · 2026-09-18';
+var CODE_STAMP = 'r182.3 · 2026-09-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12040,6 +12042,43 @@ function customsSeed_() {
   return { packs: ps, items: is };
 }
 
+// ---- Edd's signature (r182.3) --------------------------------------------
+// The old Word templates carried Edd's signature as a picture beside
+// "Signature:", and customs expect a signed declaration. The repo is PUBLIC, so
+// the picture never goes in this file: it sits as a private file in the
+// tracker's Drive folder (no link sharing) and its id lives in the script
+// property CUSTOMS_SIG_FILE. setCustomsSignature (Edd only) puts it there.
+// No signature on file means the line prints blank for a pen, as before, and
+// the page says so rather than quietly sending an unsigned invoice.
+function customsSignature_() {
+  var cache = CacheService.getScriptCache();
+  try { var hit = cache.get('customs_sig_b64'); if (hit) return hit; } catch (e) {}
+  var id = PropertiesService.getScriptProperties().getProperty('CUSTOMS_SIG_FILE');
+  if (!id) return '';
+  var b64 = '';
+  try { b64 = Utilities.base64Encode(DriveApp.getFileById(id).getBlob().getBytes()); }
+  catch (e) {
+    try {
+      var res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media&supportsAllDrives=true',
+        { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+      if (res.getResponseCode() < 300) b64 = Utilities.base64Encode(res.getContent());
+    } catch (e2) {}
+  }
+  if (b64) { try { cache.put('customs_sig_b64', b64, 21600); } catch (e) {} }
+  return b64;
+}
+function setCustomsSignature_(data) {
+  var u = data._user || {};
+  if (String(u.email || '').toLowerCase() !== EDD_EMAIL) return { ok: false, error: 'Only Edd can change the signature on customs invoices.' };
+  var b64 = String(data.base64 || '').replace(/^data:[^,]*,/, '');
+  if (!b64) return { ok: false, error: 'Send the signature as a base64 PNG.' };
+  var saved = customsSaveFile_(Utilities.newBlob(Utilities.base64Decode(b64), 'image/png', 'Customs invoice signature (Edd).png'));
+  if (!saved.ok) return { ok: false, error: 'Could not save it to Drive: ' + saved.error };
+  PropertiesService.getScriptProperties().setProperty('CUSTOMS_SIG_FILE', saved.id);
+  try { CacheService.getScriptCache().remove('customs_sig_b64'); } catch (e) {}
+  return { ok: true, file_id: saved.id };
+}
+
 function customsNum_(v) {
   var n = Number(String(v == null ? '' : v).replace(/[£,\s]/g, ''));
   return isFinite(n) ? n : 0;
@@ -12354,7 +12393,9 @@ function customsHtml_(m) {
     '<div>I/we certify the information on this invoice is true and correct and that the contents of this shipment are as stated above.</div><br>' +
     '<table><tr><td style="width:34%;">Name: ' + e(m.sender.signatory) + '</td><td style="width:22%;">Title: ' + e(m.sender.signatory_title) + '</td>' +
       '<td>Date: ' + e(m.date) + '</td></tr>' +
-    '<tr><td>E-mail: ' + e(m.sender.email) + '</td><td colspan="2">Signature: ______________________________</td></tr></table>' +
+    '<tr><td>E-mail: ' + e(m.sender.email) + '</td><td colspan="2">Signature: ' +
+      (m._sig ? '<img src="data:image/png;base64,' + m._sig + '" style="height:14mm;vertical-align:middle;">' : '______________________________') +
+    '</td></tr></table>' +
     '</body></html>';
 }
 
@@ -12426,13 +12467,18 @@ function customsDocxXml_(m) {
   ]]);
   var sign = table([3500, 2400, 4566], [
     [cell(para('Name: ' + m.sender.signatory), 3500), cell(para('Title: ' + m.sender.signatory_title), 2400), cell(para('Date: ' + m.date), 4566)],
-    [cell(para('E-mail: ' + m.sender.email), 3500), cell(para('Signature: ______________________________'), 6966, { span: 2 })]
+    [cell(para('E-mail: ' + m.sender.email), 3500), cell(m._sig ? '<w:p><w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>' + run('Signature: ') + CUSTOMS_SIG_DRAWING_ + '</w:p>'
+                  : para('Signature: ______________________________'), 6966, { span: 2 })]
   ], false);
   var body = head + para('') + table(gw, goodsRows) + para('') + tot + para('') +
     para('I/we certify the information on this invoice is true and correct and that the contents of this shipment are as stated above.') +
     para('') + sign;
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + body +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' +
+    ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"' +
+    ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"' +
+    ' xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>' + body +
     '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>' +
     '</w:body></w:document>';
 }
@@ -12441,17 +12487,32 @@ var CUSTOMS_DOCX_PARTS_ = {
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Default Extension="png" ContentType="image/png"/>' +
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
   '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'
 };
+// 38mm wide, in the signature's own 151:49 proportions (EMU: 36000 per mm).
+var CUSTOMS_SIG_DRAWING_ = '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="1368000" cy="443900"/>' +
+  '<wp:docPr id="1" name="Signature"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+  '<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="signature.png"/><pic:cNvPicPr/></pic:nvPicPr>' +
+  '<pic:blipFill><a:blip r:embed="rIdSig"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+  '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1368000" cy="443900"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
+  '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
 function customsDocxBlob_(m, name) {
   var blobs = [
     Utilities.newBlob(CUSTOMS_DOCX_PARTS_['[Content_Types].xml'], 'application/xml', '[Content_Types].xml'),
     Utilities.newBlob(CUSTOMS_DOCX_PARTS_['_rels/.rels'], 'application/xml', '_rels/.rels'),
     Utilities.newBlob(customsDocxXml_(m), 'application/xml', 'word/document.xml')
   ];
+  if (m._sig) {
+    blobs.push(Utilities.newBlob('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rIdSig" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/signature.png"/>' +
+      '</Relationships>', 'application/xml', 'word/_rels/document.xml.rels'));
+    blobs.push(Utilities.newBlob(Utilities.base64Decode(m._sig), 'image/png', 'word/media/signature.png'));
+  }
   var zip = Utilities.zip(blobs, name);
   return Utilities.newBlob(zip.getBytes(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', name);
 }
@@ -12521,6 +12582,7 @@ function customsGenerate_(data) {
     row._head = head;
   } finally { lock.releaseLock(); }
 
+  m._sig = customsSignature_();
   var pdf = customsPdfBlob_(m, customsFileName_(m, 'pdf'));
   var docx = customsDocxBlob_(m, customsFileName_(m, 'docx'));
   // A Drive hiccup must not cost the instructor the invoice, and must not be
@@ -12536,7 +12598,7 @@ function customsGenerate_(data) {
     ok: true, invoice_no: m.invoice_no, total: customsMoney_(m.total),
     pdf: { name: pdf.getName(), b64: Utilities.base64Encode(pdf.getBytes()), drive_id: sp.ok ? sp.id : '' },
     docx: { name: docx.getName(), b64: Utilities.base64Encode(docx.getBytes()), drive_id: sd.ok ? sd.id : '' },
-    saved: !saveErr, save_error: saveErr
+    saved: !saveErr, save_error: saveErr, signed: !!m._sig
   };
 }
 
@@ -12561,9 +12623,11 @@ function customsFetch_(data) {
   for (var i = rows.length - 1; i >= 0; i--) {
     if (String(rows[i].invoice_no) !== no) continue;
     var m; try { m = JSON.parse(rows[i].data_json); } catch (e) { return { ok: false, error: 'That invoice was saved without its details.' }; }
+    m._sig = customsSignature_();
     var pdf = customsPdfBlob_(m, customsFileName_(m, 'pdf'));
     var docx = customsDocxBlob_(m, customsFileName_(m, 'docx'));
-    return { ok: true, invoice_no: no, model: m,
+    var signed = !!m._sig; delete m._sig;
+    return { ok: true, invoice_no: no, model: m, signed: signed,
       pdf: { name: pdf.getName(), b64: Utilities.base64Encode(pdf.getBytes()) },
       docx: { name: docx.getName(), b64: Utilities.base64Encode(docx.getBytes()) } };
   }
