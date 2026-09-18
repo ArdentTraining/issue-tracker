@@ -12754,10 +12754,17 @@ function customsFetch_(data) {
  * the summary. If somebody does edit that line out, the next sweep files a
  * second issue. That is the failure mode; it is bounded and visible.
  *
- * DRY RUN BY DEFAULT. It logs what it would file and files nothing until the
- * script property ARDENT_FAULT_SWEEP_LIVE is set to 'true'. This has never run
- * against the live sheet, and a sweep that creates issues is not the place to
- * find out it was wrong about something.
+ * ARMED. It shipped disarmed, ran twice in dry run against the live sheet on
+ * 18 Sep 2026, and filed exactly the two candidates the view holds. Set the
+ * script property ARDENT_FAULT_SWEEP_DRY to 'true' to put it back to logging
+ * only.
+ *
+ * The cap of five issues per run holds either way, and it is the guard that
+ * matters: the thing most likely to go wrong is not the flag but a change to
+ * the rule in courses_fault_candidates letting a hundred rows through.
+ *
+ * No trigger is installed. It is run by hand until its output has been read a
+ * few times.
  * =========================================================================== */
 
 var FAULT_SWEEP_URL = 'https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/courses';
@@ -12765,8 +12772,16 @@ var FAULT_SWEEP_MARK = '[fault] ';
 var FAULT_SWEEP_MAX = 5;   // per run, so a bad rule cannot flood the queue
 
 function faultSweep() {
+  // ARMED, 18 Sep 2026. It shipped in dry run because it had never run against
+  // the live sheet; it has now, twice, and filed exactly the two candidates
+  // the view holds. So the default flips and the switch inverts: set
+  // ARDENT_FAULT_SWEEP_DRY to 'true' to put it back to logging only.
+  //
+  // The cap of five per run stays either way. That is the guard that matters,
+  // because the thing most likely to go wrong is not this flag but a change to
+  // the rule in courses_fault_candidates letting a hundred rows through.
   var live = String(PropertiesService.getScriptProperties()
-                     .getProperty('ARDENT_FAULT_SWEEP_LIVE') || '') === 'true';
+                     .getProperty('ARDENT_FAULT_SWEEP_DRY') || '') !== 'true';
 
   // The sweep is not a person, but the endpoint wants a ticket carrying the
   // analytics permission. Minted for a named service identity rather than
@@ -12889,5 +12904,5 @@ function faultSweep() {
 
   Logger.log('faultSweep: ' + (live ? 'filed ' : 'DRY RUN, would file ') + filed +
              ', already filed ' + skipped +
-             (live ? '' : '. Set ARDENT_FAULT_SWEEP_LIVE=true to arm it.'));
+             (live ? '' : '. Set ARDENT_FAULT_SWEEP_DRY to blank to arm it.'));
 }
