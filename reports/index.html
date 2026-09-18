@@ -214,6 +214,50 @@
      now always open and belongs to a page; a sub-rail picks the page.
      Cognitive load is what makes a dashboard get abandoned, and the cure is
      fewer things competing above the fold rather than smaller things. */
+  /* ------------------------------------------------ r183: the course map
+     Every lesson as a square, grouped by module, so the shape of the course
+     is visible at once and a cluster reads as a block rather than as rows
+     scattered down a table. That is not decoration: "all six faults are
+     quizzes" was the finding that identified the player bug, and it is
+     invisible in a list.
+
+     ONE thing in the colour. The fill is engagement and nothing else; a
+     fault is a separate mark in the corner. Encoding two meanings in one
+     colour is where these grids stop being readable, because a dark square
+     then means either quiet or broken and the reader has to remember which. */
+  .map-course{margin-bottom:20px}
+  .map-course>h4{font-family:'Hedvig Letters Serif',Georgia,serif; font-weight:400;
+                 font-size:17px; margin:0 0 8px}
+  .map-mod{display:grid; grid-template-columns:3.4rem 1fr; gap:8px; align-items:start; margin-bottom:5px}
+  .map-mod>span{font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; padding-top:5px}
+  .map-cells{display:flex; flex-wrap:wrap; gap:3px}
+  .cell{position:relative; width:22px; height:22px; border-radius:3px; border:0; padding:0;
+        cursor:pointer; background:var(--line)}
+  .cell:hover{outline:1px solid var(--muted); outline-offset:1px}
+  .cell:focus-visible{outline:2px solid var(--coral); outline-offset:1px}
+  .cell.on{outline:2px solid var(--coral); outline-offset:1px}
+  .cell.q0{background:#1a3350} .cell.q1{background:#255a8c}
+  .cell.q2{background:#3179bd} .cell.q3{background:#4d9ae0}
+  .cell.silent{background:transparent; border:1px dashed var(--line)}
+  /* The fault mark. A corner wedge rather than a fill, so it sits ON TOP of
+     the engagement colour instead of replacing it. */
+  .cell.fault::after{content:''; position:absolute; top:0; right:0;
+                     border-top:8px solid var(--coral); border-left:8px solid transparent;
+                     border-top-right-radius:3px}
+  .cell.layout::after{content:''; position:absolute; top:0; right:0;
+                      border-top:8px solid #e0a45c; border-left:8px solid transparent;
+                      border-top-right-radius:3px}
+  .map-wrap{display:grid; grid-template-columns:1fr 262px; gap:18px; align-items:start}
+  .map-legend{display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--muted);
+              align-items:center; margin-top:4px}
+  .map-legend span{display:inline-flex; align-items:center; gap:5px}
+  .map-legend i{width:12px; height:12px; border-radius:3px; display:inline-block}
+  .map-side{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; position:sticky; top:18px}
+  .map-side .kv{display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:6px 0; border-bottom:1px solid var(--line)}
+  .map-side .kv:last-of-type{border-bottom:0}
+  .map-side .kv b{font-weight:500; font-variant-numeric:tabular-nums}
+  @media (max-width:900px){ .map-wrap{grid-template-columns:1fr} .map-side{position:static} }
+
   .subwrap{display:flex; gap:26px; align-items:flex-start}
   #subrail{flex:0 0 152px; position:sticky; top:18px}
   #subrail a{display:flex; align-items:center; justify-content:space-between; gap:8px;
@@ -416,7 +460,15 @@
     </details>
       </div>
       <div class="page" id="page_attention"></div>
-      <div class="page" id="page_lessons"></div>
+      <div class="page" id="page_lessons">
+        <div class="acc" style="background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 22px;margin-bottom:14px">
+          <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 14px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--line)">
+            <span class="acc-h">The course, lesson by lesson</span>
+            <span class="acc-sum" id="sum_map">…</span>
+          </div>
+          <div id="courseMap"></div>
+        </div>
+      </div>
       <div class="page" id="page_questions"></div>
       <div class="page" id="page_faults"></div>
       <div class="page" id="page_activity"></div>
@@ -791,6 +843,7 @@ function showPage(key){
   /* Render on arrival, not on load. A page nobody opens costs nothing, which
      is the one thing the folds got right and worth keeping. */
   if(key === 'course') renderCourseCanvas();
+  if(key === 'lessons') renderCourseMap();
   const pg = PAGES.find(p => p.key === key);
   if(pg) pg.secs.forEach(renderSection);
 }
@@ -883,6 +936,7 @@ function render(){
   const pg = PAGES.find(x => x.key === currentPage());
   (pg ? pg.secs : SECTIONS).forEach(renderSection);
   if(document.getElementById('page_course').classList.contains('on')) renderCourseCanvas();
+  if(document.getElementById('page_lessons').classList.contains('on')) renderCourseMap();
 }
 
 function renderCards(){
@@ -1415,6 +1469,149 @@ function renderCourseCanvas(){
 function card(k, v, n){
   return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) +
          '</div><div class="n">' + esc(n) + '</div></div>';
+}
+
+/* ------------------------------------------------- r183: THE COURSE MAP
+   109 lessons on one screen, grouped by module. Two things it does that a
+   table cannot: it shows the SHAPE of the course, and it makes a cluster
+   obvious. All six faulting lessons being quizzes was the observation that
+   identified the iSpring player bug, and in a sorted table that is six rows
+   scattered down a page.
+
+   The fill carries ONE meaning: how busy the lesson is, in quartiles against
+   the rest of the course. A fault is a corner mark drawn on top, never a
+   different fill, so a dark square always means quiet and never means broken.
+
+   A registered lesson that has never reported is drawn as an empty outline
+   rather than left out. 26 of the 135 are in that state, and a map that
+   quietly omitted them would be the most misleading thing on the page. */
+let MAP_SEL = null;
+
+function mapLessons(){
+  /* health is the full registry, stats is only what reported. Starting from
+     health is what keeps the silent ones visible. */
+  const byId = {};
+  (DATA.health || []).forEach(h => { byId[h.lesson_id] = { id:h.lesson_id, title:h.lesson_title || '', visits:0, silent:true }; });
+  (VIEW.stats || []).forEach(s2 => {
+    byId[s2.lesson_id] = byId[s2.lesson_id] || { id:s2.lesson_id, title:s2.lesson_title || '' };
+    Object.assign(byId[s2.lesson_id], {
+      title: s2.lesson_title || byId[s2.lesson_id].title,
+      visits: Number(s2.sessions) || 0,
+      bounced: Number(s2.bounced_sessions) || 0,
+      median: Number(s2.median_active_seconds) || 0,
+      silent: false
+    });
+  });
+  /* Faults, by class, so the corner mark can tell a broken lesson from a
+     badly laid-out one. */
+  ((DATA.faults && DATA.faults.by_lesson) || []).forEach(f => {
+    const r = byId[f.lesson_id]; if(!r) return;
+    if(f.fault_class === 'script' || f.fault_class === 'delivery'){
+      r.fault = (r.fault || 0) + (Number(f.visits_affected) || 0);
+    } else if(f.fault_class === 'authoring'){
+      r.layout = (r.layout || 0) + (Number(f.visits_affected) || 0);
+    }
+  });
+  const course = document.getElementById('courseFilter').value;
+  return Object.values(byId)
+    .filter(r => !course || r.id.indexOf(course + '.') === 0)
+    .sort((a,b) => a.id.localeCompare(b.id, 'en', { numeric:true }));
+}
+
+function renderCourseMap(){
+  const host = document.getElementById('courseMap');
+  if(!host) return;
+  const rows = mapLessons();
+  const put = (id,t) => { const e = document.getElementById(id); if(e) e.textContent = t; };
+
+  if(!rows.length){ host.innerHTML = '<p class="hint">No lessons registered for this filter.</p>'; put('sum_map',''); return; }
+
+  /* Quartiles over the lessons that actually reported. A fixed scale would
+     make a quiet course look broken and a busy one look uniform. */
+  const live = rows.filter(r => !r.silent).map(r => r.visits).sort((a,b) => a - b);
+  const q = n => live.length ? live[Math.min(live.length - 1, Math.floor(live.length * n))] : 0;
+  const q1 = q(0.25), q2 = q(0.5), q3 = q(0.75);
+  const band = v => v <= q1 ? 'q0' : v <= q2 ? 'q1' : v <= q3 ? 'q2' : 'q3';
+
+  /* Grouped course › module, because that is how the course is actually
+     shaped and a flat wall of squares hides it. */
+  const tree = {};
+  rows.forEach(r => {
+    const bits = r.id.split('.');
+    const c = bits[0] || '?', m = bits[1] || '--';
+    ((tree[c] = tree[c] || {})[m] = tree[c][m] || []).push(r);
+  });
+
+  let h = '<div class="map-wrap"><div>';
+  Object.keys(tree).sort().forEach(c => {
+    const n = Object.values(tree[c]).reduce((a, x) => a + x.length, 0);
+    h += '<div class="map-course"><h4>' + esc(c) + ' <span class="hint" style="font-size:12px">' +
+         n + ' lesson' + (n === 1 ? '' : 's') + '</span></h4>';
+    Object.keys(tree[c]).sort().forEach(m => {
+      h += '<div class="map-mod"><span>' + esc(c) + '.' + esc(m) + '</span><div class="map-cells">';
+      tree[c][m].forEach(r => {
+        const cls = ['cell', r.silent ? 'silent' : band(r.visits)];
+        if(r.fault) cls.push('fault'); else if(r.layout) cls.push('layout');
+        if(MAP_SEL === r.id) cls.push('on');
+        h += '<button class="' + cls.join(' ') + '" data-id="' + esc(r.id) + '" ' +
+             'title="' + esc(r.id + (r.silent ? ' — no telemetry' : ' — ' + r.visits + ' visits')) + '" ' +
+             'aria-label="' + esc(r.id) + '"></button>';
+      });
+      h += '</div></div>';
+    });
+    h += '</div>';
+  });
+  h += '<div class="map-legend">' +
+       '<span><i style="background:#1a3350"></i> quiet</span>' +
+       '<span><i style="background:#255a8c"></i></span>' +
+       '<span><i style="background:#3179bd"></i></span>' +
+       '<span><i style="background:#4d9ae0"></i> busy</span>' +
+       '<span><i style="border:1px dashed var(--line)"></i> no telemetry</span>' +
+       '<span><i style="background:var(--coral)"></i> corner: a fault</span>' +
+       '<span><i style="background:#e0a45c"></i> corner: layout</span>' +
+       '</div></div><aside class="map-side" id="mapSide"></aside></div>';
+  host.innerHTML = h;
+
+  host.querySelectorAll('.cell').forEach(b =>
+    b.addEventListener('click', () => { MAP_SEL = b.dataset.id; renderCourseMap(); }));
+
+  renderMapSide(rows);
+  const silent = rows.filter(r => r.silent).length;
+  const faulty = rows.filter(r => r.fault || r.layout).length;
+  put('sum_map', rows.length + ' lessons · ' + (silent ? silent + ' not reporting · ' : '') +
+                 (faulty ? faulty + ' with a fault' : 'none with a fault'));
+}
+
+function renderMapSide(rows){
+  const el = document.getElementById('mapSide');
+  if(!el) return;
+  const r = rows.find(x => x.id === MAP_SEL);
+  if(!r){
+    el.innerHTML = '<p class="hint" style="margin:0">Pick a lesson to see everything about it. ' +
+                   'The shape above is the course: each row is a module.</p>';
+    return;
+  }
+  const slides = (DATA.dropoff || []).filter(d => d.lesson_id === r.id).length;
+  const qs = ((DATA.questions && DATA.questions.difficulty) || []).filter(x => x.lesson_id === r.id).length;
+  const started = Math.max(0, (r.visits || 0) - (r.bounced || 0));
+  const mins = r.median ? (r.median / 60).toFixed(1) + ' min' : '—';
+  let h = '<div style="font-family:var(--mono,monospace);font-size:15px;margin-bottom:2px">' + esc(r.id) + '</div>' +
+          '<p class="hint" style="margin:0 0 10px">' +
+          esc((r.title || '').replace(/^[A-Z]{2,4}\.\d{2}(\.\d{2})?\s*-\s*/, '') || '—') + '</p>';
+  if(r.silent){
+    h += '<p class="hint" style="margin:0">Registered but has never reported. Either it has not been ' +
+         'uploaded yet, or it went up without the telemetry stub.</p>';
+  } else {
+    h += '<div class="kv"><span>Visits</span><b>' + r.visits.toLocaleString('en-GB') + '</b></div>' +
+         '<div class="kv"><span>Started</span><b>' + started.toLocaleString('en-GB') + '</b></div>' +
+         '<div class="kv"><span>Median active</span><b>' + mins + '</b></div>' +
+         (slides ? '<div class="kv"><span>Slides</span><b>' + slides + '</b></div>' : '') +
+         (qs ? '<div class="kv"><span>Questions</span><b>' + qs + '</b></div>' : '');
+    if(r.fault) h += '<div class="kv"><span>Faults</span><b style="color:var(--coral)">' + r.fault + ' visits</b></div>';
+    if(r.layout) h += '<div class="kv"><span>Layout</span><b style="color:#e0a45c">' + r.layout + ' visits</b></div>';
+    if(r.fault || r.layout) h += '<p class="hint" style="margin:10px 0 0">Listed on the Attention page with what it is and whether it has been filed.</p>';
+  }
+  el.innerHTML = h;
 }
 
 function renderConfusion(){
