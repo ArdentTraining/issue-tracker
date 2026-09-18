@@ -291,6 +291,11 @@
 
     <!-- ROUND 67: everything below folds. The cards and the controls above stay
          put, because they are the glance; these are the digging. -->
+    <details class="acc" id="sec_attention" data-sec="attention" open>
+      <summary><span class="acc-h">Needs attention</span><span class="acc-sum" id="sum_attention">…</span></summary>
+      <div id="attention"></div>
+    </details>
+
     <details class="acc" id="sec_howto" data-sec="howto">
       <summary><span class="acc-h">How to read these numbers</span><span class="acc-sum">Visits, not students. Active time only. Medians throughout.</span></summary>
       <div class="note">
@@ -625,7 +630,7 @@ function setGrain(g){
 /* ------------------------------------------------------------------ load */
 function applyPayload(j, stale){
   showApp();
-  DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null, usage:j.usage || null, questions:j.questions || null };
+  DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null, usage:j.usage || null, questions:j.questions || null, faults:j.faults || null };
   renderLive();
   document.getElementById('lockReason').textContent = j.identity.reason;
   document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
@@ -673,8 +678,8 @@ async function loadAll(){
 
    The numbers and the tables themselves are exactly what they were. */
 const OPEN_KEY = 'ardr_open_v1';
-const SECTIONS = ['howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','activity','usage','questions','health'];
-const DIRTY    = { lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, activity:true, usage:true, questions:true, health:true };
+const SECTIONS = ['attention','howto','lessons','engagement','dropoff','firstslide','reported','coverage','confusion','activity','usage','questions','health'];
+const DIRTY    = { attention:true, lessons:true, engagement:true, dropoff:true, firstslide:true, reported:true, coverage:true, confusion:true, activity:true, usage:true, questions:true, health:true };
 
 function readOpen(){
   try{ return JSON.parse(localStorage.getItem(OPEN_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -700,7 +705,8 @@ const RENDERERS = { firstslide: renderFirstSlide, reported: renderReported,
                     coverage: renderCoverage, confusion: renderConfusion,
                     lessons: renderLessons, engagement: renderEngagement,
                     dropoff: renderDropoff, activity: renderActivity, usage: renderUsage,
-                    questions: renderQuestions, health: renderHealth };
+                    questions: renderQuestions, health: renderHealth,
+                    attention: renderAttention };
 function renderSection(k){
   if(!RENDERERS[k] || !DIRTY[k] || !isOpen(k)) return;
   RENDERERS[k]();
@@ -774,6 +780,7 @@ function renderSummaries(){
   const stats = VIEW.stats, put = (id, t) => { const el = document.getElementById(id); if(el) el.textContent = t; };
   put('sum_activity', activitySummary());
   put('sum_usage', usageSummary());
+  put('sum_attention', attentionSummary());
   put('sum_questions', questionsSummary());
 
   /* The four sections added 19 Aug. Same rule as the rest: the fold says what
@@ -1030,6 +1037,118 @@ function renderCoverage(){
    should take a while, and one switch away is normal. Both high is the shape
    of somebody going off to look something up. Soft signal, and labelled as
    one, so nobody rewrites a lesson off the back of a table. */
+/* ------------------------------------------------- NEEDS ATTENTION (r183)
+   The page used to open with twelve folds of equal weight and no answer. This
+   is the answer: the handful of things worth looking at this week, ideally
+   none.
+
+   It reads the SAME views the tracker's faultSweep files from, so the page and
+   the issue queue can never disagree about what counts as a fault. If a row
+   here has been filed, it was filed by that rule; if it has not, it did not
+   meet it.
+
+   Deliberately NOT here: the background delivery rate. Roughly one visit in
+   fifty loses a file somewhere, spread evenly across the course and every hour
+   of the day, which is the internet rather than a fault. It is shown as a
+   single line of context at the bottom, because a change in it would matter
+   even though its current value does not.
+
+   Course filter is deliberately ignored. This section answers "what should I
+   look at", and a fault hiding because the filter is set to DS is the failure
+   this whole section exists to prevent. */
+function attentionRows(){
+  const f = DATA.faults;
+  if(!f || f.error) return null;
+  const out = [];
+  (f.candidates || []).forEach(c => {
+    out.push({
+      cls: c.fault_class,
+      what: c.signature,
+      why: c.reason || '',
+      visits: Number(c.visits_affected) || 0,
+      lessons: (c.lessons || []),
+      detail: c.example_detail || c.example_stack || ''
+    });
+  });
+  return out;
+}
+
+function attentionSummary(){
+  const rows = attentionRows();
+  if(rows === null) return 'not available';
+  if(!rows.length) return 'nothing needs looking at';
+  return rows.length + (rows.length === 1 ? ' thing' : ' things') + ' to look at';
+}
+
+function renderAttention(){
+  const el = document.getElementById('attention');
+  const f = DATA.faults;
+  if(!f){ el.innerHTML = '<p class="hint">Fault reporting is not switched on for this dashboard yet.</p>'; return; }
+  if(f.error){ el.innerHTML = '<div class="err">Could not read the fault views.<br>' + esc(String(f.error)) + '</div>'; return; }
+
+  const rows = attentionRows();
+  let html = '';
+
+  if(!rows.length){
+    /* An empty list is a real answer and says so, rather than showing an
+       empty table and leaving someone wondering whether it loaded. */
+    html += '<div class="note">Nothing is breaking the rules we set. ' +
+            'Faults are still being counted, and anything that starts ' +
+            'repeating inside a visit, throwing an error, or hitting most ' +
+            'visitors to one lesson will appear here.</div>';
+  } else {
+    const label = { script: 'thrown error', delivery: 'missing file', authoring: 'slide layout' };
+    const cls   = { script: 'warn', delivery: 'warn', authoring: 'quiz' };
+    html += '<table><thead><tr><th>What</th><th>Where</th><th>Visits</th><th>Why it is here</th></tr></thead><tbody>' +
+      rows.map(r => {
+        const where = r.lessons.length === 1 ? r.lessons[0]
+                    : r.lessons.length ? (r.lessons.length + ' lessons: ' + r.lessons.slice(0,3).join(', ') +
+                                          (r.lessons.length > 3 ? '…' : ''))
+                    : '—';
+        return '<tr><td class="lesson">' + esc(r.what) +
+               '<small><span class="pill ' + (cls[r.cls] || 'idle') + '">' +
+               esc(label[r.cls] || r.cls) + '</span></small></td>' +
+               '<td>' + esc(where) + '</td>' +
+               '<td>' + r.visits + '</td>' +
+               '<td>' + esc(r.why) + '</td></tr>' +
+               (r.detail ? '<tr><td colspan="4" class="hint" style="padding-top:0">' + esc(r.detail) + '</td></tr>' : '');
+      }).join('') + '</tbody></table>';
+  }
+
+  /* Layout faults, per QUESTION, because that is what somebody opens and
+     edits. Only appears once re-exported quizzes are out there: the audit is
+     baked into the package, not loaded from the server like the rest. */
+  const layout = (f.layout || []);
+  if(layout.length){
+    html += '<h4 style="margin:18px 0 6px">Questions that do not lay out properly</h4>' +
+      '<table><thead><tr><th>Question</th><th>Seen by</th><th>Problem</th></tr></thead><tbody>' +
+      layout.slice(0, 12).map(l => {
+        const bits = [];
+        if(Number(l.overlap_pairs))       bits.push(l.overlap_pairs + ' overlapping');
+        if(Number(l.clipped_elements))    bits.push(l.clipped_elements + ' cut off');
+        if(Number(l.small_text_elements)) bits.push(l.small_text_elements + ' too small');
+        return '<tr><td class="lesson">' + esc(l.question) + '<small>' + esc(l.lesson_id) + '</small></td>' +
+               '<td>' + (Number(l.visits_seen) || 0) + '</td>' +
+               '<td>' + esc(bits.join(', ') || '—') +
+               (l.example ? '<small>' + esc(l.example) + '</small>' : '') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+
+  /* The background rate, as context rather than as a task. */
+  const byLesson = (f.by_lesson || []).filter(r => r.fault_class === 'delivery');
+  if(byLesson.length){
+    const hit    = byLesson.reduce((a, r) => a + (Number(r.visits_affected) || 0), 0);
+    const visits = byLesson.reduce((a, r) => a + (Number(r.visits) || 0), 0);
+    const pct    = visits ? (100 * hit / visits) : 0;
+    html += '<div class="note" style="margin-top:16px">Background: <b>' + pct.toFixed(1) +
+            '%</b> of visits lose a file somewhere (' + hit + ' of ' + visits +
+            '), spread across the course. That is connection loss rather than ' +
+            'anything broken, and it is here so a change in it would show.</div>';
+  }
+
+  el.innerHTML = html;
+}
+
 function renderConfusion(){
   const rows = VIEW.stats
     .filter(s => (Number(s.sessions) || 0) >= 20 && Number(s.median_active_seconds) > 0)
