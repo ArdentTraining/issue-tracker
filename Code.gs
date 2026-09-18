@@ -7889,7 +7889,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r182.1 · 2026-09-18';
+var CODE_STAMP = 'r182.2 · 2026-09-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -11968,10 +11968,10 @@ var CUSTOMS_SENDER = {
 };
 
 var CUSTOMS_SEED_PACKS_ = [
-  ['DS', 'Day Skipper', 'RYA Day Skipper student pack', '2.57', 'A pack to assist with training', ''],
-  ['EN', 'Essential Navigation', 'Essential Navigation student pack', '0.818', 'A pack to assist with training', ''],
-  ['YM', 'Yachtmaster', 'RYA Yachtmaster student pack', '1.21', 'A pack to assist with training', ''],
-  ['FT', 'Fast Track', 'Fast Track student pack', '', 'A pack to assist with training', 'Add the Fast Track lines in CustomsPackItems before using this pack.']
+  ['DS', 'Day Skipper', 'RYA Day Skipper student pack', '2.57', 'Sale: course training pack, sold at cost to the student', ''],
+  ['EN', 'Essential Navigation', 'Essential Navigation student pack', '0.818', 'Sale: course training pack, sold at cost to the student', ''],
+  ['YM', 'Yachtmaster', 'RYA Yachtmaster student pack', '1.21', 'Sale: course training pack, sold at cost to the student', ''],
+  ['FT', 'Fast Track', 'Fast Track student pack', '', 'Sale: course training pack, sold at cost to the student', 'Add the Fast Track lines in CustomsPackItems before using this pack.']
 ];
 var CUSTOMS_SEED_ITEMS_ = [
   ['DS', 1, 'RYA Day Skipper Student Pack (containing 2x RYA Training Charts). A sealed pack of RYA Training charts, intended for use as training material in a navigation course. This is sealed at manufacture and the items inside do not have individual values as they are not available individually. Each item is designed to be read. The pack and all its contents are of average quality and in the sealed packaging from manufacture.', 'HS 49019900', 1, 9.09, 'UK'],
@@ -11982,7 +11982,7 @@ var CUSTOMS_SEED_ITEMS_ = [
 
   ['EN', 1, 'Plastic Wallet - An A4 plastic wallet with a zip to hold the other materials included. It is of average quality.', 'HS 3926 10 00', 1, 0.82, 'UK'],
   ['EN', 2, 'RYA Training Almanac Book. Made of paper and intended for use as training material in a navigation course. It is designed to be read. It is of average quality.', 'HS 49019900', 1, 6.29, 'UK'],
-  ['EN', 3, 'Essential Nav Stationery Set: 2B Mechanical Pencil - A pencil with 2B lead to be used to complete graphical calculations. It is of average quality. Eraser - an eraser to help correct errors made in the calculations completed using the 2B pencil. It is of average quality.\nMaths compass - Weems and Plath Ultralight Dividers - Sealed from the factory, navigation stationery used for completing graphical calculations on the charts. Made of metal and plastic. Standard quality for this item.\nProtractor - Plastic school protractor / mathematical drawing instrument.', '9608.10.00', 1, 9.49, 'UK'],
+  ['EN', 3, 'Essential Nav Stationery Set: 2B Mechanical Pencil - A pencil with 2B lead to be used to complete graphical calculations. It is of average quality. Eraser - an eraser to help correct errors made in the calculations completed using the 2B pencil. It is of average quality.\nMaths compass - Weems and Plath Ultralight Dividers - Sealed from the factory, navigation stationery used for completing graphical calculations on the charts. Made of metal and plastic. Standard quality for this item.\nProtractor - Plastic school protractor / mathematical drawing instrument.', 'HS 9017.20', 1, 9.49, 'UK'],
   ['EN', 4, 'Charts - hydrographic training charts - paper - for training.', '4905900090', 1, 9.09, 'UK'],
   ['EN', 5, 'Essential Navigation and Seamanship Shorebased Notes - printed training book - printed paper / bound book - educational marine navigation training/reference book - training materials.', '4901.99', 1, 3.99, 'UK'],
 
@@ -12253,7 +12253,7 @@ function customsModel_(data) {
     waybill: waybill, pack: String(data.pack || ''),
     shipment_ref: String(data.shipment_ref || '').trim(),
     remarks: String(data.remarks || '').trim(),
-    reason: String(data.reason || 'A pack to assist with training').trim(),
+    reason: String(data.reason || 'Sale: course training pack, sold at cost to the student').trim(),
     terms: String(data.terms || '').trim(),
     receiver: receiver, sender: CUSTOMS_SENDER, lines: lines,
     goods: Math.round(goods * 100) / 100, freight: Math.round(freight * 100) / 100,

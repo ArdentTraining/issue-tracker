@@ -7425,7 +7425,7 @@ function customsLoadPack() {
   if (!p) { customs.items = []; customsDrawItems(); return; }
   customs.items = p.items.map(function (it) { return { description: it.description, hs_code: it.hs_code, qty: it.qty, unit_value: it.unit_value, origin: it.origin || "UK" }; });
   $("cu_weight").value = p.total_weight_kg || "";
-  $("cu_reason").value = p.reason_for_export || "A pack to assist with training";
+  $("cu_reason").value = p.reason_for_export || "Sale: course training pack, sold at cost to the student";
   customsDrawItems();
   if (!p.items.length) $("cu_status").textContent = "The " + p.pack + " pack has no lines yet. " + (p.notes || "Add them in the CustomsPackItems tab, or add them below for this one.");
   else $("cu_status").textContent = "";
