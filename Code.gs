@@ -1006,7 +1006,9 @@ var PREF_TEXT_KEYS = {
 // r145: replies_seen = { issue_id: answer date } - the dev/course page's
 // "New replies" hides a reply once its reader presses Got it. Capped so a
 // busy account cannot grow the cell without limit.
-var PREF_MAP_KEYS = ['replies_seen', 'feedback_seen'];
+// r180: whatsnew_seen = { last: '<n>' } - the highest What's new line this
+// person has opened. A map rather than a new column so it rides in prefs_json.
+var PREF_MAP_KEYS = ['replies_seen', 'feedback_seen', 'whatsnew_seen'];
 function setPrefs_(body) {
   var user = body._user || {};
   var f = findUserByEmail_(user.email);
@@ -7805,7 +7807,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r179 · 2026-09-17';
+var CODE_STAMP = 'r180 · 2026-09-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
