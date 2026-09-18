@@ -7889,7 +7889,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r182 · 2026-09-18';
+var CODE_STAMP = 'r182.1 · 2026-09-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12510,8 +12510,14 @@ function customsGenerate_(data) {
             conversation_id: String(data.conversation_id || ''), issue_id: String(data.issue_id || ''),
             pdf_file_id: '', docx_file_id: '', data_json: JSON.stringify(m) };
     var head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
-    sh.appendRow(head.map(function (h) { return row[h] == null ? '' : row[h]; }));
-    row._at = sh.getLastRow();
+    // Not appendRow: it parses every value as if typed, ignoring the column's
+    // text format, so the first live test waybill "0000000000" came back as
+    // 0 and printed blank (r182.1). setValues onto a row pinned to text keeps
+    // an identifier exactly as written.
+    var at = sh.getLastRow() + 1;
+    head.forEach(function (h, i) { if (CUSTOMS_TEXT_COLS_[h]) sh.getRange(at, i + 1).setNumberFormat('@'); });
+    sh.getRange(at, 1, 1, head.length).setValues([head.map(function (h) { return row[h] == null ? '' : String(row[h]); })]);
+    row._at = at;
     row._head = head;
   } finally { lock.releaseLock(); }
 
@@ -12540,7 +12546,7 @@ function customsList_() {
   return { ok: true, invoices: rows.map(function (r) {
     return { invoice_no: String(r.invoice_no), created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || ''),
              created_by: String(r.created_by || ''), pack: String(r.pack || ''), student_name: String(r.student_name || ''),
-             country: String(r.country || ''), waybill: String(r.waybill || ''), total_gbp: customsMoney_(r.total_gbp),
+             country: String(r.country || ''), waybill: String(r.waybill == null ? '' : r.waybill), total_gbp: customsMoney_(r.total_gbp),
              conversation_id: String(r.conversation_id || ''), issue_id: String(r.issue_id || ''),
              pdf_file_id: String(r.pdf_file_id || ''), docx_file_id: String(r.docx_file_id || '') };
   }) };
