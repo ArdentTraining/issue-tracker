@@ -1847,6 +1847,9 @@
   #customsView table.cu-items td.cu-num:not(:has(input)) { padding-top: 12px; }
   #customsView .cu-notes { margin: 10px 0 0; padding-left: 18px; }
   #customsView .cu-notes li { margin: 3px 0; }
+  #customsView .cu-signimg { height: 46px; max-width: 220px; background: #fff; border-radius: 6px; padding: 2px 8px; border: 1px solid var(--line); }
+  #customsView .cu-pad { width: 100%; max-width: 560px; height: 170px; background: #fff; border: 1px dashed var(--line); border-radius: 8px; touch-action: none; cursor: crosshair; display: block; }
+  #customsView .cu-warn { color: var(--coral); }
   #customsView .cu-hist td { padding: 6px; border-top: 1px solid var(--line); font-size: 13px; vertical-align: middle; }
   @media (max-width: 760px) {
     #customsView table.cu-items thead { display: none; }
@@ -1911,6 +1914,31 @@
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap;">
       <button class="ghost small" onclick="customsAddLine()">Add a line</button>
       <div><span class="muted">Total value</span> <b id="cu_total">£0.00</b></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h2>Signed by</h2>
+    <div id="cu_signer" class="small muted">Loading…</div>
+    <div id="cu_signedit" class="hidden" style="margin-top:12px;">
+      <div class="cu-grid">
+        <div class="field"><label for="cu_sname">Your name, as it should print</label><input id="cu_sname" autocomplete="off" placeholder="e.g. Holly Smith" /></div>
+        <div class="field"><label for="cu_stitle">Title</label><select id="cu_stitle"></select></div>
+      </div>
+      <label>Your signature</label>
+      <canvas id="cu_pad" class="cu-pad" width="1120" height="340"></canvas>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center;">
+        <button class="ghost small" onclick="customsPadClear()">Clear</button>
+        <label class="ghost small" style="display:inline-block;margin:0;cursor:pointer;padding:5px 12px;border:1px solid var(--line);border-radius:999px;">Upload a photo of it instead
+          <input type="file" accept="image/*" style="display:none;" onchange="customsPadUpload(this)" /></label>
+        <span class="hint">Draw with a mouse or finger, or upload a photo of it signed on white paper.</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;">
+        <button class="primary small" id="cu_ssave" onclick="customsSaveSigner()">Save</button>
+        <button class="ghost small" onclick="customsSignerEdit(false)">Cancel</button>
+        <button class="ghost small" id="cu_sremove" onclick="customsSaveSigner(true)">Remove my signature</button>
+        <span id="cu_sstatus" class="hint"></span>
+      </div>
     </div>
   </div>
 
@@ -2664,6 +2692,7 @@
   <p>Every pack goes out with a commercial invoice on the parcel, but every so often customs in the student's country ask for it again. <span class="ui">Customs</span> on the rail makes a fresh one, so nobody has to open last time's Word file and type one student's address over another's.</p>
   <p>Paste the Chatwoot chat link and press <span class="ui">Pull the details</span>. The tracker reads the chat for the address, phone number, waybill and which pack it was, and checks the student's contact card and any invoice we have made them before. Under each box it says where the answer came from. Anything it could not find is highlighted in coral, and that is the list to ask the student for. On a shipping issue, the <span class="ui">Customs invoice</span> button does the same starting from the issue.</p>
   <p>The contents fill in from the pack. If this parcel was different, a missing item or a replacement, change the lines here and it only affects this invoice. Prices, HS codes and weights for good live in the CustomsPacks and CustomsPackItems tabs of the tracker's Google Sheet, so when the RYA change a price it gets changed there once.</p>
+  <p>The declaration at the bottom is signed by whoever makes the invoice. Set your own printed name, title and signature once under <span class="ui">Signed by</span>, by drawing it or uploading a photo of it on white paper. Without one, your name prints over a blank line to sign by hand. Nobody else can use or change yours.</p>
   <p><span class="ui">Make the invoice</span> downloads a PDF to send and a Word copy in case something needs tweaking, and saves both in the tracker's Drive folder. The totals are added up by the tracker, not typed, so they always match the lines.</p>
   <p>Everything made shows under <span class="ui">Made recently</span>. If customs ask a second time, <span class="ui">Download</span> gives the identical invoice again, same number and date. <span class="ui">Copy</span> starts a new one from its details, for when the address or contents have changed.</p>
 </section>
@@ -3418,7 +3447,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r182 · 2026-09-18";  // bump this with each round, it lands on every feedback report
+var BUILD = "r182.4 · 2026-09-18";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7349,6 +7378,107 @@ function renderCustoms() {
     }).catch(function () { $("cu_status").textContent = "Could not load the packs."; customs.loaded = false; });
   }
   customsHistory();
+  customsLoadSigner();
+}
+
+// ---- Signed by (r182.4): each instructor's own name, title and signature ----
+function customsLoadSigner() {
+  apiPost({ action: "customsMySigner" }).then(function (r) {
+    if (!r || !r.ok) { $("cu_signer").textContent = "Could not load your signature: " + ((r && r.error) || "no reply"); return; }
+    customs.signer = r;
+    $("cu_stitle").innerHTML = (r.titles || [""]).map(function (t) { return '<option value="' + esc(t) + '">' + esc(t || "None") + "</option>"; }).join("");
+    customsDrawSigner();
+  }).catch(function () { $("cu_signer").textContent = "Could not load your signature."; });
+}
+function customsDrawSigner() {
+  var r = customs.signer || {};
+  var name = r.name || r.account_name || "";
+  var html = '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">' +
+    (r.has_signature ? '<img class="cu-signimg" alt="Your signature" src="data:image/png;base64,' + r.signature_b64 + '">' : "") +
+    "<div>Invoices you make are signed <b>" + esc((r.title ? r.title + " " : "") + name) + "</b>." +
+    (r.has_signature ? "" : '<br><span class="cu-warn">You have no signature on file, so the invoice prints a blank line to sign by hand.</span>') +
+    (!r.name ? '<br><span class="cu-warn">Your printed name is your account name for now. Set your full name.</span>' : "") +
+    '</div><button class="ghost small" onclick="customsSignerEdit(true)">' + (r.has_signature ? "Change" : "Add my signature") + "</button></div>";
+  $("cu_signer").innerHTML = html;
+}
+var customsPad = { drawn: false, img: null };
+function customsSignerEdit(on) {
+  $("cu_signedit").classList.toggle("hidden", !on);
+  $("cu_signer").classList.toggle("hidden", !!on);
+  if (!on) return;
+  var r = customs.signer || {};
+  $("cu_sname").value = r.name || r.account_name || "";
+  $("cu_stitle").value = r.title || "";
+  $("cu_sremove").style.display = r.has_signature ? "" : "none";
+  $("cu_sstatus").textContent = "";
+  customsPadClear();
+  customsPadWire();
+}
+function customsPadWire() {
+  var c = $("cu_pad");
+  if (c._wired) return;
+  c._wired = true;
+  var ctx = c.getContext("2d"), down = false, last = null;
+  function pt(e) { var b = c.getBoundingClientRect(); return { x: (e.clientX - b.left) * c.width / b.width, y: (e.clientY - b.top) * c.height / b.height }; }
+  c.addEventListener("pointerdown", function (e) { down = true; last = pt(e); c.setPointerCapture(e.pointerId); e.preventDefault(); });
+  c.addEventListener("pointermove", function (e) {
+    if (!down) return;
+    var p = pt(e);
+    ctx.strokeStyle = "#0b1f4d"; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    last = p; customsPad.drawn = true;
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (ev) { c.addEventListener(ev, function () { down = false; }); });
+}
+function customsPadClear() {
+  var c = $("cu_pad"); c.getContext("2d").clearRect(0, 0, c.width, c.height);
+  customsPad.drawn = false;
+}
+// A photo goes onto the pad scaled to fit, with near-white paper turned
+// transparent so it sits cleanly on the invoice.
+function customsPadUpload(input) {
+  var f = input.files && input.files[0]; if (!f) return;
+  var img = new Image();
+  img.onload = function () {
+    var c = $("cu_pad"), ctx = c.getContext("2d");
+    customsPadClear();
+    var k = Math.min(c.width / img.width, c.height / img.height);
+    var w = img.width * k, h = img.height * k;
+    ctx.drawImage(img, (c.width - w) / 2, (c.height - h) / 2, w, h);
+    var d = ctx.getImageData(0, 0, c.width, c.height), px = d.data;
+    for (var i = 0; i < px.length; i += 4) { if (px[i] > 200 && px[i + 1] > 200 && px[i + 2] > 200) px[i + 3] = 0; }
+    ctx.putImageData(d, 0, 0);
+    customsPad.drawn = true;
+    URL.revokeObjectURL(img.src);
+  };
+  img.src = URL.createObjectURL(f);
+  input.value = "";
+}
+// The inked part only, trimmed of empty margins, as a PNG.
+function customsPadPng() {
+  var c = $("cu_pad"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+  var x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+  for (var y = 0; y < c.height; y++) for (var x = 0; x < c.width; x++) {
+    if (d[(y * c.width + x) * 4 + 3] > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) return "";
+  var pad = 8; x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(c.width - 1, x1 + pad); y1 = Math.min(c.height - 1, y1 + pad);
+  var o = document.createElement("canvas"); o.width = x1 - x0 + 1; o.height = y1 - y0 + 1;
+  o.getContext("2d").drawImage(c, x0, y0, o.width, o.height, 0, 0, o.width, o.height);
+  return o.toDataURL("image/png");
+}
+function customsSaveSigner(remove) {
+  var payload = { action: "saveCustomsSigner", name: $("cu_sname").value.trim(), title: $("cu_stitle").value };
+  if (remove) payload.clear_signature = true;
+  else if (customsPad.drawn) { payload.base64 = customsPadPng(); if (!payload.base64) { $("cu_sstatus").textContent = "The pad is empty."; return; } }
+  $("cu_ssave").disabled = true; $("cu_sstatus").textContent = "Saving…";
+  apiPost(payload).then(function (r) {
+    $("cu_ssave").disabled = false;
+    if (!r || !r.ok) { $("cu_sstatus").textContent = (r && r.error) || "That did not work."; return; }
+    customs.signer = Object.assign({ titles: (customs.signer || {}).titles }, r);
+    customsDrawSigner(); customsSignerEdit(false);
+    toast(remove ? "Signature removed." : "Saved. Invoices you make now carry it.");
+  }).catch(function () { $("cu_ssave").disabled = false; $("cu_sstatus").textContent = "That did not work."; });
 }
 
 function customsReset() {
@@ -7490,7 +7620,7 @@ function customsGenerate() {
     customsDownload(r.docx, CUSTOMS_DOCX);
     $("cu_status").textContent = "Done: " + r.invoice_no + ", £" + r.total + ". The PDF and Word copy have downloaded." +
       (r.saved ? " Both are saved in the tracker's Drive folder too." : " They could NOT be saved to Drive (" + r.save_error + "), so keep the downloads.") +
-      (r.signed ? "" : " It is NOT signed: no signature is on file, so sign the printed copy by hand.");
+      (r.signed ? "" : " It is NOT signed, because you have no signature on file (see Signed by below), so sign the printed copy by hand.");
     toast("Invoice " + r.invoice_no + " made.");
     customsHistory();
   }).catch(function (e) { $("cu_go").disabled = false; $("cu_status").textContent = "That did not work (" + String(e && e.message || e) + ")."; });
@@ -9513,6 +9643,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 29, date: "2026-09-18", text: "Customs invoices are signed by whoever makes them. Set your own printed name and signature once, under Signed by on the Customs page. You can draw it or upload a photo." },
   { n: 28, date: "2026-09-18", text: "Customs invoices have their own page (Customs on the rail, or the Customs invoice button on a shipping issue). Paste the chat and it finds the address, phone and waybill, highlights anything missing to ask the student for, and makes a PDF and a Word copy. Every one is kept, so if customs ask again it is one click." },
   { n: 27, date: "2026-09-18", text: "Students now get an \"Invalid key\" error where a missing lesson used to show a 404. The tracker knows the new wording and sends those straight to Edd, since the lesson needs uploading again." },
   { n: 26, date: "2026-09-18", text: "Chat briefs are quicker. The ones already open in Chatwoot first thing get their brief written after the early-morning scan, so opening one is instant as long as the student has not written again. Screenshots are copied once rather than every time a brief is rebuilt." },

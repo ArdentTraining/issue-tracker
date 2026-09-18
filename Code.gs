@@ -682,7 +682,8 @@ function doPost(e) {
     if (action === 'customsGenerate') return jsonOut(customsGenerate_(body));
     if (action === 'customsList') return jsonOut(customsList_());
     if (action === 'customsFetch') return jsonOut(customsFetch_(body));
-    if (action === 'setCustomsSignature') return jsonOut(setCustomsSignature_(body));
+    if (action === 'customsMySigner') return jsonOut(customsMySigner_(body));
+    if (action === 'saveCustomsSigner') return jsonOut(saveCustomsSigner_(body));
     if (action === 'chatScanList') return jsonOut(chatScanList_());
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
@@ -908,7 +909,7 @@ function reqPerm_(action) {
     // r182: customs invoices. Anybody who logs issues can make one; it is the
     // same instructor job as chasing the parcel in the first place.
     case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': return 'log';
-    case 'setCustomsSignature': return 'users';   // and Edd only, checked inside
+    case 'customsMySigner': case 'saveCustomsSigner': return 'log';   // always the caller's own row
     // The scan queue is visible to every instructor (Edd, 26 Jul) - the team
     // is small and whoever spots it first should be able to act. Kicking off a
     // manual scan stays with the admins.
@@ -1849,7 +1850,7 @@ var READ_ONLY_ACTIONS = {
   sameIssue: 1,
   // r182: customs invoices live in their own three tabs and never touch an
   // issue row, so the cached issue list is still true after any of them.
-  customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1,
+  customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsMySigner: 1, saveCustomsSigner: 1,
   caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
   // nextAction DOES write one cell (its own cached answer), and it still
   // belongs here. The list projection leaves next_action_json out entirely, so
@@ -7891,7 +7892,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r182.3 · 2026-09-18';
+var CODE_STAMP = 'r182.4 · 2026-09-18';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12042,41 +12043,113 @@ function customsSeed_() {
   return { packs: ps, items: is };
 }
 
-// ---- Edd's signature (r182.3) --------------------------------------------
-// The old Word templates carried Edd's signature as a picture beside
-// "Signature:", and customs expect a signed declaration. The repo is PUBLIC, so
-// the picture never goes in this file: it sits as a private file in the
-// tracker's Drive folder (no link sharing) and its id lives in the script
-// property CUSTOMS_SIG_FILE. setCustomsSignature (Edd only) puts it there.
-// No signature on file means the line prints blank for a pen, as before, and
-// the page says so rather than quietly sending an unsigned invoice.
-function customsSignature_() {
-  var cache = CacheService.getScriptCache();
-  try { var hit = cache.get('customs_sig_b64'); if (hit) return hit; } catch (e) {}
-  var id = PropertiesService.getScriptProperties().getProperty('CUSTOMS_SIG_FILE');
-  if (!id) return '';
+// ---- Signatures, one per instructor (r182.4) -------------------------------
+// Edd (18 Sep): "can we make it put a different name and signature for each
+// instructor?" The declaration is signed by whoever makes the invoice, so each
+// instructor keeps their own printed name, title and signature in the
+// CustomsSigners tab, and sets them themselves from the Customs page. Nobody
+// can set or use anybody else's: the row is always the caller's own email.
+//
+// The pictures never go in this file (the repo is PUBLIC). Each is a private
+// file in the tracker's Drive folder, no link sharing, and the tab holds only
+// its id. No signature on file means the person's name prints over a blank
+// line for a pen - never somebody else's signature - and the page says so.
+//
+// r182.3 kept Edd's alone in the CUSTOMS_SIG_FILE property; the first read of
+// the tab carries it across into his row, so nothing needs doing by hand.
+var CUSTOMS_SIGNERS_SHEET = 'CustomsSigners';
+var CUSTOMS_SIGNER_HEADERS = ['email', 'name', 'title', 'sig_file_id', 'updated_at'];
+var CUSTOMS_TITLES_ = ['', 'Mr', 'Mrs', 'Ms', 'Miss', 'Mx', 'Dr', 'Capt'];
+
+function customsSignersSheet_() {
+  var sh = customsSheet_(CUSTOMS_SIGNERS_SHEET, CUSTOMS_SIGNER_HEADERS);
+  if (sh.getLastRow() < 2) {
+    var old = PropertiesService.getScriptProperties().getProperty('CUSTOMS_SIG_FILE');
+    if (old) sh.getRange(2, 1, 1, 5).setValues([[EDD_EMAIL, 'Edward Hewett', 'Mr', old, new Date().toISOString()]]);
+  }
+  return sh;
+}
+// { email, name, title, sig_file_id, _row } for this person, or a blank one.
+function customsSigner_(email) {
+  email = String(email || '').toLowerCase();
+  var sh = customsSignersSheet_();
+  var v = sh.getDataRange().getValues();
+  for (var r = 1; r < v.length; r++) {
+    if (String(v[r][0] || '').toLowerCase() !== email) continue;
+    return { email: email, name: String(v[r][1] || ''), title: String(v[r][2] || ''), sig_file_id: String(v[r][3] || ''), _row: r + 1 };
+  }
+  return { email: email, name: '', title: '', sig_file_id: '', _row: 0 };
+}
+// The picture itself, cached by file id (a new signature is a new file, so a
+// cached old one can never be served for it).
+function customsSigImage_(fileId) {
+  if (!fileId) return '';
+  var cache = CacheService.getScriptCache(), key = 'customs_sig_' + fileId;
+  try { var hit = cache.get(key); if (hit) return hit; } catch (e) {}
   var b64 = '';
-  try { b64 = Utilities.base64Encode(DriveApp.getFileById(id).getBlob().getBytes()); }
+  try { b64 = Utilities.base64Encode(DriveApp.getFileById(fileId).getBlob().getBytes()); }
   catch (e) {
     try {
-      var res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media&supportsAllDrives=true',
+      var res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media&supportsAllDrives=true',
         { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
       if (res.getResponseCode() < 300) b64 = Utilities.base64Encode(res.getContent());
     } catch (e2) {}
   }
-  if (b64) { try { cache.put('customs_sig_b64', b64, 21600); } catch (e) {} }
+  if (b64) { try { cache.put(key, b64, 21600); } catch (e) {} }
   return b64;
 }
-function setCustomsSignature_(data) {
+// Who signs an invoice made by this user: their saved name and title, or
+// their account name if they have not set one yet.
+function customsSignerFor_(user) {
+  var s = customsSigner_(user && user.email);
+  return { email: s.email, name: s.name || String((user && user.name) || ''), title: s.title, sig_file_id: s.sig_file_id };
+}
+function customsMySigner_(data) {
   var u = data._user || {};
-  if (String(u.email || '').toLowerCase() !== EDD_EMAIL) return { ok: false, error: 'Only Edd can change the signature on customs invoices.' };
+  var s = customsSigner_(u.email);
+  var img = customsSigImage_(s.sig_file_id);
+  return { ok: true, name: s.name, title: s.title, account_name: String(u.name || ''), has_signature: !!img,
+           signature_b64: img, saved: !!s._row, titles: CUSTOMS_TITLES_ };
+}
+// Always the caller's own row. base64 = a new signature; clear_signature =
+// remove it (the old Drive file is left alone, it is never shared anyway).
+function saveCustomsSigner_(data) {
+  var u = data._user || {};
+  var email = String(u.email || '').toLowerCase();
+  if (!email) return { ok: false, error: 'Not signed in.' };
+  var name = String(data.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  var title = String(data.title || '').trim();
+  if (!name) return { ok: false, error: 'Put the name as it should print on the invoice.' };
+  if (CUSTOMS_TITLES_.indexOf(title) < 0) return { ok: false, error: 'Pick a title from the list.' };
+  var cur = customsSigner_(email);
+  var fileId = cur.sig_file_id;
+  if (data.clear_signature) fileId = '';
   var b64 = String(data.base64 || '').replace(/^data:[^,]*,/, '');
-  if (!b64) return { ok: false, error: 'Send the signature as a base64 PNG.' };
-  var saved = customsSaveFile_(Utilities.newBlob(Utilities.base64Decode(b64), 'image/png', 'Customs invoice signature (Edd).png'));
-  if (!saved.ok) return { ok: false, error: 'Could not save it to Drive: ' + saved.error };
-  PropertiesService.getScriptProperties().setProperty('CUSTOMS_SIG_FILE', saved.id);
-  try { CacheService.getScriptCache().remove('customs_sig_b64'); } catch (e) {}
-  return { ok: true, file_id: saved.id };
+  if (b64) {
+    var bytes = Utilities.base64Decode(b64);
+    if (bytes.length > 400000) return { ok: false, error: 'That signature image is too big. Try drawing it instead.' };
+    var pngSig = [-119, 80, 78, 71];   // \x89PNG, as signed bytes
+    if (!pngSig.every(function (x, i) { return bytes[i] === x || (bytes[i] & 255) === (x & 255); })) return { ok: false, error: 'The signature has to be a PNG.' };
+    var saved = customsSaveFile_(Utilities.newBlob(bytes, 'image/png', 'Customs invoice signature - ' + email + '.png'));
+    if (!saved.ok) return { ok: false, error: 'Could not save it to Drive: ' + saved.error };
+    fileId = saved.id;
+  }
+  var sh = customsSignersSheet_();
+  var row = [email, name, title, fileId, new Date().toISOString()];
+  if (cur._row) sh.getRange(cur._row, 1, 1, 5).setValues([row]);
+  else sh.appendRow(row);
+  return customsMySigner_({ _user: u });
+}
+// Width and height of a PNG, from its header, so the Word copy draws each
+// person's signature in its own proportions.
+function customsPngSize_(b64) {
+  try {
+    var b = Utilities.base64Decode(b64);
+    function u32(i) { return ((b[i] & 255) * 16777216) + ((b[i + 1] & 255) << 16) + ((b[i + 2] & 255) << 8) + (b[i + 3] & 255); }
+    var w = u32(16), h = u32(20);
+    if (w > 0 && h > 0) return { w: w, h: h };
+  } catch (e) {}
+  return { w: 3, h: 1 };
 }
 
 function customsNum_(v) {
@@ -12394,7 +12467,7 @@ function customsHtml_(m) {
     '<table><tr><td style="width:34%;">Name: ' + e(m.sender.signatory) + '</td><td style="width:22%;">Title: ' + e(m.sender.signatory_title) + '</td>' +
       '<td>Date: ' + e(m.date) + '</td></tr>' +
     '<tr><td>E-mail: ' + e(m.sender.email) + '</td><td colspan="2">Signature: ' +
-      (m._sig ? '<img src="data:image/png;base64,' + m._sig + '" style="height:14mm;vertical-align:middle;">' : '______________________________') +
+      (m._sig ? '<img src="data:image/png;base64,' + m._sig + '" style="height:14mm;max-width:60mm;vertical-align:middle;">' : '______________________________') +
     '</td></tr></table>' +
     '</body></html>';
 }
@@ -12467,7 +12540,7 @@ function customsDocxXml_(m) {
   ]]);
   var sign = table([3500, 2400, 4566], [
     [cell(para('Name: ' + m.sender.signatory), 3500), cell(para('Title: ' + m.sender.signatory_title), 2400), cell(para('Date: ' + m.date), 4566)],
-    [cell(para('E-mail: ' + m.sender.email), 3500), cell(m._sig ? '<w:p><w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>' + run('Signature: ') + CUSTOMS_SIG_DRAWING_ + '</w:p>'
+    [cell(para('E-mail: ' + m.sender.email), 3500), cell(m._sig ? '<w:p><w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>' + run('Signature: ') + customsSigDrawing_(m._sig) + '</w:p>'
                   : para('Signature: ______________________________'), 6966, { span: 2 })]
   ], false);
   var body = head + para('') + table(gw, goodsRows) + para('') + tot + para('') +
@@ -12493,13 +12566,19 @@ var CUSTOMS_DOCX_PARTS_ = {
     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'
 };
-// 38mm wide, in the signature's own 151:49 proportions (EMU: 36000 per mm).
-var CUSTOMS_SIG_DRAWING_ = '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="1368000" cy="443900"/>' +
-  '<wp:docPr id="1" name="Signature"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
-  '<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="signature.png"/><pic:cNvPicPr/></pic:nvPicPr>' +
-  '<pic:blipFill><a:blip r:embed="rIdSig"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
-  '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1368000" cy="443900"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
-  '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+// 14mm tall like the PDF, width in the signature's own proportions, capped at
+// 60mm so a long scrawl cannot push the table about (EMU: 36000 per mm).
+function customsSigDrawing_(b64) {
+  var sz = customsPngSize_(b64);
+  var cy = 14 * 36000, cx = Math.round(cy * sz.w / sz.h);
+  if (cx > 60 * 36000) { cx = 60 * 36000; cy = Math.round(cx * sz.h / sz.w); }
+  return '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="' + cx + '" cy="' + cy + '"/>' +
+    '<wp:docPr id="1" name="Signature"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+    '<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="signature.png"/><pic:cNvPicPr/></pic:nvPicPr>' +
+    '<pic:blipFill><a:blip r:embed="rIdSig"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+    '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
+    '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+}
 function customsDocxBlob_(m, name) {
   var blobs = [
     Utilities.newBlob(CUSTOMS_DOCX_PARTS_['[Content_Types].xml'], 'application/xml', '[Content_Types].xml'),
@@ -12559,6 +12638,13 @@ function customsGenerate_(data) {
   if (!built.ok) return built;
   var m = built.model;
   var user = data._user || {};
+  // Signed by whoever makes it, recorded in data_json (never the picture) so a
+  // re-download is signed by the same person even years later.
+  var signer = customsSignerFor_(user);
+  m.signer = { email: signer.email, sig_file_id: signer.sig_file_id };
+  m.sender = JSON.parse(JSON.stringify(m.sender));
+  m.sender.signatory = signer.name || CUSTOMS_SENDER.signatory;
+  m.sender.signatory_title = signer.title;
   var lock = LockService.getScriptLock();
   try { lock.waitLock(20000); } catch (e) { return { ok: false, error: 'The tracker is busy, try again in a moment.' }; }
   var sh, row;
@@ -12582,7 +12668,7 @@ function customsGenerate_(data) {
     row._head = head;
   } finally { lock.releaseLock(); }
 
-  m._sig = customsSignature_();
+  m._sig = customsSigImage_(signer.sig_file_id);
   var pdf = customsPdfBlob_(m, customsFileName_(m, 'pdf'));
   var docx = customsDocxBlob_(m, customsFileName_(m, 'docx'));
   // A Drive hiccup must not cost the instructor the invoice, and must not be
@@ -12623,7 +12709,9 @@ function customsFetch_(data) {
   for (var i = rows.length - 1; i >= 0; i--) {
     if (String(rows[i].invoice_no) !== no) continue;
     var m; try { m = JSON.parse(rows[i].data_json); } catch (e) { return { ok: false, error: 'That invoice was saved without its details.' }; }
-    m._sig = customsSignature_();
+    // Invoices from before r182.4 carry no signer; those were all Edd's.
+    var sid = m.signer ? m.signer.sig_file_id : customsSigner_(EDD_EMAIL).sig_file_id;
+    m._sig = customsSigImage_(sid);
     var pdf = customsPdfBlob_(m, customsFileName_(m, 'pdf'));
     var docx = customsDocxBlob_(m, customsFileName_(m, 'docx'));
     var signed = !!m._sig; delete m._sig;
