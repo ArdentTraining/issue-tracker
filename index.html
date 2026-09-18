@@ -3447,7 +3447,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r182.4 · 2026-09-18";  // bump this with each round, it lands on every feedback report
+var BUILD = "r183 · 2026-09-18";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8378,17 +8378,66 @@ function irpcsRuleForm(e) {
     '</div>';
 }
 
+// r183: three shapes of question. The shape lives in `type` and in what
+// `correct` is, and the student app keys off the data rather than the label,
+// so switching type here rewrites `correct` to match rather than leaving a
+// number where an array is expected.
+var IRPCS_Q_TYPES = [
+  { k: "single", label: "One right answer", help: "Tick the right one." },
+  { k: "multi",  label: "Tick all that apply", help: "Tick every right one. It is all or nothing for the student: three out of four is wrong." },
+  { k: "order",  label: "Put these in order", help: "Write the options in the RIGHT order. The student sees them shuffled and puts them back." },
+];
+function irpcsQType(e) {
+  if (e.type === "order") return "order";
+  if (Array.isArray(e.correct)) return "multi";
+  return "single";
+}
+function irpcsSetQType(k) {
+  var e = irpcs.edited; if (!e) return;
+  var was = irpcsQType(e);
+  if (k === was) return;
+  e.type = k;
+  if (k === "multi") e.correct = Number.isInteger(e.correct) ? [e.correct] : [];
+  else if (k === "single") e.correct = Array.isArray(e.correct) && e.correct.length ? e.correct[0] : 0;
+  else delete e.correct;
+  irpcsRenderEditor();
+}
+function irpcsToggleCorrect(idx) {
+  var e = irpcs.edited; if (!e) return;
+  var c = Array.isArray(e.correct) ? e.correct.slice() : [];
+  var at = c.indexOf(idx);
+  if (at >= 0) c.splice(at, 1); else c.push(idx);
+  c.sort(function (a, b) { return a - b; });
+  irpcsSet("correct", c);
+}
+
 function irpcsQuestionForm(e) {
   var opts = Array.isArray(e.options) ? e.options : [];
   var refs = Array.isArray(e.rule_refs) ? e.rule_refs.join(", ") : "";
+  var qt = irpcsQType(e);
+  var typeDef = IRPCS_Q_TYPES.filter(function (t) { return t.k === qt; })[0];
   return '<div class="card">' +
     irpcsTextField("Question", "stem", e.stem, 3) +
+    '<div class="fld"><label for="irf_qtype">Kind of question</label>' +
+      '<select id="irf_qtype" onchange="irpcsSetQType(this.value)">' +
+        IRPCS_Q_TYPES.map(function (t) {
+          return '<option value="' + t.k + '"' + (t.k === qt ? " selected" : "") + '>' + esc(t.label) + '</option>';
+        }).join("") +
+      '</select></div>' +
     '<div class="fld"><label>Answers</label>' +
-      '<p class="small muted" style="margin:0 0 4px;">Tick the right one.</p>' +
+      '<p class="small muted" style="margin:0 0 4px;">' + esc(typeDef.help) + '</p>' +
       opts.map(function (o, idx) {
-        return '<div class="irpcs-opt">' +
-          '<label class="rad"><input type="radio" name="irpcs_q_correct" ' + (Number(e.correct) === idx ? "checked" : "") +
-            ' onchange="irpcsSet(\'correct\', ' + idx + ')"> correct</label>' +
+        var mark;
+        if (qt === "single") {
+          mark = '<label class="rad"><input type="radio" name="irpcs_q_correct" ' + (Number(e.correct) === idx ? "checked" : "") +
+            ' onchange="irpcsSet(\'correct\', ' + idx + ')"> correct</label>';
+        } else if (qt === "multi") {
+          mark = '<label class="rad"><input type="checkbox" ' + (e.correct.indexOf(idx) >= 0 ? "checked" : "") +
+            ' onchange="irpcsToggleCorrect(' + idx + ')"> correct</label>';
+        } else {
+          mark = '<span class="small muted" style="min-width:52px;display:inline-block;">' + (idx + 1) + '.</span>';
+        }
+        return '<div class="irpcs-opt">' + mark +
           '<input type="text" value="' + esc(o) + '" oninput="irpcsSetIn(\'options\', ' + idx + ', this.value)">' +
           '</div>';
       }).join("") +
@@ -8411,7 +8460,31 @@ function irpcsQuestionForm(e) {
         '<input id="irf_refs" type="text" value="' + esc(refs) + '" placeholder="e.g. 12, 13" ' +
           'oninput="irpcsSetRefs(this.value)"></div>' +
     '</div>' +
+    // r183: every rule the question draws on goes in Rule references, not just
+    // the main one. Since 18 Sep practice offers a question only when EVERY
+    // rule listed here is in the student's selection, so "13, 18" means it
+    // appears in the who-gives-way group and never when drilling Rule 13 alone.
+    '<p class="small muted" style="margin:-6px 0 10px;">List every rule the question needs, not just the main one. A question needing 13 and 18 is offered when both are selected and never when someone is drilling Rule 13 on its own.</p>' +
+    '<div class="fld"><label for="irf_topic">Topic</label>' +
+      '<input id="irf_topic" type="text" list="irpcs_topics" value="' + esc(e.topic || "") + '" autocomplete="off" ' +
+        'placeholder="e.g. Making Way vs Underway" oninput="irpcsSet(\'topic\', this.value.trim() || null)">' +
+      '<datalist id="irpcs_topics">' + irpcsTopicOptions() + '</datalist>' +
+      '<p class="small muted" style="margin:4px 0 0;">The second way into practice, beside rule number. Students can search for it without knowing which rule it lives in, and a question that spans two rule groups can only be found this way. Pick an existing topic where one fits, so they stay few.</p>' +
+    '</div>' +
     '</div>';
+}
+
+// The topics already in use, so the box offers them and nobody types "Day
+// shapes" when 21 questions already say "Day Shapes". Read from the list the
+// Content tab loaded, which carries topic since irpcs-editor r183.
+function irpcsTopicOptions() {
+  var seen = {};
+  (irpcs.items || []).forEach(function (it) {
+    var t = it && it.topic ? String(it.topic).trim() : "";
+    if (t) seen[t] = (seen[t] || 0) + 1;
+  });
+  return Object.keys(seen).sort(function (a, b) { return seen[b] - seen[a] || a.localeCompare(b); })
+    .map(function (t) { return '<option value="' + esc(t) + '">' + seen[t] + '</option>'; }).join("");
 }
 
 // Rule refs are numbers in the body, not text, and the app groups questions by
@@ -9643,6 +9716,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 30, date: "2026-09-18", text: "IRPCS questions come in three kinds now: one right answer, tick all that apply, and put these in order. Pick the kind at the top of a question. There is also a Topic box, which is how students will find a question without knowing its rule number, so use one that already exists where it fits." },
   { n: 29, date: "2026-09-18", text: "Customs invoices are signed by whoever makes them. Set your own printed name and signature once, under Signed by on the Customs page. You can draw it or upload a photo." },
   { n: 28, date: "2026-09-18", text: "Customs invoices have their own page (Customs on the rail, or the Customs invoice button on a shipping issue). Paste the chat and it finds the address, phone and waybill, highlights anything missing to ask the student for, and makes a PDF and a Word copy. Every one is kept, so if customs ask again it is one click." },
   { n: 27, date: "2026-09-18", text: "Students now get an \"Invalid key\" error where a missing lesson used to show a 404. The tracker knows the new wording and sends those straight to Edd, since the lesson needs uploading again." },
