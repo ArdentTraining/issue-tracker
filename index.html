@@ -3649,7 +3649,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r188.5 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r188.6 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8635,13 +8635,14 @@ function shipOrdersCard(d, b) {
   if (ss) bits.push(ss.n + " shipment" + (ss.n === 1 ? "" : "s") + " in ShipStation");
   h += "<p>" + bits.join(". ") + ".</p>";
   if (x) {
-    h += "<p>" + x.matched + " of " + x.orders + " orders matched to a shipment. Paid to posted took " + (x.median_days == null ? "–" : shipR1(x.median_days)) +
+    h += "<p>" + x.matched + " of " + x.orders + " orders matched to a shipment" +
+      (x.matched_by_destination ? " (" + x.matched_by_destination + " of them by destination and date rather than email, most likely gifts bought for someone else)" : "") + ". Paid to posted took " + (x.median_days == null ? "–" : shipR1(x.median_days)) +
       " working days (median), and " + (x.matched ? Math.round(x.within_2 / x.matched * 100) : 0) + "% went within 2 working days.</p>";
     if (x.unmatched && x.unmatched.length) {
       h += '<p class="small" style="margin-bottom:4px;"><b>Paid, and no shipment found after 3 working days:</b></p>' + x.unmatched.map(function (u) {
         return '<div class="shr-row"><div>' + esc(new Date(u.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })) + "</div><div>" + esc(u.email || "(no email)") +
           '</div><div class="small muted">' + esc(u.courier || "") + (u.country ? " · " + esc(u.country) : "") + "</div></div>";
-      }).join("") + '<p class="small muted">Matched on the email address, so a pack sent under a different email shows here too. Worth a look in ShipStation before chasing.</p>';
+      }).join("") + '<p class="small muted">No shipment to that email, and none by the same courier to the same country within 10 working days. A gift posted abroad from someone in the UK can still land here, so worth a look in ShipStation before chasing.</p>';
     }
   } else if (st && !ss) h += '<p class="small muted">Connect ShipStation as well to see how long orders take to go out, and which paid packs have not shipped.</p>';
   return h + "</div>";

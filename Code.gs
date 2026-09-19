@@ -8068,7 +8068,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r188.4 · 2026-09-19';
+var CODE_STAMP = 'r188.6 · 2026-09-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -14044,7 +14044,7 @@ function shipCfg_() {
 }
 // Bumped when the way a Stripe order is read changes, so months already
 // cached under the old rule are fetched again rather than kept forever.
-var SHIP_STRIPE_V = 3;
+var SHIP_STRIPE_V = 4;
 function shipStripeGet_(key, path) {
   var r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, { headers: { Authorization: 'Bearer ' + key }, muteHttpExceptions: true });
   var code = r.getResponseCode(), body = r.getContentText();
@@ -14194,27 +14194,41 @@ function shipMedian_(a) {
   var m = Math.floor(a.length / 2);
   return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
 }
-// Paid orders against what actually went out. A match is the same email with a
-// shipment dated from the day before the order to 30 days after it. Working
-// days, because nothing is posted at the weekend.
+// Paid orders against what actually went out. First by email: a shipment to
+// the same address from the day before the order to 30 days after it.
+// Edd, 19 Sep: the new checkout sells courses as gifts, so the person paying
+// is often not the student the pack goes to, and their emails differ. Orders
+// left over are then matched by destination instead: a shipment nobody else
+// has claimed, by the same courier to the same country, within 10 working
+// days. That is a likely match rather than a certain one, so it is counted
+// separately and the page says so. Working days throughout, because nothing
+// is posted at the weekend.
 function shipXref_(orders, shipments, now) {
   var byEmail = {};
-  shipments.forEach(function (s) { if (s.email) (byEmail[s.email] = byEmail[s.email] || []).push(s); });
-  var lags = [], unmatched = [], matched = 0;
+  shipments.forEach(function (s, i) { s._i = i; if (s.email) (byEmail[s.email] = byEmail[s.email] || []).push(s); });
+  var claimed = {}, lags = [], leftover = [], matched = 0, byDest = 0;
+  var today = Utilities.formatDate(now, 'Europe/London', 'yyyy-MM-dd');
+  function inWindow(o, s, maxWd) {
+    var od = new Date(o.at), d = new Date(s.day + 'T12:00:00Z');
+    if (d.getTime() < od.getTime() - 86400000 * 1.5) return false;
+    return maxWd == null ? d.getTime() <= od.getTime() + 30 * 86400000 : shipWorkingDays_(o.at.slice(0, 10), s.day) <= maxWd;
+  }
+  function earliest(a) { return a.sort(function (x, y) { return x.day < y.day ? -1 : 1; })[0]; }
   orders.forEach(function (o) {
-    var od = new Date(o.at), odDay = o.at.slice(0, 10);
-    var cands = (byEmail[o.email] || []).filter(function (s) {
-      var d = new Date(s.day + 'T12:00:00Z');
-      return d.getTime() >= od.getTime() - 86400000 * 1.5 && d.getTime() <= od.getTime() + 30 * 86400000;
-    }).sort(function (x, y) { return x.day < y.day ? -1 : 1; });
-    if (cands.length) {
-      matched++;
-      lags.push(shipWorkingDays_(odDay, cands[0].day));
-    } else if (shipWorkingDays_(odDay, Utilities.formatDate(now, 'Europe/London', 'yyyy-MM-dd')) > 3) {
-      unmatched.push({ at: o.at, email: o.email, courier: o.courier, country: o.country });
-    }
+    var c = earliest((byEmail[o.email] || []).filter(function (s) { return inWindow(o, s); }));
+    if (c) { matched++; claimed[c._i] = 1; lags.push(shipWorkingDays_(o.at.slice(0, 10), c.day)); }
+    else leftover.push(o);
   });
-  return { orders: orders.length, matched: matched, median_days: shipMedian_(lags),
+  var unmatched = [];
+  leftover.sort(function (a, b) { return a.at < b.at ? -1 : 1; }).forEach(function (o) {
+    var c = o.country ? earliest(shipments.filter(function (s) {
+      return !claimed[s._i] && s.country && s.country.toUpperCase() === o.country.toUpperCase() &&
+             s.courier === o.courier && inWindow(o, s, 10);
+    })) : null;
+    if (c) { matched++; byDest++; claimed[c._i] = 1; lags.push(shipWorkingDays_(o.at.slice(0, 10), c.day)); return; }
+    if (shipWorkingDays_(o.at.slice(0, 10), today) > 3) unmatched.push({ at: o.at, email: o.email, courier: o.courier, country: o.country });
+  });
+  return { orders: orders.length, matched: matched, matched_by_destination: byDest, median_days: shipMedian_(lags),
            within_2: lags.filter(function (x) { return x <= 2; }).length, unmatched: unmatched.slice(0, 40), unmatched_n: unmatched.length };
 }
 function shipWorkingDays_(fromDay, toDay) {
