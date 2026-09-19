@@ -14299,15 +14299,20 @@ function shipXref_(orders, shipments, now) {
     // bought outside ShipStation). Zero is "not known", never a free label.
     if (s.cost == null || !isFinite(s.cost) || s.cost <= 0) {
       noCost++;
-      var nk = o.courier + '|' + (shipRegion_(o.country) === 'uk' ? 'UK' : 'abroad');
+      var nk = (s.courier && s.courier !== 'Other' ? s.courier : o.courier) + '|' + (shipRegion_(s.country || o.country) === 'uk' ? 'UK' : 'abroad');
       noCostBy[nk] = (noCostBy[nk] || 0) + 1;
       return;
     }
     var why = s.cost_currency && s.cost_currency !== (o.currency || 'gbp') ? 'label ' + s.cost_currency + ' ' + s.courier
             : o.currency && o.currency !== 'gbp' ? 'paid ' + o.currency : '';
     if (why) { otherCur++; otherBy[why] = (otherBy[why] || 0) + 1; return; }
+    // Where it actually went and who actually took it, from ShipStation. The
+    // Stripe country is the payer's billing address, which for a gift bought
+    // in the UK for someone abroad is the wrong country entirely (r193.6).
+    var cc = String(s.country || o.country || '').toUpperCase();
+    var cr = s.courier && s.courier !== 'Other' ? s.courier : o.courier;
     pairs.push([o.id || '', String(o.at || '').slice(0, 10), o.paid != null ? o.paid : (o.shipping_gbp || 0), s.cost,
-                o.courier, String(o.country || '').toUpperCase(), (dest ? 1 : 0) | (o.courier_guessed ? 2 : 0)]);
+                cr, cc, (dest ? 1 : 0) | (o.courier_guessed && !(s.courier && s.courier !== 'Other') ? 2 : 0)]);
   }
   var today = Utilities.formatDate(now, 'Europe/London', 'yyyy-MM-dd');
   function inWindow(o, s, maxWd) {
@@ -14438,7 +14443,7 @@ function shipVolumesRefresh_(data) {
 // cross-reference matched to a shipment (by email or by destination) carries
 // what the customer paid for postage and what the label cost. The page does
 // the banding, so moving the tolerance redraws at once without a round trip.
-var SHIP_COST_V = 4;
+var SHIP_COST_V = 5;
 var SHIP_COST_FLOOR_ = '2020-11';          // the Stripe account opened in November 2020
 var SHIP_COST_TOL_KEY_ = 'SHIP_COST_TOL';
 var SHIP_COST_HIST_KEY_ = 'SHIP_COST_HIST';
@@ -14471,7 +14476,10 @@ function shipVolLock_() { return LockService.getUserLock(); }
 function shipCostHistState_() {
   var st = null;
   try { st = JSON.parse(PropertiesService.getScriptProperties().getProperty(SHIP_COST_HIST_KEY_) || 'null'); } catch (e) {}
-  return st || { next: shipMonthOf_(new Date()), empty: 0, done: false, oldest: '' };
+  // A walk done under an older rule starts again, or months before the
+  // report's window would stay on the old rule and drop out of the section.
+  if (st && st.v === SHIP_COST_V) return st;
+  return { v: SHIP_COST_V, next: shipMonthOf_(new Date()), empty: 0, done: false, oldest: '' };
 }
 function shipMonthBefore_(ym) { return shipMonthsBack_(ym, 2)[0]; }
 function shipCostCounts_(row) {
