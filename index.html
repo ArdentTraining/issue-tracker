@@ -3447,7 +3447,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r183 · 2026-09-18";  // bump this with each round, it lands on every feedback report
+var BUILD = "r184 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9716,6 +9716,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 31, date: "2026-09-19", who: ["users"], text: "Admins can set an issue to With Edd from the Status box, next to With developers. Use it for lesson packages and course content, which are Edd's. The website and LMS stay with the developers." },
   { n: 30, date: "2026-09-18", text: "IRPCS questions come in three kinds now: one right answer, tick all that apply, and put these in order. Pick the kind at the top of a question. There is also a Topic box, which is how students will find a question without knowing its rule number, so use one that already exists where it fits." },
   { n: 29, date: "2026-09-18", text: "Customs invoices are signed by whoever makes them. Set your own printed name and signature once, under Signed by on the Customs page. You can draw it or upload a photo." },
   { n: 28, date: "2026-09-18", text: "Customs invoices have their own page (Customs on the rail, or the Customs invoice button on a shipping issue). Paste the chat and it finds the address, phone and waybill, highlights anything missing to ask the student for, and makes a PDF and a Word copy. Every one is kept, so if customs ask again it is one click." },
@@ -13732,7 +13733,13 @@ function openDetail(issue) {
   sideCol += '<h3 style="margin-top:2px;">Update</h3>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;">' +
     '<div class="field"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Status</label><select id="d_status" onchange="onStatusChange()">' +
-      ['open','in_progress','with_dev','dev_fixed','parked','resolved_tbc','resolved','past'].map(function (s) {
+      // r184 (Edd): "With Edd" sits beside With developers, admins only. The
+      // developers (Aureus) own the website and LMS; lesson packages and course
+      // content are Edd's. Anyone else still sees it when an issue is already
+      // there, so opening one can never quietly show it as something else.
+      ['open','in_progress','with_dev','with_edd','dev_fixed','parked','resolved_tbc','resolved','past'].filter(function (s) {
+        return s !== 'with_edd' || !!(state.perms && state.perms.users) || (issue.status || "").toLowerCase() === 'with_edd';
+      }).map(function (s) {
         var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
         return '<option value="' + s + '"' + sel + '>' + statusLabel(s, issue) + '</option>';
       }).join("") +
