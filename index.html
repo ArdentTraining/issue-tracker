@@ -8704,7 +8704,7 @@ function shipSourcesCard(d) {
     h += bf && bf.running
       ? '<br><button class="ghost small" onclick="shipBackfill(\'stop\')">Stop the back-fill</button>'
       : '<br><button class="ghost small" onclick="shipBackfill(\'start\')" title="Reads older chats in the background, about 450 every 10 minutes">Back-fill the last 12 months</button>' +
-        '<div class="small muted">Roughly $3 to $6 of AI, and a few hours in the background. Chats already sorted are skipped.</div>';
+        '<div class="small muted">Measured at about 4 cents per 1,000 chats, so under $2 for the year, and a few hours in the background. Chats already sorted are skipped.</div>';
   }
   h += "</div>";
   h += "<div><b>Stripe</b> " + (s.stripe ? '<span class="on">connected</span>' : '<span class="off">not connected</span>') +
