@@ -3649,7 +3649,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r189.2 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r190 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9659,9 +9659,24 @@ var IRPCS_Q_TYPES = [
   { k: "single", label: "One right answer", help: "Tick the right one." },
   { k: "multi",  label: "Tick all that apply", help: "Tick every right one. It is all or nothing for the student: three out of four is wrong." },
   { k: "order",  label: "Put these in order", help: "Write the options in the RIGHT order. The student sees them shuffled and puts them back." },
+  { k: "identify", label: "Identify the vessel", help: "A vessel drawn from its lights, frozen at one bearing, and four things to say about it. Each right field earns a share and all four earns a bonus, so three of four scores under half." },
 ];
+// r190: the identify question. The four fields below are the house set, in
+// this wording, because the student page draws the wrong status next to the
+// right one and finds the vessel to draw by the option's text.
+var IRPCS_IDENTIFY_STATUSES = ["Power-driven", "Sailing", "Fishing (not trawling)", "Trawling", "Constrained by draught", "Not under command",
+  "Restricted in ability to manoeuvre", "Mine clearance", "WIG craft", "Air-cushion vessel", "At anchor", "Aground", "Towing", "Underwater operations", "Pilot vessel"];
+function irpcsIdentifyFields() {
+  return [
+    { key: "status", label: "What is it?", options: IRPCS_IDENTIFY_STATUSES.slice(), correct: 0 },
+    { key: "aspect", label: "Aspect", options: ["Bow", "Starboard", "Port", "Stern", "Unknown"], correct: 2 },
+    { key: "size", label: "Size", options: ["<12m", "probably ≥12m", "<20m", "probably ≥20m", "<50m", "probably ≥50m", "<100m", "probably ≥100m", "unknown"], correct: 4 },
+    { key: "way", label: "Way", options: ["Underway", "Underway but not making way", "Underway and making way", "Not underway"], correct: 0 },
+  ];
+}
 function irpcsQType(e) {
   if (e.type === "order") return "order";
+  if (e.type === "identify") return "identify";
   if (Array.isArray(e.correct)) return "multi";
   return "single";
 }
@@ -9670,10 +9685,69 @@ function irpcsSetQType(k) {
   var was = irpcsQType(e);
   if (k === was) return;
   e.type = k;
-  if (k === "multi") e.correct = Number.isInteger(e.correct) ? [e.correct] : [];
-  else if (k === "single") e.correct = Array.isArray(e.correct) && e.correct.length ? e.correct[0] : 0;
-  else delete e.correct;
+  if (k === "identify") {
+    e.options = []; e.correct = null;
+    if (!e.scene) e.scene = { preset: "power_under50", bearing: -35, night: true, making: true, motion: "still" };
+    if (!Array.isArray(e.fields) || !e.fields.length) e.fields = irpcsIdentifyFields();
+  } else {
+    if (was === "identify") { delete e.scene; delete e.fields; if (!Array.isArray(e.options) || !e.options.length) e.options = ["", "", "", ""]; }
+    if (k === "multi") e.correct = Number.isInteger(e.correct) ? [e.correct] : [];
+    else if (k === "single") e.correct = Array.isArray(e.correct) && e.correct.length ? e.correct[0] : 0;
+    else delete e.correct;
+  }
   irpcsRenderEditor();
+}
+function irpcsSetScene(k, v) {
+  var e = irpcs.edited; if (!e) return;
+  if (!e.scene) e.scene = {};
+  e.scene[k] = v;
+  irpcsMarkDirty();
+}
+function irpcsSetField(n, k, v) {
+  var e = irpcs.edited; if (!e || !Array.isArray(e.fields) || !e.fields[n]) return;
+  e.fields[n][k] = v;
+  irpcsMarkDirty();
+  if (k === "options") irpcsRenderEditor();   // the correct-answer list follows the options
+}
+function irpcsIdentifyForm(e) {
+  var sc = e.scene || {};
+  var fields = Array.isArray(e.fields) ? e.fields : [];
+  var motions = [["still", "Afloat, not going anywhere"], ["making", "Making way: the water streams past"], ["none", "A still picture"]];
+  return '<div class="fld"><label>The picture</label>' +
+    '<p class="small muted" style="margin:0 0 6px;">The student sees this vessel as a silhouette at night, from this bearing, and cannot turn it. The lights are the evidence.</p>' +
+    '<div class="row" style="gap:12px;flex-wrap:wrap;">' +
+      '<div class="fld" style="flex:1;min-width:220px;"><label for="irf_sc_preset">Vessel</label>' +
+        '<select id="irf_sc_preset" onchange="irpcsSetScene(\'preset\', this.value)">' +
+          IRPCS_MODELS.map(function (m) { return '<option value="' + esc(m.preset) + '"' + (m.preset === sc.preset ? " selected" : "") + '>' + esc(m.label) + '</option>'; }).join("") +
+        '</select></div>' +
+      '<div class="fld" style="flex:0 0 120px;"><label for="irf_sc_bearing">Seen from</label>' +
+        '<input id="irf_sc_bearing" type="number" min="-180" max="180" step="5" value="' + esc(sc.bearing == null ? -35 : sc.bearing) + '" oninput="irpcsSetScene(\'bearing\', Number(this.value))"></div>' +
+      '<div class="fld" style="flex:0 0 auto;"><label for="irf_sc_motion">Sea</label>' +
+        '<select id="irf_sc_motion" onchange="irpcsSetScene(\'motion\', this.value)">' +
+          motions.map(function (m) { return '<option value="' + m[0] + '"' + ((sc.motion || "still") === m[0] ? " selected" : "") + '>' + esc(m[1]) + '</option>'; }).join("") +
+        '</select></div>' +
+    '</div>' +
+    '<p class="small muted" style="margin:-4px 0 6px;">Bearing in degrees off the vessel\'s bow: 0 is dead ahead, 90 its starboard beam, -90 its port beam, 180 dead astern. Use the moving sea only where the answer is "making way"; where the lights leave way unknown, keep it afloat, so the movement stays a clue and never the answer.</p>' +
+    '<label class="rad" style="margin-right:14px;"><input type="checkbox" ' + (sc.night === false ? "" : "checked") + ' onchange="irpcsSetScene(\'night\', this.checked)"> Night (lights, not shapes)</label>' +
+    '<label class="rad"><input type="checkbox" ' + (sc.making === false ? "" : "checked") + ' onchange="irpcsSetScene(\'making\', this.checked)"> Making way (drops the sidelights, sternlight and masthead light on a vessel fishing, not under command or restricted)</label>' +
+    '</div>' +
+    '<div class="fld"><label>The four things to say</label>' +
+    fields.map(function (f, n) {
+      var opts = Array.isArray(f.options) ? f.options : [];
+      return '<div class="irpcs-cq">' +
+        '<div class="row" style="gap:12px;flex-wrap:wrap;">' +
+          '<div class="fld" style="flex:1;min-width:160px;"><label>Question ' + (n + 1) + '</label>' +
+            '<input type="text" value="' + esc(f.label || "") + '" oninput="irpcsSetField(' + n + ', \'label\', this.value)"></div>' +
+          '<div class="fld" style="flex:1;min-width:200px;"><label>Right answer</label>' +
+            '<select onchange="irpcsSetField(' + n + ', \'correct\', Number(this.value))">' +
+              opts.map(function (o, idx) { return '<option value="' + idx + '"' + (Number(f.correct) === idx ? " selected" : "") + '>' + esc(o) + '</option>'; }).join("") +
+            '</select></div>' +
+        '</div>' +
+        '<div class="fld" style="margin-bottom:0;"><label>Choices, one per line</label>' +
+          '<textarea rows="3" onchange="irpcsSetField(' + n + ', \'options\', this.value.split(/\\n/).map(function (t) { return t.trim(); }).filter(Boolean))">' + esc(opts.join("\n")) + '</textarea></div>' +
+        '</div>';
+    }).join("") +
+    '</div>';
 }
 function irpcsToggleCorrect(idx) {
   var e = irpcs.edited; if (!e) return;
@@ -9697,6 +9771,7 @@ function irpcsQuestionForm(e) {
           return '<option value="' + t.k + '"' + (t.k === qt ? " selected" : "") + '>' + esc(t.label) + '</option>';
         }).join("") +
       '</select></div>' +
+    (qt === "identify" ? '<p class="small muted" style="margin:-6px 0 10px;">' + esc(typeDef.help) + '</p>' + irpcsIdentifyForm(e) :
     '<div class="fld"><label>Answers</label>' +
       '<p class="small muted" style="margin:0 0 4px;">' + esc(typeDef.help) + '</p>' +
       opts.map(function (o, idx) {
@@ -9714,7 +9789,7 @@ function irpcsQuestionForm(e) {
           '<input type="text" value="' + esc(o) + '" oninput="irpcsSetIn(\'options\', ' + idx + ', this.value)">' +
           '</div>';
       }).join("") +
-    '</div>' +
+    '</div>') +
     irpcsTextField("Why that is the answer", "reasoning", e.reasoning, 4, "Shown after they answer, right or wrong, so it carries the reasoning and not just the verdict.") +
     '<div class="row" style="gap:12px;flex-wrap:wrap;">' +
       // r162: EN joined the ladder. irpcs-editor validates level against
@@ -10250,7 +10325,26 @@ var IRPCS_MODELS = [
   { preset: "constrained",     label: "Vessel constrained by her draught",            rule: 28 },
   { preset: "pilot",           label: "Pilot vessel on duty",                         rule: 29 },
   { preset: "anchored_under50",label: "Vessel at anchor, under 50m",                  rule: 30 },
-  { preset: "anchored_over50", label: "Vessel at anchor, 50m or more",                rule: 30 }
+  { preset: "anchored_over50", label: "Vessel at anchor, 50m or more",                rule: 30 },
+  // r190: the rest of the catalogue, added for the identify questions.
+  { preset: "wig",             label: "WIG craft, near the surface",                  rule: 23 },
+  { preset: "air_cushion",     label: "Air-cushion vessel, non-displacement mode",    rule: 23 },
+  { preset: "sailing_tricolour", label: "Sailing vessel under 20m, tricolour lantern", rule: 25 },
+  { preset: "sailing_optional", label: "Sailing vessel with the optional red over green", rule: 25 },
+  { preset: "trawling_over50", label: "Vessel trawling, 50m or more",                 rule: 26 },
+  { preset: "ram_over50",      label: "Restricted in ability to manoeuvre, 50m or more", rule: 27 },
+  { preset: "ram_anchored_under50", label: "Restricted in ability to manoeuvre, at anchor, under 50m", rule: 27 },
+  { preset: "ram_anchored_over50",  label: "Restricted in ability to manoeuvre, at anchor, 50m or more", rule: 27 },
+  { preset: "mine_under50",    label: "Mine clearance, under 50m",                    rule: 27 },
+  { preset: "mine_over50",     label: "Mine clearance, 50m or more",                  rule: 27 },
+  { preset: "mine_anchored_under50", label: "Mine clearance, at anchor, under 50m",   rule: 27 },
+  { preset: "mine_anchored_over50",  label: "Mine clearance, at anchor, 50m or more", rule: 27 },
+  { preset: "constrained_over50", label: "Vessel constrained by her draught, 50m or more", rule: 28 },
+  { preset: "pilot_anchored_under50", label: "Pilot vessel on duty, at anchor, under 50m", rule: 29 },
+  { preset: "pilot_anchored_over50",  label: "Pilot vessel on duty, at anchor, 50m or more", rule: 29 },
+  { preset: "anchored_over100", label: "Vessel at anchor, 100m or more, decks lit",   rule: 30 },
+  { preset: "aground_under50", label: "Vessel aground, under 50m",                    rule: 30 },
+  { preset: "aground_over50",  label: "Vessel aground, 50m or more",                  rule: 30 }
 ];
 function irpcsModelLabel(preset) {
   var m = IRPCS_MODELS.filter(function (x) { return x.preset === preset; })[0];
@@ -11033,6 +11127,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 36, date: "2026-09-19", text: "A fourth kind of IRPCS question: Identify the vessel. Pick a vessel and a bearing and the student sees it as a silhouette at night on a calm sea, lights only, and says what it is, its aspect, its size and whether it is making way. Every vessel in the rules is in the list now, mine clearance and hovercraft included." },
   { n: 35, date: "2026-09-19", who: ["users"], text: "The Status box always offers all three hand-overs: With developers, With the course team and With Edd. Before, it only offered whichever team matched how the issue was filed, so a website fault filed as a course error could not be sent to the developers. Picking the other team moves the issue to that team's page." },
   { n: 34, date: "2026-09-19", who: ["log"], text: "Customs on the rail is now Shipping, with two pages: Report and Customs invoice. The report shows each month's parcel problems by type and courier, from the tracker and from the chats, against how many packs we sent, plus the parcels still open and any shipping chat nobody logged. A summary goes to the shipping channel on the 1st." },
   { n: 33, date: "2026-09-19", who: ["resources"], text: "Resources, on the rail, edits the free downloads on the website. Change a title, description, category or order, swap a file or thumbnail, or add a new PDF and it makes the thumbnail and a first draft of the listing. Nothing goes live until Save to website." },
