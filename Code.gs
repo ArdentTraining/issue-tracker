@@ -692,6 +692,8 @@ function doPost(e) {
     if (action === 'deleteUser') return jsonOut(deleteUser_(body));
     if (action === 'resurfaceIssue') return jsonOut(resurfaceIssue_(body));
     if (action === 'lessonIssueCounts') return jsonOut(lessonIssueCounts_());
+    if (action === 'faultIssueMap') return jsonOut(faultIssueMap_());
+    if (action === 'logFault') return jsonOut(logFault_(body));
     if (action === 'estimateFixSize') return jsonOut(estimateFixSize_(body));
     if (action === 'runChatBackSweep') return jsonOut(runChatBackSweep_(body));
     if (action === 'chatBackSweepState') return jsonOut(chatBackSweepState_());
@@ -921,6 +923,10 @@ function reqPerm_(action) {
     // lesson traffic. Same permission as Reports itself, and it returns counts
     // only - no summaries, no students, nothing about any one report.
     case 'lessonIssueCounts': return 'analytics';
+    // Reading which faults are filed rides with the rest of Reports. Filing
+    // one creates an issue, so it needs what logging an issue needs.
+    case 'faultIssueMap': return 'analytics';
+    case 'logFault': return 'log';
     case 'saveChecklist': case 'assignIssue': case 'getAssignees': case 'studentToldCheck': return 'work';
     // The queue tools (Edd, FB-0165): reviewing and bulk-assigning are for
     // anyone who works a fix queue. Fetching a Chatwoot update sits with the
@@ -12969,16 +12975,7 @@ function faultSweep() {
   // merging two issues by hand) appends one issue's text into the middle of
   // another's, and a first-line-only match would then miss it and file the
   // same fault again every single run.
-  var seen = {};
-  getIssues_().issues.forEach(function (i) {
-    var text = String(i.raw_text || '');
-    var at = text.indexOf(FAULT_SWEEP_MARK);
-    while (at >= 0) {
-      var line = text.slice(at + FAULT_SWEEP_MARK.length).split('\n')[0].trim();
-      if (line) seen[line] = i;
-      at = text.indexOf(FAULT_SWEEP_MARK, at + 1);
-    }
-  });
+  var seen = filedFaults_();
 
   var filed = 0, skipped = 0;
   candidates.forEach(function (c) {
@@ -12991,54 +12988,7 @@ function faultSweep() {
       return;
     }
 
-    var lessons = (c.lessons || []).join(', ');
-    var lines = [
-      FAULT_SWEEP_MARK + sig,
-      '',
-      'Filed automatically from lesson telemetry. ' + (c.reason || ''),
-      '',
-      'Class:    ' + c.fault_class,
-      'Visits:   ' + c.visits_affected + ' affected',
-      'Lessons:  ' + c.lessons_affected + (lessons ? ' (' + lessons + ')' : ''),
-      'Last hit: ' + String(c.last_seen || '').slice(0, 16).replace('T', ' ')
-    ];
-    if (c.worst_repeat_in_a_visit > 1) {
-      lines.push('Worst:    ' + c.worst_repeat_in_a_visit + ' times inside one visit');
-    }
-    if (c.example_stack) lines.push('', 'Stack:    ' + c.example_stack);
-    if (c.example_detail) lines.push('', 'Detail:   ' + c.example_detail);
-    lines.push('', 'No student is identified in any of this: lesson telemetry is ' +
-                   'anonymous and carries a random per-visit id only.');
-
-    // An authoring fault is a course-content job; the other two are platform.
-    // Severity stays moderate on purpose. These are real and none of them is
-    // stopping a student finishing, and a sweep that files everything as
-    // severe teaches people to ignore severe.
-    var data = {
-      category: c.fault_class === 'authoring' ? 'course_error' : 'tech_issue',
-      audience: 'student',
-      section: 'course_player',
-      request_kind: 'fix',
-      instructor_name: 'Fault sweep',
-      summary: (c.fault_class === 'authoring'
-                 ? 'Slide layout: ' : 'Lesson fault: ') + sig,
-      raw_text: lines.join('\n'),
-      lesson_code: c.lessons_affected === 1 ? (c.lessons || [''])[0] : '',
-      severity: 'moderate',
-      media_kind: c.fault_class === 'authoring' ? 'text' : 'other',
-      // Nobody told us; a machine measured it. Saying otherwise would put a
-      // student in the notify queue who never existed.
-      student_involved: 'no',
-      double_checked: 'true',
-      // addIssue_ runs aiMatchIssue_ unless this is set, and a merge here
-      // would be wrong twice over. A fault we measured is not the same thing
-      // as a student's report of a symptom, however similar the words look to
-      // a matcher. And a merge appends our text into the middle of the
-      // master's raw_text, which buries the [fault] marker the dedupe reads,
-      // so the next sweep would file it again, and the one after that.
-      // It also saves an AI call per filing.
-      no_merge: true
-    };
+    var data = faultIssueData_(c);
 
     if (!live) {
       Logger.log('faultSweep DRY RUN would file: ' + data.summary + '  [' + (c.reason || '') + ']');
@@ -13183,4 +13133,135 @@ function claudeInbox() {
     Logger.log('claudeInbox: report back failed, will retry: ' + e);
   }
   return { ok: true, filed: results.filter(function (x) { return x.ok; }).length, failed: results.filter(function (x) { return !x.ok; }).length };
+}
+
+/* Which fault signatures already have an issue.
+ *
+ * Shared by the sweep and by the Log it button on the Reports page, because
+ * two lookups would eventually disagree about what "already filed" means and
+ * the button would offer to file something the sweep had just filed.
+ *
+ * The marker is searched for ANYWHERE in raw_text, not only on the first
+ * line: a merge appends one issue's text into the middle of another's, and a
+ * first-line-only match would then miss it and file the same fault twice.
+ */
+function filedFaults_() {
+  var seen = {};
+  getIssues_().issues.forEach(function (i) {
+    var text = String(i.raw_text || '');
+    var at = text.indexOf(FAULT_SWEEP_MARK);
+    while (at >= 0) {
+      var line = text.slice(at + FAULT_SWEEP_MARK.length).split('\n')[0].trim();
+      if (line) seen[line] = i;
+      at = text.indexOf(FAULT_SWEEP_MARK, at + 1);
+    }
+  });
+  return seen;
+}
+
+/* The issue a fault candidate becomes. One function, so an issue filed by
+ * hand from the dashboard is identical to one the sweep filed overnight. */
+function faultIssueData_(c) {
+  // sig was a loop local when this lived inside faultSweep. It has to come
+  // from the candidate now, or the marker line reads "[fault] undefined" and
+  // the dedupe never matches anything again.
+  var sig = String(c.signature || '').trim();
+  var lessons = (c.lessons || []).join(', ');
+  var lines = [
+    FAULT_SWEEP_MARK + sig,
+    '',
+    // Neutral wording: this same function now builds an issue filed by hand
+    // from the dashboard as well as one the sweep files overnight.
+    'From lesson telemetry. ' + (c.reason || ''),
+    '',
+    'Class:    ' + c.fault_class,
+    'Visits:   ' + c.visits_affected + ' affected',
+    'Lessons:  ' + c.lessons_affected + (lessons ? ' (' + lessons + ')' : ''),
+    'Last hit: ' + String(c.last_seen || '').slice(0, 16).replace('T', ' ')
+  ];
+  if (c.worst_repeat_in_a_visit > 1) {
+    lines.push('Worst:    ' + c.worst_repeat_in_a_visit + ' times inside one visit');
+  }
+  if (c.example_stack) lines.push('', 'Stack:    ' + c.example_stack);
+  if (c.example_detail) lines.push('', 'Detail:   ' + c.example_detail);
+  lines.push('', 'No student is identified in any of this: lesson telemetry is ' +
+                 'anonymous and carries a random per-visit id only.');
+
+  // An authoring fault is a course-content job; the other two are platform.
+  // Severity stays moderate on purpose. These are real and none of them is
+  // stopping a student finishing, and a sweep that files everything as
+  // severe teaches people to ignore severe.
+  var data = {
+    category: c.fault_class === 'authoring' ? 'course_error' : 'tech_issue',
+    audience: 'student',
+    section: 'course_player',
+    request_kind: 'fix',
+    instructor_name: 'Fault sweep',
+    summary: (c.fault_class === 'authoring'
+               ? 'Slide layout: ' : 'Lesson fault: ') + sig,
+    raw_text: lines.join('\n'),
+    lesson_code: c.lessons_affected === 1 ? (c.lessons || [''])[0] : '',
+    severity: 'moderate',
+    media_kind: c.fault_class === 'authoring' ? 'text' : 'other',
+    // Nobody told us; a machine measured it. Saying otherwise would put a
+    // student in the notify queue who never existed.
+    student_involved: 'no',
+    double_checked: 'true',
+    // addIssue_ runs aiMatchIssue_ unless this is set, and a merge here
+    // would be wrong twice over. A fault we measured is not the same thing
+    // as a student's report of a symptom, however similar the words look to
+    // a matcher. And a merge appends our text into the middle of the
+    // master's raw_text, which buries the [fault] marker the dedupe reads,
+    // so the next sweep would file it again, and the one after that.
+    // It also saves an AI call per filing.
+    no_merge: true
+  };
+  return data;
+}
+
+/* Reports asks which of the current candidates are already logged, so each
+ * row can offer "Log it" or a link to the case rather than guessing. */
+function faultIssueMap_() {
+  var seen = filedFaults_(), out = {};
+  Object.keys(seen).forEach(function (sig) {
+    var i = seen[sig];
+    out[sig] = { issue_id: i.issue_id, status: i.status || '', summary: i.summary || '' };
+  });
+  return { ok: true, filed: out };
+}
+
+/* File ONE fault, from the dashboard. Reads the same view the sweep reads, so
+ * a person cannot log something the rule would not have logged, and cannot
+ * invent a fault that is not in the data. */
+function logFault_(body) {
+  var sig = String((body && body.signature) || '').trim();
+  if (!sig) return { ok: false, error: 'no signature' };
+
+  var already = filedFaults_()[sig];
+  if (already) return { ok: true, issue_id: already.issue_id, already: true };
+
+  var t = mintPortalTicket_({
+    email: 'fault-sweep@ardent-training.com',
+    name: 'Fault sweep',
+    perms_json: JSON.stringify({ analytics: true })
+  }, 'analytics');
+  if (!t.ok) return { ok: false, error: 'no ticket (' + t.error + ')' };
+
+  var res;
+  try {
+    res = UrlFetchApp.fetch(FAULT_SWEEP_URL, {
+      method: 'get', headers: { Authorization: 'Bearer ' + t.ticket }, muteHttpExceptions: true
+    });
+  } catch (e) { return { ok: false, error: String(e) }; }
+  if (res.getResponseCode() !== 200) return { ok: false, error: 'HTTP ' + res.getResponseCode() };
+
+  var faults = (JSON.parse(res.getContentText()) || {}).faults || {};
+  if (faults.error) return { ok: false, error: String(faults.error) };
+  var c = (faults.candidates || []).filter(function (x) { return String(x.signature) === sig; })[0];
+  // Not in the view means the rule does not consider it worth filing. Saying
+  // so is better than filing it anyway on the strength of a stale page.
+  if (!c) return { ok: false, error: 'that fault is no longer in the list' };
+
+  var r = addIssue_(faultIssueData_(c));
+  return { ok: true, issue_id: (r && r.issue && r.issue.issue_id) || '', already: false };
 }

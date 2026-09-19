@@ -258,6 +258,27 @@
   .map-side .kv b{font-weight:500; font-variant-numeric:tabular-nums}
   @media (max-width:900px){ .map-wrap{grid-template-columns:1fr} .map-side{position:static} }
 
+  .btn-small{background:var(--surface); border:1px solid var(--line); border-radius:4px;
+             color:var(--text); font:inherit; font-size:12.5px; padding:4px 10px; cursor:pointer}
+  .btn-small:hover{border-color:var(--coral)}
+  .btn-small:disabled{opacity:.6; cursor:default}
+  .btn-small:focus-visible{outline:2px solid var(--coral); outline-offset:1px}
+  .card-link{width:100%; text-align:left; cursor:pointer; font:inherit; color:inherit;
+             display:block; transition:border-color .12s ease}
+  .card-link:hover{border-color:var(--coral)}
+  .card-link:focus-visible{outline:2px solid var(--coral); outline-offset:2px}
+  /* FB-0400: sortable headings. The arrow says which way, because a header
+     that sorts without saying so leaves you guessing what you are looking at. */
+  th.sortable{cursor:pointer; user-select:none; white-space:nowrap}
+  th.sortable:hover{color:var(--text)}
+  th.sortable::after{content:'\2009\2195'; opacity:.35}
+  th.sortable.asc::after{content:'\2009\2191'; opacity:1; color:var(--coral)}
+  th.sortable.desc::after{content:'\2009\2193'; opacity:1; color:var(--coral)}
+  .tblfilter{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 0 10px}
+  .tblfilter input{background:var(--bg); border:1px solid var(--line); border-radius:4px;
+                   color:var(--text); font:inherit; font-size:13px; padding:5px 9px; min-width:180px}
+  .tblfilter input:focus-visible{outline:2px solid var(--coral); outline-offset:-1px}
+
   .subwrap{display:flex; gap:26px; align-items:flex-start}
   #subrail{flex:0 0 152px; position:sticky; top:18px}
   #subrail a{display:flex; align-items:center; justify-content:space-between; gap:8px;
@@ -742,6 +763,57 @@ function applyPayload(j, stale){
   document.getElementById('stamp').textContent = stale ? ('showing figures from ' + stale + ', refreshing…') : ('updated ' + new Date().toLocaleTimeString('en-GB'));
   render();
 }
+/* FB-0401 (Edd): "There should be a 'log it' or 'open case' button next to
+   each of these (depending on if they have previously been logged or not)."
+   Which faults already have an issue. The tracker is asked rather than
+   guessed at, and the SAME lookup the overnight sweep uses answers it, so
+   the button can never offer to file something the sweep filed an hour ago. */
+let FAULT_ISSUES = null;      // null = not asked yet, {} = asked, none filed
+
+async function loadFaultIssues(){
+  const token = localStorage.getItem(SESSION_KEY);
+  if(!token) return;
+  try{
+    const r = await fetch(APPS_SCRIPT, {
+      method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'faultIssueMap', token: token })
+    });
+    const j = await r.json();
+    FAULT_ISSUES = (j && j.ok && j.filed) ? j.filed : {};
+  }catch(e){ FAULT_ISSUES = {}; }
+  DIRTY.attention = true;
+  renderSection('attention');
+}
+
+/* Filing is done by the BACKEND from the same view, not from this page's copy
+   of the row. A page left open for an hour is a stale opinion about what is
+   worth filing, and the rule lives in the database on purpose. */
+async function logFault(sig, btn){
+  const token = localStorage.getItem(SESSION_KEY);
+  if(!token) return;
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Logging…';
+  try{
+    const r = await fetch(APPS_SCRIPT, {
+      method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'logFault', token: token, signature: sig })
+    });
+    const j = await r.json();
+    if(j && j.ok && j.issue_id){
+      FAULT_ISSUES = FAULT_ISSUES || {};
+      FAULT_ISSUES[sig] = { issue_id: j.issue_id, status:'open' };
+      DIRTY.attention = true; renderSection('attention');
+    }else{
+      btn.disabled = false;
+      btn.textContent = (j && j.error) ? String(j.error).slice(0, 40) : 'Could not log it';
+      setTimeout(() => { btn.disabled = false; btn.textContent = was; }, 4000);
+    }
+  }catch(e){
+    btn.disabled = false; btn.textContent = 'Could not log it';
+    setTimeout(() => { btn.textContent = was; }, 4000);
+  }
+}
+
 let PAINTED_FROM_CACHE = false;
 async function loadAll(){
   document.getElementById('error').innerHTML='';
@@ -755,6 +827,7 @@ async function loadAll(){
     writeDataCache(j);
     applyPayload(j, null);
     loadIssueCounts();
+    loadFaultIssues();
   }catch(e){
     if(e instanceof AuthProblem){ showGate(e.kind, e.detail); return; }
     showApp();
@@ -1299,7 +1372,7 @@ function renderAttention(){
   } else {
     const label = { script: 'thrown error', delivery: 'missing file', authoring: 'slide layout' };
     const cls   = { script: 'warn', delivery: 'warn', authoring: 'quiz' };
-    html += '<table><thead><tr><th>What</th><th>Where</th><th>Visits</th><th>Why it is here</th></tr></thead><tbody>' +
+    html += '<table><thead><tr><th>What</th><th>Where</th><th>Visits</th><th>Why it is here</th><th></th></tr></thead><tbody>' +
       rows.map(r => {
         const where = r.lessons.length === 1 ? r.lessons[0]
                     : r.lessons.length ? (r.lessons.length + ' lessons: ' + r.lessons.slice(0,3).join(', ') +
@@ -1310,8 +1383,9 @@ function renderAttention(){
                esc(label[r.cls] || r.cls) + '</span></small></td>' +
                '<td>' + esc(where) + '</td>' +
                '<td>' + r.visits + '</td>' +
-               '<td>' + esc(r.why) + '</td></tr>' +
-               (r.detail ? '<tr><td colspan="4" class="hint" style="padding-top:0">' + esc(r.detail) + '</td></tr>' : '');
+               '<td>' + esc(r.why) + '</td>' +
+               '<td style="text-align:right;white-space:nowrap">' + faultAction(r.what) + '</td></tr>' +
+               (r.detail ? '<tr><td colspan="5" class="hint" style="padding-top:0">' + esc(r.detail) + '</td></tr>' : '');
       }).join('') + '</tbody></table>';
   }
 
@@ -1360,6 +1434,8 @@ function renderAttention(){
   }
 
   el.innerHTML = html;
+  el.querySelectorAll('[data-log]').forEach(b =>
+    b.addEventListener('click', () => logFault(b.dataset.log, b)));
 }
 
 /* ------------------------------------------------- r183: THE COURSE canvas
@@ -1461,14 +1537,35 @@ function renderCourseCanvas(){
   h += '<div class="cards" style="margin-top:22px">' +
        card('Started visits', started.toLocaleString('en-GB'), 'of ' + visits.toLocaleString('en-GB') + ' opened') +
        card('Lessons live', String(VIEW.ids.size), 'reporting telemetry') +
-       card('Needs a look', String(faults), faults ? 'on the Attention page' : 'nothing outstanding') +
+       card('Needs a look', String(faults),
+            faults ? 'click to see them' : 'nothing outstanding',
+            faults ? 'attention' : null) +
        '</div>';
   el.innerHTML = h;
+  /* FB-0399: the card is a button, so it has to actually go somewhere. */
+  el.querySelectorAll('[data-goto]').forEach(b =>
+    b.addEventListener('click', () => showPage(b.dataset.goto)));
 }
 
-function card(k, v, n){
-  return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) +
-         '</div><div class="n">' + esc(n) + '</div></div>';
+/* FB-0399 (Edd): "I wish I could click on the 'needs a look' box to take me
+   to the things which need a look". A card that names a number you then have
+   to go and find is half a control. */
+/* Three states, and the third one matters: until the tracker has answered we
+   say nothing, rather than offering to log something that is already logged. */
+function faultAction(sig){
+  if(FAULT_ISSUES === null) return '<span class="hint" style="margin:0">\u2026</span>';
+  const f = FAULT_ISSUES[sig];
+  if(f) return '<a href="' + TRACKER_URL + '?issue=' + encodeURIComponent(f.issue_id) +
+               '" target="_blank" rel="noopener">Open case</a>';
+  return '<button type="button" class="btn-small" data-log="' + esc(sig) + '">Log it</button>';
+}
+
+function card(k, v, n, page){
+  const inner = '<div class="k">' + esc(k) + '</div><div class="v">' + esc(v) +
+                '</div><div class="n">' + esc(n) + '</div>';
+  if(!page) return '<div class="card">' + inner + '</div>';
+  return '<button type="button" class="card card-link" data-goto="' + esc(page) + '">' +
+         inner + '</button>';
 }
 
 /* ------------------------------------------------- r183: THE COURSE MAP
@@ -1776,6 +1873,80 @@ function renderUsage(){
     '<h3 style="margin:18px 0 8px">Issue panes</h3>' + panes + '<h3 style="margin:18px 0 8px">Day by day</h3>' + daily;
 }
 
+/* ------------------------------------------------- FB-0400: sort and filter
+   Edd, on the Questions page: "we could do with being able to sort by for
+   this info. And filter."
+
+   Written once and reusable, because the moment one table can be sorted every
+   other table on the page invites the same question, and a second hand-rolled
+   sorter is how two tables end up disagreeing about what "hardest" means.
+
+   Sorting is on the DATA, never on the rendered text: sorting "12%" and "9%"
+   as strings puts 12 below 9, and a table that lies quietly is worse than one
+   that cannot sort at all. */
+function sortableTable(opts){
+  /* opts: { rows, cols:[{key,label,get,num,cls}], sort:{key,dir}, filter,
+             placeholder, empty } */
+  const st = opts.sort || { key: opts.cols[0].key, dir: 'asc' };
+  const q  = (opts.filter || '').trim().toLowerCase();
+
+  let rows = opts.rows.slice();
+  if(q && opts.match) rows = rows.filter(r => opts.match(r).toLowerCase().indexOf(q) >= 0);
+
+  const col = opts.cols.find(c => c.key === st.key) || opts.cols[0];
+  rows.sort((a, b) => {
+    let x = col.get(a), y = col.get(b);
+    if(col.num){ x = Number(x); y = Number(y);
+      if(!isFinite(x)) x = st.dir === 'asc' ?  Infinity : -Infinity;
+      if(!isFinite(y)) y = st.dir === 'asc' ?  Infinity : -Infinity;
+      return st.dir === 'asc' ? x - y : y - x; }
+    x = String(x == null ? '' : x); y = String(y == null ? '' : y);
+    return st.dir === 'asc' ? x.localeCompare(y, 'en', { numeric:true })
+                            : y.localeCompare(x, 'en', { numeric:true });
+  });
+
+  const head = '<thead><tr>' + opts.cols.map(c =>
+      '<th class="sortable' + (c.key === st.key ? ' ' + st.dir : '') + '" data-sort="' + esc(c.key) + '">' +
+      esc(c.label) + '</th>').join('') + '</tr></thead>';
+  const body = rows.length
+    ? '<tbody>' + rows.map(r => '<tr>' + opts.cols.map(c =>
+        '<td' + (c.cls ? ' class="' + c.cls + '"' : '') + '>' + c.cell(r) + '</td>').join('') + '</tr>').join('') + '</tbody>'
+    : '<tbody><tr><td colspan="' + opts.cols.length + '" class="hint">' +
+      esc(opts.empty || 'Nothing matches that.') + '</td></tr></tbody>';
+
+  const bar = opts.match
+    ? '<div class="tblfilter"><input type="search" data-filter placeholder="' +
+      esc(opts.placeholder || 'Filter…') + '" value="' + esc(opts.filter || '') + '">' +
+      '<span class="hint" style="margin:0">' + rows.length + ' of ' + opts.rows.length + '</span></div>'
+    : '';
+  return bar + '<table>' + head + body + '</table>';
+}
+
+/* Wiring, kept beside the builder so a table cannot be sortable-looking and
+   inert. Re-renders through the caller so the state lives in one place. */
+function wireSortable(host, state, redraw){
+  host.querySelectorAll('th[data-sort]').forEach(th =>
+    th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      /* A new column starts in the direction that puts the interesting end
+         first: worst marks, most attempts. Clicking the same one flips it. */
+      if(state.key === k) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+      else { state.key = k; state.dir = th.classList.contains('num') ? 'desc' : 'asc'; }
+      redraw();
+    }));
+  const f = host.querySelector('[data-filter]');
+  if(f) f.addEventListener('input', () => {
+    state.filter = f.value;
+    redraw();
+    const again = host.querySelector('[data-filter]');
+    if(again){ again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+  });
+}
+
+/* Kept outside the renderer so a filter survives the page being rebuilt when
+   the course filter moves or new data lands. */
+let Q_SORT = { key:'pct_marks_earned', dir:'asc', filter:'' };
+
 function renderQuestions(){
   const host = document.getElementById('questions'); host.classList.remove('loading');
   const q = DATA.questions;
@@ -1784,17 +1955,33 @@ function renderQuestions(){
   if (!diff.length) { host.innerHTML = '<div class="note">Nothing yet. Only lessons exported as xAPI report question data; teaching lessons and older quiz packages do not. Upload one and it appears here.</div>'; return; }
   const thin = diff.reduce((a,r) => a + Number(r.attempts || 0), 0) < 30;
 
-  /* Hardest first, by marks earned rather than by pass/fail. */
-  const byHard = diff.slice().sort((a,b) => (Number(a.pct_marks_earned)||0) - (Number(b.pct_marks_earned)||0));
-  let hard = '<table><thead><tr><th>Question</th><th>Type</th><th>Attempts</th><th>Marks earned</th><th>Fully right</th><th>Blank boxes</th><th>Typical time</th></tr></thead><tbody>' +
-    byHard.map(r => '<tr><td>' + esc(r.question_code) + (r.variant ? ' <span style="color:var(--muted)">' + esc(r.variant) + '</span>' : '') + '</td>' +
-      '<td style="color:var(--muted)">' + esc(r.interaction_type || '') + '</td>' +
-      '<td>' + r.attempts + '</td>' +
-      '<td>' + (r.pct_marks_earned == null ? '\u2014' : r.pct_marks_earned + '%') + '</td>' +
-      '<td style="color:var(--muted)">' + (r.pct_fully_correct == null ? '\u2014' : r.pct_fully_correct + '%') + '</td>' +
-      '<td style="color:var(--muted)">' + (r.pct_parts_left_blank == null ? '\u2014' : r.pct_parts_left_blank + '%') + '</td>' +
-      '<td style="color:var(--muted)">' + (r.mean_seconds == null ? '\u2014' : r.mean_seconds + 's') + '</td></tr>').join('') +
-    '</tbody></table>';
+  /* Hardest first, by marks earned rather than by pass/fail, and sortable
+     from there (FB-0400). Filtering is on the question code, which is the
+     thing you have in your hand when you come looking. */
+  const pc = v => v == null ? '\u2014' : v + '%';
+  const hard = sortableTable({
+    rows: diff,
+    filter: Q_SORT.filter,
+    sort: Q_SORT,
+    placeholder: 'Filter by question, e.g. DS.07',
+    empty: 'No question matches that.',
+    match: r => String(r.question_code || '') + ' ' + String(r.interaction_type || ''),
+    cols: [
+      { key:'question_code', label:'Question', get:r => r.question_code,
+        cell:r => esc(r.question_code) + (r.variant ? ' <span style="color:var(--muted)">' + esc(r.variant) + '</span>' : '') },
+      { key:'interaction_type', label:'Type', get:r => r.interaction_type || '', cls:'muted',
+        cell:r => '<span style="color:var(--muted)">' + esc(r.interaction_type || '') + '</span>' },
+      { key:'attempts', label:'Attempts', num:true, get:r => r.attempts, cell:r => r.attempts },
+      { key:'pct_marks_earned', label:'Marks earned', num:true, get:r => r.pct_marks_earned,
+        cell:r => pc(r.pct_marks_earned) },
+      { key:'pct_fully_correct', label:'Fully right', num:true, get:r => r.pct_fully_correct,
+        cell:r => '<span style="color:var(--muted)">' + pc(r.pct_fully_correct) + '</span>' },
+      { key:'pct_parts_left_blank', label:'Blank boxes', num:true, get:r => r.pct_parts_left_blank,
+        cell:r => '<span style="color:var(--muted)">' + pc(r.pct_parts_left_blank) + '</span>' },
+      { key:'mean_seconds', label:'Typical time', num:true, get:r => r.mean_seconds,
+        cell:r => '<span style="color:var(--muted)">' + (r.mean_seconds == null ? '\u2014' : r.mean_seconds + 's') + '</span>' }
+    ]
+  });
 
   /* What people actually put. The whole reason for capturing the response. */
   const topWrong = wrong.slice().sort((a,b) => Number(b.times_given) - Number(a.times_given)).slice(0, 40);
@@ -1825,6 +2012,10 @@ function renderQuestions(){
     '<h3 style="margin:6px 0 8px">Hardest questions</h3>' + hard +
     '<h3 style="margin:18px 0 8px">What people put instead</h3>' + wrongTbl +
     '<h3 style="margin:18px 0 8px">Marked wrong, possibly unfairly</h3>' + narrowHtml;
+
+  /* A sortable-looking header that does nothing is worse than a plain one,
+     so the wiring happens in the same breath as the markup. */
+  wireSortable(host, Q_SORT, renderQuestions);
 }
 
 function renderLive(){
