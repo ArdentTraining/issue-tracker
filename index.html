@@ -3649,7 +3649,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r188.6 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r189 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4258,6 +4258,13 @@ function statusLabel(s, issue) {
   s = (s || "open").toLowerCase();
   if (issue && catOf(issue) === "course_error" && STATUS_LABEL_COURSE[s]) return STATUS_LABEL_COURSE[s];
   return STATUS_LABEL[s] || s.replace(/_/g, " ");
+}
+// The Status dropdown's value for an issue: with_dev splits into developers
+// and course team by category (r189).
+function handoverValue(issue) {
+  var st = String((issue && issue.status) || "open").toLowerCase();
+  if (st === "with_dev" && catOf(issue) === "course_error") return "with_course";
+  return st;
 }
 function statusBadge(s, issue) {
   s = (s || "open").toLowerCase();
@@ -11015,6 +11022,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 35, date: "2026-09-19", who: ["users"], text: "The Status box always offers all three hand-overs: With developers, With the course team and With Edd. Before, it only offered whichever team matched how the issue was filed, so a website fault filed as a course error could not be sent to the developers. Picking the other team moves the issue to that team's page." },
   { n: 34, date: "2026-09-19", who: ["log"], text: "Customs on the rail is now Shipping, with two pages: Report and Customs invoice. The report shows each month's parcel problems by type and courier, from the tracker and from the chats, against how many packs we sent, plus the parcels still open and any shipping chat nobody logged. A summary goes to the shipping channel on the 1st." },
   { n: 33, date: "2026-09-19", who: ["resources"], text: "Resources, on the rail, edits the free downloads on the website. Change a title, description, category or order, swap a file or thumbnail, or add a new PDF and it makes the thumbnail and a first draft of the listing. Nothing goes live until Save to website." },
   { n: 32, date: "2026-09-19", text: "The board loads quicker, most of all straight after somebody saves a change, which used to be the slowest open of all. Saving an update now refreshes just that issue rather than the whole list." },
@@ -15044,11 +15052,21 @@ function openDetail(issue) {
       // developers (Aureus) own the website and LMS; lesson packages and course
       // content are Edd's. Anyone else still sees it when an issue is already
       // there, so opening one can never quietly show it as something else.
-      ['open','in_progress','with_dev','with_edd','dev_fixed','parked','resolved_tbc','resolved','past'].filter(function (s) {
+      // r189 (Edd): three people to hand to, always three options. Developers
+      // (Aman and the rest), the course team (Edd, Stu and whoever else is
+      // ticked course), and Edd. It used to be ONE with_dev option relabelled by
+      // category, so a website bug filed as a course error could only ever go
+      // "with the course team" and the developers were nowhere in the list.
+      // Which team has a with_dev issue is decided by its category (the Dev page
+      // reads tech_issue, the Course page course_error), so "with_course" is a
+      // dropdown-only value: saveDetail turns it into with_dev + course_error,
+      // and with_dev on anything else into with_dev + tech_issue.
+      ['open','in_progress','with_dev','with_course','with_edd','dev_fixed','parked','resolved_tbc','resolved','past'].filter(function (s) {
         return s !== 'with_edd' || !!(state.perms && state.perms.users) || (issue.status || "").toLowerCase() === 'with_edd';
       }).map(function (s) {
-        var sel = (issue.status || "open").toLowerCase() === s ? " selected" : "";
-        return '<option value="' + s + '"' + sel + '>' + statusLabel(s, issue) + '</option>';
+        var sel = handoverValue(issue) === s ? " selected" : "";
+        var label = s === 'with_dev' ? 'with developers' : s === 'with_course' ? 'with the course team' : statusLabel(s, issue);
+        return '<option value="' + s + '"' + sel + '>' + label + '</option>';
       }).join("") +
     '</select></div>' +
     '<div class="field"><label class="small" style="display:block;margin-bottom:2px;color:var(--muted);">Priority</label><select id="d_priority">' +
@@ -15425,6 +15443,17 @@ function saveDetail() {
     return;
   }
   var status = $("d_status").value;
+  // r189: which team a handover goes to is the category. Picking the other
+  // team moves the issue across (and restarts its with-the-team clock, so the
+  // developers' turnaround figures don't inherit time it spent with the course
+  // team). with_course is only ever a dropdown value; the row says with_dev.
+  var handover = null;
+  var handIssue = (state.issues || []).filter(function (i) { return i.issue_id === state.detailId; })[0] || {};
+  if (status === "with_course" || status === "with_dev") {
+    var wantCat = status === "with_course" ? "course_error" : "tech_issue";
+    status = "with_dev";
+    if (catOf(handIssue) !== wantCat) handover = { category: wantCat, dev_passed_at: new Date().toISOString() };
+  }
   var note = detailResolutionNote();
   // Make sure we capture how it was fixed when fully resolving.
   if (status === "resolved" && !note) { toast("Add a resolution note before resolving."); return; }
@@ -15478,6 +15507,7 @@ function saveDetail() {
     student_sorted: $("d_sorted") ? $("d_sorted").checked : false
   };
   if ($("d_priority")) payload.priority = $("d_priority").value;
+  if (handover) Object.assign(payload, handover);
   // The board changes the moment the button goes down, and the write catches
   // up behind it. Nine times out of ten this used to be a five second wait
   // on a blank pane (Round 54).
@@ -15487,6 +15517,7 @@ function saveDetail() {
     student_sorted: ($("d_sorted") && $("d_sorted").checked) ? "true" : ""
   };
   if (payload.priority) fields.priority = payload.priority;
+  if (handover) Object.assign(fields, handover);
   if (status === "resolved" || status === "resolved_tbc") fields.resolved_at = new Date().toISOString();
   var savingId = payload.issue_id;
   closeDetail();
