@@ -14292,18 +14292,20 @@ function shipXref_(orders, shipments, now) {
   // for postage and what the label cost, for the cost accuracy section.
   // [order id, order day, paid, label cost, courier, country, flags]
   // flags: 1 matched by destination, 2 courier guessed from the country.
-  var pairs = [], noCost = 0, otherCur = 0, otherBy = {};
+  var pairs = [], noCost = 0, otherCur = 0, otherBy = {}, noCostBy = {};
   function pair(o, s, dest) {
-    if (s.cost == null || !isFinite(s.cost)) { noCost++; return; }
-    var why = s.cost_currency && s.cost_currency !== (o.currency || 'gbp') ? 'label ' + s.cost_currency + ' ' + s.courier
-            : o.currency && o.currency !== 'gbp' ? 'paid ' + o.currency : '';
-    if (why) {
-      otherCur++; otherBy[why] = (otherBy[why] || 0) + 1;
-      // A few examples of each, so the page can show what was set aside.
-      var ex = otherBy[why + ' e.g.'] = otherBy[why + ' e.g.'] || [];
-      if (ex.length < 6) ex.push([o.paid, s.cost, o.country]);
+    // A label ShipStation holds no price for comes back as 0.00 in "usd"
+    // (seen live 19 Sep 2026: every UK Royal Mail label, and UK DHL ones,
+    // bought outside ShipStation). Zero is "not known", never a free label.
+    if (s.cost == null || !isFinite(s.cost) || s.cost <= 0) {
+      noCost++;
+      var nk = o.courier + '|' + (shipRegion_(o.country) === 'uk' ? 'UK' : 'abroad');
+      noCostBy[nk] = (noCostBy[nk] || 0) + 1;
       return;
     }
+    var why = s.cost_currency && s.cost_currency !== (o.currency || 'gbp') ? 'label ' + s.cost_currency + ' ' + s.courier
+            : o.currency && o.currency !== 'gbp' ? 'paid ' + o.currency : '';
+    if (why) { otherCur++; otherBy[why] = (otherBy[why] || 0) + 1; return; }
     pairs.push([o.id || '', String(o.at || '').slice(0, 10), o.paid != null ? o.paid : (o.shipping_gbp || 0), s.cost,
                 o.courier, String(o.country || '').toUpperCase(), (dest ? 1 : 0) | (o.courier_guessed ? 2 : 0)]);
   }
@@ -14330,7 +14332,7 @@ function shipXref_(orders, shipments, now) {
   });
   return { orders: orders.length, matched: matched, matched_by_destination: byDest, median_days: shipMedian_(lags),
            within_2: lags.filter(function (x) { return x <= 2; }).length, unmatched: unmatched.slice(0, 40), unmatched_n: unmatched.length,
-           _cost: { v: SHIP_COST_V, pairs: pairs, no_cost: noCost, other_currency: otherCur, other_by: otherBy } };
+           _cost: { v: SHIP_COST_V, pairs: pairs, no_cost: noCost, other_currency: otherCur, other_by: otherBy, no_cost_by: noCostBy } };
 }
 function shipWorkingDays_(fromDay, toDay) {
   var a = new Date(fromDay + 'T12:00:00Z'), b = new Date(toDay + 'T12:00:00Z'), n = 0;
@@ -14436,7 +14438,7 @@ function shipVolumesRefresh_(data) {
 // cross-reference matched to a shipment (by email or by destination) carries
 // what the customer paid for postage and what the label cost. The page does
 // the banding, so moving the tolerance redraws at once without a round trip.
-var SHIP_COST_V = 3;
+var SHIP_COST_V = 4;
 var SHIP_COST_FLOOR_ = '2020-11';          // the Stripe account opened in November 2020
 var SHIP_COST_TOL_KEY_ = 'SHIP_COST_TOL';
 var SHIP_COST_HIST_KEY_ = 'SHIP_COST_HIST';
@@ -14519,7 +14521,7 @@ function shipCost_(data) {
     if (!c || c.v !== SHIP_COST_V) return;
     var x = null; try { x = r.xref_json ? JSON.parse(r.xref_json) : null; } catch (e) {}
     months.push({ month: String(r.month), orders: x ? x.orders : null, matched: x ? x.matched : null, pairs: c.pairs || [],
-                  no_cost: c.no_cost || 0, other_currency: c.other_currency || 0, other_by: c.other_by || {}, error: c.error || '', trimmed: !!c.trimmed });
+                  no_cost: c.no_cost || 0, other_currency: c.other_currency || 0, other_by: c.other_by || {}, no_cost_by: c.no_cost_by || {}, error: c.error || '', trimmed: !!c.trimmed });
   });
   months.sort(function (a, b) { return a.month < b.month ? -1 : 1; });
   var cfg = shipCfg_();

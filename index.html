@@ -9186,11 +9186,15 @@ function shipCostBody(d) {
   h += "</div>";
 
   // ---- what is not in here
-  var noCost = 0, otherCur = 0, orders = 0, matched = 0, costErr = "", trimmed = false;
-  c.months.forEach(function (m) { noCost += m.no_cost; otherCur += m.other_currency; orders += m.orders || 0; matched += m.matched || 0; if (m.error) costErr = m.error; if (m.trimmed) trimmed = true; });
+  var noCost = 0, otherCur = 0, orders = 0, matched = 0, costErr = "", trimmed = false, ncBy = {};
+  // Only the months the lists look at, so the caveat matches the figures above.
+  pms.forEach(function (m) { noCost += m.no_cost; otherCur += m.other_currency; orders += m.orders || 0; matched += m.matched || 0; if (m.error) costErr = m.error; if (m.trimmed) trimmed = true;
+    Object.keys(m.no_cost_by || {}).forEach(function (k) { ncBy[k] = (ncBy[k] || 0) + m.no_cost_by[k]; }); });
   var gaps = [];
   if (orders > matched) gaps.push((orders - matched) + " paid orders never matched to a shipment");
-  if (noCost) gaps.push(noCost + " matched shipment" + (noCost === 1 ? "" : "s") + " with no label cost in ShipStation");
+  if (noCost) gaps.push(noCost + " matched shipment" + (noCost === 1 ? "" : "s") + " with no label cost in ShipStation (" +
+    Object.keys(ncBy).sort(function (a, b) { return ncBy[b] - ncBy[a]; }).map(function (k) { var p = k.split("|"); return ncBy[k] + " " + p[0] + " " + (p[1] === "UK" ? "in the UK" : "abroad"); }).join(", ") +
+    "), most likely labels bought outside ShipStation, so it has no price for them");
   if (otherCur) gaps.push(otherCur + " in a currency other than pounds");
   h += '<p class="small muted" style="margin:12px 0 0;">Every order matched to a shipment, whether by email or by destination, all time. ' +
     (gaps.length ? "Not compared: " + gaps.join(", ") + ". " : "") +
