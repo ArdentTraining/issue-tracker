@@ -385,7 +385,11 @@ const STATIONS = {
 };
 
 const DECK_Y = 0.65;
-const KEEL_Y = -0.75;
+// The hull stops just under the waterline. Nobody sees a boat's underwater
+// body from another boat, and the water is painted first, so anything drawn
+// below y=0 shows THROUGH the sea and the boat looks to be sitting on top of
+// it. The first cut went to -0.75 and floated a foot too high for that reason.
+const KEEL_Y = -0.16;
 
 /** Sheer: the deck line rises towards the bow, and a touch at the stern. A flat
  *  deck edge is the single thing that most makes a hull read as a box. */
@@ -401,7 +405,7 @@ function deckY(z, kind) {
 function ring(z, beam, kind) {
   const w = beam / 2;
   const dy = deckY(z, kind);
-  const mid = dy - 0.55;
+  const mid = dy - 0.42;
   const k = w * 0.32;
   return [
     [-w, dy, z], [-w * 0.94, mid, z], [-k, KEEL_Y, z],
@@ -445,7 +449,7 @@ function sail(tack, head, clew, belly) {
  *  stations, just above the water on each side. */
 function bootTop(stations, kind) {
   const v = [], f = [];
-  const y0 = 0.02, y1 = 0.22;
+  const y0 = -0.03, y1 = 0.17;
   for (const [z, beam] of stations) {
     const w = (beam / 2) * 0.96;
     v.push([-w, y0, z], [-w, y1, z], [w, y1, z], [w, y0, z]);
