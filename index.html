@@ -3719,7 +3719,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r192.1 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r193 · 2026-09-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -10238,7 +10238,172 @@ var IRPCS_Q_TYPES = [
   { k: "multi",  label: "Tick all that apply", help: "Tick every right one. It is all or nothing for the student: three out of four is wrong." },
   { k: "order",  label: "Put these in order", help: "Write the options in the RIGHT order. The student sees them shuffled and puts them back." },
   { k: "identify", label: "Identify the vessel", help: "A vessel drawn from its lights, frozen at one bearing, and four things to say about it. Each right field earns a share and all four earns a bonus, so three of four scores under half." },
+  { k: "build", label: "Put the lights or shapes on", help: "A bare hull, and a list of places a light or a shape can go. The student picks what goes at each place, or nothing, and the boat draws it as they go. Right only when every place is right, the empty ones included." },
+  { k: "sort", label: "Sort under headings", help: "Two or more headings and a list of items. The student puts each item under the heading it belongs to. Right only when every item is under its heading." },
 ];
+// r193: the figures the student app can draw itself, by name, so a question or
+// an option can carry a picture without an illustrator. The names are the
+// contract with app/figures.js on the student site; the labels are copied.
+var IRPCS_SHAPE_SETS = [
+  ["ball", "One ball (at anchor)"], ["two_balls", "Two balls (not under command)"], ["three_balls", "Three balls (aground)"],
+  ["ball_diamond_ball", "Ball, diamond, ball (restricted)"], ["cylinder", "Cylinder (constrained by draught)"],
+  ["cone_down", "Cone, point down (sailing under engine)"], ["cone_up", "Cone, point up (fishing gear out)"],
+  ["cones_apex", "Two cones, points together (fishing)"], ["diamond", "Diamond (tow over 200m)"],
+  ["mine", "Three balls, one up two out (mine clearance)"], ["fishing_gear", "Fishing, with gear out over 150m"],
+  ["works_pass_right", "Underwater works, pass on the right as we look"], ["works_pass_left", "Underwater works, pass on the left as we look"],
+  ["ram_at_anchor", "Restricted, and at anchor"]
+];
+var IRPCS_FLAGS = [["A", "Flag A (diver down)"], ["H", "Flag H (pilot on board)"]];
+// The places a light or a shape can go on the build question, and what can go
+// there. Keys are the contract with app/build.js.
+var IRPCS_BUILD = {
+  lights: { slots: [["masthead_fore", "Masthead light, forward"], ["masthead_aft", "Second masthead light, aft and higher"], ["port", "Port side"], ["starboard", "Starboard side"], ["stern", "Stern"], ["allround_top", "All-round, top of the mast"], ["allround_mid", "All-round, middle"], ["allround_low", "All-round, lowest"]],
+            palette: [["none", "Nothing"], ["white", "White"], ["red", "Red"], ["green", "Green"], ["yellow", "Yellow"], ["flashing_yellow", "Flashing yellow"], ["flashing_red", "Flashing red"]] },
+  shapes: { slots: [["mast_top", "Top of the mast"], ["mast_mid", "Middle of the mast"], ["mast_low", "Lowest on the mast"], ["fore", "In the fore part"], ["yard_port", "Port yard"], ["yard_stbd", "Starboard yard"]],
+            palette: [["none", "Nothing"], ["ball", "Ball"], ["cone_down", "Cone, point down"], ["cone_up", "Cone, point up"], ["cones_apex", "Two cones, points together"], ["diamond", "Diamond"], ["cylinder", "Cylinder"]] }
+};
+function irpcsFigureValue(fig) {
+  if (!fig || typeof fig !== "object") return "";
+  if (fig.kind === "shapes" && fig.name) return "shapes:" + fig.name;
+  if (fig.kind === "flag") return "flag:" + fig.letter;
+  if (fig.kind === "model") return "model";
+  if (fig.kind === "image") return "image";
+  return "json";
+}
+function irpcsFigureFrom(value, prev) {
+  if (!value) return null;
+  if (value.indexOf("shapes:") === 0) return { kind: "shapes", name: value.slice(7) };
+  if (value.indexOf("flag:") === 0) return { kind: "flag", letter: value.slice(5) };
+  if (value === "model") return (prev && prev.kind === "model") ? prev : { kind: "model", preset: "power_under50", bearing: -35, night: false };
+  return prev || null;
+}
+function irpcsFigureOptions(current) {
+  var v = irpcsFigureValue(current);
+  var out = '<option value="">No picture</option>' +
+    '<optgroup label="Day shapes">' + IRPCS_SHAPE_SETS.map(function (x) { return '<option value="shapes:' + x[0] + '"' + (v === "shapes:" + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>' +
+    '<optgroup label="Flags">' + IRPCS_FLAGS.map(function (x) { return '<option value="flag:' + x[0] + '"' + (v === "flag:" + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>';
+  if (v === "image" || v === "json") out += '<option value="' + v + '" selected>' + (v === "image" ? "A diagram from the library (edit as JSON)" : "Set in JSON") + '</option>';
+  return out;
+}
+function irpcsOptText(o) { return (o && typeof o === "object") ? String(o.text || "") : String(o == null ? "" : o); }
+function irpcsOptFigure(o) { return (o && typeof o === "object" && o.figure) ? o.figure : null; }
+function irpcsSetOptText(idx, text) {
+  var e = irpcs.edited; if (!e || !Array.isArray(e.options)) return;
+  var o = e.options[idx];
+  e.options[idx] = (o && typeof o === "object") ? Object.assign({}, o, { text: text }) : text;
+  irpcsMarkDirty();
+}
+function irpcsSetOptFigure(idx, value) {
+  var e = irpcs.edited; if (!e || !Array.isArray(e.options)) return;
+  var o = e.options[idx], fig = irpcsFigureFrom(value, irpcsOptFigure(o));
+  e.options[idx] = fig ? { text: irpcsOptText(o), figure: fig } : irpcsOptText(o);
+  irpcsMarkDirty();
+}
+function irpcsSetQFigure(value) {
+  var e = irpcs.edited; if (!e) return;
+  var fig = irpcsFigureFrom(value, e.figure);
+  if (fig) e.figure = fig; else delete e.figure;
+  irpcsMarkDirty();
+  irpcsRenderEditor();
+}
+function irpcsSetQFigureModel(k, v) {
+  var e = irpcs.edited; if (!e || !e.figure || e.figure.kind !== "model") return;
+  e.figure[k] = v;
+  irpcsMarkDirty();
+}
+function irpcsQFigureForm(e) {
+  var fig = e.figure || null, v = irpcsFigureValue(fig);
+  var h = '<div class="fld"><label for="irf_qfig">Picture on the question</label>' +
+    '<p class="small muted" style="margin:0 0 4px;">Drawn between the question and the answers. A day shape, a flag, or one of the vessels by day.</p>' +
+    '<select id="irf_qfig" onchange="irpcsSetQFigure(this.value)">' +
+      '<option value="">No picture</option>' +
+      '<option value="model"' + (v === "model" ? " selected" : "") + '>One of the vessels</option>' +
+      '<optgroup label="Day shapes">' + IRPCS_SHAPE_SETS.map(function (x) { return '<option value="shapes:' + x[0] + '"' + (v === "shapes:" + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>' +
+      '<optgroup label="Flags">' + IRPCS_FLAGS.map(function (x) { return '<option value="flag:' + x[0] + '"' + (v === "flag:" + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>' +
+      ((v === "image" || v === "json") ? '<option value="' + v + '" selected>Set in JSON</option>' : "") +
+    '</select>';
+  if (v === "model") {
+    h += '<div class="row" style="gap:12px;flex-wrap:wrap;margin-top:6px;">' +
+      '<div class="fld" style="flex:1;min-width:220px;"><label>Vessel</label><select onchange="irpcsSetQFigureModel(\'preset\', this.value)">' +
+        IRPCS_MODELS.map(function (m) { return '<option value="' + esc(m.preset) + '"' + (m.preset === fig.preset ? " selected" : "") + '>' + esc(m.label) + '</option>'; }).join("") + '</select></div>' +
+      '<div class="fld" style="flex:0 0 120px;"><label>Seen from</label><input type="number" min="-180" max="180" step="5" value="' + esc(fig.bearing == null ? -35 : fig.bearing) + '" oninput="irpcsSetQFigureModel(\'bearing\', Number(this.value))"></div>' +
+      '<label class="rad" style="align-self:end;margin-bottom:12px;"><input type="checkbox" ' + (fig.night ? "checked" : "") + ' onchange="irpcsSetQFigureModel(\'night\', this.checked)"> Night</label>' +
+      '</div>' +
+      (fig.shapes || fig.lights || fig.hull ? '<p class="small muted" style="margin:0 0 6px;">This one also carries its own ' + [fig.hull ? "hull" : "", fig.shapes ? "shapes" : "", fig.lights ? "lights" : ""].filter(String).join(", ") + ', set in JSON.</p>' : "");
+  }
+  return h + '</div>';
+}
+function irpcsSetBuild(k, v) {
+  var e = irpcs.edited; if (!e) return;
+  if (k === "build") {
+    e.build = v; e.correct = {};
+    if (!e.scene) e.scene = {};
+    e.scene.night = v === "lights";
+    if (v === "shapes" && !e.scene.preset) e.scene.preset = "power_under50";
+    irpcsMarkDirty(); irpcsRenderEditor(); return;
+  }
+  irpcsMarkDirty();
+}
+function irpcsSetBuildSlot(slot, v) {
+  var e = irpcs.edited; if (!e) return;
+  if (!e.correct || typeof e.correct !== "object" || Array.isArray(e.correct)) e.correct = {};
+  if (v === "none") delete e.correct[slot]; else e.correct[slot] = v;
+  irpcsMarkDirty();
+}
+function irpcsBuildForm(e) {
+  var kind = e.build === "shapes" ? "shapes" : "lights";
+  var t = IRPCS_BUILD[kind], sc = e.scene || {}, c = (e.correct && typeof e.correct === "object") ? e.correct : {};
+  return '<div class="fld"><label>What goes on</label>' +
+    '<select onchange="irpcsSetBuild(\'build\', this.value)"><option value="lights"' + (kind === "lights" ? " selected" : "") + '>Lights, at night</option><option value="shapes"' + (kind === "shapes" ? " selected" : "") + '>Day shapes</option></select></div>' +
+    '<div class="row" style="gap:12px;flex-wrap:wrap;">' +
+      '<div class="fld" style="flex:1;min-width:220px;"><label>Hull</label>' +
+        '<p class="small muted" style="margin:0 0 4px;">Only the hull is used; its own lights and shapes are taken off.</p>' +
+        '<select onchange="irpcsSetScene(\'preset\', this.value)">' +
+          IRPCS_MODELS.map(function (m) { return '<option value="' + esc(m.preset) + '"' + (m.preset === sc.preset ? " selected" : "") + '>' + esc(m.label) + '</option>'; }).join("") + '</select></div>' +
+      '<div class="fld" style="flex:0 0 120px;"><label>Seen from</label>' +
+        '<input type="number" min="-180" max="180" step="5" value="' + esc(sc.bearing == null ? -40 : sc.bearing) + '" oninput="irpcsSetScene(\'bearing\', Number(this.value))"></div>' +
+    '</div>' +
+    '<div class="fld"><label>The right answer</label>' +
+      '<p class="small muted" style="margin:0 0 6px;">What goes at each place. A place left as Nothing must be left empty by the student too.</p>' +
+      t.slots.map(function (sl) {
+        var cur = c[sl[0]] || "none";
+        return '<div class="irpcs-opt"><span class="small" style="min-width:220px;display:inline-block;">' + esc(sl[1]) + '</span>' +
+          '<select onchange="irpcsSetBuildSlot(\'' + sl[0] + '\', this.value)">' +
+            t.palette.map(function (p) { return '<option value="' + p[0] + '"' + (cur === p[0] ? " selected" : "") + '>' + esc(p[1]) + '</option>'; }).join("") +
+          '</select></div>';
+      }).join("") +
+    '</div>';
+}
+function irpcsSetSortCats(text) {
+  var e = irpcs.edited; if (!e) return;
+  e.categories = String(text).split(/\n/).map(function (t) { return t.trim(); }).filter(Boolean);
+  (e.items || []).forEach(function (it) { if (it.correct >= e.categories.length) it.correct = 0; });
+  irpcsMarkDirty(); irpcsRenderEditor();
+}
+function irpcsSetSortItem(n, k, v) {
+  var e = irpcs.edited; if (!e || !Array.isArray(e.items) || !e.items[n]) return;
+  if (k === "figure") { var fig = irpcsFigureFrom(v, e.items[n].figure); if (fig) e.items[n].figure = fig; else delete e.items[n].figure; }
+  else e.items[n][k] = v;
+  irpcsMarkDirty();
+}
+function irpcsSortItemAdd() { var e = irpcs.edited; if (!e) return; (e.items = e.items || []).push({ text: "", correct: 0 }); irpcsMarkDirty(); irpcsRenderEditor(); }
+function irpcsSortItemRemove(n) { var e = irpcs.edited; if (!e || !e.items) return; e.items.splice(n, 1); irpcsMarkDirty(); irpcsRenderEditor(); }
+function irpcsSortForm(e) {
+  var cats = Array.isArray(e.categories) ? e.categories : [], items = Array.isArray(e.items) ? e.items : [];
+  return '<div class="fld"><label>Headings, one per line</label>' +
+    '<textarea rows="3" onchange="irpcsSetSortCats(this.value)">' + esc(cats.join("\n")) + '</textarea></div>' +
+    '<div class="fld"><label>Items</label>' +
+    items.map(function (it, n) {
+      return '<div class="irpcs-opt" style="flex-wrap:wrap;">' +
+        '<input type="text" value="' + esc(it.text || "") + '" placeholder="The item" style="flex:2;min-width:200px;" oninput="irpcsSetSortItem(' + n + ', \'text\', this.value)">' +
+        '<select style="flex:1;min-width:140px;" onchange="irpcsSetSortItem(' + n + ', \'correct\', Number(this.value))">' +
+          cats.map(function (cat, ci) { return '<option value="' + ci + '"' + (Number(it.correct) === ci ? " selected" : "") + '>' + esc(cat || ("Heading " + (ci + 1))) + '</option>'; }).join("") + '</select>' +
+        '<select style="flex:1;min-width:140px;" title="A picture instead of, or as well as, the words" onchange="irpcsSetSortItem(' + n + ', \'figure\', this.value)">' + irpcsFigureOptions(it.figure) + '</select>' +
+        (items.length > 1 ? '<button class="ghost small" style="padding:2px 8px;" onclick="irpcsSortItemRemove(' + n + ')">Remove</button>' : "") +
+        '</div>';
+    }).join("") +
+    '<button class="ghost small" style="padding:4px 10px;margin-top:6px;" onclick="irpcsSortItemAdd()">Add an item</button></div>';
+}
 // r190: the identify question. The four fields below are the house set, in
 // this wording, because the student page draws the wrong status next to the
 // right one and finds the vessel to draw by the option's text.
@@ -10255,6 +10420,8 @@ function irpcsIdentifyFields() {
 function irpcsQType(e) {
   if (e.type === "order") return "order";
   if (e.type === "identify") return "identify";
+  if (e.type === "build") return "build";
+  if (e.type === "sort") return "sort";
   if (Array.isArray(e.correct)) return "multi";
   return "single";
 }
@@ -10263,12 +10430,22 @@ function irpcsSetQType(k) {
   var was = irpcsQType(e);
   if (k === was) return;
   e.type = k;
+  var wasSpecial = ["identify", "build", "sort"].indexOf(was) >= 0;
   if (k === "identify") {
-    e.options = []; e.correct = null;
+    e.options = []; e.correct = null; delete e.build; delete e.categories; delete e.items;
     if (!e.scene) e.scene = { preset: "power_under50", bearing: -35, night: true, making: true, motion: "still" };
     if (!Array.isArray(e.fields) || !e.fields.length) e.fields = irpcsIdentifyFields();
+  } else if (k === "build") {
+    e.options = []; delete e.fields; delete e.categories; delete e.items;
+    if (!e.build) e.build = "lights";
+    e.scene = { preset: (e.scene && e.scene.preset) || "power_under50", bearing: -40, night: e.build === "lights" };
+    if (!e.correct || typeof e.correct !== "object" || Array.isArray(e.correct)) e.correct = {};
+  } else if (k === "sort") {
+    e.options = []; e.correct = null; delete e.scene; delete e.fields; delete e.build;
+    if (!Array.isArray(e.categories) || e.categories.length < 2) e.categories = ["", ""];
+    if (!Array.isArray(e.items) || !e.items.length) e.items = [{ text: "", correct: 0 }];
   } else {
-    if (was === "identify") { delete e.scene; delete e.fields; if (!Array.isArray(e.options) || !e.options.length) e.options = ["", "", "", ""]; }
+    if (wasSpecial) { delete e.scene; delete e.fields; delete e.build; delete e.categories; delete e.items; if (!Array.isArray(e.options) || !e.options.length) e.options = ["", "", "", ""]; if (e.correct && typeof e.correct === "object" && !Array.isArray(e.correct)) e.correct = 0; }
     if (k === "multi") e.correct = Number.isInteger(e.correct) ? [e.correct] : [];
     else if (k === "single") e.correct = Array.isArray(e.correct) && e.correct.length ? e.correct[0] : 0;
     else delete e.correct;
@@ -10350,6 +10527,9 @@ function irpcsQuestionForm(e) {
         }).join("") +
       '</select></div>' +
     (qt === "identify" ? '<p class="small muted" style="margin:-6px 0 10px;">' + esc(typeDef.help) + '</p>' + irpcsIdentifyForm(e) :
+     qt === "build" ? '<p class="small muted" style="margin:-6px 0 10px;">' + esc(typeDef.help) + '</p>' + irpcsBuildForm(e) :
+     qt === "sort" ? '<p class="small muted" style="margin:-6px 0 10px;">' + esc(typeDef.help) + '</p>' + irpcsQFigureForm(e) + irpcsSortForm(e) :
+    irpcsQFigureForm(e) +
     '<div class="fld"><label>Answers</label>' +
       '<p class="small muted" style="margin:0 0 4px;">' + esc(typeDef.help) + '</p>' +
       opts.map(function (o, idx) {
@@ -10363,8 +10543,11 @@ function irpcsQuestionForm(e) {
         } else {
           mark = '<span class="small muted" style="min-width:52px;display:inline-block;">' + (idx + 1) + '.</span>';
         }
-        return '<div class="irpcs-opt">' + mark +
-          '<input type="text" value="' + esc(o) + '" oninput="irpcsSetIn(\'options\', ' + idx + ', this.value)">' +
+        // r193: an option can carry a picture (a day shape or a flag) drawn
+        // above its words, so a "which shapes?" question shows the shapes.
+        return '<div class="irpcs-opt" style="flex-wrap:wrap;">' + mark +
+          '<input type="text" value="' + esc(irpcsOptText(o)) + '" style="flex:2;min-width:180px;" oninput="irpcsSetOptText(' + idx + ', this.value)">' +
+          '<select style="flex:1;min-width:150px;" title="A picture on this answer" onchange="irpcsSetOptFigure(' + idx + ', this.value)">' + irpcsFigureOptions(irpcsOptFigure(o)) + '</select>' +
           '</div>';
       }).join("") +
     '</div>') +
@@ -11767,6 +11950,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 41, date: "2026-09-20", who: ["irpcs"], text: "IRPCS: two new kinds of question, put the lights or shapes on a vessel, and sort items under headings. A question or an answer can carry a picture the app draws itself: a day shape, a flag or a vessel by day." },
   { n: 40, date: "2026-09-19", who: ["users"], text: "RCA takes screenshots and files. Attach them, or paste or drop them into the box." },
   { n: 39, date: "2026-09-19", who: ["log"], text: "Shipping report: note a change to how we ship and it is marked on the chart." },
   { n: 38, date: "2026-09-19", text: "Clear all on the bell." },
