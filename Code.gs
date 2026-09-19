@@ -6129,6 +6129,7 @@ function ensureTriggers_() {
   var haveEnrich = false;     // r152
   var haveDevTargets = false; // r170
   var haveWaiting = false;    // r175
+  var haveInbox = false;      // r186
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -6142,9 +6143,14 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'enrichContacts') haveEnrich = true;
     if (t.getHandlerFunction() === 'devTargetSweep') haveDevTargets = true;
     if (t.getHandlerFunction() === 'waitingOnStudentSweep') haveWaiting = true;
+    if (t.getHandlerFunction() === 'claudeInbox') haveInbox = true;
   });
   // r175: 08:00, so the chase list is sitting there when the day starts rather
   // than arriving on top of whatever else the morning brings.
+  // r186: Claude's letterbox. Five minutes, so a report Claude files lands on
+  // the board about as fast as somebody typing it in; an empty inbox costs one
+  // small fetch.
+  if (!haveInbox) ScriptApp.newTrigger('claudeInbox').timeBased().everyMinutes(5).create();
   if (!haveWaiting) ScriptApp.newTrigger('waitingOnStudentSweep').timeBased().everyDays(1).atHour(8).create();
   if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
   if (!haveEnrich) ScriptApp.newTrigger('enrichContacts').timeBased().everyDays(1).atHour(19).create();   // r152: end of the working day
@@ -6376,7 +6382,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1 };
+var RUNNABLE_JOBS_ = { prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -8021,7 +8027,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r182.4 · 2026-09-18';
+var CODE_STAMP = 'r186 · 2026-09-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -13053,4 +13059,128 @@ function faultSweep() {
   Logger.log('faultSweep: ' + (live ? 'filed ' : 'DRY RUN, would file ') + filed +
              ', already filed ' + skipped +
              (live ? '' : '. Set ARDENT_FAULT_SWEEP_DRY to blank to arm it.'));
+}
+
+/* ===================== CLAUDE'S INBOX (r186, 19 Sep 2026) =====================
+ *
+ * Edd: "I would also recommend we build a new way for you to file
+ * issues/reports. You should be able to add them at the backend." On 19 Sep
+ * Claude had eight student reports to file and the browser pane would not load
+ * any page at all, so filing depended on a borrowed Chrome tab.
+ *
+ * Claude CAN reach the Supabase database. So Claude writes a row into
+ * inbox.items (migration 040), and this job collects pending rows through the
+ * `inbox` Edge Function every five minutes and files each one through
+ * addIssue_ / addUpdate_, the same functions the form uses. Matching, merging,
+ * scoring, returning-fault checks and Slack all behave exactly as they would
+ * for a person pressing Submit. The outcome (issue id, merged or not, or the
+ * error) is written back onto the row, which is how Claude checks it landed.
+ *
+ * Rows file as the Claude account, never as a person: the trail should say a
+ * machine logged it, the same reason faultSweep files as "Fault sweep".
+ *
+ * Exactly-once: a row is claimed before filing, and the filed result is kept
+ * in a script property until the report back succeeds. If a run dies between
+ * filing and reporting, the row is offered again after 15 minutes, the
+ * property is found, and the SAME result is reported instead of filing twice.
+ *
+ * Nothing sends in either direction without the signed ticket, which only
+ * this script can mint (REPORTS_TICKET_SECRET), and the Edge Function only
+ * accepts one for inbox@ardent-training.com carrying perms.inbox.
+ * ============================================================================ */
+
+var INBOX_URL = 'https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/inbox';
+var INBOX_BATCH = 5;          // each filing can make an AI match call; stay far inside 6 minutes
+var INBOX_FILER = { name: 'Claude', email: 'claude-agent@ardent-training.com' };
+var INBOX_DONE_PREFIX = 'INBOX_DONE_';
+
+function inboxCall_(ticket, body) {
+  var res = UrlFetchApp.fetch(INBOX_URL, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + ticket },
+    payload: JSON.stringify(body),
+    muteHttpExceptions: true
+  });
+  var code = res.getResponseCode();
+  var out = {};
+  try { out = JSON.parse(res.getContentText()); } catch (e) { out = { error: res.getContentText().slice(0, 200) }; }
+  if (code !== 200) throw new Error('inbox ' + body.action + ': HTTP ' + code + ' ' + (out.error || ''));
+  return out;
+}
+
+// Only the fields a person could send from the form. Anything starting with an
+// underscore is the backend's own plumbing (_user, _import_date,
+// _suppress_slack), and identity always comes from INBOX_FILER.
+function inboxPayload_(p) {
+  var d = {};
+  Object.keys(p || {}).forEach(function (k) {
+    if (k.charAt(0) === '_' || k === 'token' || k === 'action' || k === 'instructor_name' || k === 'instructor_email') return;
+    d[k] = p[k];
+  });
+  d._user = INBOX_FILER;
+  if (!d.app_url) {
+    try { d.app_url = PropertiesService.getScriptProperties().getProperty('APP_URL') || ''; } catch (e) {}
+  }
+  return d;
+}
+
+function claudeInbox() {
+  var t = mintPortalTicket_({
+    email: 'inbox@ardent-training.com',
+    name: 'Claude inbox',
+    perms_json: JSON.stringify({ inbox: true })
+  }, 'inbox');
+  if (!t.ok) { Logger.log('claudeInbox: no ticket (' + t.error + ')'); return { ok: false, error: t.error }; }
+
+  var claimed;
+  try { claimed = inboxCall_(t.ticket, { action: 'claim', limit: INBOX_BATCH }); }
+  catch (e) { Logger.log('claudeInbox: ' + e); return { ok: false, error: String(e) }; }
+  var items = claimed.items || [];
+  if (claimed.gave_up) Logger.log('claudeInbox: ' + claimed.gave_up + ' row(s) failed after repeated abandoned claims');
+  if (!items.length) return { ok: true, filed: 0 };
+
+  var props = PropertiesService.getScriptProperties();
+  var results = [];
+  var wrote = false;
+  items.forEach(function (it) {
+    var doneKey = INBOX_DONE_PREFIX + it.id;
+    var prior = props.getProperty(doneKey);
+    if (prior) {                       // filed on an earlier run, report never landed
+      try { results.push(JSON.parse(prior)); return; } catch (e) {}
+    }
+    var r, out;
+    try {
+      var data = inboxPayload_(it.payload);
+      if (it.kind === 'update') {
+        if (!data.issue_id) throw new Error('an update needs payload.issue_id');
+        r = addUpdate_(data);
+      } else {
+        r = addIssue_(data);
+      }
+      var issueId = (r && r.issue && r.issue.issue_id) || (r && r.issue_id) || (it.kind === 'update' ? data.issue_id : '');
+      out = (r && r.ok)
+        ? { id: it.id, ok: true, issue_id: issueId, merged: !!(r.merged), result: { status: r.issue && r.issue.status, priority: r.issue && r.issue.priority } }
+        : { id: it.id, ok: false, error: (r && r.error) || 'the tracker said no without a reason' };
+      if (out.ok) wrote = true;
+    } catch (e) {
+      out = { id: it.id, ok: false, error: String(e && e.message || e) };
+    }
+    if (out.ok) { try { props.setProperty(doneKey, JSON.stringify(out)); } catch (e) {} }
+    results.push(out);
+    Logger.log('claudeInbox #' + it.id + ': ' + (out.ok ? (out.merged ? 'merged into ' : 'filed ') + out.issue_id : 'FAILED ' + out.error));
+  });
+
+  // Scheduled writes do not pass through doPost, so the cached board would not
+  // show these for up to ten minutes. Drop it, the same as a form submit.
+  if (wrote) { try { invalidateIssueCache_(); dropBootExtras_(['live_cases']); } catch (e) {} }
+
+  try {
+    inboxCall_(t.ticket, { action: 'report', results: results });
+    results.forEach(function (x) { try { props.deleteProperty(INBOX_DONE_PREFIX + x.id); } catch (e) {} });
+  } catch (e) {
+    // Kept in properties: the next claim of these rows reports instead of refiling.
+    Logger.log('claudeInbox: report back failed, will retry: ' + e);
+  }
+  return { ok: true, filed: results.filter(function (x) { return x.ok; }).length, failed: results.filter(function (x) { return !x.ok; }).length };
 }
