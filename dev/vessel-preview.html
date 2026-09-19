@@ -1622,9 +1622,11 @@ const scenes = [
   ['Learn page: RAM making way, day, sea moving', { preset: 'ram', bearing: -35, night: false, motion: 'making' }],
   ['Learn page: mine clearance >=50m, night', { preset: 'mine_over50', bearing: 50, motion: 'still' }],
 ];
+const views = [];
 for (const [title, spec] of scenes) {
-  const v = createVesselView(spec, document);
+  const v = createVesselView(spec, document); views.push(v);
   const d = document.createElement('div'); d.innerHTML = '<h2>' + title + '</h2>';
   d.appendChild(v.el); g.appendChild(d);
 }
+setTimeout(() => views.forEach((v) => v.destroy()), 3000);  // freeze so a screenshot can be taken
 </script>
