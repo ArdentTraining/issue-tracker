@@ -390,7 +390,7 @@ const PRESETS = {
       light('starboard', GREEN, [1.5, 1.0, 2.2], 'Starboard sidelight'),
       light('port', RED, [-1.5, 1.0, 2.2], 'Port sidelight'),
       light('stern', WHITE, [0, 1.1, -4.8], 'Sternlight'),
-      light('allround', RED, [0, 3.5, 1.2], 'High-intensity all-round flashing red', { flash: 480 }),
+      light('allround', RED, [0, 3.9, 1.2], 'High-intensity all-round flashing red', { flash: 480 }),
     ],
     shapes: [],
     note: 'A power-driven vessel\'s lights with a bright flashing red above them. A wing-in-ground craft skimming the surface can be doing 100 knots, which is why the extra light has to be one we cannot miss.',
@@ -404,7 +404,7 @@ const PRESETS = {
       light('starboard', GREEN, [1.5, 1.0, 2.2], 'Starboard sidelight'),
       light('port', RED, [-1.5, 1.0, 2.2], 'Port sidelight'),
       light('stern', WHITE, [0, 1.1, -4.8], 'Sternlight'),
-      light('allround', YELLOW, [0, 3.5, 1.2], 'All-round flashing yellow', { flash: 600 }),
+      light('allround', YELLOW, [0, 3.9, 1.2], 'All-round flashing yellow', { flash: 600 }),
     ],
     shapes: [],
     note: 'A power-driven vessel\'s lights plus a flashing yellow. A hovercraft up on its skirt slides sideways in any wind and stops nothing like a boat, so the flashing yellow says "give this one room".',
@@ -1522,11 +1522,17 @@ function createVesselView(spec = {}, doc = document) {
     if (animated && !dead) schedule();
   }
 
+  // A moving sea repaints at about 24 frames a second, not 60. This is a
+  // software renderer on a phone; the roll is slow enough that nobody can tell,
+  // and the battery can.
+  const FRAME_MS = 42;
+  let lastFrame = 0;
   function schedule() {
     if (raf || dead) return;
-    raf = (typeof requestAnimationFrame === 'function')
-      ? requestAnimationFrame(paint)
-      : setTimeout(paint, animated ? 40 : 16);
+    const rafFn = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : null;
+    if (!animated) { raf = rafFn ? rafFn(paint) : setTimeout(paint, 16); return; }
+    const wait = Math.max(0, FRAME_MS - (Date.now() - lastFrame));
+    raf = setTimeout(() => { lastFrame = Date.now(); if (rafFn) raf = rafFn(paint); else paint(); }, wait);
   }
 
   // --- dragging ---
