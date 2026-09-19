@@ -571,6 +571,7 @@ function doGet(e) {
     var p = (e && e.parameter) || {};
     var action = p.action || '';
     CURRENT_ACTION_ = action;
+    TOUCHED_IDS_ = {};
     if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
     if (action === 'getInvite') return jsonOut(getInvite_(p.token));   // public: validate an invite link
     if (action === 'mirror') return jsonOut(mirror_(p));               // read-only, key-gated mirror for the local Cowork sync
@@ -606,6 +607,7 @@ function doPost(e) {
     if (e && e.postData && e.postData.contents) body = JSON.parse(e.postData.contents);
     var action = body.action || '';
     CURRENT_ACTION_ = action;
+    TOUCHED_IDS_ = {};
 
     // Public auth actions (no session yet).
     // Self-deploy: gated by its own DEPLOY_KEY (script property), not a user
@@ -1852,6 +1854,10 @@ var READ_ONLY_ACTIONS = {
   // issue row, so the cached issue list is still true after any of them.
   customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsMySigner: 1, saveCustomsSigner: 1,
   caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
+  // r185: preferences live on the Users tab and never touch an issue row, and
+  // opening What's new, the bell or feedback saves one, and each of those was
+  // throwing the whole board away for nothing.
+  setPrefs: 1,
   // nextAction DOES write one cell (its own cached answer), and it still
   // belongs here. The list projection leaves next_action_json out entirely, so
   // there is no way for a held cache to show a stale next action - and dropping
@@ -1860,10 +1866,121 @@ var READ_ONLY_ACTIONS = {
   nextAction: 1
 };
 var CURRENT_ACTION_ = '';
+
+/* r185 (Edd, 19 Sep 2026): "Why does this take so long to update/load".
+ * Measured: a warm open was ~6.5s and the first open after ANY write ~11s,
+ * because every write threw the whole cached board away and the next reader
+ * paid 3.6s re-reading 1,200 rows. Most writes change one row. So the five
+ * busiest write actions now patch the rows they touched into the cached list
+ * instead of dropping it.
+ *
+ * Which rows: findRow_ is the only way these five find a row to write, and
+ * addIssue_ records the row it appends. Checked by walking every function
+ * each one can reach: the only other writes are Slack thread stamps on the
+ * same row (also via findRow_). Any action NOT on this list still drops the
+ * cache exactly as before, so a new action is safe by default. If one of
+ * these five ever gains a write that does not go through findRow_, take it
+ * off the list.
+ */
+var PATCHABLE_ACTIONS = { updateIssue: 1, addUpdate: 1, addIssue: 1, assignIssue: 1, saveChecklist: 1 };
+var PATCH_MAX_ROWS = 12;
+var TOUCHED_IDS_ = null;
+function touchIssue_(id) { if (TOUCHED_IDS_ && id) TOUCHED_IDS_[String(id)] = 1; }
+
 function maybeInvalidate_() {
   if (!CURRENT_ACTION_) return;
-  if (READ_ONLY_ACTIONS[CURRENT_ACTION_]) return;
+  var action = CURRENT_ACTION_;
+  maybeDropBootExtras_(action);
+  if (READ_ONLY_ACTIONS[action]) return;
+  if (PATCHABLE_ACTIONS[action] && TOUCHED_IDS_) {
+    var ids = Object.keys(TOUCHED_IDS_);
+    if (ids.length && ids.length <= PATCH_MAX_ROWS && patchIssueCache_(ids)) return;
+  }
   invalidateIssueCache_();
+}
+
+// Re-reads just these rows and writes them into the cached list, keeping the
+// cache's ORIGINAL expiry. That matters: scheduled jobs (scans, sweeps) write
+// without dropping the cache and rely on the ten-minute expiry to show up, so
+// a patch must never extend it. Returns false to fall back to a full drop.
+function patchIssueCache_(ids) {
+  try {
+    var raw = cacheGetChunked_(ISSUE_CACHE_KEY);
+    if (!raw) return true;                 // nothing cached, nothing stale
+    var p = JSON.parse(raw);
+    var built = new Date(p.built_at || p.generated_at || 0).getTime();
+    var left = Math.floor(ISSUE_CACHE_SECONDS - (Date.now() - built) / 1000);
+    if (!built || left < 30) return false; // about to expire anyway: let it rebuild
+    var list = p.issues || [];
+    var at = {};
+    for (var i = 0; i < list.length; i++) at[list[i].issue_id] = i;
+    var gone = {};
+    ids.forEach(function (id) {
+      var got = getIssueFull_({ issue_id: id });
+      if (got && got.ok && got.issue) {
+        var row = issueListRow_(got.issue);
+        if (at[id] != null) list[at[id]] = row;
+        else { at[id] = list.length; list.push(row); }
+      } else if (at[id] != null) {
+        gone[id] = 1;                      // deleted or merged away
+      }
+    });
+    p.issues = list.filter(function (r) { return !gone[r.issue_id]; });
+    p.built_at = p.built_at || p.generated_at;
+    p.generated_at = new Date().toISOString();
+    delete p.from_cache;
+    return cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(p), left);
+  } catch (e) { return false; }
+}
+
+/* r185: the rest of bootstrap, cached too. Measured warm: instructors,
+ * assignees, live cases and scans together were ~2.3s of every open, each
+ * re-reading its own sheet. Same rule as the issue list, only stricter: ONLY
+ * the pure reads below keep these. Anything else drops them all, except the
+ * five issue writes, which touch nothing but issue rows and so only drop the
+ * live cases (those carry each issue's status). Scheduled jobs write without
+ * dropping anything, so each piece also expires on its own, soonest for the
+ * pieces a job writes.
+ */
+var BOOT_EXTRAS_ = {
+  instructors: 600, assignees: 600, playbook_suggestions: 600, knownfix_corrections: 600,
+  scans: 300, live_cases: 120
+};
+var BOOT_EXTRAS_KEY_ = 'ait_boot_x1_';
+var PURE_READS_ = {
+  ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
+  listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1,
+  getAssignees: 1, mirror: 1, chatScanList: 1, listLiveCases: 1, lessonIssueCounts: 1,
+  askIssues: 1, askManual: 1, extract: 1, suggestFix: 1, troubleshoot: 1, matchUpdate: 1, sameIssue: 1,
+  getManifest: 1, getInvite: 1, customsPacks: 1, customsList: 1, customsFetch: 1,
+  chatwootList: 1, chatwootContactUrl: 1, draftStudentMessage: 1, listVoiceGuides: 1, listContentSuggestions: 1,
+  // These two DO write, but only a cell no extra is built from: nextAction its
+  // own cached answer on the issue row, setPrefs the person's preferences.
+  // nextAction runs every time an issue opens, so dropping on it would empty
+  // this cache all day.
+  nextAction: 1, setPrefs: 1
+};
+function bootExtra_(name, build) {
+  var c = null;
+  try {
+    c = CacheService.getScriptCache();
+    var hit = c.get(BOOT_EXTRAS_KEY_ + name);
+    if (hit != null) return JSON.parse(hit);
+  } catch (e) {}
+  var v = build();
+  try {
+    var s = JSON.stringify(v);
+    if (c && s.length < 90 * 1024) c.put(BOOT_EXTRAS_KEY_ + name, s, BOOT_EXTRAS_[name] || 120);
+  } catch (e) {}
+  return v;
+}
+function dropBootExtras_(names) {
+  try { CacheService.getScriptCache().removeAll(names.map(function (n) { return BOOT_EXTRAS_KEY_ + n; })); } catch (e) {}
+}
+function maybeDropBootExtras_(action) {
+  if (PURE_READS_[action]) return;
+  if (PATCHABLE_ACTIONS[action]) { dropBootExtras_(['live_cases']); return; }
+  dropBootExtras_(Object.keys(BOOT_EXTRAS_));
 }
 
 // The list payload: cached projection, or built and cached.
@@ -1902,7 +2019,8 @@ function getIssuesList_() {
       out.push(issueListRow_(obj));
     }
   });
-  var payload = { ok: true, generated_at: new Date().toISOString(), issues: out };
+  var nowIso = new Date().toISOString();
+  var payload = { ok: true, generated_at: nowIso, built_at: nowIso, issues: out };
   cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(payload), ISSUE_CACHE_SECONDS);
   return payload;
 }
@@ -1965,26 +2083,26 @@ function bootstrap_(user) {
   out.issues_from_cache = !!list.from_cache;
   ms.issues = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('getInstructors'))) {
-    try { out.instructors = getInstructors_().instructors || []; } catch (e) { out.instructors_error = String(e); }
+    try { out.instructors = bootExtra_('instructors', function () { return getInstructors_().instructors || []; }); } catch (e) { out.instructors_error = String(e); }
   }
   ms.instructors = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('getAssignees'))) {
-    try { out.assignees = listAssignees_().assignees || []; } catch (e) { out.assignees_error = String(e); }
+    try { out.assignees = bootExtra_('assignees', function () { return listAssignees_().assignees || []; }); } catch (e) { out.assignees_error = String(e); }
   }
   ms.assignees = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('listLiveCases'))) {
-    try { out.live_cases = listLiveCases_({ _issues: out.issues }).cases || []; } catch (e) { out.live_cases_error = String(e); }
+    try { out.live_cases = bootExtra_('live_cases', function () { return listLiveCases_({ _issues: out.issues }).cases || []; }); } catch (e) { out.live_cases_error = String(e); }
   }
   ms.live_cases = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('chatScanList'))) {
-    try { out.scans = chatScanList_().scans || []; } catch (e) { out.scans_error = String(e); }
+    try { out.scans = bootExtra_('scans', function () { return chatScanList_().scans || []; }); } catch (e) { out.scans_error = String(e); }
   }
   ms.scans = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('listPlaybookSuggestions'))) {
-    try { out.playbook_suggestions = getSuggestions_() || []; } catch (e) {}
+    try { out.playbook_suggestions = bootExtra_('playbook_suggestions', function () { return getSuggestions_() || []; }); } catch (e) {}
   }
   if (hasPerm_(user, reqPerm_('listKnownFixFlags'))) {
-    try { out.knownfix_corrections = getKfCorrections_() || []; } catch (e) {}
+    try { out.knownfix_corrections = bootExtra_('knownfix_corrections', function () { return getKfCorrections_() || []; }); } catch (e) {}
   }
   ms.total = Date.now() - t0;
   out.ms = ms;   // cumulative milliseconds at each step
@@ -2396,6 +2514,7 @@ function addIssue_(data) {
   var noteError = '';   // FB-0357: a Chatwoot note that did not arrive is said out loud
   var sheet = sheetByName_(targetSheetName_(category));
   sheet.appendRow(recordToRow_(issue));
+  touchIssue_(issue.issue_id);   // r185: a new row, patched into the cached list
   if (fastTrackRequested) { try { sendFastTrackRequestSlack_(issue, data.app_url || getAppUrl_()); } catch (e) {} }
 
   // Slack only for a high-priority fix; never let a Slack failure block the save.
@@ -2983,6 +3102,7 @@ function findRow_(id) {
         var head = values[0];
         var obj = {};
         for (var c = 0; c < head.length; c++) obj[head[c]] = values[r][c];
+        touchIssue_(id);   // r185: this request may change this row, see patchIssueCache_
         return { sheetName: ISSUE_SHEETS[s], sheet: sheet, rowNum: r + 1, record: obj };
       }
     }
