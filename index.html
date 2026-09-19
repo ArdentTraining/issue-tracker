@@ -2433,6 +2433,18 @@
   <div id="irpcsResultsPane" class="hidden">
     <div id="irpcsResultsBody"></div>
   </div>
+
+  <!-- ---------- MODELS (r191) ---------- -->
+  <div id="irpcsModelsPane" class="hidden">
+    <div class="card" style="padding:10px 12px;margin-bottom:12px;">
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+        <span class="small muted" style="flex:1;min-width:200px;">Every vessel the student app can draw, exactly as students see it. Drag any of them round. The name in grey is the one to look for in the model picker.</span>
+        <button class="ghost small" style="padding:5px 10px;" onclick="irpcsRenderModels(true)" title="Load the models again, for instance after the student site has been updated.">Reload</button>
+        <button class="ghost small" style="padding:5px 10px;" onclick="window.open(IRPCS_APP_URL + '/models.html', '_blank')" title="Open in a new tab, with the whole screen to play with.">Open in a new tab</button>
+      </div>
+    </div>
+    <div class="irpcs-frame-host" id="irpcsModelsHost"></div>
+  </div>
 </div>
 
 <!-- ===================== RCA (Root Cause Analysis) =====================
@@ -3649,7 +3661,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r190 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r191 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9337,6 +9349,8 @@ function renderIrpcs() {
     irpcsMediaLoad();
   } else if (irpcs.tab === "preview") {
     irpcsRenderPreview();
+  } else if (irpcs.tab === "models") {
+    irpcsRenderModels();
   } else {
     irpcsRenderResults();
   }
@@ -9352,7 +9366,8 @@ function irpcsSetTab(k) {
 
 function irpcsShowTab() {
   var panes = [["irpcsContentPane", "content"], ["irpcsMediaPane", "media"],
-               ["irpcsPreviewPane", "preview"], ["irpcsResultsPane", "results"]];
+               ["irpcsPreviewPane", "preview"], ["irpcsResultsPane", "results"],
+               ["irpcsModelsPane", "models"]];
   panes.forEach(function (p) {
     var el = $(p[0]);
     if (el) el.classList.toggle("hidden", irpcs.tab !== p[1]);
@@ -10170,6 +10185,27 @@ function irpcsPreviewPopOut() {
     if (w) w.close();
     toast("Could not open the preview: " + String((e && e.message) || e));
   });
+}
+
+/* ---------------- models ---------------- */
+
+// r191 (19 Sep 2026): Edd asked for a page where we can see every model. It is
+// a frame onto models.html on the student site rather than a copy of the
+// models here, because the models are the student site's code (vessel3d.js)
+// and that site does not let other origins import it. A copy would be 1,600
+// lines that drift from what students see; the frame IS what students see.
+// The page reads the vessel list straight from vessel3d.js, so a new preset
+// appears here without touching the tracker. It needs no token: nothing on it
+// is about anybody.
+//
+// Built once and left alone when the tab is switched away, so coming back does
+// not reload it. The page itself only animates what is on screen.
+function irpcsRenderModels(force) {
+  var host = $("irpcsModelsHost");
+  if (!host) return;
+  if (host.querySelector("iframe") && !force) return;
+  host.innerHTML = '<iframe src="' + esc(IRPCS_APP_URL + "/models.html" + (force ? "?r=" + Date.now() : "")) +
+    '" title="IRPCS vessel models" referrerpolicy="no-referrer"></iframe>';
 }
 
 /* ---------------- results ---------------- */
@@ -11127,6 +11163,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 37, date: "2026-09-19", text: "IRPCS has a Models page, under Results: every vessel the student app can draw, side by side, filtered by rule, by day or night, still or moving. The grey name under each is the one to pick from the model list. On the Learn pages the models now float on a moving sea too, making way when the vessel is underway and riding at anchor when it is anchored." },
   { n: 36, date: "2026-09-19", text: "A fourth kind of IRPCS question: Identify the vessel. Pick a vessel and a bearing and the student sees it as a silhouette at night on a calm sea, lights only, and says what it is, its aspect, its size and whether it is making way. Every vessel in the rules is in the list now, mine clearance and hovercraft included." },
   { n: 35, date: "2026-09-19", who: ["users"], text: "The Status box always offers all three hand-overs: With developers, With the course team and With Edd. Before, it only offered whichever team matched how the issue was filed, so a website fault filed as a course error could not be sent to the developers. Picking the other team moves the issue to that team's page." },
   { n: 34, date: "2026-09-19", who: ["log"], text: "Customs on the rail is now Shipping, with two pages: Report and Customs invoice. The report shows each month's parcel problems by type and courier, from the tracker and from the chats, against how many packs we sent, plus the parcels still open and any shipping chat nobody logged. A summary goes to the shipping channel on the 1st." },
@@ -11378,7 +11415,8 @@ function subRailSpec() {
   if (v === "irpcs") return {
     head: "IRPCS", cur: irpcs.tab, go: irpcsSetTab,
     items: [{ key: "content", label: "Content" }, { key: "media", label: "Media" },
-            { key: "preview", label: "Preview" }, { key: "results", label: "Results" }]
+            { key: "preview", label: "Preview" }, { key: "results", label: "Results" },
+            { key: "models", label: "Models" }]
   };
   if (v === "dev") return {
     head: "Developers", cur: state.devFilter, go: setDevFilter,
