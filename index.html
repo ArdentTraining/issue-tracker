@@ -3649,7 +3649,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r188 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r188.2 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8715,7 +8715,7 @@ function shipSourcesCard(d) {
   h += "<div><b>ShipStation</b> " + (s.shipstation ? '<span class="on">connected</span>' : '<span class="off">not connected</span>') +
     "<br>What actually went out, by carrier and destination, and how long after payment.";
   if (admin) h += (s.shipstation ? '<br><a href="#" class="small" onclick="shipDisconnect(\'shipstation\');return false;">Disconnect</a>'
-    : '<input id="shr_ssk" type="password" autocomplete="off" placeholder="API key"><input id="shr_sss" type="password" autocomplete="off" placeholder="API secret"><div class="small muted">In ShipStation: Settings, Account, API Settings.</div>');
+    : '<input id="shr_ssk" type="password" autocomplete="off" placeholder="API key (V1 or V2)"><input id="shr_sss" type="password" autocomplete="off" placeholder="API secret (V1 only, leave blank for V2)"><div class="small muted">In ShipStation: Settings, Account, API Settings. A V2 key is a single key with no secret.</div>');
   h += "</div></div>";
   if (admin && (!s.stripe || !s.shipstation)) h += '<div style="margin-top:10px;"><button class="primary" id="shr_connect" onclick="shipConnect()">Connect</button> <span id="shr_cmsg" class="small muted">Keys are checked, stored on the server, and never shown again.</span></div>';
   if (!admin && (!s.stripe || !s.shipstation)) h += '<p class="small muted" style="margin-bottom:0;">An admin can connect Stripe and ShipStation from this page.</p>';

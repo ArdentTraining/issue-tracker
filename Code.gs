@@ -8068,7 +8068,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r188 · 2026-09-19';
+var CODE_STAMP = 'r188.2 · 2026-09-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -14034,8 +14034,13 @@ function shipBfPublic_(s) {
 // ---------------------------------------------------------------- volumes
 function shipCfg_() {
   var p = PropertiesService.getScriptProperties();
-  return { stripe: p.getProperty('STRIPE_READ_KEY') || '', ssKey: p.getProperty('SHIPSTATION_KEY') || '',
-           ssSecret: p.getProperty('SHIPSTATION_SECRET') || '' };
+  // ShipStation has two APIs. V1 is a key and a secret; V2 (19 Sep: the V1
+  // slots were both taken, and both are in use elsewhere) is a single key.
+  // Either one will do; ssOn says whether we have one.
+  var c = { stripe: p.getProperty('STRIPE_READ_KEY') || '', ssKey: p.getProperty('SHIPSTATION_KEY') || '',
+            ssSecret: p.getProperty('SHIPSTATION_SECRET') || '', ssV2: p.getProperty('SHIPSTATION_V2_KEY') || '' };
+  c.ssOn = !!(c.ssV2 || (c.ssKey && c.ssSecret));
+  return c;
 }
 function shipStripeGet_(key, path) {
   var r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, { headers: { Authorization: 'Bearer ' + key }, muteHttpExceptions: true });
@@ -14078,7 +14083,41 @@ function shipShipStationGet_(cfg, path) {
   if (code < 200 || code >= 300) throw new Error('ShipStation ' + code + ': ' + r.getContentText().slice(0, 160));
   return JSON.parse(r.getContentText());
 }
+function shipShipStationV2Get_(key, path) {
+  var url = 'https://api.shipstation.com/v2/' + path;
+  var r = UrlFetchApp.fetch(url, { headers: { 'API-Key': key }, muteHttpExceptions: true });
+  var code = r.getResponseCode();
+  if (code === 429) { Utilities.sleep(2000); r = UrlFetchApp.fetch(url, { headers: { 'API-Key': key }, muteHttpExceptions: true }); code = r.getResponseCode(); }
+  if (code < 200 || code >= 300) throw new Error('ShipStation ' + code + ': ' + r.getContentText().slice(0, 160));
+  return JSON.parse(r.getContentText());
+}
+// V2 lists shipments by when they were CREATED (an order lands in ShipStation
+// around the time it is paid), not by when they went out. So it reads a wider
+// window, keeps only shipments with a label bought, and sorts them by their
+// own ship date afterwards, the same as V1 does.
+function shipShipStationV2Shipments_(cfg, fromDay, toDay) {
+  var a = new Date(fromDay + 'T00:00:00Z'); a.setUTCDate(a.getUTCDate() - 21);
+  var b = new Date(toDay + 'T23:59:59Z');
+  var out = [], page = 1, pages = 1;
+  while (page <= pages && page <= 20) {
+    var res = shipShipStationV2Get_(cfg.ssV2, 'shipments?shipment_status=label_purchased&page_size=500&page=' + page +
+      '&created_at_start=' + encodeURIComponent(a.toISOString()) + '&created_at_end=' + encodeURIComponent(b.toISOString()));
+    pages = Number(res.pages) || 1;
+    (res.shipments || []).forEach(function (s) {
+      var to = s.ship_to || {};
+      var day = String(s.ship_date || '').slice(0, 10);
+      if (!day || day < fromDay || day > toDay) return;
+      out.push({ day: day, email: String(to.email || '').toLowerCase(),
+                 courier: shipCourier_(s.service_code || s.carrier_code || s.carrier_id) || 'Other',
+                 country: String(to.country_code || ''), region: shipRegion_(to.country_code),
+                 tracking: normaliseTracking_(s.tracking_number || '') });
+    });
+    page++;
+  }
+  return out;
+}
 function shipShipStationShipments_(cfg, fromDay, toDay) {
+  if (cfg.ssV2) return shipShipStationV2Shipments_(cfg, fromDay, toDay);
   var out = [], page = 1, pages = 1;
   while (page <= pages && page <= 20) {
     var res = shipShipStationGet_(cfg, 'shipments?shipDateStart=' + fromDay + '&shipDateEnd=' + toDay + '&pageSize=500&page=' + page);
@@ -14148,7 +14187,7 @@ function shipFetchMonth_(ym) {
       row.stripe_json = JSON.stringify(t); }
     catch (e) { errs.push(String(e.message || e)); }
   }
-  if (cfg.ssKey && cfg.ssSecret) {
+  if (cfg.ssOn) {
     try {
       var tz = Session.getScriptTimeZone();
       var d0 = Utilities.formatDate(rng.start, tz, 'yyyy-MM-dd');
@@ -14170,7 +14209,7 @@ function shipFetchMonth_(ym) {
 function shipStaleMonths_(months, rows, cfg) {
   var have = {}; rows.forEach(function (r) { have[String(r.month)] = r; });
   var now = Date.now(), cur = shipMonthOf_(new Date());
-  var connected = !!cfg.stripe || !!(cfg.ssKey && cfg.ssSecret);
+  var connected = !!cfg.stripe || cfg.ssOn;
   if (!connected) return [];
   return months.filter(function (m) {
     if (m > cur) return false;
@@ -14178,7 +14217,7 @@ function shipStaleMonths_(months, rows, cfg) {
     if (!r) return true;
     // A source connected after this month was fetched needs another go.
     if (cfg.stripe && !r.stripe_json) return true;
-    if (cfg.ssKey && !r.shipstation_json) return true;
+    if (cfg.ssOn && !r.shipstation_json) return true;
     var age = now - new Date(r.fetched_at).getTime();
     var settled = new Date(r.fetched_at).getTime() > shipMonthRange_(m).end.getTime() + 35 * 86400000;
     if (settled) return false;
@@ -14208,7 +14247,7 @@ function shipVolumesRefresh_(data) {
 function setShipConfig_(data) {
   var p = PropertiesService.getScriptProperties(), out = { ok: true, stripe: null, shipstation: null };
   if (data.clear_stripe) p.deleteProperty('STRIPE_READ_KEY');
-  if (data.clear_shipstation) { p.deleteProperty('SHIPSTATION_KEY'); p.deleteProperty('SHIPSTATION_SECRET'); }
+  if (data.clear_shipstation) { p.deleteProperty('SHIPSTATION_KEY'); p.deleteProperty('SHIPSTATION_SECRET'); p.deleteProperty('SHIPSTATION_V2_KEY'); }
   var sk = String(data.stripe_key || '').trim();
   if (sk) {
     if (!/^(rk|sk)_(live|test)_/.test(sk)) return { ok: false, error: 'That does not look like a Stripe key. A restricted key starts rk_live_.' };
@@ -14216,9 +14255,13 @@ function setShipConfig_(data) {
     catch (e) { return { ok: false, error: 'Stripe said no: ' + String(e.message || e).slice(0, 200) + '. Nothing was saved.' }; }
   }
   var k = String(data.shipstation_key || '').trim(), s = String(data.shipstation_secret || '').trim();
-  if (k || s) {
-    if (!k || !s) return { ok: false, error: 'ShipStation needs both the API key and the API secret.' };
-    try { shipShipStationGet_({ ssKey: k, ssSecret: s }, 'carriers'); p.setProperty('SHIPSTATION_KEY', k); p.setProperty('SHIPSTATION_SECRET', s); out.shipstation = 'connected'; }
+  if (k && !s) {
+    // A key on its own is a V2 key.
+    try { shipShipStationV2Get_(k, 'carriers'); p.setProperty('SHIPSTATION_V2_KEY', k); p.deleteProperty('SHIPSTATION_KEY'); p.deleteProperty('SHIPSTATION_SECRET'); out.shipstation = 'connected (V2)'; }
+    catch (e3) { return { ok: false, error: 'ShipStation said no to that V2 key: ' + String(e3.message || e3).slice(0, 200) + '. If it is a V1 key, it needs its secret too. Nothing was saved.' }; }
+  } else if (k || s) {
+    if (!k) return { ok: false, error: 'ShipStation needs the API key as well as the secret.' };
+    try { shipShipStationGet_({ ssKey: k, ssSecret: s }, 'carriers'); p.setProperty('SHIPSTATION_KEY', k); p.setProperty('SHIPSTATION_SECRET', s); p.deleteProperty('SHIPSTATION_V2_KEY'); out.shipstation = 'connected (V1)'; }
     catch (e2) { return { ok: false, error: 'ShipStation said no: ' + String(e2.message || e2).slice(0, 200) + '. Nothing was saved.' }; }
   }
   // New sources change every month's figures, so the cached ones go.
@@ -14360,7 +14403,7 @@ function shipReport_(data) {
     }),
     open: open, unlogged: unloggedList.sort(function (a, b) { return a.at < b.at ? 1 : -1; }),
     sources: {
-      stripe: !!cfg.stripe, shipstation: !!(cfg.ssKey && cfg.ssSecret), chatwoot: !!(cw.token && cw.account),
+      stripe: !!cfg.stripe, shipstation: cfg.ssOn, chatwoot: !!(cw.token && cw.account),
       chats_since: since, nightly: run ? { at: run.at, listed: run.listed, hits: run.hits, tagged: run.tagged, note: run.note || '' } : null,
       backfill: shipBfPublic_(), volumes_stale: shipStaleMonths_(months, vol, cfg).length
     },
