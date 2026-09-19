@@ -643,6 +643,17 @@
   .rca-msg.user { align-self: flex-end; background: var(--surface); border: 1px solid var(--line); }
   .rca-msg.assistant { align-self: flex-start; background: var(--surface); border-left: 3px solid var(--accent); }
   .rca-msg .who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  /* r191: files and screenshots in RCA */
+  .rca-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .rca-files:empty { display: none; }
+  .rca-file { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; font-size: 12px; background: var(--surface); max-width: 260px; }
+  .rca-file img { width: 36px; height: 28px; object-fit: cover; border-radius: 4px; }
+  .rca-file .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rca-file button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
+  .rca-att { display: block; margin-top: 6px; white-space: normal; }
+  .rca-att img { max-width: 100%; max-height: 320px; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; display: block; }
+  .rca-att .chip { display: inline-block; border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+  #rcaPanel.dragging .rca-input { outline: 2px dashed var(--accent); outline-offset: -4px; }
   .rca-tool { align-self: flex-start; font-size: 12px; color: var(--muted); }
   .rca-tool details { cursor: pointer; }
   .rca-input { border-top: 1px solid var(--line); padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; }
@@ -1877,6 +1888,17 @@
   #shipReportView .shr-col.cur { outline: 2px solid var(--coral); outline-offset: 2px; border-radius: 3px; }
   #shipReportView .shr-col .top { position: absolute; top: -18px; left: -4px; right: -4px; text-align: center; font-size: 11px; font-weight: 600; white-space: nowrap; }
   #shipReportView .shr-col .rate { display: block; font-weight: 400; color: var(--muted); font-size: 10px; }
+  /* r191: a change we made to how we ship, marked on its month. */
+  #shipReportView .shr-col .chg { position: absolute; left: 50%; bottom: 18px; top: -30px; width: 0; border-left: 2px dashed var(--coral); pointer-events: none; }
+  #shipReportView .shr-col .chg-n { position: absolute; top: -34px; left: 50%; transform: translateX(-50%); background: var(--coral); color: #111; font-size: 10px; font-weight: 700;
+    border-radius: 9px; min-width: 16px; height: 16px; line-height: 16px; text-align: center; padding: 0 4px; }
+  #shipReportView .shr-trend.has-chg { padding-top: 40px; }
+  #shipReportView .shr-changes { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+  #shipReportView .shr-changes .chg-row { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
+  #shipReportView .shr-changes .chg-row .d { flex: 0 0 90px; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+  #shipReportView .shr-stand a { color: inherit; text-decoration: underline; text-decoration-color: var(--coral); text-underline-offset: 3px; cursor: pointer; }
+  #shipReportView .flash { animation: shrflash 1.6s ease-out; }
+  @keyframes shrflash { 0% { box-shadow: 0 0 0 3px var(--coral); } 100% { box-shadow: 0 0 0 3px transparent; } }
   #shipReportView .shr-col .lab { position: absolute; bottom: -20px; left: -4px; right: -4px; text-align: center; font-size: 10px; color: var(--muted); }
   #shipReportView .shr-col.nochat .seg-l { background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.18) 4px 6px); }
   #shipReportView .shr-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
@@ -2481,10 +2503,13 @@
   </div>
   <div id="rcaMsgs" class="rca-msgs"></div>
   <div class="rca-input">
-    <textarea id="rcaText" rows="2" placeholder="Work the problem. The assistant can read Chatwoot, the tracker, and the infra timeline - all read-only."></textarea>
+    <div id="rcaFiles" class="rca-files"></div>
+    <textarea id="rcaText" rows="2" placeholder="Work the problem. The assistant can read Chatwoot, the tracker, and the infra timeline - all read-only. Paste or drop a screenshot straight in here." onpaste="rcaPaste(event)"></textarea>
+    <input type="file" id="rcaFileInput" multiple accept="image/*,application/pdf,.txt,.log,.csv,.json,.md,.html,.xml,.har,.ndjson,.yaml,.yml,.sql" style="display:none" onchange="rcaAddFiles(this.files);this.value=''">
     <div class="row" style="gap:8px;justify-content:space-between;align-items:center;">
       <span class="small muted" id="rcaUsage"></span>
       <div class="row" style="gap:8px;">
+        <button class="ghost small" style="padding:5px 10px;" onclick="$('rcaFileInput').click()" title="Screenshots, PDFs and text files like logs, CSV or JSON. You can also paste or drop them into the box.">Attach</button>
         <button class="ghost small" style="padding:5px 10px;" onclick="rcaAddInfra()" title="Record a deploy or infra change on the shared timeline the deploy_log tool reads.">Log infra event</button>
         <button class="primary small" id="rcaSendBtn" style="padding:6px 16px;" onclick="rcaSend()">Send</button>
       </div>
@@ -3661,7 +3686,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r191 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r192 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6110,6 +6135,7 @@ function rcaMsgHtml(m) {
   }
   var parts = [];
   (m.content || []).forEach(function (c) {
+    if (c.type === "file_ref") { parts.push(rcaAttHtml(c)); return; }
     if (c.type === "text" && c.text) parts.push(esc(c.text));
     if (c.type === "tool_use") parts.push('<span class="muted small">→ ' + esc(c.name) + '(' + esc(JSON.stringify(c.input || {}).slice(0, 160)) + ')</span>');
   });
@@ -6117,21 +6143,152 @@ function rcaMsgHtml(m) {
   var who = m.role === "user" ? (m.author || "you") : "investigator";
   return '<div class="rca-msg ' + (m.role === "user" ? "user" : "assistant") + '"><div class="who">' + esc(who) + '</div>' + parts.join("<br>") + '</div>';
 }
+// ---------------------------------------------------------------- r191: files
+// Edd: "I could do with being able to upload files... and screenshots in RCA."
+// Screenshots are shrunk here to 1600px on the long side before they go, which
+// keeps them readable for the model and far under the Worker's 1.4MB a file.
+// Anything already in the conversation is fetched on demand to show it, so a
+// long record does not download every screenshot it has ever had to open.
+var RCA_FILE_EXT_ = { log: "text/plain", txt: "text/plain", md: "text/markdown", csv: "text/csv", json: "application/json", har: "application/json",
+  ndjson: "application/x-ndjson", html: "text/html", xml: "application/xml", yaml: "application/yaml", yml: "application/yaml", sql: "application/sql", pdf: "application/pdf" };
+state.rcaPending = [];
+state.rcaFileCache = {};
+function rcaFileMime_(f) {
+  var ext = String(f.name || "").split(".").pop().toLowerCase();
+  if (/^image\//.test(f.type)) return f.type;
+  return RCA_FILE_EXT_[ext] || f.type || "";
+}
+function rcaAddFiles(list) {
+  Array.prototype.slice.call(list || []).forEach(function (f) {
+    if (state.rcaPending.length >= 6) { toast("Up to six files a message."); return; }
+    var mime = rcaFileMime_(f);
+    var item = { name: f.name || "screenshot.png", mime: mime, data: null, preview: null, busy: true };
+    state.rcaPending.push(item);
+    rcaRenderPending();
+    var done = function () { item.busy = false; rcaRenderPending(); };
+    var fail = function (why) { state.rcaPending.splice(state.rcaPending.indexOf(item), 1); toast(item.name + ": " + why, 7000); rcaRenderPending(); };
+    if (/^image\//.test(mime)) {
+      rcaShrinkImage_(f).then(function (out) { item.mime = out.mime; item.data = out.data; item.preview = out.url; if (!/\.(png|jpe?g|gif|webp)$/i.test(item.name) || out.mime === "image/jpeg") item.name = item.name.replace(/\.[a-z]+$/i, "") + (out.mime === "image/jpeg" ? ".jpg" : ".png"); done(); })
+        .catch(function () { fail("could not read that image."); });
+    } else if (mime === "application/pdf") {
+      if (f.size > 1400000) { fail("is over 1.4MB. Try a smaller PDF, or a screenshot of the page that matters."); return; }
+      var fr = new FileReader();
+      fr.onload = function () { item.data = String(fr.result).split(",")[1]; done(); };
+      fr.onerror = function () { fail("could not be read."); };
+      fr.readAsDataURL(f);
+    } else if (/^text\/|json|xml|yaml|sql|csv|ndjson/.test(mime)) {
+      if (f.size > 250000) { fail("is too long. Trim it to the part that matters."); return; }
+      var tr = new FileReader();
+      tr.onload = function () { item.data = String(tr.result); done(); };
+      tr.onerror = function () { fail("could not be read."); };
+      tr.readAsText(f);
+    } else fail("that kind of file cannot be read here. Screenshots, PDFs and text files can.");
+  });
+}
+function rcaShrinkImage_(file) {
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(file), img = new Image();
+    img.onload = function () {
+      var max = 1600, w = img.naturalWidth, h = img.naturalHeight, k = Math.min(1, max / Math.max(w, h));
+      var c = document.createElement("canvas"); c.width = Math.round(w * k); c.height = Math.round(h * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      // PNG keeps small text crisp; fall back to JPEG when a PNG would be big.
+      var png = c.toDataURL("image/png"), out = png, mime = "image/png";
+      if (png.length > 1100000) { out = c.toDataURL("image/jpeg", 0.88); mime = "image/jpeg"; }
+      if (out.length > 1850000) out = c.toDataURL("image/jpeg", 0.7), mime = "image/jpeg";
+      resolve({ mime: mime, data: out.split(",")[1], url: out });
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); reject(); };
+    img.src = url;
+  });
+}
+function rcaPaste(e) {
+  var items = (e.clipboardData && e.clipboardData.files) || [];
+  if (!items.length) return;
+  e.preventDefault();
+  rcaAddFiles(items);
+}
+function rcaRenderPending() {
+  var host = $("rcaFiles"); if (!host) return;
+  host.innerHTML = state.rcaPending.map(function (f, i) {
+    return '<span class="rca-file">' + (f.preview ? '<img src="' + f.preview + '" alt="">' : '<span class="muted">' + (f.busy ? '<span class="spinner"></span>' : "📄") + "</span>") +
+      '<span class="nm" title="' + esc(f.name) + '">' + esc(f.name) + '</span><button title="Remove" onclick="state.rcaPending.splice(' + i + ',1);rcaRenderPending()">✕</button></span>';
+  }).join("");
+}
+function rcaAttHtml(c) {
+  var id = "rcaatt_" + c.file_id;
+  var isImg = /^image\//.test(c.mime);
+  setTimeout(function () { rcaFillAtt_(c, id); }, 0);
+  return '<span class="rca-att" id="' + id + '">' + (isImg ? '<span class="muted small">' + esc(c.name) + ' (loading)</span>'
+    : '<span class="chip" onclick="rcaOpenAtt(' + Number(c.file_id) + ')" title="Open">📄 ' + esc(c.name) + "</span>") + "</span>";
+}
+function rcaFetchFile_(fileId) {
+  if (state.rcaFileCache[fileId]) return Promise.resolve(state.rcaFileCache[fileId]);
+  return rcaApi("/api/file", { file_id: fileId }).then(function (res) {
+    if (!res || !res.ok) throw new Error((res && res.error) || "not found");
+    state.rcaFileCache[fileId] = res.file; return res.file;
+  });
+}
+function rcaFillAtt_(c, id) {
+  if (!/^image\//.test(c.mime)) return;
+  var el = $(id); if (!el) return;
+  if (c.preview) { el.innerHTML = '<img src="' + c.preview + '" alt="' + esc(c.name) + '">'; return; }
+  rcaFetchFile_(c.file_id).then(function (f) {
+    var e2 = $(id); if (!e2) return;
+    e2.innerHTML = '<img src="data:' + esc(f.mime) + ';base64,' + f.data + '" alt="' + esc(f.name) + '" title="' + esc(f.name) + '" onclick="rcaOpenAtt(' + Number(c.file_id) + ')">';
+  }).catch(function () { var e3 = $(id); if (e3) e3.innerHTML = '<span class="muted small">' + esc(c.name) + " (could not load)</span>"; });
+}
+function rcaOpenAtt(fileId) {
+  var w = window.open("", "_blank");
+  rcaFetchFile_(fileId).then(function (f) {
+    var blob = /^image\/|pdf$/.test(f.mime)
+      ? new Blob([Uint8Array.from(atob(f.data), function (ch) { return ch.charCodeAt(0); })], { type: f.mime })
+      : new Blob([f.data], { type: "text/plain;charset=utf-8" });
+    var u = URL.createObjectURL(blob);
+    if (w) w.location = u; else window.open(u, "_blank");
+  }).catch(function (e) { if (w) w.close(); toast("Could not open that file: " + e.message); });
+}
+(function rcaDropWire() {
+  var panel = document.getElementById("rcaPanel"); if (!panel) return;
+  panel.addEventListener("dragover", function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") > -1) { e.preventDefault(); panel.classList.add("dragging"); } });
+  panel.addEventListener("dragleave", function (e) { if (e.target === panel) panel.classList.remove("dragging"); });
+  panel.addEventListener("drop", function (e) { if (!e.dataTransfer || !e.dataTransfer.files.length) return; e.preventDefault(); panel.classList.remove("dragging"); rcaAddFiles(e.dataTransfer.files); });
+})();
+
 function rcaSend(presetText) {
   var r = state.rca; if (!r) return;
   var text = presetText || $("rcaText").value.trim();
-  if (!text) return;
+  var pending = presetText ? [] : state.rcaPending.slice();
+  if (pending.some(function (f) { return f.busy; })) { toast("A file is still being read. Give it a second."); return; }
+  if (!text && !pending.length) return;
   $("rcaText").value = "";
+  if (!presetText) { state.rcaPending = []; rcaRenderPending(); }
   $("rcaSendBtn").disabled = true;
-  state.rca.messages.push({ role: "user", author: (state.user && state.user.name) || "you", content: [{ type: "text", text: text }] });
+  var echo = text ? [{ type: "text", text: text }] : [];
+  pending.forEach(function (f, i) { echo.push({ type: "file_ref", file_id: "p" + Date.now() + i, name: f.name, mime: f.mime, preview: f.preview }); });
+  state.rca.messages.push({ role: "user", author: (state.user && state.user.name) || "you", content: echo });
   rcaRender();
   var thinking = document.createElement("div");
   thinking.className = "rca-tool"; thinking.id = "rcaThinking";
   thinking.innerHTML = '<span class="spinner"></span> investigating - tool calls can take a minute or two…';
   $("rcaMsgs").appendChild(thinking); $("rcaMsgs").scrollTop = $("rcaMsgs").scrollHeight;
-  return rcaApi("/api/message", { rca_id: r.rec.id, text: text }).then(function (res) {
+  var attachments = pending.map(function (f) { return { name: f.name, mime: f.mime, data: f.data }; });
+  return rcaApi("/api/message", { rca_id: r.rec.id, text: text, attachments: attachments }).then(function (res) {
     $("rcaSendBtn").disabled = false;
-    if (!res.ok) { var t = $("rcaThinking"); if (t) t.remove(); toast("RCA: " + (res.error || "failed"), 9000); return; }
+    if (!res.ok) {
+      var t = $("rcaThinking"); if (t) t.remove();
+      // Refused before anything was stored (a file it cannot take, the token
+      // cap): the words and the files go back in the box to try again. An
+      // "Anthropic:" error comes after the message was saved, so that one stays.
+      if (!/^Anthropic:/.test(String(res.error || ""))) {
+        state.rca.messages.pop();
+        if (!presetText) { $("rcaText").value = text; state.rcaPending = pending; rcaRenderPending(); }
+        rcaRender();
+      }
+      toast("RCA: " + (res.error || "failed"), 9000);
+      return;
+    }
     state.rca.messages = state.rca.messages.concat(res.messages || []);
     rcaRender();
     return res;
@@ -8574,31 +8731,93 @@ function shipStandOut(d, b, prev3, last12, fair) {
     last12.forEach(function (x) { var ii = shipIntl(x); if (ii) { i12 += ii; r12 += shipKinds(x).customs || 0; } });
     out.push("Customs hit " + per100(cust, intl) + " in every 100 international parcels" + (i12 ? ", against " + per100(r12, i12) + " over the last 12 months" : "") + ".");
   }
-  if (b.chats_counted && b.chats.n) out.push(b.chats.n + " problem" + (b.chats.n === 1 ? " was" : "s were") + " only ever in a chat and never logged. They are listed under Chats below, with a Log it button.");
+  // r191 (Edd): "when there are statements like this ... we could do with a
+  // link to click to get more details". Every line that has a list behind it
+  // on this page now links to that list.
+  if (b.chats_counted && b.chats.n) out.push(shipJumpLink("shr-chats", b.chats.n + " problem" + (b.chats.n === 1 ? " was" : "s were") + " only ever in a chat and never logged") + ". They are listed under Chats, with a Log it button.");
   var x = b.volumes && b.volumes.xref;
-  if (x && x.unmatched_n) out.push(x.unmatched_n + " paid pack" + (x.unmatched_n === 1 ? " has" : "s have") + " no shipment in ShipStation after 3 working days.");
+  if (x && x.unmatched_n) out.push(shipJumpLink("shr-unmatched", x.unmatched_n + " paid pack" + (x.unmatched_n === 1 ? " has" : "s have") + " no shipment in ShipStation") + " after 3 working days.");
   var pa = shipAvg(prev3, function (p) { return p.price; });
   if (b.chats_counted && b.price >= 4 && pa != null && b.price >= 1.5 * pa) out.push(b.price + " people asked about postage costs or times before buying, against an average of " + shipR1(pa) + ". Worth checking the checkout makes the price and timing clear.");
-  if (d.open.length && d.open[0].days_open >= 14) out.push("The oldest open parcel has been waiting " + d.open[0].days_open + " days.");
+  if (d.open.length && d.open[0].days_open >= 14) out.push(shipJumpLink("shr-open", "The oldest open parcel has been waiting " + d.open[0].days_open + " days") + ".");
   return out;
+}
+function shipJumpLink(id, html) { return '<a onclick="shipJump(\'' + id + '\')">' + html + "</a>"; }
+function shipJump(id) {
+  var el = $(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
 }
 function SHIP_KINDS_ORDER() { return (shipr.data && shipr.data.kinds) || Object.keys(SHIP_KIND_LABEL); }
 
 function shipTrendCard(d, last12) {
   var max = Math.max.apply(null, last12.map(shipTotal).concat([1]));
+  // r191: the changes we made, by month, so the chart shows what happened after.
+  var changes = d.changes || [], byMonth = {};
+  changes.forEach(function (c) { var m = String(c.date || "").slice(0, 7); (byMonth[m] = byMonth[m] || []).push(c); });
+  var anyShown = last12.some(function (x) { return byMonth[x.month]; });
   var cols = last12.map(function (x) {
+    var ch = byMonth[x.month] || [];
+    var chTitle = ch.map(function (c) { return "\n• " + fmtShipChangeDate(c.date) + ": " + c.text; }).join("");
     var l = x.issues.n, c = x.chats_counted ? x.chats.n : 0, v = shipVol(x), r = v && v.n ? per100(l + c, v.n) : null;
     var lab = shipMonthName(x.month, true) + (x.month.slice(5) === "01" ? " " + x.month.slice(2, 4) : "");
     return '<div class="shr-col' + (x.month === d.month ? " cur" : "") + (x.chats_counted ? "" : " nochat") + '" onclick="shipReportMonth(\'' + x.month + '\');$(\'shr_month\').value=\'' + x.month + '\'"' +
-      ' title="' + esc(shipMonthName(x.month)) + ": " + l + " logged" + (x.chats_counted ? ", " + c + " only in chats" : ", chats not read") + (r != null ? ", " + r + " per 100 parcels" : "") + '">' +
+      ' title="' + esc(shipMonthName(x.month)) + ": " + l + " logged" + (x.chats_counted ? ", " + c + " only in chats" : ", chats not read") + (r != null ? ", " + r + " per 100 parcels" : "") +
+        (ch.length ? esc("\nWhat we changed:" + chTitle) : "") + '">' +
+      (ch.length ? '<div class="chg"></div><div class="chg-n">' + ch.length + "</div>" : "") +
       '<div class="top">' + (l + c) + (r != null ? '<span class="rate">' + r + "%</span>" : "") + "</div>" +
       (c ? '<div class="seg-c" style="height:' + (c / max * 100) + '%"></div>' : "") +
       '<div class="seg-l" style="height:' + Math.max(l ? 2 : 0, l / max * 100) + '%"></div>' +
       '<div class="lab">' + esc(lab) + "</div></div>";
   }).join("");
-  return '<div class="card"><h3>The last 12 months</h3><div class="shr-trend">' + cols + "</div>" +
+  return '<div class="card"><h3>The last 12 months</h3><div class="shr-trend' + (anyShown ? " has-chg" : "") + '">' + cols + "</div>" +
     '<div class="shr-legend"><span><i style="background:var(--accent)"></i>Logged in the tracker</span><span><i style="background:var(--medium)"></i>Only in chats</span>' +
-    "<span class=\"shr-ratekey\">Small figure: problems per 100 parcels</span><span>Striped: chats not read that month</span><span>Tap a month to open it</span></div></div>";
+    "<span class=\"shr-ratekey\">Small figure: problems per 100 parcels</span><span>Striped: chats not read that month</span>" +
+    (anyShown ? '<span><i style="background:var(--coral)"></i>A change we made</span>' : "") + "<span>Tap a month to open it</span></div>" +
+    shipChangesBlock(changes) + "</div>";
+}
+
+// r191: the list of changes, and the box to add one. Newest first, because
+// the one we are waiting to see the effect of is the one we just made.
+function fmtShipChangeDate(ymd) {
+  var p = String(ymd || "").split("-");
+  return p.length === 3 ? new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ymd;
+}
+function shipChangesBlock(changes) {
+  var me = String((state.user && state.user.email) || "").toLowerCase(), admin = !!(state.perms || {}).users;
+  var rows = changes.slice().reverse().map(function (c) {
+    var mine = admin || String(c.by_email || "").toLowerCase() === me;
+    return '<div class="chg-row"><div class="d">' + esc(fmtShipChangeDate(c.date)) + '</div><div style="flex:1;min-width:0;">' + esc(c.text) +
+      (c.by ? ' <span class="small muted">' + esc(c.by) + "</span>" : "") + "</div>" +
+      (mine ? '<button class="ghost small" style="padding:1px 8px;" title="Take this off the list" onclick="shipChangeDelete(\'' + esc(c.id) + '\')">✕</button>' : "") + "</div>";
+  }).join("");
+  var today = new Date(); var ymd = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+  return '<div class="shr-changes"><div style="font-weight:600;margin-bottom:4px;">What we changed</div>' +
+    (rows || '<p class="small muted" style="margin:0 0 6px;">Nothing noted yet. Note a change to how we ship, like a new courier, a new box or new customs wording, and it is marked on its month above, so we can see what happened after.</p>') +
+    '<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;">' +
+      '<input type="date" id="shr_chg_date" value="' + ymd + '" max="' + ymd + '" style="width:auto;">' +
+      '<input type="text" id="shr_chg_text" maxlength="200" placeholder="What changed, e.g. switched Europe to DHL" style="flex:1;min-width:200px;" onkeydown="if(event.key===\'Enter\')shipChangeAdd()">' +
+      '<button class="small" style="padding:5px 12px;" onclick="shipChangeAdd()">Add</button>' +
+    "</div></div>";
+}
+function shipChangeAdd() {
+  var date = ($("shr_chg_date") || {}).value, text = String(($("shr_chg_text") || {}).value || "").trim();
+  if (!text) { toast("Say what changed first."); return; }
+  apiPost({ action: "shipChangeSave", date: date, text: text }).then(function (r) {
+    if (!r || !r.ok) { toast((r && r.error) || "That did not save."); return; }
+    if (shipr.data) shipr.data.changes = r.changes;
+    drawShipReport();
+    toast("Noted. It is marked on " + shipMonthName(String(date).slice(0, 7)) + ".");
+  }).catch(function (e) { toastErr("Saving the change", e); });
+}
+function shipChangeDelete(id) {
+  if (!confirm("Take this change off the list?")) return;
+  apiPost({ action: "shipChangeDelete", id: id }).then(function (r) {
+    if (!r || !r.ok) { toast((r && r.error) || "That did not come off."); return; }
+    if (shipr.data) shipr.data.changes = r.changes;
+    drawShipReport();
+  }).catch(function (e) { toastErr("Removing the change", e); });
 }
 
 function shipKindCard(d, b, prev3, last12) {
@@ -8658,7 +8877,7 @@ function shipOrdersCard(d, b) {
       (x.matched_by_destination ? " (" + x.matched_by_destination + " of them by destination and date rather than email, most likely gifts bought for someone else)" : "") + ". Paid to posted took " + (x.median_days == null ? "–" : shipR1(x.median_days)) +
       " working days (median), and " + (x.matched ? Math.round(x.within_2 / x.matched * 100) : 0) + "% went within 2 working days.</p>";
     if (x.unmatched && x.unmatched.length) {
-      h += '<p class="small" style="margin-bottom:4px;"><b>Paid, and no shipment found after 3 working days:</b></p>' + x.unmatched.map(function (u) {
+      h += '<p class="small" id="shr-unmatched" style="margin-bottom:4px;border-radius:6px;"><b>Paid, and no shipment found after 3 working days:</b></p>' + x.unmatched.map(function (u) {
         return '<div class="shr-row"><div>' + esc(new Date(u.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })) + "</div><div>" + esc(u.email || "(no email)") +
           '</div><div class="small muted">' + esc(u.courier || "") + (u.country ? " · " + esc(u.country) : "") + "</div></div>";
       }).join("") + '<p class="small muted">No shipment to that email, and none by the same courier to the same country within 10 working days. A gift posted abroad from someone in the UK can still land here, so worth a look in ShipStation before chasing.</p>';
@@ -8669,7 +8888,7 @@ function shipOrdersCard(d, b) {
 
 function shipChatsCard(d, b, prev3) {
   if (!b.chats_counted) return "";
-  var h = '<div class="card"><h3>Chats</h3><p>' + b.chats_all + " chat" + (b.chats_all === 1 ? "" : "s") + " about a parcel problem: " +
+  var h = '<div class="card" id="shr-chats"><h3>Chats</h3><p>' + b.chats_all + " chat" + (b.chats_all === 1 ? "" : "s") + " about a parcel problem: " +
     b.chats_logged + " already in the tracker, " + b.chats.n + " problem" + (b.chats.n === 1 ? "" : "s") + " only in chats" +
     (b.courier_mail ? ", and " + b.courier_mail + " of the chats were the courier writing to us" : "") + ". " +
     b.price + " postage question" + (b.price === 1 ? "" : "s") + " (cost, times, do we ship there)" +
@@ -8693,7 +8912,7 @@ function shipLogChat(id) {
 
 function shipOpenCard(d) {
   if (!d.open.length) return "";
-  return '<div class="card"><h3>Parcels open right now</h3>' + d.open.map(function (o) {
+  return '<div class="card" id="shr-open"><h3>Parcels open right now</h3>' + d.open.map(function (o) {
     return '<div class="shr-row"><div class="small"><b>' + o.days_open + "</b> days</div><div>" +
       '<span class="shr-tag">' + esc(SHIP_KIND_LABEL[o.kind] || o.kind) + "</span>" + (o.courier && o.courier !== "Unknown" ? '<span class="shr-tag">' + esc(o.courier) + "</span>" : "") +
       (o.tracking ? '<span class="shr-tag">' + esc(o.tracking) + "</span>" : "") +
@@ -9540,6 +9759,26 @@ function irpcsSetCqOption(i, idx, value) {
   cq[i].options[idx] = value;
   irpcsMarkDirty();
 }
+// r191 (Stuart): a bank of check questions per rule. The student page asks one
+// and moves to the next on a wrong answer. A new one copies the first one's
+// number of options, so the bank reads as a set.
+function irpcsCqAdd() {
+  if (!irpcs.edited) return;
+  var cq = Array.isArray(irpcs.edited.check_questions) ? irpcs.edited.check_questions : (irpcs.edited.check_questions = []);
+  var n = (cq[0] && Array.isArray(cq[0].options)) ? Math.max(2, cq[0].options.length) : 4;
+  var opts = []; for (var k = 0; k < n; k++) opts.push("");
+  cq.push({ stem: "", options: opts, correct: 0, reasoning: "" });
+  irpcsMarkDirty();
+  irpcsRenderEditor();
+}
+function irpcsCqRemove(i) {
+  var cq = irpcs.edited && irpcs.edited.check_questions;
+  if (!cq || cq.length < 2 || !cq[i]) return;
+  if ((cq[i].stem || "").trim() && !confirm("Take check question " + (i + 1) + " out of the bank?")) return;
+  cq.splice(i, 1);
+  irpcsMarkDirty();
+  irpcsRenderEditor();
+}
 function irpcsMarkDirty() {
   var el = $("irpcsDirty");
   if (el) el.textContent = irpcsDirty() ? "unsaved changes" : "";
@@ -9640,7 +9879,10 @@ function irpcsRuleForm(e) {
   var cqHtml = cqs.map(function (cq, i) {
     var opts = Array.isArray(cq.options) ? cq.options : [];
     return '<div class="irpcs-cq">' +
-      '<div class="small muted" style="margin-bottom:6px;">Check question ' + (i + 1) + '</div>' +
+      '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+        '<div class="small muted">Check question ' + (i + 1) + (i === 0 ? '' : ', asked if the one before is got wrong') + '</div>' +
+        (cqs.length > 1 ? '<button class="ghost small" style="padding:2px 8px;" onclick="irpcsCqRemove(' + i + ')" title="Take this one out of the bank. Saved with the rest of the rule.">Remove</button>' : '') +
+      '</div>' +
       '<div class="fld"><label>Question</label>' +
         '<textarea rows="2" oninput="irpcsSetCq(' + i + ', \'stem\', this.value)">' + esc(cq.stem || "") + '</textarea></div>' +
       opts.map(function (o, idx) {
@@ -9662,7 +9904,11 @@ function irpcsRuleForm(e) {
     irpcsTextField("Plain English", "plain", e.plain, 7, "What the rule actually means, in the words we would use on the boat.") +
     irpcsTextField("Extra tip", "extra_tip", e.extra_tip, 3) +
     irpcsTextField("Example", "example", e.example, 3, "A real situation where this rule decides what we do. Leave it empty if there is not a good one.") +
-    (cqHtml ? '<div class="fld"><label>Check questions</label>' + cqHtml + '</div>' : "") +
+    '<div class="fld"><label>Check questions</label>' +
+      '<p class="small muted" style="margin:0 0 6px;">A student sees one. Get it wrong and the next one here is asked instead, rather than the same question again with the answer already known. So extra ones are a bank, not a longer test.</p>' +
+      cqHtml +
+      (cqs.length < 6 ? '<button class="ghost small" style="padding:4px 10px;margin-top:6px;" onclick="irpcsCqAdd()">Add a check question</button>' : '') +
+    '</div>' +
     '</div>';
 }
 
@@ -10471,6 +10717,13 @@ function irpcsRenderMedia(listOnly) {
 
   var form = irpcs.media.form ? irpcsMediaForm() : "";
   var busy = irpcs.media.busy ? irpcsMediaBusy() : "";
+  // r191 (Edd: "how can I delete these?"): retiring is the delete, as far as
+  // anyone using the library can tell. Retired rows are hidden unless asked
+  // for, so the list is only what can still be attached. The row itself stays
+  // in the database, for the reason in the header.
+  var nRetired = irpcs.media.items.filter(function (m) { return m.status === "retired"; }).length;
+  var shown = irpcs.media.showRetired ? irpcs.media.items
+    : irpcs.media.items.filter(function (m) { return m.status !== "retired"; });
 
   var head =
     '<div class="card" style="padding:10px 12px;margin-bottom:12px;">' +
@@ -10479,7 +10732,9 @@ function irpcsRenderMedia(listOnly) {
         '<button class="small" style="padding:5px 10px;" onclick="irpcsMediaStart(\'image\')">Add a diagram</button>' +
         '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaLoad(true)">Refresh</button>' +
         '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaCheck()" title="Uploads a two-byte test object from the server, where the real error can be read, and says what storage answered.">Check storage</button>' +
-        '<span class="small muted" style="flex:1;min-width:200px;">MP4 video up to 500MB, and PNG, JPEG, WebP or SVG diagrams. Nothing here is ever deleted, because an item published last month may still point at it.</span>' +
+        '<span class="small muted" style="flex:1;min-width:200px;">MP4 video up to 500MB, and PNG, JPEG, WebP or SVG diagrams. Retire takes something off this list. It is never deleted outright, because an item published last month may still point at it.</span>' +
+        (nRetired ? '<label class="small muted" style="display:flex;align-items:center;gap:5px;white-space:nowrap;"><input type="checkbox" ' + (irpcs.media.showRetired ? "checked" : "") +
+          ' onchange="irpcs.media.showRetired=this.checked;irpcsRenderMedia()"> show retired (' + nRetired + ')</label>' : '') +
       '</div>' +
     '</div>';
 
@@ -10491,17 +10746,17 @@ function irpcsRenderMedia(listOnly) {
     return;
   }
 
-  if (!irpcs.media.items.length) {
+  if (!shown.length) {
     host.innerHTML = head + form + busy +
       '<div class="card"><p class="hint" style="margin:0;">' +
-      (irpcs.media.loaded ? "Nothing uploaded yet. A video or a diagram added here can then be attached to a rule or a question."
+      (irpcs.media.loaded ? (nRetired ? "Nothing here but retired files. Tick show retired to see them." : "Nothing uploaded yet. A video or a diagram added here can then be attached to a rule or a question.")
                           : "Fetching the library...") +
       '</p></div>';
     return;
   }
 
   host.innerHTML = head + form + busy + '<div class="card" style="padding:0;">' +
-    irpcs.media.items.map(irpcsMediaRow).join("") + '</div>';
+    shown.map(irpcsMediaRow).join("") + '</div>';
 }
 
 function irpcsMediaRow(m) {
@@ -10562,7 +10817,7 @@ function irpcsMediaRow(m) {
 
 function irpcsMediaHide(id) {
   var m = irpcs.media.items.filter(function (x) { return x.media_id === id; })[0];
-  if (!confirm('Retire "' + ((m && m.title) || id) + '"?\n\nIt stops being offered for new items. Anything already using it carries on working, because nothing is deleted.')) return;
+  if (!confirm('Retire "' + ((m && m.title) || id) + '"?\n\nIt comes off this list and stops being offered for new items. Anything already using it carries on working.')) return;
   irpcsMediaApi({ body: { op: "hide", media_id: id } }).then(function () {
     toast("Retired. Anything already pointing at it still works.");
     return irpcsMediaLoad(true);
@@ -11117,7 +11372,10 @@ function renderBell() {
   var items = bellItems();
   var p = $("bellPanel");
   if (!items.length) { p.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">Nothing waiting</div><div class="small muted">Replies to your questions, and answers written onto feedback you sent, show up here. Feedback that has simply been built or closed is counted on the Feedback tab instead.</div>'; return; }
-  p.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">For you (' + items.length + ')</div>' + items.map(function (x) {
+  p.innerHTML = '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;">' +
+      '<div style="font-weight:600;">For you (' + items.length + ')</div>' +
+      (items.length > 1 ? '<button class="ghost small" style="padding:3px 10px;" onclick="bellClearAll()" title="Mark everything here as read.">Clear all</button>' : '') +
+    '</div>' + items.map(function (x) {
     var open = x.issue_id ? '<button class="primary small" style="padding:4px 10px;" onclick="closeBell();openIssueFromBell(\'' + esc(x.issue_id) + '\')">Open</button> ' : '';
     var got = x.kind === "reply"
       ? 'replySeen(\'' + esc(x.issue_id) + '\', \'' + esc(x.date_seen) + '\')'
@@ -11130,6 +11388,28 @@ function renderBell() {
       '<div style="margin-top:6px;">' + open + '<button class="ghost small" style="padding:4px 10px;" onclick="' + got + ';renderBell()">Got it</button></div>' +
     '</div>';
   }).join("");
+}
+// r191 (Edd, with 29 on the bell): "can we get a clear all on the notifications
+// menu". Everything is marked read in ONE setPrefs call, carrying both maps,
+// rather than a call per item: 29 overlapping read-modify-writes on the same
+// prefs cell is the r121 session-carousel fault waiting to happen again.
+function bellClearAll() {
+  var items = bellItems();
+  if (!items.length) return;
+  var replies = Object.assign({}, (state.prefs && state.prefs.replies_seen) || {});
+  var fb = Object.assign({}, (state.prefs && state.prefs.feedback_seen) || {});
+  items.forEach(function (x) {
+    if (x.kind === "reply") { if (!replies[x.issue_id] || String(replies[x.issue_id]) < String(x.date_seen)) replies[x.issue_id] = x.date_seen; }
+    else if (x.kind === "feedback") fb[x.fb_id] = x.fb_status;
+  });
+  state.prefs = Object.assign({}, state.prefs || {}, { replies_seen: replies, feedback_seen: fb });
+  renderBell();
+  updateRailBadges();
+  renderCurrentView();
+  apiPost({ action: "setPrefs", prefs: { replies_seen: replies, feedback_seen: fb } }).then(function (res) {
+    if (res && res.ok && res.prefs) state.prefs = res.prefs;
+    else toast("The bell could not be cleared on the server, so it may come back after a reload.");
+  }).catch(function () { toast("The bell could not be cleared on the server, so it may come back after a reload."); });
 }
 function openIssueFromBell(id) {
   var p = state.perms || {};
@@ -11162,44 +11442,42 @@ function feedbackSeen(id, status) {
 //
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
+//
+// r191 (Edd, 19 Sep 2026): "The whats new is probably way too granular. We want
+// to keep it super short and simple for our team. Skip anything they wouldn't
+// notice." So: one short sentence, what they will see and where, never how it
+// works or why. If it needs a second sentence it probably belongs in Help. The
+// ones that were only about the tracker's insides went, and the numbers they
+// had are simply left out rather than reused.
 var WHATS_NEW = [
-  { n: 37, date: "2026-09-19", text: "IRPCS has a Models page, under Results: every vessel the student app can draw, side by side, filtered by rule, by day or night, still or moving. The grey name under each is the one to pick from the model list. On the Learn pages the models now float on a moving sea too, making way when the vessel is underway and riding at anchor when it is anchored." },
-  { n: 36, date: "2026-09-19", text: "A fourth kind of IRPCS question: Identify the vessel. Pick a vessel and a bearing and the student sees it as a silhouette at night on a calm sea, lights only, and says what it is, its aspect, its size and whether it is making way. Every vessel in the rules is in the list now, mine clearance and hovercraft included." },
-  { n: 35, date: "2026-09-19", who: ["users"], text: "The Status box always offers all three hand-overs: With developers, With the course team and With Edd. Before, it only offered whichever team matched how the issue was filed, so a website fault filed as a course error could not be sent to the developers. Picking the other team moves the issue to that team's page." },
-  { n: 34, date: "2026-09-19", who: ["log"], text: "Customs on the rail is now Shipping, with two pages: Report and Customs invoice. The report shows each month's parcel problems by type and courier, from the tracker and from the chats, against how many packs we sent, plus the parcels still open and any shipping chat nobody logged. A summary goes to the shipping channel on the 1st." },
-  { n: 33, date: "2026-09-19", who: ["resources"], text: "Resources, on the rail, edits the free downloads on the website. Change a title, description, category or order, swap a file or thumbnail, or add a new PDF and it makes the thumbnail and a first draft of the listing. Nothing goes live until Save to website." },
-  { n: 32, date: "2026-09-19", text: "The board loads quicker, most of all straight after somebody saves a change, which used to be the slowest open of all. Saving an update now refreshes just that issue rather than the whole list." },
-  { n: 31, date: "2026-09-19", who: ["users"], text: "Admins can set an issue to With Edd from the Status box, next to With developers. Use it for lesson packages and course content, which are Edd's. The website and LMS stay with the developers." },
-  { n: 30, date: "2026-09-18", text: "IRPCS questions come in three kinds now: one right answer, tick all that apply, and put these in order. Pick the kind at the top of a question. There is also a Topic box, which is how students will find a question without knowing its rule number, so use one that already exists where it fits." },
-  { n: 29, date: "2026-09-18", text: "Customs invoices are signed by whoever makes them. Set your own printed name and signature once, under Signed by on the Customs page. You can draw it or upload a photo." },
-  { n: 28, date: "2026-09-18", text: "Customs invoices have their own page (Customs on the rail, or the Customs invoice button on a shipping issue). Paste the chat and it finds the address, phone and waybill, highlights anything missing to ask the student for, and makes a PDF and a Word copy. Every one is kept, so if customs ask again it is one click." },
-  { n: 27, date: "2026-09-18", text: "Students now get an \"Invalid key\" error where a missing lesson used to show a 404. The tracker knows the new wording and sends those straight to Edd, since the lesson needs uploading again." },
-  { n: 26, date: "2026-09-18", text: "Chat briefs are quicker. The ones already open in Chatwoot first thing get their brief written after the early-morning scan, so opening one is instant as long as the student has not written again. Screenshots are copied once rather than every time a brief is rebuilt." },
-  { n: 25, date: "2026-09-18", text: "What's new lives here now. When this turns coral there is something we have not read yet, and opening it clears the colour." },
-  { n: 24, date: "2026-09-17", text: "A report logged from a Chatwoot chat now links straight back to the message it came from, rather than to the student's contact card." },
-  { n: 23, date: "2026-09-17", text: "A resolved issue can come back to life. If the same fault turns up again within 90 days, adding the new report reopens the old issue instead of starting a second one, so the history stays in one place." },
-  { n: 22, date: "2026-09-17", text: "Before Today asks us to chase a student, the tracker checks Chatwoot to see whether they have already replied. Fewer pointless chases." },
-  { n: 21, date: "2026-09-17", who: ["manage", "users"], text: "Split apart no longer turns the updates on an issue into separate junk issues. It only splits real reports." },
-  { n: 20, date: "2026-09-14", text: "A chat stays on Today until it is resolved in Chatwoot, or until we close the case ourselves. Logging an issue from it no longer takes it off the list." },
-  { n: 19, date: "2026-09-14", who: ["manage", "users", "dev"], text: "Developer figures: a scoreboard, weekly targets, and a monthly pack, all at team level rather than per person." },
-  { n: 18, date: "2026-09-13", text: "A half-written report survives the tab closing. Come back to New and it is still there." },
-  { n: 17, date: "2026-09-13", text: "Very long Chatwoot threads now read properly. If a paste is long enough to take a while, it tells us before the wait rather than after." },
-  { n: 16, date: "2026-09-13", text: "Preferences, under our name at the bottom of the rail: open the issue after logging it, which page to land on, how lists sort, and whether the bell rings for feedback that has been built." },
-  { n: 15, date: "2026-09-10", text: "Closing a student-facing issue now asks whether the fault itself is sorted, or just this student. \"The student is sorted, the fault is not\" keeps the fault open for the developers." },
-  { n: 14, date: "2026-09-08", text: "\"Same as a report already on the log?\" sits under Extract on New. Search for the existing issue and our report goes on as an update to it." },
-  { n: 13, date: "2026-09-08", text: "If a chat did not include the student's email, the tracker fills it in from their Chatwoot contact record, both when we log it and in a nightly sweep." },
-  { n: 12, date: "2026-09-06", text: "Something needs a developer right now? Tick \"Ask an admin to fast-track this\" on the form. It files as normal and the admins get a Slack nudge to make the call." },
-  { n: 11, date: "2026-09-05", text: "The bell, just above Help, lights up when somebody replies to a question we asked, or writes back on feedback we sent." },
-  { n: 10, date: "2026-09-05", text: "Parcels get their own rows on Today: Tracking for ones still on the way, and Chase once a parcel has had three working days." },
-  { n: 9,  date: "2026-09-05", text: "When someone answers a question we asked on an issue, the answer comes to us as a direct message rather than into a busy channel." },
-  { n: 8,  date: "2026-08-27", who: ["manage", "users"], text: "A Tuesday-morning digest to the admins of everything nobody has picked up in the last week." },
-  { n: 7,  date: "2026-08-26", text: "Marking an issue fixed or resolved deletes its alert from the improvements channel, so that channel only shows what is still live." },
-  { n: 6,  date: "2026-08-25", text: "The tracker opens on Today: the students in touch right now with a written brief on each, and underneath, everything waiting on an instructor." },
-  { n: 5,  date: "2026-08-25", text: "Tech issues go through the troubleshooting checklist before they reach the developers, so the developer starts from what has already been ruled out." },
-  { n: 4,  date: "2026-08-25", text: "No more being logged out three times a day. We can stay signed in on twelve devices at once, and a session lasts thirty days from when it was last used." },
-  { n: 3,  date: "2026-08-22", text: "Help, at the bottom of the rail, is the full manual. Type to search it, or press Enter to ask it a question in plain English." },
-  { n: 2,  date: "2026-08-22", text: "In a hurry, or the chat reading is slow? New on the rail lets us type or paste a report straight in, no Chatwoot import needed." },
-  { n: 1,  date: "2026-08-22", text: "The tracker went live for everybody at ardenttraining.github.io/issue-tracker, replacing the course errors and tech issues forms. Worth a bookmark." }
+  { n: 40, date: "2026-09-19", who: ["users"], text: "RCA takes screenshots and files. Attach them, or paste or drop them into the box." },
+  { n: 39, date: "2026-09-19", who: ["log"], text: "Shipping report: note a change to how we ship and it is marked on the chart." },
+  { n: 38, date: "2026-09-19", text: "Clear all on the bell." },
+  { n: 37, date: "2026-09-19", who: ["irpcs"], text: "IRPCS has a Models page: every vessel the app can draw, side by side." },
+  { n: 36, date: "2026-09-19", who: ["irpcs"], text: "New IRPCS question kind: Identify the vessel." },
+  { n: 35, date: "2026-09-19", who: ["users"], text: "The Status box can hand any issue to the developers, the course team or Edd." },
+  { n: 34, date: "2026-09-19", who: ["log"], text: "Shipping on the rail: a monthly report and the customs invoice." },
+  { n: 33, date: "2026-09-19", who: ["resources"], text: "Resources on the rail edits the free downloads on the website." },
+  { n: 32, date: "2026-09-19", text: "The board loads quicker." },
+  { n: 30, date: "2026-09-18", who: ["irpcs"], text: "IRPCS questions can be tick all that apply, or put these in order." },
+  { n: 28, date: "2026-09-18", text: "Customs invoices have their own page. Paste the chat and it fills the invoice in." },
+  { n: 25, date: "2026-09-18", text: "What's new lives here. It turns coral when there is something we have not read." },
+  { n: 24, date: "2026-09-17", text: "A report logged from a chat links back to the message it came from." },
+  { n: 23, date: "2026-09-17", text: "A resolved fault that comes back reopens the old issue rather than starting a new one." },
+  { n: 20, date: "2026-09-14", text: "A chat stays on Today until it is resolved in Chatwoot." },
+  { n: 19, date: "2026-09-14", who: ["manage", "users", "dev"], text: "Developer figures: weekly targets and a monthly pack." },
+  { n: 18, date: "2026-09-13", text: "A half-written report survives the tab closing." },
+  { n: 16, date: "2026-09-13", text: "Preferences, under our name at the bottom of the rail." },
+  { n: 15, date: "2026-09-10", text: "Closing an issue asks whether the fault is sorted, or just the student." },
+  { n: 14, date: "2026-09-08", text: "Same fault as one already logged? Search for it under Extract and add ours as an update." },
+  { n: 12, date: "2026-09-06", text: "Tick \"Ask an admin to fast-track this\" when something needs a developer now." },
+  { n: 11, date: "2026-09-05", text: "The bell lights up when somebody replies to us." },
+  { n: 10, date: "2026-09-05", text: "Parcels have their own rows on Today: Tracking, and Chase after three working days." },
+  { n: 6,  date: "2026-08-25", text: "The tracker opens on Today: the students in touch right now, each with a brief." },
+  { n: 4,  date: "2026-08-25", text: "We stay signed in for thirty days now." },
+  { n: 3,  date: "2026-08-22", text: "Help, at the bottom of the rail, is the manual. Search it or ask it a question." },
+  { n: 2,  date: "2026-08-22", text: "New on the rail logs a report by hand, no chat needed." },
+  { n: 1,  date: "2026-08-22", text: "The tracker is live at ardenttraining.github.io/issue-tracker. Worth a bookmark." }
 ];
 function newsFor_(x) {
   if (!x.who) return true;

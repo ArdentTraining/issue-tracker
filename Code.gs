@@ -683,6 +683,8 @@ function doPost(e) {
     if (action === 'customsPacks') return jsonOut(customsPacks_());
     // r188: the shipping report
     if (action === 'shipReport') return jsonOut(shipReport_(body));
+    if (action === 'shipChangeSave') return jsonOut(shipChangeSave_(body));
+    if (action === 'shipChangeDelete') return jsonOut(shipChangeDelete_(body));
     if (action === 'shipVolumesRefresh') return jsonOut(shipVolumesRefresh_(body));
     if (action === 'shipMonthlyPreview') return jsonOut(shipMonthlyPreview_(body));
     if (action === 'shipBackfill') return jsonOut(shipBackfillAction_(body));
@@ -931,6 +933,10 @@ function reqPerm_(action) {
     // Starting a back-fill spends AI credit and connecting Stripe or
     // ShipStation stores a key, so both of those are the admins'.
     case 'shipReport': case 'shipVolumesRefresh': case 'shipMonthlyPreview': return 'log';
+    // r191: the changes we make to how we ship, drawn on the report's chart.
+    // Whoever reads the report can note one; only its author or an admin can
+    // take one off (checked in shipChangeDelete_).
+    case 'shipChangeSave': case 'shipChangeDelete': return 'log';
     case 'shipBackfill': case 'setShipConfig': return 'users';
     // r187: the website resources page. Its own key, because it publishes
     // straight to the public website and Edd hand-picks who can.
@@ -1882,6 +1888,7 @@ var READ_ONLY_ACTIONS = {
   customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsMySigner: 1, saveCustomsSigner: 1,
   // r188: the shipping report keeps its own two tabs and never writes an issue.
   shipReport: 1, shipVolumesRefresh: 1, shipMonthlyPreview: 1, shipBackfill: 1, setShipConfig: 1,
+  shipChangeSave: 1, shipChangeDelete: 1,
   // r187: website resources live in a different spreadsheet altogether.
   resourcesList: 1, resourcesSave: 1, resourcesUpload: 1, resourcesSuggest: 1,
   caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
@@ -2174,6 +2181,21 @@ function addIssue_(data) {
   // That is now an audience, not a category, and it always meant tech.
   var audience = data.audience === 'internal' || category === 'internal' ? 'internal' : 'student';
   if (category === 'internal') category = 'tech_issue';
+  // r191 (Edd, 19 Sep 2026, on a double-postage checkout fault Holly logged):
+  // "This isn't a course error, typo on a course package or similar. It
+  // shouldn't have gone to the course team. It is a bug on the checkout on the
+  // website." The extraction had said category course_error and section
+  // website in the same breath. A course error lives in a lesson; a fault with
+  // no lesson that the extraction itself places on the website, a portal or
+  // the app is the developers', so the section wins the argument.
+  var secNow = String(data.section || '').toLowerCase();
+  if (category === 'course_error' && !(data.lesson_code || data.lesson) &&
+      ['website', 'instructor_portal', 'partner_portal', 'app'].indexOf(secNow) > -1) {
+    category = 'tech_issue';
+    data.category = 'tech_issue';
+    data.priority_reason = (String(data.priority_reason || '') +
+      ' [Filed with the developers: no lesson, and the fault is on the ' + secNow.replace('_', ' ') + ' (r191).]').trim();
+  }
 
   // r142 (Edd, 5 Sep 2026): the overnight scan hands the extraction straight
   // to this function, and the extraction reports a closed thread in
@@ -14476,8 +14498,55 @@ function shipReport_(data) {
       chats_since: since, nightly: run ? { at: run.at, listed: run.listed, hits: run.hits, tagged: run.tagged, note: run.note || '' } : null,
       backfill: shipBfPublic_(), volumes_stale: shipStaleMonths_(months, vol, cfg).length
     },
-    kinds: SHIP_KINDS_
+    kinds: SHIP_KINDS_,
+    changes: shipChanges_()
   };
+}
+
+// ---------------------------------------------------------------- practice changes
+// r191 (Edd, 19 Sep 2026): "Can we add a feature where we can log changes to
+// our shipping practices and have them show in the 'last 12 months' graphic so
+// we can see the effect?" A dated line each (switched Europe to DHL, started
+// sending tracking links, new customs wording), kept in a script property: it
+// is a short list written a few times a year, and it rides out with the report
+// so the page never makes a second call for it.
+var SHIP_CHANGES_KEY_ = 'SHIP_CHANGES';
+function shipChanges_() {
+  var list = [];
+  try { list = JSON.parse(PropertiesService.getScriptProperties().getProperty(SHIP_CHANGES_KEY_) || '[]'); } catch (e) { list = []; }
+  return Array.isArray(list) ? list.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }) : [];
+}
+function shipChangeSave_(data) {
+  var date = String(data.date || '').trim(), text = String(data.text || '').replace(/\s+/g, ' ').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Pick the date the change started.' };
+  if (text.length < 3) return { ok: false, error: 'Say what changed, in a few words.' };
+  if (text.length > 200) text = text.slice(0, 200);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var list = shipChanges_();
+    var who = (data._user && data._user.name) || '';
+    list.push({ id: Utilities.getUuid().slice(0, 8), date: date, text: text, by: who, by_email: (data._user && data._user.email) || '', at: new Date().toISOString() });
+    if (list.length > 150) list = list.slice(-150);
+    PropertiesService.getScriptProperties().setProperty(SHIP_CHANGES_KEY_, JSON.stringify(list));
+    return { ok: true, changes: shipChanges_() };
+  } finally { lock.releaseLock(); }
+}
+function shipChangeDelete_(data) {
+  var id = String(data.id || '');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var list = shipChanges_(), hit = list.filter(function (c) { return c.id === id; })[0];
+    if (!hit) return { ok: false, error: 'That change is not on the list any more.' };
+    var me = data._user || {};
+    if (!hasPerm_(me, 'users') && String(hit.by_email || '').toLowerCase() !== String(me.email || '').toLowerCase()) {
+      return { ok: false, error: 'Only whoever added it, or an admin, can take it off.' };
+    }
+    list = list.filter(function (c) { return c.id !== id; });
+    PropertiesService.getScriptProperties().setProperty(SHIP_CHANGES_KEY_, JSON.stringify(list));
+    return { ok: true, changes: shipChanges_() };
+  } finally { lock.releaseLock(); }
 }
 
 // ---------------------------------------------------------------- Slack on the 1st
