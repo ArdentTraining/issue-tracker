@@ -3057,6 +3057,15 @@ function updateIssue_(data) {
     return { ok: false, error: 'Only an admin can pass an issue to the developers.' };
   }
 
+  // r184 (Edd): With Edd is an admin call too, the same as passing to the
+  // developers. The dropdown only offers it to admins; this is what makes that
+  // mean something rather than one crafted POST away from ignored.
+  if (String(data.status || '').toLowerCase() === 'with_edd' &&
+      String(record.status || '').toLowerCase() !== 'with_edd' &&
+      data._user && !hasPerm_(data._user, 'users')) {
+    return { ok: false, error: 'Only an admin can pass an issue to Edd.' };
+  }
+
   // Overlay any provided fields (except identity fields).
   HEADERS.forEach(function (key) {
     if (key === 'issue_id' || key === 'submitted_at') return;
