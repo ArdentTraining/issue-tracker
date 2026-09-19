@@ -3649,7 +3649,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r189 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r189.1 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9921,7 +9921,11 @@ function irpcsPublishConfirm() {
   if (note.length < 3) { toast("Add a few words on what changed."); return; }
   var id = irpcs.openId;
   irpcsApi({ body: { op: "publish", item_id: id, note: note } }).then(function (j) {
-    toast("Published as version " + j.version + ". Build a release to put it in front of students.");
+    // r188.6: publish builds the release too, so this is the whole job. The old
+    // toast said "build a release", and the only button that did was Publish
+    // all, which refuses once nothing is pending. A dead end with a hint on it.
+    toast("Published as version " + j.version + " and released as release " + j.release_id +
+      ". Students get it on their next load, within five minutes.");
     irpcs.publishing = null;
     return irpcsOpenAgain();
   }).catch(function (e) {
