@@ -8068,7 +8068,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r188.2 · 2026-09-19';
+var CODE_STAMP = 'r188.3 · 2026-09-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -14042,6 +14042,9 @@ function shipCfg_() {
   c.ssOn = !!(c.ssV2 || (c.ssKey && c.ssSecret));
   return c;
 }
+// Bumped when the way a Stripe order is read changes, so months already
+// cached under the old rule are fetched again rather than kept forever.
+var SHIP_STRIPE_V = 2;
 function shipStripeGet_(key, path) {
   var r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, { headers: { Authorization: 'Bearer ' + key }, muteHttpExceptions: true });
   var code = r.getResponseCode(), body = r.getContentText();
@@ -14058,17 +14061,31 @@ function shipStripeGet_(key, path) {
 function shipStripeOrders_(key, fromDate, toDate) {
   var a = Math.floor(fromDate.getTime() / 1000), b = Math.floor(toDate.getTime() / 1000), after = '', out = [], guard = 0;
   while (guard++ < 40) {
-    var q = 'checkout/sessions?limit=100&status=complete&created%5Bgte%5D=' + a + '&created%5Blt%5D=' + b + (after ? '&starting_after=' + after : '');
+    var q = 'checkout/sessions?limit=100&status=complete&created%5Bgte%5D=' + a + '&created%5Blt%5D=' + b +
+      '&expand%5B%5D=data.shipping_cost.shipping_rate' + (after ? '&starting_after=' + after : '');
     var page = shipStripeGet_(key, q);
     (page.data || []).forEach(function (s) {
       var md = s.metadata || {};
       if (s.payment_status && s.payment_status !== 'paid') return;
       if (!md.shipping_provider && !md.shippingId) return;
       var addr = (s.customer_details && s.customer_details.address) || {};
+      // Edd, 19 Sep: postage used to come through as Stripe's own shipping
+      // line (shipping_cost, with a named shipping rate) and now comes as
+      // metadata (shipping_provider, shipping_amount). Older orders have only
+      // the first, newer ones only the second, so read both. Where neither
+      // names a courier ("Shipping", or a free UK rate), go by where it went:
+      // Royal Mail in the UK, DHL abroad, which is how we post.
+      var sc = s.shipping_cost || {}, rate = (sc.shipping_rate && typeof sc.shipping_rate === 'object') ? sc.shipping_rate : {};
+      var named = shipCourier_(md.shipping_provider);
+      if (!named || named === 'Other') { var rn = shipCourier_(rate.display_name); if (rn && rn !== 'Other') named = rn; }
+      var guessed = false;
+      if (!named || named === 'Other') { named = shipRegion_(addr.country) === 'uk' ? 'Royal Mail' : 'DHL'; guessed = true; }
+      var postage = md.shipping_amount != null && md.shipping_amount !== '' ? Number(md.shipping_amount)
+        : ((Number(sc.amount_total) || Number(s.total_details && s.total_details.amount_shipping) || 0) / 100);
       out.push({ at: new Date(Number(s.created) * 1000).toISOString(),
                  email: String((s.customer_details && s.customer_details.email) || md.email || '').toLowerCase(),
-                 courier: shipCourier_(md.shipping_provider) || 'Other', country: String(addr.country || ''),
-                 region: shipRegion_(addr.country), shipping_gbp: Number(md.shipping_amount) || 0 });
+                 courier: named, courier_guessed: guessed, country: String(addr.country || ''),
+                 region: shipRegion_(addr.country), shipping_gbp: Number(postage) || 0 });
     });
     if (!page.has_more || !(page.data || []).length) break;
     after = page.data[page.data.length - 1].id;
@@ -14183,6 +14200,8 @@ function shipFetchMonth_(ym) {
   var orders = null, ships = null, errs = [];
   if (cfg.stripe) {
     try { orders = shipStripeOrders_(cfg.stripe, rng.start, rng.end); var t = shipTally_(orders);
+      t.courier_guessed = orders.filter(function (o) { return o.courier_guessed; }).length;
+      t.v = SHIP_STRIPE_V;
       t.shipping_gbp = Math.round(orders.reduce(function (s, o) { return s + o.shipping_gbp; }, 0) * 100) / 100;
       row.stripe_json = JSON.stringify(t); }
     catch (e) { errs.push(String(e.message || e)); }
@@ -14216,7 +14235,7 @@ function shipStaleMonths_(months, rows, cfg) {
     var r = have[m];
     if (!r) return true;
     // A source connected after this month was fetched needs another go.
-    if (cfg.stripe && !r.stripe_json) return true;
+    if (cfg.stripe && (!r.stripe_json || String(r.stripe_json).indexOf('"v":' + SHIP_STRIPE_V) < 0)) return true;   // read by an older rule
     if (cfg.ssOn && !r.shipstation_json) return true;
     var age = now - new Date(r.fetched_at).getTime();
     var settled = new Date(r.fetched_at).getTime() > shipMonthRange_(m).end.getTime() + 35 * 86400000;
