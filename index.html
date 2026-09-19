@@ -9099,12 +9099,17 @@ function shipCostBody(d) {
   if (!c) return '<p class="small muted">' + (shipr.costError ? "Could not load this: " + esc(shipr.costError) : shipr.refreshing ? "Waiting for the parcel counts to finish…" : "Loading…") + "</p>";
   var h = "";
   var hist = c.history || {};
-  var oldest = c.months.length ? c.months[0].month : "";
+  // Months before the first postage order have nothing to show, so the chart
+  // and "from" start where the comparisons do.
+  var cms = c.months.slice(), fi = 0;
+  while (fi < cms.length && !cms[fi].pairs.length && !cms[fi].orders) fi++;
+  cms = cms.slice(fi);
+  var oldest = cms.length ? cms[0].month : "";
   var histLine = hist.done ? "All time, from " + (oldest ? esc(shipMonthName(oldest)) : "the start") + "."
     : shipr.costWalking ? "Reading older months from Stripe and ShipStation, back to " + (oldest ? esc(shipMonthName(oldest)) : "…") + " so far. It fills in as it goes."
     : "Older months still to read.";
   if (shipr.costWalkErr) histLine += " Stopped on an error: " + esc(shipr.costWalkErr);
-  if (!c.months.length) return '<p class="small muted">' + histLine + " Nothing compared yet.</p>";
+  if (!cms.length) return '<p class="small muted">' + histLine + " Nothing compared yet.</p>";
 
   // ---- the report's month, in words
   var mo = c.months.filter(function (m) { return m.month === d.month; })[0];
@@ -9128,10 +9133,10 @@ function shipCostBody(d) {
   // ---- accuracy over time
   var changes = d.changes || [], byMonth = {};
   changes.forEach(function (x) { var m = String(x.date || "").slice(0, 7); (byMonth[m] = byMonth[m] || []).push(x); });
-  var anyChg = c.months.some(function (m) { return byMonth[m.month]; });
-  var cols = c.months.map(function (m) {
+  var anyChg = cms.some(function (m) { return byMonth[m.month]; });
+  var cols = cms.map(function (m) {
     var t = shipCostTally(m.pairs, tol), ch = byMonth[m.month] || [];
-    var lab = shipMonthName(m.month, true) + (m.month.slice(5) === "01" || m === c.months[0] ? " " + m.month.slice(2, 4) : "");
+    var lab = shipMonthName(m.month, true) + (m.month.slice(5) === "01" || m === cms[0] ? " " + m.month.slice(2, 4) : "");
     var title = shipMonthName(m.month) + ": " + (t.n ? t.pct + "% within, " + t.in + " within, " + t.over + " over, " + t.under + " under" : "nothing compared") +
       (t.free ? ", " + t.free + " free UK" : "") + (m.no_cost ? ", " + m.no_cost + " with no label cost" : "") +
       (ch.length ? "\nWhat we changed:" + ch.map(function (x) { return "\n• " + fmtShipChangeDate(x.date) + ": " + x.text; }).join("") : "");

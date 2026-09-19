@@ -14480,8 +14480,8 @@ function shipCostCounts_(row) {
 }
 // All time, not just the report's 15 months. Walks back a month at a time
 // from this month, reading any month that has not been compared yet, until
-// six months in a row have no postage orders in Stripe and no shipments in
-// ShipStation (or it reaches the month the Stripe account opened). A month
+// six months in a row have no postage orders in Stripe (or it reaches the
+// month the Stripe account opened). A month
 // already read under this rule is not fetched again. About 40 seconds per
 // call; the page keeps calling while there is more to do.
 function shipCostHistory_(data) {
@@ -14506,7 +14506,10 @@ function shipCostHistory_(data) {
         done.push(m);
       }
       var c = shipCostCounts_(row);
-      if (c.orders || c.ships) { st.empty = 0; st.oldest = m; } else st.empty = (st.empty || 0) + 1;
+      // Orders, not shipments: a shipment with no postage order behind it has
+      // nothing to compare against. (Live, 19 Sep 2026: Stripe carries no
+      // postage before January 2025, while ShipStation goes back further.)
+      if (c.orders) { st.empty = 0; st.oldest = m; } else st.empty = (st.empty || 0) + 1;
       if (st.empty >= 6) st.done = true;
       st.next = shipMonthBefore_(m);
     }
