@@ -14408,7 +14408,7 @@ function shipVolumesRefresh_(data) {
   // could land on the same row, so only one of them writes at a time; the
   // page tries again shortly when it is told the other one is busy.
   if (!stale.length) return { ok: true, refreshed: [], remaining: 0, errors: [] };
-  var lock = LockService.getScriptLock();
+  var lock = shipVolLock_();
   if (!lock.tryLock(1000)) return { ok: true, busy: true, refreshed: [], remaining: stale.length, errors: [] };
   try {
   for (var i = 0; i < stale.length; i++) {
@@ -14452,6 +14452,14 @@ function shipCostToleranceSave_(data) {
   PropertiesService.getScriptProperties().setProperty(SHIP_COST_TOL_KEY_, JSON.stringify(t));
   return { ok: true, tolerance: shipCostTol_() };
 }
+// The two writers of Ship Volumes (the report's refresh and the history walk)
+// only need to keep out of each other's way. They must NOT take the script
+// lock: the chat back-fill holds that for minutes at a time and sign-ins wait
+// on it (withSessionLock_), so a minute-long month fetch would stall logins
+// and queue behind the back-fill. The web app and its triggers all run as the
+// owner ("Execute as: Me"), so the user lock is one lock that nothing else in
+// the app uses.
+function shipVolLock_() { return LockService.getUserLock(); }
 function shipCostHistState_() {
   var st = null;
   try { st = JSON.parse(PropertiesService.getScriptProperties().getProperty(SHIP_COST_HIST_KEY_) || 'null'); } catch (e) {}
@@ -14472,7 +14480,7 @@ function shipCostHistory_(data) {
   var cfg = shipCfg_();
   if (!cfg.stripe || !cfg.ssOn) return { ok: false, error: 'Needs both Stripe and ShipStation connected.' };
   if (data && data.restart && hasPerm_(data._user || {}, 'users')) PropertiesService.getScriptProperties().deleteProperty(SHIP_COST_HIST_KEY_);
-  var lock = LockService.getScriptLock();
+  var lock = shipVolLock_();
   if (!lock.tryLock(1000)) return { ok: true, busy: true, history: shipCostHistState_() };
   try {
     var st = shipCostHistState_(), started = Date.now(), done = [], errors = [];
