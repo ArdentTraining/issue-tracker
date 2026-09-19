@@ -10329,6 +10329,7 @@ function irpcsRenderMedia(listOnly) {
         '<button class="small" style="padding:5px 10px;" onclick="irpcsMediaStart(\'video\')">Add a video</button>' +
         '<button class="small" style="padding:5px 10px;" onclick="irpcsMediaStart(\'image\')">Add a diagram</button>' +
         '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaLoad(true)">Refresh</button>' +
+        '<button class="ghost small" style="padding:5px 10px;" onclick="irpcsMediaCheck()" title="Uploads a two-byte test object from the server, where the real error can be read, and says what storage answered.">Check storage</button>' +
         '<span class="small muted" style="flex:1;min-width:200px;">MP4 video up to 500MB, and PNG, JPEG, WebP or SVG diagrams. Nothing here is ever deleted, because an item published last month may still point at it.</span>' +
       '</div>' +
     '</div>';
@@ -10596,6 +10597,37 @@ function irpcsMediaBusy() {
 }
 function irpcsMediaBusyClear() { irpcs.media.busy = null; irpcsRenderMedia(); }
 
+// r184: ask the server to try the upload. A browser cannot see WHY a PUT to R2
+// failed, because R2 sends no CORS headers with a 403, so a bad signature and a
+// missing CORS policy look identical from here (status 0, "No
+// Access-Control-Allow-Origin"). The server has no CORS in the way and gets the
+// real S3 error code back.
+function irpcsMediaCheck() {
+  irpcs.media.busy = { title: "Checking storage", stage: "Asking the server to put a tiny test object in the bucket...", pct: 50, error: "" };
+  irpcsRenderMedia();
+  irpcsMediaApi({ body: { op: "r2check" } }).then(function (j) {
+    var b = irpcs.media.busy; if (!b) return;
+    b.pct = 100;
+    if (j.ok) {
+      b.stage = "Storage is fine. The server just wrote " + esc(j.key) + " to " + esc(j.bucket) + " and R2 said " + j.status + ". So if uploads from here still fail, it is something between this browser and R2, not the credentials or the signing.";
+    } else if (j.stage === "config") {
+      b.error = "Not configured: missing " + j.missing + " in the Supabase secrets.";
+    } else if (j.stage === "put") {
+      b.error = "R2 refused the server's own upload with " + j.status + (j.code ? " " + j.code : "") + ". " +
+        (j.code === "SignatureDoesNotMatch" ? "The signature we compute does not match what R2 computes. Either the secret key in Supabase is not the one that goes with the access key id, or the signing code has a bug. " :
+         j.code === "InvalidAccessKeyId" ? "R2 does not recognise the access key id at all. The R2_ACCESS_KEY_ID secret is wrong, or the token was deleted. " :
+         j.code === "AccessDenied" ? "The token is valid but not allowed to write to " + esc(j.bucket) + ". A token scoped to a bucket that was later recreated can end up like this: make a new token and scope it to the bucket as it exists now. " :
+         j.code === "NoSuchBucket" ? "There is no bucket called " + esc(j.bucket) + " on this account. Check R2_MEDIA_BUCKET. " : "") +
+        (j.message ? "R2 said: " + esc(j.message) : "");
+    } else {
+      b.error = "The server could not reach R2 at all (" + esc(j.stage) + ").";
+    }
+    irpcsRenderMedia();
+  }).catch(function (e) {
+    if (irpcs.media.busy) { irpcs.media.busy.error = "Could not run the check: " + esc(e.message); irpcsRenderMedia(); }
+  });
+}
+
 function irpcsMediaUpload() {
   var f = irpcs.media.form;
   if (!f || !irpcsMediaReady()) return;
@@ -10698,9 +10730,10 @@ function irpcsPutFile(uploadUrl, file, contentType) {
       } catch (e) { /* leave it out rather than guess */ }
       reject(new Error(
         xhr.status === 0 && /r2\.cloudflarestorage\.com/.test(uploadUrl)
-          ? "the browser could not reach our storage, so nothing was uploaded. The link was addressed to " +
-            (where || "our bucket") + ", and that bucket needs a CORS policy allowing PUT from " +
-            location.origin + " with content-type in AllowedHeaders. If the bucket named there is not the one you set the policy on, that is the problem: it is the R2_MEDIA_BUCKET secret in Supabase."
+          ? "the upload to " + (where || "our storage") + " failed and the browser was not allowed to see why. " +
+            "Two things look exactly like this from here: the bucket has no CORS policy allowing PUT from " + location.origin +
+            ", or R2 refused the upload (a bad signature or the wrong credentials) and sent its refusal without CORS headers. " +
+            "Press Check storage above: the server tries the same upload with nothing in the way and reports what R2 actually said."
           : "the connection dropped during the upload"));
     };
     xhr.onabort = function () { reject(new Error("the upload was cancelled")); };
