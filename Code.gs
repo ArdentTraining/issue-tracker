@@ -14297,7 +14297,13 @@ function shipXref_(orders, shipments, now) {
     if (s.cost == null || !isFinite(s.cost)) { noCost++; return; }
     var why = s.cost_currency && s.cost_currency !== (o.currency || 'gbp') ? 'label ' + s.cost_currency + ' ' + s.courier
             : o.currency && o.currency !== 'gbp' ? 'paid ' + o.currency : '';
-    if (why) { otherCur++; otherBy[why] = (otherBy[why] || 0) + 1; return; }
+    if (why) {
+      otherCur++; otherBy[why] = (otherBy[why] || 0) + 1;
+      // A few examples of each, so the page can show what was set aside.
+      var ex = otherBy[why + ' e.g.'] = otherBy[why + ' e.g.'] || [];
+      if (ex.length < 6) ex.push([o.paid, s.cost, o.country]);
+      return;
+    }
     pairs.push([o.id || '', String(o.at || '').slice(0, 10), o.paid != null ? o.paid : (o.shipping_gbp || 0), s.cost,
                 o.courier, String(o.country || '').toUpperCase(), (dest ? 1 : 0) | (o.courier_guessed ? 2 : 0)]);
   }
@@ -14430,7 +14436,7 @@ function shipVolumesRefresh_(data) {
 // cross-reference matched to a shipment (by email or by destination) carries
 // what the customer paid for postage and what the label cost. The page does
 // the banding, so moving the tolerance redraws at once without a round trip.
-var SHIP_COST_V = 2;
+var SHIP_COST_V = 3;
 var SHIP_COST_FLOOR_ = '2020-11';          // the Stripe account opened in November 2020
 var SHIP_COST_TOL_KEY_ = 'SHIP_COST_TOL';
 var SHIP_COST_HIST_KEY_ = 'SHIP_COST_HIST';
