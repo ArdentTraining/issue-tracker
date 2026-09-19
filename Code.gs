@@ -8068,7 +8068,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r188.6 · 2026-09-19';
+var CODE_STAMP = 'r188.7 · 2026-09-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -14046,7 +14046,13 @@ function shipCfg_() {
 // cached under the old rule are fetched again rather than kept forever.
 var SHIP_STRIPE_V = 4;
 function shipStripeGet_(key, path) {
-  var r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, { headers: { Authorization: 'Bearer ' + key }, muteHttpExceptions: true });
+  // A long month is a dozen pages, and Apps Script's fetch now and then throws
+  // "Address unavailable" on one of them (seen live 19 Sep). One retry after a
+  // pause, so a single wobble does not throw the whole month away.
+  var opt = { headers: { Authorization: 'Bearer ' + key }, muteHttpExceptions: true }, r;
+  try { r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, opt); }
+  catch (e0) { Utilities.sleep(1500); r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, opt); }
+  if (r.getResponseCode() === 429 || r.getResponseCode() >= 500) { Utilities.sleep(1500); r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, opt); }
   var code = r.getResponseCode(), body = r.getContentText();
   if (code < 200 || code >= 300) {
     var msg = ''; try { msg = JSON.parse(body).error.message; } catch (e) { msg = body.slice(0, 160); }
