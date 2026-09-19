@@ -689,6 +689,9 @@ function doPost(e) {
     if (action === 'shipMonthlyPreview') return jsonOut(shipMonthlyPreview_(body));
     if (action === 'shipBackfill') return jsonOut(shipBackfillAction_(body));
     if (action === 'setShipConfig') return jsonOut(setShipConfig_(body));
+    if (action === 'shipCost') return jsonOut(shipCost_(body));
+    if (action === 'shipCostHistory') return jsonOut(shipCostHistory_(body));
+    if (action === 'shipCostTolerance') return jsonOut(shipCostToleranceSave_(body));
     if (action === 'customsPrefill') return jsonOut(customsPrefill_(body));
     if (action === 'customsGenerate') return jsonOut(customsGenerate_(body));
     if (action === 'customsList') return jsonOut(customsList_());
@@ -938,6 +941,12 @@ function reqPerm_(action) {
     // take one off (checked in shipChangeDelete_).
     case 'shipChangeSave': case 'shipChangeDelete': return 'log';
     case 'shipBackfill': case 'setShipConfig': return 'users';
+    // r193: postage against label cost. Reading it, and walking back through
+    // history to fill it, are for whoever reads the report (read-only calls to
+    // Stripe and ShipStation, no AI spend). Changing the team's tolerance is
+    // the admins'.
+    case 'shipCost': case 'shipCostHistory': return 'log';
+    case 'shipCostTolerance': return 'users';
     // r187: the website resources page. Its own key, because it publishes
     // straight to the public website and Edd hand-picks who can.
     case 'resourcesList': case 'resourcesSave': case 'resourcesUpload': case 'resourcesSuggest': return 'resources';
@@ -1888,7 +1897,7 @@ var READ_ONLY_ACTIONS = {
   customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsMySigner: 1, saveCustomsSigner: 1,
   // r188: the shipping report keeps its own two tabs and never writes an issue.
   shipReport: 1, shipVolumesRefresh: 1, shipMonthlyPreview: 1, shipBackfill: 1, setShipConfig: 1,
-  shipChangeSave: 1, shipChangeDelete: 1,
+  shipChangeSave: 1, shipChangeDelete: 1, shipCost: 1, shipCostHistory: 1, shipCostTolerance: 1,
   // r187: website resources live in a different spreadsheet altogether.
   resourcesList: 1, resourcesSave: 1, resourcesUpload: 1, resourcesSuggest: 1,
   caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
@@ -13673,7 +13682,7 @@ var SHIP_TAG_SHEET = 'Ship Chat Tags';
 var SHIP_TAG_HEADERS = ['conversation_id', 'created_at', 'last_activity_at', 'problem', 'kinds', 'price_enquiry',
   'from_courier', 'courier', 'tracking', 'summary', 'student_email', 'tagged_at', 'source'];
 var SHIP_VOL_SHEET = 'Ship Volumes';
-var SHIP_VOL_HEADERS = ['month', 'fetched_at', 'stripe_json', 'shipstation_json', 'xref_json'];
+var SHIP_VOL_HEADERS = ['month', 'fetched_at', 'stripe_json', 'shipstation_json', 'xref_json', 'cost_json'];
 // Sorting a chat is a small, closed question, so it goes to the small model.
 // If that model name is ever retired the call falls back to the finder model
 // rather than quietly tagging nothing.
@@ -14096,7 +14105,7 @@ function shipStripeOrders_(key, fromDate, toDate) {
   // PaymentIntents with no Checkout Session at all, which is why August
   // showed 19 orders against 295 parcels. So read both, and never count a
   // payment twice: a Checkout Session's own PaymentIntent is skipped.
-  function push(at, email, md, country, rateName, rateAmount) {
+  function push(at, email, md, country, rateName, rateAmount, id, currency) {
     var named = shipCourier_(md.shipping_provider);
     if (!named || named === 'Other') { var rn = shipCourier_(rateName); if (rn && rn !== 'Other') named = rn; }
     // Where nothing names a courier ("Shipping", or a free UK rate), go by
@@ -14104,8 +14113,15 @@ function shipStripeOrders_(key, fromDate, toDate) {
     var guessed = false;
     if (!named || named === 'Other') { named = shipRegion_(country) === 'uk' ? 'Royal Mail' : 'DHL'; guessed = true; }
     var postage = md.shipping_amount != null && md.shipping_amount !== '' ? Number(md.shipping_amount) : rateAmount;
+    // r193: what the customer actually paid for postage. The new checkout
+    // sends shipping_amount (pounds, before any shipping discount) and
+    // shipping_discount beside it; the old one sent Stripe's own shipping
+    // line, which is already after discounts.
+    var paid = Number(postage) || 0;
+    if (md.shipping_amount != null && md.shipping_amount !== '' && Number(md.shipping_discount)) paid -= Number(md.shipping_discount);
     out.push({ at: at, email: String(email || '').toLowerCase(), courier: named, courier_guessed: guessed,
-               country: String(country || ''), region: shipRegion_(country), shipping_gbp: Number(postage) || 0 });
+               country: String(country || ''), region: shipRegion_(country), shipping_gbp: Number(postage) || 0,
+               id: String(id || ''), paid: Math.round(Math.max(0, paid) * 100) / 100, currency: String(currency || 'gbp').toLowerCase() });
   }
   var after = '', guard = 0;
   while (guard++ < 40) {
@@ -14121,7 +14137,8 @@ function shipStripeOrders_(key, fromDate, toDate) {
       var sc = s.shipping_cost || {}, rate = (sc.shipping_rate && typeof sc.shipping_rate === 'object') ? sc.shipping_rate : {};
       push(new Date(Number(s.created) * 1000).toISOString(), (s.customer_details && s.customer_details.email) || md.email,
            md, addr.country, rate.display_name,
-           (Number(sc.amount_total) || Number(s.total_details && s.total_details.amount_shipping) || 0) / 100);
+           (Number(sc.amount_total) || Number(s.total_details && s.total_details.amount_shipping) || 0) / 100,
+           (s.payment_intent && (typeof s.payment_intent === 'string' ? s.payment_intent : s.payment_intent.id)) || s.id, s.currency);
     });
     if (!page.has_more || !(page.data || []).length) break;
     after = page.data[page.data.length - 1].id;
@@ -14143,7 +14160,7 @@ function shipStripeOrders_(key, fromDate, toDate) {
       var ch = (p.latest_charge && typeof p.latest_charge === 'object') ? p.latest_charge : {};
       var bd = ch.billing_details || {};
       var country = (p.shipping && p.shipping.address && p.shipping.address.country) || (bd.address && bd.address.country) || '';
-      push(new Date(Number(p.created) * 1000).toISOString(), md.email || p.receipt_email || bd.email, md, country, '', 0);
+      push(new Date(Number(p.created) * 1000).toISOString(), md.email || p.receipt_email || bd.email, md, country, '', 0, p.id, p.currency);
     });
     if (!pg.has_more || !(pg.data || []).length) break;
     after = pg.data[pg.data.length - 1].id;
@@ -14174,6 +14191,12 @@ function shipShipStationV2Shipments_(cfg, fromDay, toDay) {
   var a = new Date(fromDay + 'T00:00:00Z'); a.setUTCDate(a.getUTCDate() - 21);
   var b = new Date(toDay + 'T23:59:59Z');
   var out = [], page = 1, pages = 1;
+  // r193: what each label cost us. V2 keeps the cost on the label, not the
+  // shipment, so the labels are read over the same window and joined on
+  // shipment_id. If that read fails the shipments still count; they just
+  // carry no cost, and the cost section says how many.
+  var costs = {}, costErr = '';
+  try { costs = shipShipStationV2LabelCosts_(cfg, a, b); } catch (eL) { costErr = String(eL.message || eL); }
   while (page <= pages && page <= 20) {
     var res = shipShipStationV2Get_(cfg.ssV2, 'shipments?shipment_status=label_purchased&page_size=500&page=' + page +
       '&created_at_start=' + encodeURIComponent(a.toISOString()) + '&created_at_end=' + encodeURIComponent(b.toISOString()));
@@ -14182,10 +14205,38 @@ function shipShipStationV2Shipments_(cfg, fromDay, toDay) {
       var to = s.ship_to || {};
       var day = String(s.ship_date || '').slice(0, 10);
       if (!day || day < fromDay || day > toDay) return;
+      var lc = costs[s.shipment_id];
       out.push({ day: day, email: String(to.email || '').toLowerCase(),
                  courier: shipCourier_(s.service_code || s.carrier_code || s.carrier_id) || 'Other',
                  country: String(to.country_code || ''), region: shipRegion_(to.country_code),
-                 tracking: normaliseTracking_(s.tracking_number || '') });
+                 tracking: normaliseTracking_(s.tracking_number || ''),
+                 cost: lc ? lc.cost : null, cost_currency: lc ? lc.currency : '' });
+    });
+    page++;
+  }
+  if (costErr) out.cost_error = costErr;
+  return out;
+}
+// shipment_id -> { cost, currency } for every live label bought in the window.
+// Cost is postage plus any insurance bought on the label, since both are what
+// the label cost us. A voided label or a return label is not a parcel we sent.
+// Where a shipment was relabelled, the newest live label wins.
+function shipShipStationV2LabelCosts_(cfg, a, b) {
+  var out = {}, seenAt = {}, page = 1, pages = 1;
+  while (page <= pages && page <= 30) {
+    var res = shipShipStationV2Get_(cfg.ssV2, 'labels?label_status=completed&page_size=500&page=' + page +
+      '&created_at_start=' + encodeURIComponent(a.toISOString()) + '&created_at_end=' + encodeURIComponent(b.toISOString()));
+    pages = Number(res.pages) || 1;
+    (res.labels || []).forEach(function (l) {
+      if (!l.shipment_id || l.voided || l.is_return_label) return;
+      var sc = l.shipment_cost || {}, ic = l.insurance_cost || {};
+      if (sc.amount == null) return;
+      var at = String(l.created_at || '');
+      if (seenAt[l.shipment_id] && seenAt[l.shipment_id] > at) return;
+      seenAt[l.shipment_id] = at;
+      var cur = String(sc.currency || '').toLowerCase();
+      var ins = ic.amount && String(ic.currency || cur).toLowerCase() === cur ? Number(ic.amount) : 0;
+      out[l.shipment_id] = { cost: Math.round((Number(sc.amount) + ins) * 100) / 100, currency: cur };
     });
     page++;
   }
@@ -14200,9 +14251,11 @@ function shipShipStationShipments_(cfg, fromDay, toDay) {
     (res.shipments || []).forEach(function (s) {
       if (s.voided) return;
       var to = s.shipTo || {};
+      // V1 carries the cost on the shipment itself, in the account's currency.
+      var c1 = s.shipmentCost == null ? null : Math.round((Number(s.shipmentCost) + (Number(s.insuranceCost) || 0)) * 100) / 100;
       out.push({ day: String(s.shipDate || '').slice(0, 10), email: String(s.customerEmail || '').toLowerCase(),
                  courier: shipCourier_(s.carrierCode) || 'Other', country: String(to.country || ''), region: shipRegion_(to.country),
-                 tracking: normaliseTracking_(s.trackingNumber || '') });
+                 tracking: normaliseTracking_(s.trackingNumber || ''), cost: c1, cost_currency: '' });
     });
     page++;
   }
@@ -14235,6 +14288,18 @@ function shipXref_(orders, shipments, now) {
   var byEmail = {};
   shipments.forEach(function (s, i) { s._i = i; if (s.email) (byEmail[s.email] = byEmail[s.email] || []).push(s); });
   var claimed = {}, lags = [], leftover = [], matched = 0, byDest = 0;
+  // r193: every match also becomes a pair of prices, what the customer paid
+  // for postage and what the label cost, for the cost accuracy section.
+  // [order id, order day, paid, label cost, courier, country, flags]
+  // flags: 1 matched by destination, 2 courier guessed from the country.
+  var pairs = [], noCost = 0, otherCur = 0;
+  function pair(o, s, dest) {
+    if (s.cost == null || !isFinite(s.cost)) { noCost++; return; }
+    if (s.cost_currency && s.cost_currency !== (o.currency || 'gbp')) { otherCur++; return; }
+    if (o.currency && o.currency !== 'gbp') { otherCur++; return; }
+    pairs.push([o.id || '', String(o.at || '').slice(0, 10), o.paid != null ? o.paid : (o.shipping_gbp || 0), s.cost,
+                o.courier, String(o.country || '').toUpperCase(), (dest ? 1 : 0) | (o.courier_guessed ? 2 : 0)]);
+  }
   var today = Utilities.formatDate(now, 'Europe/London', 'yyyy-MM-dd');
   function inWindow(o, s, maxWd) {
     var od = new Date(o.at), d = new Date(s.day + 'T12:00:00Z');
@@ -14244,7 +14309,7 @@ function shipXref_(orders, shipments, now) {
   function earliest(a) { return a.sort(function (x, y) { return x.day < y.day ? -1 : 1; })[0]; }
   orders.forEach(function (o) {
     var c = earliest((byEmail[o.email] || []).filter(function (s) { return inWindow(o, s); }));
-    if (c) { matched++; claimed[c._i] = 1; lags.push(shipWorkingDays_(o.at.slice(0, 10), c.day)); }
+    if (c) { matched++; claimed[c._i] = 1; lags.push(shipWorkingDays_(o.at.slice(0, 10), c.day)); pair(o, c, false); }
     else leftover.push(o);
   });
   var unmatched = [];
@@ -14253,11 +14318,12 @@ function shipXref_(orders, shipments, now) {
       return !claimed[s._i] && s.country && s.country.toUpperCase() === o.country.toUpperCase() &&
              s.courier === o.courier && inWindow(o, s, 10);
     })) : null;
-    if (c) { matched++; byDest++; claimed[c._i] = 1; lags.push(shipWorkingDays_(o.at.slice(0, 10), c.day)); return; }
+    if (c) { matched++; byDest++; claimed[c._i] = 1; lags.push(shipWorkingDays_(o.at.slice(0, 10), c.day)); pair(o, c, true); return; }
     if (shipWorkingDays_(o.at.slice(0, 10), today) > 3) unmatched.push({ at: o.at, email: o.email, courier: o.courier, country: o.country });
   });
   return { orders: orders.length, matched: matched, matched_by_destination: byDest, median_days: shipMedian_(lags),
-           within_2: lags.filter(function (x) { return x <= 2; }).length, unmatched: unmatched.slice(0, 40), unmatched_n: unmatched.length };
+           within_2: lags.filter(function (x) { return x <= 2; }).length, unmatched: unmatched.slice(0, 40), unmatched_n: unmatched.length,
+           _cost: { v: SHIP_COST_V, pairs: pairs, no_cost: noCost, other_currency: otherCur } };
 }
 function shipWorkingDays_(fromDay, toDay) {
   var a = new Date(fromDay + 'T12:00:00Z'), b = new Date(toDay + 'T12:00:00Z'), n = 0;
@@ -14268,7 +14334,7 @@ function shipWorkingDays_(fromDay, toDay) {
 // One month's volumes, from whichever sources are connected.
 function shipFetchMonth_(ym) {
   var cfg = shipCfg_(), rng = shipMonthRange_(ym), now = new Date();
-  var row = { month: ym, fetched_at: now.toISOString(), stripe_json: '', shipstation_json: '', xref_json: '' };
+  var row = { month: ym, fetched_at: now.toISOString(), stripe_json: '', shipstation_json: '', xref_json: '', cost_json: '' };
   var orders = null, ships = null, errs = [];
   if (cfg.stripe) {
     try { orders = shipStripeOrders_(cfg.stripe, rng.start, rng.end); var t = shipTally_(orders);
@@ -14290,7 +14356,21 @@ function shipFetchMonth_(ym) {
       row.shipstation_json = JSON.stringify(shipTally_(ships.filter(function (s) { return s.day >= d0 && s.day <= lastDay; })));
     } catch (e2) { errs.push(String(e2.message || e2)); }
   }
-  if (orders && ships) row.xref_json = JSON.stringify(shipXref_(orders, ships, now));
+  if (orders && ships) {
+    var xr = shipXref_(orders, ships, now), cst = xr._cost;
+    delete xr._cost;
+    if (ships.cost_error) cst.error = ships.cost_error.slice(0, 200);
+    row.xref_json = JSON.stringify(xr);
+    row.cost_json = JSON.stringify(cst);
+    // A sheet cell holds 50,000 characters. A month would need about 700
+    // matched parcels to get near that; if one ever does, the smallest gaps
+    // go first, since they are the ones the section keeps quiet about anyway.
+    while (row.cost_json.length > 49000 && cst.pairs.length) {
+      cst.pairs.sort(function (p, q) { return Math.abs(q[2] - q[3]) - Math.abs(p[2] - p[3]); });
+      cst.pairs = cst.pairs.slice(0, Math.floor(cst.pairs.length * 0.9)); cst.trimmed = true;
+      row.cost_json = JSON.stringify(cst);
+    }
+  }
   row._errors = errs;
   return row;
 }
@@ -14309,6 +14389,8 @@ function shipStaleMonths_(months, rows, cfg) {
     // A source connected after this month was fetched needs another go.
     if (cfg.stripe && (!r.stripe_json || String(r.stripe_json).indexOf('"v":' + SHIP_STRIPE_V) < 0)) return true;   // read by an older rule
     if (cfg.ssOn && !r.shipstation_json) return true;
+    // r193: read before postage was compared with label cost.
+    if (cfg.stripe && cfg.ssOn && String(r.cost_json || '').indexOf('"v":' + SHIP_COST_V) < 0) return true;
     var age = now - new Date(r.fetched_at).getTime();
     var settled = new Date(r.fetched_at).getTime() > shipMonthRange_(m).end.getTime() + 35 * 86400000;
     if (settled) return false;
@@ -14321,6 +14403,13 @@ function shipVolumesRefresh_(data) {
   var cur = shipRows_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS);
   var stale = shipStaleMonths_(months, cur.rows, cfg).reverse();   // newest first: the month on screen matters most
   var done = [], errors = [];
+  // r193: the cost history walk writes to the same tab. Two appends at once
+  // could land on the same row, so only one of them writes at a time; the
+  // page tries again shortly when it is told the other one is busy.
+  if (!stale.length) return { ok: true, refreshed: [], remaining: 0, errors: [] };
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: true, busy: true, refreshed: [], remaining: stale.length, errors: [] };
+  try {
   for (var i = 0; i < stale.length; i++) {
     if (Date.now() - started > 40000) break;
     var row = shipFetchMonth_(stale[i]);
@@ -14329,7 +14418,126 @@ function shipVolumesRefresh_(data) {
     shipUpsert_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS, [row], ['month']);
     done.push(stale[i]);
   }
+  } finally { lock.releaseLock(); }
   return { ok: true, refreshed: done, remaining: stale.length - done.length, errors: errors.filter(function (e, k, a) { return a.indexOf(e) === k; }).slice(0, 3) };
+}
+
+// ---------------------------------------------------------------- postage against label cost
+// r193 (Edd, 19 Sep 2026): "The goal is that students pay exactly what postage
+// costs us, no more and no less. We are not trying to make money on shipping,
+// so overcharging is as much a problem as undercharging." Every order the
+// cross-reference matched to a shipment (by email or by destination) carries
+// what the customer paid for postage and what the label cost. The page does
+// the banding, so moving the tolerance redraws at once without a round trip.
+var SHIP_COST_V = 1;
+var SHIP_COST_FLOOR_ = '2020-11';          // the Stripe account opened in November 2020
+var SHIP_COST_TOL_KEY_ = 'SHIP_COST_TOL';
+var SHIP_COST_HIST_KEY_ = 'SHIP_COST_HIST';
+function shipCostTol_() {
+  var t = {};
+  try { t = JSON.parse(PropertiesService.getScriptProperties().getProperty(SHIP_COST_TOL_KEY_) || '{}') || {}; } catch (e) { t = {}; }
+  // Within £1 or 10% of the label, whichever is the bigger: £1 on a £4 Royal
+  // Mail label, about £4 on a £40 DHL one.
+  return { gbp: isFinite(Number(t.gbp)) && t.gbp !== '' && t.gbp != null ? Number(t.gbp) : 1,
+           pct: isFinite(Number(t.pct)) && t.pct !== '' && t.pct != null ? Number(t.pct) : 10,
+           free_uk: t.free_uk === 'count' ? 'count' : 'separate' };
+}
+function shipCostToleranceSave_(data) {
+  var gbp = Number(data.gbp), pct = Number(data.pct);
+  if (!isFinite(gbp) || gbp < 0 || gbp > 50) return { ok: false, error: 'The pounds figure wants to be between 0 and 50.' };
+  if (!isFinite(pct) || pct < 0 || pct > 100) return { ok: false, error: 'The percentage wants to be between 0 and 100.' };
+  var t = { gbp: Math.round(gbp * 100) / 100, pct: Math.round(pct * 10) / 10, free_uk: data.free_uk === 'count' ? 'count' : 'separate',
+            by: (data._user && data._user.name) || '', at: new Date().toISOString() };
+  PropertiesService.getScriptProperties().setProperty(SHIP_COST_TOL_KEY_, JSON.stringify(t));
+  return { ok: true, tolerance: shipCostTol_() };
+}
+function shipCostHistState_() {
+  var st = null;
+  try { st = JSON.parse(PropertiesService.getScriptProperties().getProperty(SHIP_COST_HIST_KEY_) || 'null'); } catch (e) {}
+  return st || { next: shipMonthOf_(new Date()), empty: 0, done: false, oldest: '' };
+}
+function shipMonthBefore_(ym) { return shipMonthsBack_(ym, 2)[0]; }
+function shipCostCounts_(row) {
+  function n(sj) { try { return sj ? (JSON.parse(sj).n || 0) : 0; } catch (e) { return 0; } }
+  return { orders: n(row.stripe_json), ships: n(row.shipstation_json) };
+}
+// All time, not just the report's 15 months. Walks back a month at a time
+// from this month, reading any month that has not been compared yet, until
+// six months in a row have no postage orders in Stripe and no shipments in
+// ShipStation (or it reaches the month the Stripe account opened). A month
+// already read under this rule is not fetched again. About 40 seconds per
+// call; the page keeps calling while there is more to do.
+function shipCostHistory_(data) {
+  var cfg = shipCfg_();
+  if (!cfg.stripe || !cfg.ssOn) return { ok: false, error: 'Needs both Stripe and ShipStation connected.' };
+  if (data && data.restart && hasPerm_(data._user || {}, 'users')) PropertiesService.getScriptProperties().deleteProperty(SHIP_COST_HIST_KEY_);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: true, busy: true, history: shipCostHistState_() };
+  try {
+    var st = shipCostHistState_(), started = Date.now(), done = [], errors = [];
+    var have = {};
+    shipRows_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS).rows.forEach(function (r) { have[String(r.month)] = r; });
+    while (!st.done && Date.now() - started < 40000) {
+      var m = st.next;
+      if (m < SHIP_COST_FLOOR_) { st.done = true; break; }
+      var row = have[m];
+      if (!row || String(row.cost_json || '').indexOf('"v":' + SHIP_COST_V) < 0) {
+        row = shipFetchMonth_(m);
+        if (row._errors.length) { errors = row._errors; break; }   // try the same month next time, never skip it
+        delete row._errors;
+        shipUpsert_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS, [row], ['month']);
+        done.push(m);
+      }
+      var c = shipCostCounts_(row);
+      if (c.orders || c.ships) { st.empty = 0; st.oldest = m; } else st.empty = (st.empty || 0) + 1;
+      if (st.empty >= 6) st.done = true;
+      st.next = shipMonthBefore_(m);
+    }
+    PropertiesService.getScriptProperties().setProperty(SHIP_COST_HIST_KEY_, JSON.stringify(st));
+    return { ok: true, fetched: done, history: st, errors: errors.slice(0, 2) };
+  } finally { lock.releaseLock(); }
+}
+function shipCost_(data) {
+  var rows = shipRows_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS).rows, months = [];
+  rows.forEach(function (r) {
+    var c = null; try { c = r.cost_json ? JSON.parse(r.cost_json) : null; } catch (e) {}
+    if (!c || c.v !== SHIP_COST_V) return;
+    var x = null; try { x = r.xref_json ? JSON.parse(r.xref_json) : null; } catch (e) {}
+    months.push({ month: String(r.month), orders: x ? x.orders : null, matched: x ? x.matched : null, pairs: c.pairs || [],
+                  no_cost: c.no_cost || 0, other_currency: c.other_currency || 0, error: c.error || '', trimmed: !!c.trimmed });
+  });
+  months.sort(function (a, b) { return a.month < b.month ? -1 : 1; });
+  var cfg = shipCfg_();
+  return { ok: true, tolerance: shipCostTol_(), months: months, history: shipCostHistState_(),
+           connected: !!cfg.stripe && cfg.ssOn, v2: !!cfg.ssV2 };
+}
+// One pair against the tolerance: 'in', 'over', 'under', or 'free' for free
+// UK postage when that is being kept separate. The page has the same rule
+// (shipCostBand); a change to one is a change to both.
+function shipCostBand_(p, tol) {
+  var paid = Number(p[2]), cost = Number(p[3]), gap = paid - cost;
+  if (tol.free_uk !== 'count' && paid === 0 && shipRegion_(p[5]) === 'uk') return 'free';
+  var band = Math.max(tol.gbp, tol.pct / 100 * cost);
+  if (Math.abs(gap) <= band + 1e-9) return 'in';
+  return gap > 0 ? 'over' : 'under';
+}
+// One line for the Slack post on the 1st.
+function shipCostLine_(ym) {
+  var tol = shipCostTol_(), row = shipRows_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS).rows.filter(function (r) { return String(r.month) === ym; })[0];
+  var c = null; try { c = row && row.cost_json ? JSON.parse(row.cost_json) : null; } catch (e) {}
+  if (!c || !c.pairs || !c.pairs.length) return '';
+  var n = { in: 0, over: 0, under: 0, free: 0 }, overGbp = 0, underGbp = 0;
+  c.pairs.forEach(function (p) {
+    var b = shipCostBand_(p, tol); n[b]++;
+    if (b === 'over') overGbp += p[2] - p[3];
+    if (b === 'under') underGbp += p[3] - p[2];
+  });
+  var cmp = n.in + n.over + n.under;
+  if (!cmp) return '';
+  function gbp(x) { return '£' + (Math.round(x * 100) / 100).toFixed(2); }
+  return '• Postage charged against label cost: ' + Math.round(n.in / cmp * 100) + '% of ' + cmp + ' orders within ' + gbp(tol.gbp) +
+    ' or ' + tol.pct + '% of the label. ' + n.over + ' overcharged (' + gbp(overGbp) + ' more than the labels), ' +
+    n.under + ' undercharged (' + gbp(underGbp) + ' short).' + (n.free ? ' ' + n.free + ' UK order' + (n.free === 1 ? '' : 's') + ' posted free, not counted.' : '');
 }
 
 // Admins paste the keys into the page. They go straight into script
@@ -14583,6 +14791,7 @@ function shipSummaryText_(rep) {
   var x = b.volumes && b.volumes.xref;
   if (x && x.median_days != null) lines.push('• Paid to posted: ' + x.median_days + ' working days (median).' + (x.unmatched_n ? ' ' + x.unmatched_n + ' paid pack' + (x.unmatched_n === 1 ? '' : 's') + ' with no shipment found yet.' : ''));
   if (rep.open.length) lines.push('• ' + rep.open.length + ' parcel' + (rep.open.length === 1 ? '' : 's') + ' still open, the oldest ' + rep.open[0].days_open + ' days.');
+  try { var costLine = shipCostLine_(rep.month); if (costLine) lines.push(costLine); } catch (eC) {}
   var url = getAppUrl_();
   if (url) lines.push('Full report: ' + url + (url.indexOf('?') > -1 ? '&' : '?') + 'view=shipreport&month=' + rep.month);
   return lines.join('\n');

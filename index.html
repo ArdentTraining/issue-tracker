@@ -1909,6 +1909,35 @@
   #shipReportView .shr-row:first-child { border-top: 0; }
   #shipReportView .shr-tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--surface-2); margin: 0 4px 2px 0; white-space: nowrap; }
   #shipReportView .shr-scroll { overflow-x: auto; }
+  /* r193: postage charged against label cost */
+  #shipReportView .shc-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 13px; margin-bottom: 10px; }
+  #shipReportView .shc-controls input[type=number] { width: 72px; padding: 3px 6px; }
+  #shipReportView .shc-controls select { width: auto; padding: 3px 6px; }
+  #shipReportView .shc-controls input[type=checkbox] { width: auto; margin: 0; flex: none; }
+  #shipReportView .shc-controls label { white-space: nowrap; }
+  #shipReportView .shc-trend { display: flex; align-items: flex-end; gap: 4px; height: 170px; padding: 22px 2px 26px; overflow-x: auto; }
+  #shipReportView .shc-trend.has-chg { padding-top: 40px; }
+  #shipReportView .shc-col { flex: 1 0 20px; max-width: 46px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; position: relative; }
+  #shipReportView .shc-col.thin .shc-s { opacity: 0.45; }
+  #shipReportView .shc-col .shc-s { flex: none; }
+  #shipReportView .shc-col.cur { outline: 2px solid var(--coral); outline-offset: 2px; border-radius: 3px; }
+  #shipReportView .shc-col .s-in { background: var(--low); }
+  #shipReportView .shc-col .s-under { background: var(--medium); }
+  #shipReportView .shc-col .s-over { background: var(--accent); }
+  #shipReportView .shc-col .top { position: absolute; top: -18px; left: -6px; right: -6px; text-align: center; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  #shipReportView .shc-col .lab { position: absolute; bottom: -20px; left: -6px; right: -6px; text-align: center; font-size: 10px; color: var(--muted); white-space: nowrap; }
+  #shipReportView .shc-col .chg { position: absolute; left: 50%; top: 0; bottom: 0; width: 0; border-left: 2px dashed var(--coral); pointer-events: none; }
+  #shipReportView .shc-col .chg-n { position: absolute; top: -34px; left: 50%; transform: translateX(-50%); background: var(--coral); color: #111; font-size: 10px; font-weight: 700; border-radius: 8px; padding: 0 5px; }
+  #shipReportView .shc-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 14px; }
+  #shipReportView .shc-lists h4 { margin: 0 0 4px; }
+  #shipReportView .shc-row { display: grid; grid-template-columns: 64px 1fr auto; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; align-items: start; }
+  #shipReportView .shc-gap { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #shipReportView .shc-gap.over { color: var(--accent); }
+  #shipReportView .shc-gap.under { color: var(--high); }
+  #shipReportView .shc-flag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
+  #shipReportView .shc-flag.over { background: var(--accent); color: #fff; }
+  #shipReportView .shc-flag.under { background: var(--medium); color: #111; }
+  #shipReportView tr.shc-flagged th, #shipReportView tr.shc-flagged td { font-weight: 600; }
   #shipReportView .shr-src { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
   #shipReportView .shr-src > div { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
   #shipReportView .shr-src .on { color: var(--low); font-weight: 600; }
@@ -1918,6 +1947,9 @@
     #shipReportView .shr-trend { gap: 3px; }
     #shipReportView .shr-col .rate, #shipReportView .shr-ratekey { display: none; }
     #shipReportView .shr-row { grid-template-columns: 1fr; gap: 4px; }
+    #shipReportView .shc-row { grid-template-columns: 1fr auto; }
+    #shipReportView .shc-col { flex-basis: 34px; }
+    #shipReportView .shc-row > div:first-child { grid-column: 1 / -1; }
   }
   #customsView .cu-hist td { padding: 6px; border-top: 1px solid var(--line); font-size: 13px; vertical-align: middle; }
   @media (max-width: 760px) {
@@ -2915,6 +2947,7 @@
   <p><span class="ui">Shipping</span> on the rail opens on <span class="ui">Report</span>: one month of parcel problems, the last whole month to start with. Pick another month at the top, or tap a bar in the 12-month chart.</p>
   <p>A problem is counted from two places. Everything logged in the tracker as Shipping, and the chats, which are read every night and sorted into the same types (not arrived, customs, damaged and so on). A chat that already became an issue is only counted once, and several DHL emails about one waybill count as one parcel. Chats nobody logged are listed under <span class="ui">Chats</span> with a <span class="ui">Log it</span> button, which takes the chat straight to the log form.</p>
   <p>Where Stripe and ShipStation are connected, the problems are set against how many packs went out, so a busy month does not read as a bad one. Customs is measured against parcels sent abroad only, since a UK parcel cannot be held at customs. With ShipStation it also shows how many working days packs take to go out after payment, and any paid pack with no shipment after 3 working days.</p>
+  <p><span class="ui">Postage charged against label cost</span> checks that students pay what their postage actually cost us, no more and no less. Every order matched to a shipment is compared with the label's cost in ShipStation, all the way back, and the chart shows the share each month that came within tolerance, so we can see it improve as rates get fixed. The tolerance is set at the top of the section (within so many pounds or so much of the label, whichever is bigger); anyone can try other figures, and an admin can <span class="ui">Save for everyone</span>. Orders outside it are listed as <span class="ui">Overcharged</span> and <span class="ui">Undercharged</span>, and <span class="ui">By country and courier</span> marks any combination that is consistently off the same way, which is a rate band to adjust rather than a one-off.</p>
   <p>A short summary of last month goes to the shipping channel at 09:00 on the 1st.</p>
 </section>
 <section id="man-customs" data-perm="log" data-title="Customs invoices">
@@ -8542,7 +8575,9 @@ var SHIP_KIND_LABEL = {
   wrong_item: "Wrong or missing contents", damaged: "Damaged in transit", returned: "Failed delivery or returned",
   wrong_address: "Address or label error", other: "Other"
 };
-var shipr = { month: "", data: null, loading: false, refreshing: false, error: "" };
+var shipr = { month: "", data: null, loading: false, refreshing: false, error: "",
+  // r193: postage against label cost, loaded separately and kept for the session
+  cost: null, costLoading: false, costWalking: false, costStale: false, tol: null, period: "all", showAll: {} };
 
 function shipMonthName(ym, short) {
   var d = new Date(ym + "-15T12:00:00Z");
@@ -8581,12 +8616,17 @@ function loadShipReport(quiet) {
     // Parcel counts come from Stripe and ShipStation and are kept in the
     // sheet. Stale months are fetched after the page is up, then it redraws.
     if (r.sources.volumes_stale && !shipr.refreshing) shipRefreshVolumes();
+    // r193: the cost section waits for the volumes, since they are one fetch.
+    else if (r.sources.stripe && r.sources.shipstation && (!shipr.cost || shipr.costStale)) loadShipCost();
   }).catch(function (e) { shipr.loading = false; $("shr_status").textContent = "Could not load the report."; console.error(e); });
 }
 function shipRefreshVolumes() {
   shipr.refreshing = true;
   $("shr_status").textContent = "Fetching parcel counts from " + shipSourceNames() + "…";
   apiPost({ action: "shipVolumesRefresh", month: shipr.month }).then(function (r) {
+    // r193: the cost history walk is writing the same tab; wait our turn.
+    if (r && r.busy) { setTimeout(shipRefreshVolumes, 15000); return; }
+    if (r && r.refreshed && r.refreshed.length) shipr.costStale = true;
     if (r && r.errors && r.errors.length) { shipr.refreshing = false; $("shr_status").textContent = "Parcel counts: " + r.errors[0]; loadShipReport(true); return; }
     if (r && r.ok && r.remaining > 0 && r.refreshed.length) { shipRefreshVolumes(); return; }
     shipr.refreshing = false;
@@ -8672,7 +8712,7 @@ function drawShipReport() {
 
   // ---- what stands out
   var notes = shipStandOut(d, b, prev3, last12, fair);
-  if (notes.length) h += '<div class="card"><h3>What stands out</h3><ul class="shr-stand">' + notes.map(function (n) { return "<li>" + n + "</li>"; }).join("") + "</ul></div>";
+  if (notes.length) h += '<div class="card"><h3>What stands out</h3><ul class="shr-stand" id="shr_stand">' + notes.map(function (n) { return "<li>" + n + "</li>"; }).join("") + "</ul></div>";
 
   // ---- trend
   h += shipTrendCard(d, last12);
@@ -8686,6 +8726,9 @@ function drawShipReport() {
   // ---- orders against shipments
   h += shipOrdersCard(d, b);
 
+  // ---- r193: postage charged against what the label cost
+  h += shipCostCard(d);
+
   // ---- chats
   h += shipChatsCard(d, b, prev3);
 
@@ -8695,7 +8738,10 @@ function drawShipReport() {
   // ---- sources
   h += shipSourcesCard(d);
   $("shr_body").innerHTML = h;
+  shipCostScroll();
 }
+// The accuracy chart can run to years; open it on the latest months.
+function shipCostScroll() { document.querySelectorAll("#shipReportView .shc-trend").forEach(function (e) { e.scrollLeft = e.scrollWidth; }); }
 
 function shipStandOut(d, b, prev3, last12, fair) {
   var out = [];
@@ -8740,6 +8786,10 @@ function shipStandOut(d, b, prev3, last12, fair) {
   var pa = shipAvg(prev3, function (p) { return p.price; });
   if (b.chats_counted && b.price >= 4 && pa != null && b.price >= 1.5 * pa) out.push(b.price + " people asked about postage costs or times before buying, against an average of " + shipR1(pa) + ". Worth checking the checkout makes the price and timing clear.");
   if (d.open.length && d.open[0].days_open >= 14) out.push(shipJumpLink("shr-open", "The oldest open parcel has been waiting " + d.open[0].days_open + " days") + ".");
+  // r193: only a rate band that is off the same way again and again is news.
+  // A single odd parcel stays in its list further down.
+  var sc = shipCostStandOut();
+  if (sc) out.push(sc);
   return out;
 }
 function shipJumpLink(id, html) { return '<a onclick="shipJump(\'' + id + '\')">' + html + "</a>"; }
@@ -8884,6 +8934,269 @@ function shipOrdersCard(d, b) {
     }
   } else if (st && !ss) h += '<p class="small muted">Connect ShipStation as well to see how long orders take to go out, and which paid packs have not shipped.</p>';
   return h + "</div>";
+}
+
+// ---------------------------------------------------------------- r193: postage against label cost
+// Edd, 19 Sep 2026: students should pay exactly what postage costs us, no
+// more and no less, so an overcharge is as much a fault as an undercharge.
+// Each pair is [order id, order day, paid, label cost, courier, country, flags]
+// from the server's match (flags: 1 matched by destination, 2 courier guessed).
+function loadShipCost() {
+  if (shipr.costLoading) return;
+  shipr.costLoading = true; shipr.costStale = false;
+  apiPost({ action: "shipCost" }).then(function (r) {
+    shipr.costLoading = false;
+    if (!r || !r.ok) { shipr.costError = (r && r.error) || "no reply"; shipCostRedraw(); return; }
+    shipr.cost = r; shipr.costError = "";
+    if (!shipr.tol) shipr.tol = { gbp: r.tolerance.gbp, pct: r.tolerance.pct, free_uk: r.tolerance.free_uk };
+    // A full draw only when the section or its stand-out line is new, so a
+    // batch of history landing never pulls focus from the tolerance boxes.
+    shipCostRedraw(!$("shr-cost") || (!$("shr_stand") && !!shipCostStandOut()));
+    if (r.connected && r.history && !r.history.done && !shipr.costWalking && !shipr.costWalkErr) shipCostWalk();
+  }).catch(function (e) { shipr.costLoading = false; console.error(e); });
+}
+// All time: the server walks back a month at a time, about 40 seconds a call,
+// and the section redraws as each batch lands.
+function shipCostWalk() {
+  shipr.costWalking = true;
+  apiPost({ action: "shipCostHistory" }).then(function (r) {
+    if (!r || !r.ok) { shipr.costWalking = false; shipr.costWalkErr = (r && r.error) || "no reply"; shipCostRedraw(); return; }
+    if (r.busy) { setTimeout(shipCostWalk, 15000); return; }
+    shipr.costWalkErr = r.errors && r.errors.length ? r.errors[0] : "";
+    if (shipr.costWalkErr) { shipr.costWalking = false; loadShipCost(); return; }
+    shipr.costWalking = !r.history.done;
+    if (r.fetched && r.fetched.length) shipr.costStale = true;
+    if (r.history.done) { loadShipCost(); return; }
+    if (shipr.costStale && !shipr.costLoading) loadShipCost();
+    setTimeout(shipCostWalk, 500);
+  }).catch(function () { shipr.costWalking = false; shipr.costWalkErr = "The connection dropped. Reload the page to carry on."; shipCostRedraw(); });
+}
+function shipCostBand(p, tol) {
+  // Same rule as shipCostBand_ in Code.gs, which writes the Slack line.
+  var paid = Number(p[2]), cost = Number(p[3]), gap = paid - cost;
+  if (tol.free_uk !== "count" && paid === 0 && shipCostRegion(p[5]) === "uk") return "free";
+  var band = Math.max(tol.gbp, tol.pct / 100 * cost);
+  if (Math.abs(gap) <= band + 1e-9) return "in";
+  return gap > 0 ? "over" : "under";
+}
+function shipCostRegion(cc) {
+  cc = String(cc || "").toUpperCase();
+  return cc === "GB" || cc === "UK" || cc === "IM" || cc === "JE" || cc === "GG" ? "uk" : cc ? "abroad" : "unknown";
+}
+function shipGBP(x) { return (x < 0 ? "−" : "") + "£" + Math.abs(x).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+var SHIP_COUNTRY_NAMES = null;
+function shipCountryName(cc) {
+  try { if (!SHIP_COUNTRY_NAMES) SHIP_COUNTRY_NAMES = new Intl.DisplayNames(["en-GB"], { type: "region" }); return cc ? SHIP_COUNTRY_NAMES.of(cc) : "Not known"; }
+  catch (e) { return cc || "Not known"; }
+}
+function shipOrderLink(id) {
+  if (!id) return "";
+  var u = /^pi_/.test(id) ? "https://dashboard.stripe.com/payments/" + encodeURIComponent(id) : "https://dashboard.stripe.com/search?query=" + encodeURIComponent(id);
+  return '<a href="' + u + '" target="_blank" rel="noopener" title="' + esc(id) + '">Order</a>';
+}
+function shipMedianJs(a) {
+  if (!a.length) return null;
+  a = a.slice().sort(function (x, y) { return x - y; });
+  var m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+// Which months the lists and the grouping look at. The chart always shows all.
+function shipCostPeriodMonths() {
+  var ms = (shipr.cost && shipr.cost.months) || [], cur = shipr.month;
+  if (shipr.period === "month") return ms.filter(function (m) { return m.month === cur; });
+  if (shipr.period === "all") return ms;
+  var n = Number(shipr.period) || 12, from = shipMonthsBackJs(cur, n);
+  return ms.filter(function (m) { return m.month >= from && m.month <= cur; });
+}
+function shipMonthsBackJs(ym, n) { var d = new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7) - 1 - (n - 1), 1)); return d.getUTCFullYear() + "-" + ("0" + (d.getUTCMonth() + 1)).slice(-2); }
+function shipCostTally(pairs, tol) {
+  var t = { n: 0, in: 0, over: 0, under: 0, free: 0, overGbp: 0, underGbp: 0, freeGbp: 0, net: 0 };
+  pairs.forEach(function (p) {
+    var b = shipCostBand(p, tol), gap = p[2] - p[3];
+    t[b]++;
+    if (b === "free") { t.freeGbp += p[3]; return; }
+    t.n++; t.net += gap;
+    if (b === "over") t.overGbp += gap;
+    if (b === "under") t.underGbp -= gap;
+  });
+  t.pct = t.n ? Math.round(t.in / t.n * 100) : null;
+  return t;
+}
+// Country and courier together, since a rate band is set per courier per
+// destination. "Consistently off" means at least three orders off the same
+// way, making up at least 60% of that combination's orders, with hardly any
+// (10% or fewer) off the other way. That points at the rate, not a one-off.
+function shipCostGroups(pairs, tol) {
+  var G = {};
+  pairs.forEach(function (p) {
+    var b = shipCostBand(p, tol);
+    if (b === "free") return;
+    var k = (p[5] || "?") + "|" + p[4], g = G[k] || (G[k] = { cc: p[5], courier: p[4], n: 0, in: 0, over: 0, under: 0, paid: [], cost: [], gap: [], last: "" });
+    g.n++; g[b]++; g.paid.push(p[2]); g.cost.push(p[3]); g.gap.push(p[2] - p[3]);
+    if (b !== "in" && p[1] > g.last) g.last = p[1];
+  });
+  return Object.keys(G).map(function (k) {
+    var g = G[k], dir = g.over >= g.under ? "over" : "under", dn = g[dir], opp = g[dir === "over" ? "under" : "over"];
+    g.flag = dn >= 3 && dn / g.n >= 0.6 && opp <= 0.1 * g.n ? dir : "";
+    g.mPaid = shipMedianJs(g.paid); g.mCost = shipMedianJs(g.cost); g.mGap = shipMedianJs(g.gap);
+    return g;
+  }).filter(function (g) { return g.over + g.under > 0; })
+    .sort(function (a, b) { return (b.flag ? 1 : 0) - (a.flag ? 1 : 0) || (b.over + b.under) - (a.over + a.under) || b.n - a.n; });
+}
+function shipCostStandOut() {
+  var c = shipr.cost, tol = shipr.tol;
+  if (!c || !tol || !c.months.length) return "";
+  var pairs = [];
+  shipCostPeriodMonths().forEach(function (m) { pairs = pairs.concat(m.pairs); });
+  var flagged = shipCostGroups(pairs, tol).filter(function (g) { return g.flag; });
+  if (!flagged.length) return "";
+  return shipJumpLink("shc-groups", flagged.length + " courier and country combination" + (flagged.length === 1 ? " is" : "s are") + " charging consistently off the label cost") +
+    ": " + flagged.slice(0, 3).map(function (g) { return esc(g.courier) + " to " + esc(shipCountryName(g.cc)) + " " + (g.flag === "over" ? "over" : "under") + " by about " + shipGBP(Math.abs(g.mGap)); }).join(", ") +
+    (flagged.length > 3 ? " and more" : "") + ". That points at a rate band to adjust rather than a one-off.";
+}
+function shipCostCard(d) {
+  var s = d.sources || {};
+  if (!s.stripe || !s.shipstation) return "";
+  var admin = !!(state.perms || {}).users, tol = shipr.tol || { gbp: 1, pct: 10, free_uk: "separate" };
+  var per = [["month", "This report's month"], ["3", "Last 3 months"], ["12", "Last 12 months"], ["all", "All time"]];
+  return '<div class="card" id="shr-cost"><h3>Postage charged against label cost</h3>' +
+    '<p class="small muted" style="margin-top:0;">What each student paid for postage at checkout, against what ShipStation says the label cost us. We are aiming for the two to match, so charging too much counts against us as much as charging too little.</p>' +
+    '<div class="shc-controls">' +
+      '<span>Close enough: within £<input type="number" id="shc_gbp" min="0" max="50" step="0.5" value="' + tol.gbp + '" oninput="shipCostTolInput()"> or ' +
+      '<input type="number" id="shc_pct" min="0" max="100" step="1" value="' + tol.pct + '" oninput="shipCostTolInput()">% of the label, whichever is bigger</span>' +
+      '<label style="display:inline-flex;gap:6px;align-items:center;"><input type="checkbox" id="shc_free"' + (tol.free_uk === "count" ? " checked" : "") + ' onchange="shipCostTolInput()"> Count free UK postage as undercharged</label>' +
+      '<label style="display:inline-flex;gap:6px;align-items:center;">Lists and groups: <select id="shc_period" onchange="shipr.period=this.value;shipr.showAll={};shipCostRedraw()">' +
+        per.map(function (o) { return '<option value="' + o[0] + '"' + (shipr.period === o[0] ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + "</select></label>" +
+      (admin ? '<button class="ghost small" onclick="shipCostTolSave()" title="Makes these the settings everyone opens on, and the ones the Slack summary uses">Save for everyone</button>' : "") +
+    '</div><div id="shc_body">' + shipCostBody(d) + "</div></div>";
+}
+function shipCostTolInput() {
+  var g = Number(($("shc_gbp") || {}).value), p = Number(($("shc_pct") || {}).value);
+  shipr.tol = { gbp: isFinite(g) && g >= 0 ? g : 0, pct: isFinite(p) && p >= 0 ? p : 0, free_uk: ($("shc_free") || {}).checked ? "count" : "separate" };
+  shipCostRedraw();
+}
+function shipCostTolSave() {
+  var t = shipr.tol;
+  apiPost({ action: "shipCostTolerance", gbp: t.gbp, pct: t.pct, free_uk: t.free_uk }).then(function (r) {
+    if (!r || !r.ok) { toast((r && r.error) || "That did not save."); return; }
+    if (shipr.cost) shipr.cost.tolerance = r.tolerance;
+    toast("Saved. Everyone opens on within £" + r.tolerance.gbp + " or " + r.tolerance.pct + "% now, and the Slack summary uses it too.");
+  }).catch(function (e) { toastErr("Saving the tolerance", e); });
+}
+// Redraws the section body (and the stand-out list) without touching the
+// controls, so typing in the tolerance boxes keeps its place.
+function shipCostRedraw(full) {
+  if (!shipr.data) return;
+  if (full || !$("shr-cost")) { drawShipReport(); return; }
+  var b = $("shc_body"); if (b) { b.innerHTML = shipCostBody(shipr.data); shipCostScroll(); }
+  var d = shipr.data, i = d.buckets.length - 1;
+  var ul = $("shr_stand");
+  if (ul) ul.innerHTML = shipStandOut(d, d.buckets[i], d.buckets.slice(i - 3, i), d.buckets.slice(i - 11, i + 1),
+    d.buckets[i].chats_counted && d.buckets.slice(i - 3, i).every(function (x) { return x.chats_counted; })).map(function (n) { return "<li>" + n + "</li>"; }).join("");
+}
+function shipCostBody(d) {
+  var c = shipr.cost, tol = shipr.tol;
+  if (!c) return '<p class="small muted">' + (shipr.costError ? "Could not load this: " + esc(shipr.costError) : shipr.refreshing ? "Waiting for the parcel counts to finish…" : "Loading…") + "</p>";
+  var h = "";
+  var hist = c.history || {};
+  var oldest = c.months.length ? c.months[0].month : "";
+  var histLine = hist.done ? "All time, from " + (oldest ? esc(shipMonthName(oldest)) : "the start") + "."
+    : shipr.costWalking ? "Reading older months from Stripe and ShipStation, back to " + (oldest ? esc(shipMonthName(oldest)) : "…") + " so far. It fills in as it goes."
+    : "Older months still to read.";
+  if (shipr.costWalkErr) histLine += " Stopped on an error: " + esc(shipr.costWalkErr);
+  if (!c.months.length) return '<p class="small muted">' + histLine + " Nothing compared yet.</p>";
+
+  // ---- the report's month, in words
+  var mo = c.months.filter(function (m) { return m.month === d.month; })[0];
+  var mt = mo ? shipCostTally(mo.pairs, tol) : null;
+  var pms = shipCostPeriodMonths(), pp = [];
+  pms.forEach(function (m) { pp = pp.concat(m.pairs); });
+  var pt = shipCostTally(pp, tol);
+  function said(t, label) {
+    if (!t || !t.n) return label + ": nothing to compare.";
+    return label + ": <b>" + t.pct + "%</b> of " + t.n + " orders charged within tolerance. " +
+      (t.over ? t.over + " overcharged, " + shipGBP(t.overGbp) + " more than the labels. " : "None overcharged. ") +
+      (t.under ? t.under + " undercharged, " + shipGBP(t.underGbp) + " short. " : "None undercharged. ") +
+      "Across every order, we took " + shipGBP(Math.abs(t.net)) + (t.net >= 0 ? " more" : " less") + " than postage cost us.";
+  }
+  h += "<p>" + said(mt, esc(shipMonthName(d.month))) + "</p>";
+  if (shipr.period !== "month") h += '<p class="small">' + said(pt, esc(({ "3": "Last 3 months", "12": "Last 12 months", all: "All time" })[shipr.period])) + "</p>";
+  var freeN = pt.free, freeGbp = pt.freeGbp;
+  if (freeN) h += '<p class="small muted">' + freeN + " UK order" + (freeN === 1 ? " was" : "s were") + " posted free in that time, " + shipGBP(freeGbp) +
+    " of labels we covered. Not counted above; tick the box to count free postage as undercharged.</p>";
+
+  // ---- accuracy over time
+  var changes = d.changes || [], byMonth = {};
+  changes.forEach(function (x) { var m = String(x.date || "").slice(0, 7); (byMonth[m] = byMonth[m] || []).push(x); });
+  var anyChg = c.months.some(function (m) { return byMonth[m.month]; });
+  var cols = c.months.map(function (m) {
+    var t = shipCostTally(m.pairs, tol), ch = byMonth[m.month] || [];
+    var lab = shipMonthName(m.month, true) + (m.month.slice(5) === "01" || m === c.months[0] ? " " + m.month.slice(2, 4) : "");
+    var title = shipMonthName(m.month) + ": " + (t.n ? t.pct + "% within, " + t.in + " within, " + t.over + " over, " + t.under + " under" : "nothing compared") +
+      (t.free ? ", " + t.free + " free UK" : "") + (m.no_cost ? ", " + m.no_cost + " with no label cost" : "") +
+      (ch.length ? "\nWhat we changed:" + ch.map(function (x) { return "\n• " + fmtShipChangeDate(x.date) + ": " + x.text; }).join("") : "");
+    var seg = function (cls, n) { return n ? '<div class="shc-s ' + cls + '" style="height:' + (n / t.n * 100) + '%"></div>' : ""; };
+    return '<div class="shc-col' + (t.n < 5 ? " thin" : "") + (m.month === d.month ? " cur" : "") + '" title="' + esc(title) + '">' +
+      (ch.length ? '<div class="chg"></div><div class="chg-n">' + ch.length + "</div>" : "") +
+      '<div class="top">' + (t.n ? t.pct + "%" : "–") + "</div>" +
+      (t.n ? seg("s-over", t.over) + seg("s-under", t.under) + seg("s-in", t.in) : "") +
+      '<div class="lab">' + esc(lab) + "</div></div>";
+  }).join("");
+  h += '<div class="shc-trend' + (anyChg ? " has-chg" : "") + '">' + cols + "</div>" +
+    '<div class="shr-legend"><span><i style="background:var(--low)"></i>Within tolerance</span><span><i style="background:var(--medium)"></i>Undercharged</span>' +
+    '<span><i style="background:var(--accent)"></i>Overcharged</span><span>Figure: share within tolerance</span><span>Faded: fewer than 5 orders to go on</span>' +
+    (anyChg ? '<span><i style="background:var(--coral)"></i>A change we made</span>' : "") + "</div>";
+  h += '<p class="small muted" style="margin:6px 0 0;">' + histLine + "</p>";
+
+  // ---- outliers, overcharged and undercharged apart
+  var outl = { over: [], under: [] };
+  pp.forEach(function (p) { var b = shipCostBand(p, tol); if (b === "over" || b === "under") outl[b].push(p); });
+  function list(kind, title, none) {
+    var rows = outl[kind].sort(function (a, b) { return Math.abs(b[2] - b[3]) - Math.abs(a[2] - a[3]); });
+    var shown = shipr.showAll[kind] ? rows : rows.slice(0, 12);
+    return "<div><h4>" + title + " (" + rows.length + ")</h4>" +
+      (rows.length ? shown.map(function (p) {
+        var gap = p[2] - p[3];
+        return '<div class="shc-row"><div class="small">' + esc(new Date(p[1] + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" })) + "</div><div>" +
+          '<span class="shr-tag">' + esc(p[4]) + '</span><span class="shr-tag">' + esc(shipCountryName(p[5])) + "</span>" +
+          (p[6] & 1 ? '<span class="shr-tag" title="Matched on courier, country and date rather than email, most likely a gift. Worth a check before acting on it.">matched by destination</span>' : "") +
+          '<div class="small muted">Paid ' + shipGBP(p[2]) + ", label " + shipGBP(p[3]) + " · " + shipOrderLink(p[0]) + "</div></div>" +
+          '<div class="shc-gap ' + kind + '">' + (gap > 0 ? "+" : "") + shipGBP(gap) + "</div></div>";
+      }).join("") + (rows.length > shown.length ? '<a href="#" class="small" onclick="shipr.showAll.' + kind + '=true;shipCostRedraw();return false;">Show all ' + rows.length + "</a>" : "")
+        : '<p class="small muted">' + none + "</p>") + "</div>";
+  }
+  h += '<div class="shc-lists">' + list("over", "Overcharged", "Nobody paid meaningfully more than the label cost.") +
+    list("under", "Undercharged", "Nobody paid meaningfully less than the label cost.") + "</div>";
+
+  // ---- grouped by country and courier
+  var groups = shipCostGroups(pp, tol);
+  h += '<div id="shc-groups" style="margin-top:16px;border-radius:6px;"><h4 style="margin:0 0 4px;">By country and courier</h4>';
+  if (!groups.length) h += '<p class="small muted">No combination has anything outside tolerance.</p>';
+  else {
+    h += '<div class="shr-scroll"><table class="matrix"><thead><tr><th class="l">Where, and who took it</th><th>Orders</th><th>Within</th><th>Over</th><th>Under</th>' +
+      "<th>We charge</th><th>Label costs</th><th>Typical gap</th><th>Last off</th><th class=\"l\"></th></tr></thead><tbody>" +
+      groups.map(function (g) {
+        return '<tr' + (g.flag ? ' class="shc-flagged"' : "") + '><th class="l">' + esc(shipCountryName(g.cc)) + ", " + esc(g.courier) + "</th><td>" + g.n + "</td><td>" + Math.round(g.in / g.n * 100) + "%</td>" +
+          "<td>" + g.over + "</td><td>" + g.under + "</td><td>" + shipGBP(g.mPaid) + "</td><td>" + shipGBP(g.mCost) + "</td><td>" + (g.mGap > 0 ? "+" : "") + shipGBP(g.mGap) + "</td>" +
+          "<td>" + (g.last ? esc(new Date(g.last + "T12:00:00Z").toLocaleDateString("en-GB", { month: "short", year: "2-digit" })) : "–") + "</td>" +
+          '<td class="l">' + (g.flag ? '<span class="shc-flag ' + g.flag + '">Consistently ' + g.flag + "</span>" : "") + "</td></tr>";
+      }).join("") + "</tbody></table></div>" +
+      '<p class="small muted" style="margin-bottom:0;">Only combinations with something outside tolerance are listed. "We charge" and "Label costs" are the middle values. Consistently over or under means three or more orders off the same way, at least 60% of that combination\'s orders, and hardly any off the other way, so the rate band itself wants adjusting. "Last off" shows whether it is still happening after a change.</p>';
+  }
+  h += "</div>";
+
+  // ---- what is not in here
+  var noCost = 0, otherCur = 0, orders = 0, matched = 0, costErr = "", trimmed = false;
+  c.months.forEach(function (m) { noCost += m.no_cost; otherCur += m.other_currency; orders += m.orders || 0; matched += m.matched || 0; if (m.error) costErr = m.error; if (m.trimmed) trimmed = true; });
+  var gaps = [];
+  if (orders > matched) gaps.push((orders - matched) + " paid orders never matched to a shipment");
+  if (noCost) gaps.push(noCost + " matched shipment" + (noCost === 1 ? "" : "s") + " with no label cost in ShipStation");
+  if (otherCur) gaps.push(otherCur + " in a currency other than pounds");
+  h += '<p class="small muted" style="margin:12px 0 0;">Every order matched to a shipment, whether by email or by destination, all time. ' +
+    (gaps.length ? "Not compared: " + gaps.join(", ") + ". " : "") +
+    "Label cost is postage plus any insurance bought on the label." + (costErr ? " ShipStation would not give label costs for some months: " + esc(costErr) + "." : "") +
+    (trimmed ? " A very busy month kept only its biggest gaps." : "") + "</p>";
+  return h;
 }
 
 function shipChatsCard(d, b, prev3) {
