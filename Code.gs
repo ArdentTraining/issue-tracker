@@ -8068,7 +8068,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r188.3 · 2026-09-19';
+var CODE_STAMP = 'r188.4 · 2026-09-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -14044,7 +14044,7 @@ function shipCfg_() {
 }
 // Bumped when the way a Stripe order is read changes, so months already
 // cached under the old rule are fetched again rather than kept forever.
-var SHIP_STRIPE_V = 2;
+var SHIP_STRIPE_V = 3;
 function shipStripeGet_(key, path) {
   var r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, { headers: { Authorization: 'Bearer ' + key }, muteHttpExceptions: true });
   var code = r.getResponseCode(), body = r.getContentText();
@@ -14059,36 +14059,66 @@ function shipStripeGet_(key, path) {
 // Worldwide 1200") and the billing country; a session with neither a service
 // nor a shipping id bought nothing physical (an extension, an SRC course).
 function shipStripeOrders_(key, fromDate, toDate) {
-  var a = Math.floor(fromDate.getTime() / 1000), b = Math.floor(toDate.getTime() / 1000), after = '', out = [], guard = 0;
+  var a = Math.floor(fromDate.getTime() / 1000), b = Math.floor(toDate.getTime() / 1000);
+  var out = [], viaSession = {};
+  // Edd, 19 Sep: postage used to come through as Stripe's own shipping line
+  // (shipping_cost, with a named rate) and now comes as metadata
+  // (shipping_provider, shipping_amount). The move came with a new checkout:
+  // from late August 2026 most orders (payment_type CART_PURCHASE) are plain
+  // PaymentIntents with no Checkout Session at all, which is why August
+  // showed 19 orders against 295 parcels. So read both, and never count a
+  // payment twice: a Checkout Session's own PaymentIntent is skipped.
+  function push(at, email, md, country, rateName, rateAmount) {
+    var named = shipCourier_(md.shipping_provider);
+    if (!named || named === 'Other') { var rn = shipCourier_(rateName); if (rn && rn !== 'Other') named = rn; }
+    // Where nothing names a courier ("Shipping", or a free UK rate), go by
+    // where it went: Royal Mail in the UK, DHL abroad, which is how we post.
+    var guessed = false;
+    if (!named || named === 'Other') { named = shipRegion_(country) === 'uk' ? 'Royal Mail' : 'DHL'; guessed = true; }
+    var postage = md.shipping_amount != null && md.shipping_amount !== '' ? Number(md.shipping_amount) : rateAmount;
+    out.push({ at: at, email: String(email || '').toLowerCase(), courier: named, courier_guessed: guessed,
+               country: String(country || ''), region: shipRegion_(country), shipping_gbp: Number(postage) || 0 });
+  }
+  var after = '', guard = 0;
   while (guard++ < 40) {
     var q = 'checkout/sessions?limit=100&status=complete&created%5Bgte%5D=' + a + '&created%5Blt%5D=' + b +
       '&expand%5B%5D=data.shipping_cost.shipping_rate' + (after ? '&starting_after=' + after : '');
     var page = shipStripeGet_(key, q);
     (page.data || []).forEach(function (s) {
       var md = s.metadata || {};
+      if (s.payment_intent) viaSession[typeof s.payment_intent === 'string' ? s.payment_intent : s.payment_intent.id] = 1;
       if (s.payment_status && s.payment_status !== 'paid') return;
       if (!md.shipping_provider && !md.shippingId) return;
       var addr = (s.customer_details && s.customer_details.address) || {};
-      // Edd, 19 Sep: postage used to come through as Stripe's own shipping
-      // line (shipping_cost, with a named shipping rate) and now comes as
-      // metadata (shipping_provider, shipping_amount). Older orders have only
-      // the first, newer ones only the second, so read both. Where neither
-      // names a courier ("Shipping", or a free UK rate), go by where it went:
-      // Royal Mail in the UK, DHL abroad, which is how we post.
       var sc = s.shipping_cost || {}, rate = (sc.shipping_rate && typeof sc.shipping_rate === 'object') ? sc.shipping_rate : {};
-      var named = shipCourier_(md.shipping_provider);
-      if (!named || named === 'Other') { var rn = shipCourier_(rate.display_name); if (rn && rn !== 'Other') named = rn; }
-      var guessed = false;
-      if (!named || named === 'Other') { named = shipRegion_(addr.country) === 'uk' ? 'Royal Mail' : 'DHL'; guessed = true; }
-      var postage = md.shipping_amount != null && md.shipping_amount !== '' ? Number(md.shipping_amount)
-        : ((Number(sc.amount_total) || Number(s.total_details && s.total_details.amount_shipping) || 0) / 100);
-      out.push({ at: new Date(Number(s.created) * 1000).toISOString(),
-                 email: String((s.customer_details && s.customer_details.email) || md.email || '').toLowerCase(),
-                 courier: named, courier_guessed: guessed, country: String(addr.country || ''),
-                 region: shipRegion_(addr.country), shipping_gbp: Number(postage) || 0 });
+      push(new Date(Number(s.created) * 1000).toISOString(), (s.customer_details && s.customer_details.email) || md.email,
+           md, addr.country, rate.display_name,
+           (Number(sc.amount_total) || Number(s.total_details && s.total_details.amount_shipping) || 0) / 100);
     });
     if (!page.has_more || !(page.data || []).length) break;
     after = page.data[page.data.length - 1].id;
+  }
+  after = ''; guard = 0;
+  while (guard++ < 60) {
+    var q2 = 'payment_intents?limit=100&created%5Bgte%5D=' + a + '&created%5Blt%5D=' + b +
+      '&expand%5B%5D=data.latest_charge' + (after ? '&starting_after=' + after : '');
+    var pg;
+    try { pg = shipStripeGet_(key, q2); }
+    catch (e) {
+      if (/permission|rak_/i.test(String(e.message || e))) throw new Error('The Stripe key can read checkouts but not payments. Since August most orders are payments, so in Stripe give the restricted key PaymentIntents: Read and Charges: Read as well.');
+      throw e;
+    }
+    (pg.data || []).forEach(function (p) {
+      if (p.status !== 'succeeded' || viaSession[p.id]) return;
+      var md = p.metadata || {};
+      if (!md.shipping_provider && !md.shippingId) return;
+      var ch = (p.latest_charge && typeof p.latest_charge === 'object') ? p.latest_charge : {};
+      var bd = ch.billing_details || {};
+      var country = (p.shipping && p.shipping.address && p.shipping.address.country) || (bd.address && bd.address.country) || '';
+      push(new Date(Number(p.created) * 1000).toISOString(), md.email || p.receipt_email || bd.email, md, country, '', 0);
+    });
+    if (!pg.has_more || !(pg.data || []).length) break;
+    after = pg.data[pg.data.length - 1].id;
   }
   return out;
 }
@@ -14270,7 +14300,7 @@ function setShipConfig_(data) {
   var sk = String(data.stripe_key || '').trim();
   if (sk) {
     if (!/^(rk|sk)_(live|test)_/.test(sk)) return { ok: false, error: 'That does not look like a Stripe key. A restricted key starts rk_live_.' };
-    try { shipStripeGet_(sk, 'checkout/sessions?limit=1'); p.setProperty('STRIPE_READ_KEY', sk); out.stripe = 'connected'; }
+    try { shipStripeGet_(sk, 'checkout/sessions?limit=1'); shipStripeGet_(sk, 'payment_intents?limit=1&expand%5B%5D=data.latest_charge'); p.setProperty('STRIPE_READ_KEY', sk); out.stripe = 'connected'; }
     catch (e) { return { ok: false, error: 'Stripe said no: ' + String(e.message || e).slice(0, 200) + '. Nothing was saved.' }; }
   }
   var k = String(data.shipstation_key || '').trim(), s = String(data.shipstation_secret || '').trim();

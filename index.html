@@ -3649,7 +3649,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r188.2 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r188.4 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8710,7 +8710,7 @@ function shipSourcesCard(d) {
   h += "<div><b>Stripe</b> " + (s.stripe ? '<span class="on">connected</span>' : '<span class="off">not connected</span>') +
     "<br>Paid orders that included postage, with the courier chosen at checkout and the billing country.";
   if (admin) h += (s.stripe ? '<br><a href="#" class="small" onclick="shipDisconnect(\'stripe\');return false;">Disconnect</a>'
-    : '<input id="shr_sk" type="password" autocomplete="off" placeholder="Restricted key, rk_live_…"><div class="small muted">In Stripe: Developers, API keys, Create restricted key, with Checkout Sessions set to Read and nothing else.</div>');
+    : '<input id="shr_sk" type="password" autocomplete="off" placeholder="Restricted key, rk_live_…"><div class="small muted">In Stripe: Developers, API keys, Create restricted key, with Checkout Sessions, PaymentIntents and Charges set to Read and nothing else.</div>');
   h += "</div>";
   h += "<div><b>ShipStation</b> " + (s.shipstation ? '<span class="on">connected</span>' : '<span class="off">not connected</span>') +
     "<br>What actually went out, by carrier and destination, and how long after payment.";
