@@ -686,6 +686,10 @@ function doPost(e) {
     if (action === 'customsFetch') return jsonOut(customsFetch_(body));
     if (action === 'customsMySigner') return jsonOut(customsMySigner_(body));
     if (action === 'saveCustomsSigner') return jsonOut(saveCustomsSigner_(body));
+    if (action === 'resourcesList') return jsonOut(resourcesList_());
+    if (action === 'resourcesSave') return jsonOut(resourcesSave_(body));
+    if (action === 'resourcesUpload') return jsonOut(resourcesUpload_(body));
+    if (action === 'resourcesSuggest') return jsonOut(resourcesSuggest_(body));
     if (action === 'chatScanList') return jsonOut(chatScanList_());
     if (action === 'chatScanReview') return jsonOut(chatScanReview_(body));
     if (action === 'runChatScan') return jsonOut(runChatScan_(body));
@@ -775,7 +779,9 @@ var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_
 // object from PERM_KEYS, so a key missing from PERM_LABELS in index.html would
 // be silently stripped off every account the next time anyone pressed Save on
 // the Users page. The two lists move together, always.
-var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs'];
+// r187: 'resources' joins, for the website resources page. Hand-picked
+// (Edd, 19 Sep), so like irpcs nobody holds it until an admin ticks it.
+var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources'];
 var SESSION_DAYS = 30;
 var HASH_ROUNDS = 2000;
 // Password-reset links expire after this many minutes. The expiry is packed into
@@ -914,6 +920,9 @@ function reqPerm_(action) {
     // same instructor job as chasing the parcel in the first place.
     case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': return 'log';
     case 'customsMySigner': case 'saveCustomsSigner': return 'log';   // always the caller's own row
+    // r187: the website resources page. Its own key, because it publishes
+    // straight to the public website and Edd hand-picks who can.
+    case 'resourcesList': case 'resourcesSave': case 'resourcesUpload': case 'resourcesSuggest': return 'resources';
     // The scan queue is visible to every instructor (Edd, 26 Jul) - the team
     // is small and whoever spots it first should be able to act. Kicking off a
     // manual scan stays with the admins.
@@ -1859,6 +1868,8 @@ var READ_ONLY_ACTIONS = {
   // r182: customs invoices live in their own three tabs and never touch an
   // issue row, so the cached issue list is still true after any of them.
   customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsMySigner: 1, saveCustomsSigner: 1,
+  // r187: website resources live in a different spreadsheet altogether.
+  resourcesList: 1, resourcesSave: 1, resourcesUpload: 1, resourcesSuggest: 1,
   caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
   // r185: preferences live on the Users tab and never touch an issue row, and
   // opening What's new, the bell or feedback saves one, and each of those was
@@ -1959,6 +1970,7 @@ var PURE_READS_ = {
   getAssignees: 1, mirror: 1, chatScanList: 1, listLiveCases: 1, lessonIssueCounts: 1,
   askIssues: 1, askManual: 1, extract: 1, suggestFix: 1, troubleshoot: 1, matchUpdate: 1, sameIssue: 1,
   getManifest: 1, getInvite: 1, customsPacks: 1, customsList: 1, customsFetch: 1,
+  resourcesList: 1, resourcesSave: 1, resourcesUpload: 1, resourcesSuggest: 1,   // r187: another spreadsheet, no extra is built from it
   chatwootList: 1, chatwootContactUrl: 1, draftStudentMessage: 1, listVoiceGuides: 1, listContentSuggestions: 1,
   // These two DO write, but only a cell no extra is built from: nextAction its
   // own cached answer on the issue row, setPrefs the person's preferences.
@@ -6762,9 +6774,11 @@ function uploadImage_(data) {
 // Upload straight to the Drive REST API with the script's OAuth token. Used
 // only when DriveApp has thrown. Multipart so the file and its metadata (name
 // and parent folder) go up in one request.
-function driveRestUpload_(blob, filename) {
+// r187: `parent` lets the resources page use it for its own folder; left off,
+// it is the screenshot folder as before.
+function driveRestUpload_(blob, filename, parent) {
   var boundary = '----aitUpload' + new Date().getTime();
-  var meta = JSON.stringify({ name: filename, parents: [DRIVE_FOLDER_ID] });
+  var meta = JSON.stringify({ name: filename, parents: [parent || DRIVE_FOLDER_ID] });
   var head = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta +
     '\r\n--' + boundary + '\r\nContent-Type: ' + blob.getContentType() + '\r\n\r\n';
   var tail = '\r\n--' + boundary + '--\r\n';
@@ -8033,7 +8047,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r186 · 2026-09-19';
+var CODE_STAMP = 'r187 · 2026-09-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -13264,4 +13278,329 @@ function logFault_(body) {
 
   var r = addIssue_(faultIssueData_(c));
   return { ok: true, issue_id: (r && r.issue && r.issue.issue_id) || '', already: false };
+}
+
+// ===================== WEBSITE RESOURCES (r187, 19 Sep 2026) =====================
+// Edd: "a new tab on bug tracker where it lists the resources already there,
+// allows people to edit their Category, title, description etc, and to upload
+// new files or thumbnails." The resources page on ardent-training.com is built
+// from its own Google Sheet (not this one), so that sheet stays the single
+// source of truth and this is a friendlier way in than editing it by hand.
+//
+// Who: the 'resources' permission only, hand-picked in Admin (Edd, 19 Sep).
+//
+// Files: new PDFs and thumbnails go to a "Website resources" folder in Drive,
+// shared anyone-with-the-link, because that is where the thumbnails already
+// live and it needs nobody else's system (Edd: "We don't want wordpress").
+// Existing links on blog.ardent-training.com are left exactly as they are.
+//
+// The sheet is found by its header words, not by position, so a blank row
+// above the headers or a column added to the right does not break it. Any
+// column we do not know about is carried along untouched when rows move.
+//
+// Hiding a resource moves its row to a second tab, "Hidden from website",
+// rather than adding a Show column: we cannot see how the website reads the
+// sheet, and a new column is a change it has never had to cope with. A second
+// tab after the first is the smallest change that can be undone by hand.
+//
+// Saving is all-or-nothing against the version the page loaded. If anybody
+// (a person in the sheet, or another tab of the tracker) changed it in the
+// meantime, the save is refused and says so, rather than writing over them.
+var RESOURCES_SHEET_ID = '1rrjwHj6qYJqTqTF3DOml-N5at48TDn_W2Zj8YUrOTmQ';
+var RESOURCES_HIDDEN_TAB = 'Hidden from website';
+var RESOURCES_FIELDS_ = ['category', 'title', 'description', 'url', 'thumbnail', 'type'];
+var RESOURCES_MAX_BYTES_ = 25 * 1024 * 1024;
+var RESOURCES_LOG_SHEET = 'ResourcesLog';
+var RESOURCES_LOG_HEADERS = ['at', 'by', 'summary', 'changes_json'];
+
+function resourcesBook_() { return SpreadsheetApp.openById(RESOURCES_SHEET_ID); }
+
+// The header row of a tab: the first of its top six rows holding at least
+// Category, Title and URL. Returns null for a tab that is not a resources list.
+function resourcesHeader_(sh) {
+  var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return null;
+  var top = sh.getRange(1, 1, Math.min(6, lastRow), lastCol).getValues();
+  for (var r = 0; r < top.length; r++) {
+    var cols = {};
+    for (var c = 0; c < top[r].length; c++) {
+      var h = String(top[r][c] || '').trim().toLowerCase();
+      if (h && cols[h] === undefined) cols[h] = c;
+    }
+    if (cols.category !== undefined && cols.title !== undefined && cols.url !== undefined) {
+      return { row: r + 1, cols: cols, width: lastCol, names: top[r].map(function (h) { return String(h || '').trim(); }) };
+    }
+  }
+  return null;
+}
+
+// Both tabs, read in one go. `live` is the tab the website reads (the first
+// one that looks like a resources list), `hidden` the parking tab if it exists.
+function resourcesRead_() {
+  var book = resourcesBook_();
+  var live = null, hidden = null;
+  book.getSheets().forEach(function (sh) {
+    if (sh.getName() === RESOURCES_HIDDEN_TAB) { hidden = sh; return; }
+    if (!live && resourcesHeader_(sh)) live = sh;
+  });
+  if (!live) return { ok: false, error: 'Could not find the resources list in the sheet. It needs a header row with Category, Title and URL.' };
+  function block(sh) {
+    if (!sh) return { sh: null, head: null, rows: [] };
+    var head = resourcesHeader_(sh);
+    if (!head) return { sh: sh, head: null, rows: [] };
+    var n = sh.getLastRow() - head.row;
+    var rows = n > 0 ? sh.getRange(head.row + 1, 1, n, head.width).getValues() : [];
+    // Trailing blank rows are not resources. Blank rows in the middle are
+    // kept in the snapshot (so the version and the row numbers stay honest)
+    // but are not offered as items.
+    while (rows.length && rows[rows.length - 1].join('') === '') rows.pop();
+    return { sh: sh, head: head, rows: rows };
+  }
+  var L = block(live), H = block(hidden);
+  var version = Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5,
+    JSON.stringify([L.rows, H.rows, L.head && L.head.names]), Utilities.Charset.UTF_8));
+  return { ok: true, book: book, live: L, hidden: H, version: version };
+}
+
+function resourcesItem_(row, head, key, hiddenFlag, sheetRow) {
+  var it = { key: key, hidden: hiddenFlag, row: sheetRow };
+  RESOURCES_FIELDS_.forEach(function (f) {
+    var c = head.cols[f];
+    it[f] = c === undefined ? '' : String(row[c] == null ? '' : row[c]).trim();
+  });
+  return it;
+}
+
+function resourcesList_() {
+  var r = resourcesRead_();
+  if (!r.ok) return r;
+  var items = [], hidden = [];
+  r.live.rows.forEach(function (row, i) {
+    if (row.join('') === '') return;
+    items.push(resourcesItem_(row, r.live.head, 'L' + i, false, r.live.head.row + 1 + i));
+  });
+  if (r.hidden.head) r.hidden.rows.forEach(function (row, i) {
+    if (row.join('') === '') return;
+    hidden.push(resourcesItem_(row, r.hidden.head, 'H' + i, true, r.hidden.head.row + 1 + i));
+  });
+  return {
+    ok: true, version: r.version, items: items, hidden: hidden,
+    tab: r.live.sh.getName(), has_type: r.live.head.cols.type !== undefined,
+    sheet_url: 'https://docs.google.com/spreadsheets/d/' + RESOURCES_SHEET_ID + '/edit'
+  };
+}
+
+// Save the whole list as the page now has it: `live` in website order and
+// `hidden`. Every item the page was given must come back in one list or the
+// other, so nothing can vanish by accident; there is no delete.
+function resourcesSave_(body) {
+  var user = body._user || {};
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return { ok: false, error: 'busy', message: 'Somebody else is saving resources right now. Try again in a moment.' };
+  try {
+    var r = resourcesRead_();
+    if (!r.ok) return r;
+    if (String(body.version || '') !== r.version) {
+      return { ok: false, error: 'stale', message: 'The resources sheet has changed since this page loaded, so nothing was saved. Reload the list and make the change again.' };
+    }
+    var live = Array.isArray(body.live) ? body.live : [], hid = Array.isArray(body.hidden) ? body.hidden : [];
+    var LH = r.live.head;
+
+    // Account for every existing row, once.
+    var seen = {}, problems = [];
+    live.concat(hid).forEach(function (it) {
+      if (!it || !it.key) return;
+      if (seen[it.key]) problems.push('"' + (it.title || it.key) + '" is in the list twice');
+      seen[it.key] = 1;
+    });
+    r.live.rows.forEach(function (row, i) { if (row.join('') !== '' && !seen['L' + i]) problems.push('row ' + (LH.row + 1 + i) + ' went missing'); });
+    r.hidden.rows.forEach(function (row, i) { if (row.join('') !== '' && !seen['H' + i]) problems.push('a hidden row went missing'); });
+    live.concat(hid).forEach(function (it) {
+      if (!String(it.title || '').trim()) problems.push('a resource has no title');
+      if (!String(it.url || '').trim()) problems.push('"' + (it.title || 'untitled') + '" has no file or link');
+      if (!String(it.category || '').trim()) problems.push('"' + (it.title || 'untitled') + '" has no category');
+      if (it.key && !/^[LH]\d+$/.test(String(it.key))) problems.push('an item came back with a key we did not give out');
+    });
+    if (problems.length) return { ok: false, error: 'invalid', message: 'Nothing was saved: ' + problems.slice(0, 4).join('; ') + '.' };
+
+    // A row in the live tab's shape. Starts from the row it came from (so any
+    // column we do not know about travels with it), then takes the fields.
+    function shaped(it, head) {
+      var out = [];
+      for (var c = 0; c < head.width; c++) out.push('');
+      var src = null, srcHead = null;
+      if (it.key && it.key.charAt(0) === 'L') { src = r.live.rows[+it.key.slice(1)]; srcHead = r.live.head; }
+      if (it.key && it.key.charAt(0) === 'H') { src = r.hidden.rows[+it.key.slice(1)]; srcHead = r.hidden.head; }
+      if (src && srcHead) {
+        srcHead.names.forEach(function (name, c) {
+          if (!name) return;
+          var to = head.cols[name.toLowerCase()];
+          if (to !== undefined && c < src.length) out[to] = src[c];
+        });
+      }
+      RESOURCES_FIELDS_.forEach(function (f) {
+        if (head.cols[f] !== undefined && it[f] !== undefined) out[head.cols[f]] = String(it[f] == null ? '' : it[f]).trim();
+      });
+      return out;
+    }
+    function sameRow(a, b) {
+      if (!b || a.length !== b.length) return false;
+      for (var i = 0; i < a.length; i++) if (String(a[i]) !== String(b[i] == null ? '' : b[i])) return false;
+      return true;
+    }
+    // Write only what changed when the shape is the same; otherwise rewrite the
+    // block and clear what is left below it.
+    function write(sh, head, oldRows, newRows) {
+      var written = 0;
+      if (newRows.length === oldRows.length) {
+        newRows.forEach(function (row, i) {
+          if (sameRow(row, oldRows[i])) return;
+          sh.getRange(head.row + 1 + i, 1, 1, head.width).setValues([row]);
+          written++;
+        });
+        return written;
+      }
+      if (newRows.length) sh.getRange(head.row + 1, 1, newRows.length, head.width).setValues(newRows);
+      if (oldRows.length > newRows.length) sh.getRange(head.row + 1 + newRows.length, 1, oldRows.length - newRows.length, head.width).clearContent();
+      return Math.max(newRows.length, oldRows.length);
+    }
+
+    var newLive = live.map(function (it) { return shaped(it, LH); });
+    var wroteLive = write(r.live.sh, LH, r.live.rows, newLive);
+
+    var wroteHidden = 0;
+    if (hid.length || r.hidden.rows.length) {
+      var hsh = r.hidden.sh, hHead = r.hidden.head;
+      if (!hsh) {
+        hsh = r.book.insertSheet(RESOURCES_HIDDEN_TAB, r.book.getSheets().length);
+        hsh.getRange(1, 1, 1, LH.width).setValues([LH.names]).setFontWeight('bold');
+        hsh.setFrozenRows(1);
+        hHead = resourcesHeader_(hsh);
+      } else if (!hHead) {
+        return { ok: false, error: 'invalid', message: 'The "' + RESOURCES_HIDDEN_TAB + '" tab has lost its header row, so nothing was saved. Put Category, Title and URL back on its first row.' };
+      }
+      wroteHidden = write(hsh, hHead, r.hidden.rows, hid.map(function (it) { return shaped(it, hHead); }));
+    }
+
+    // A plain record of every save, in the tracker's own sheet: who, when, and
+    // each resource before and after. It is the undo if a save goes wrong.
+    try {
+      var before = {};
+      r.live.rows.forEach(function (row, i) { before['L' + i] = resourcesItem_(row, LH, 'L' + i, false, 0); });
+      if (r.hidden.head) r.hidden.rows.forEach(function (row, i) { before['H' + i] = resourcesItem_(row, r.hidden.head, 'H' + i, true, 0); });
+      var changes = [];
+      live.concat(hid).forEach(function (it, idx) {
+        var was = it.key ? before[it.key] : null, nowHidden = idx >= live.length;
+        var diff = {};
+        RESOURCES_FIELDS_.forEach(function (f) {
+          var a = was ? was[f] : '', b = String(it[f] == null ? '' : it[f]).trim();
+          if (a !== b) diff[f] = [a, b];
+        });
+        if (!was) changes.push({ added: it.title, hidden: nowHidden, fields: diff });
+        else if (was.hidden !== nowHidden || Object.keys(diff).length) changes.push({ title: was.title, hidden: [was.hidden, nowHidden], fields: diff });
+      });
+      var summary = changes.length ? changes.length + ' resource' + (changes.length === 1 ? '' : 's') + ' changed'
+        : ((wroteLive || wroteHidden) ? 'order changed' : 'nothing changed');
+      customsSheet_(RESOURCES_LOG_SHEET, RESOURCES_LOG_HEADERS)
+        .appendRow([new Date().toISOString(), user.email || '', summary, JSON.stringify(changes).slice(0, 45000)]);
+    } catch (e) { Logger.log('ResourcesLog write failed: ' + e); }
+
+    SpreadsheetApp.flush();
+    var fresh = resourcesList_();
+    fresh.rows_written = wroteLive + wroteHidden;
+    return fresh;
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+// The Drive folder new files go in: "Website resources", inside the tracker's
+// own Drive folder, made the first time it is needed and shared with anyone
+// who has the link (the website's visitors are exactly those people).
+function resourcesFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('RESOURCES_FOLDER_ID');
+  if (id) return id;
+  try {
+    var f = DriveApp.getFolderById(DRIVE_FOLDER_ID).createFolder('Website resources');
+    try { f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+    id = f.getId();
+  } catch (e) {
+    // Same fallback as uploadImage_: DriveApp has been refusing here since July.
+    var token = ScriptApp.getOAuthToken();
+    var res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?fields=id&supportsAllDrives=true', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({ name: 'Website resources', mimeType: 'application/vnd.google-apps.folder', parents: [DRIVE_FOLDER_ID] })
+    });
+    if (res.getResponseCode() >= 300) throw new Error('Could not make the Website resources folder: HTTP ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+    id = JSON.parse(res.getContentText()).id;
+    try {
+      UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '/permissions?supportsAllDrives=true', {
+        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: { Authorization: 'Bearer ' + token }, payload: JSON.stringify({ role: 'reader', type: 'anyone' })
+      });
+    } catch (e2) {}
+  }
+  props.setProperty('RESOURCES_FOLDER_ID', id);
+  return id;
+}
+
+// One file up: a PDF (or any document) for `kind: 'file'`, an image for
+// `kind: 'thumb'`. Uploading does not touch the sheet; the link it hands back
+// only reaches the website when the page is saved.
+function resourcesUpload_(body) {
+  var b64 = String(body.base64 || '');
+  var comma = b64.indexOf(',');
+  if (b64.indexOf('data:') === 0 && comma > -1) b64 = b64.substring(comma + 1);
+  if (!b64) return { ok: false, error: 'No file came through.' };
+  var kind = body.kind === 'thumb' ? 'thumb' : 'file';
+  var bytes = Utilities.base64Decode(b64);
+  if (bytes.length > RESOURCES_MAX_BYTES_) return { ok: false, error: 'That file is over 25 MB, which is too big to send through the tracker.' };
+  var mime = String(body.mimeType || (kind === 'thumb' ? 'image/jpeg' : 'application/pdf'));
+  if (kind === 'thumb' && mime.indexOf('image/') !== 0) return { ok: false, error: 'A thumbnail needs to be an image.' };
+  var name = String(body.filename || (kind === 'thumb' ? 'thumbnail.jpg' : 'resource.pdf')).replace(/[\\\/]/g, '-').slice(0, 180);
+  var blob = Utilities.newBlob(bytes, mime, name);
+  var folder = resourcesFolder_();
+  var id = '';
+  try {
+    var file = DriveApp.getFolderById(folder).createFile(blob);
+    try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+    id = file.getId();
+  } catch (e) {
+    var rest = driveRestUpload_(blob, name, folder);
+    if (!rest.ok) return { ok: false, error: 'Drive would not take the file: ' + rest.error };
+    id = rest.id;
+  }
+  return {
+    ok: true, id: id, name: name, bytes: bytes.length,
+    // The shapes the sheet already uses: lh3 for thumbnails (every existing
+    // row), the Drive viewer for a document (the one Drive-hosted PDF there).
+    url: kind === 'thumb' ? 'https://lh3.googleusercontent.com/d/' + id : 'https://drive.google.com/file/d/' + id + '/view'
+  };
+}
+
+// First go at a title, description and category for a new resource, from the
+// text on its first pages. Written in the house style of the existing rows,
+// and always shown to a person to check before anything is saved.
+function resourcesSuggest_(body) {
+  var text = String(body.text || '').replace(/\s+/g, ' ').trim().slice(0, 5000);
+  var cats = (Array.isArray(body.categories) ? body.categories : []).map(String).slice(0, 20);
+  var examples = (Array.isArray(body.examples) ? body.examples : []).slice(0, 12).map(function (e) {
+    return '- [' + String(e.category || '') + '] ' + String(e.title || '') + ': ' + String(e.description || '');
+  }).join('\n');
+  if (!text && !body.filename) return { ok: false, error: 'Nothing to read.' };
+  var prompt = 'We run a sailing school website with a page of free downloadable resources (pro formas, checklists, step by step guides, quick reminders). ' +
+    'A new one is being added. Suggest its listing.\n\n' +
+    'Existing listings, for style:\n' + examples + '\n\n' +
+    'Categories in use: ' + cats.join(', ') + '\n\n' +
+    'File name: ' + String(body.filename || '') + '\n' +
+    'Text from its first pages:\n"""\n' + text + '\n"""\n\n' +
+    'Rules: title in Title Case, short, naming the thing (like the examples). Description one plain sentence of at most 60 characters, starting with a verb or "A", British English, no full stop missing. ' +
+    'Category must be one of the categories in use unless none fits at all. Type is PDF for a PDF.\n' +
+    'Return ONLY JSON: {"title": "...", "description": "...", "category": "...", "type": "PDF"}';
+  var out = anthropicRaw_(ANTHROPIC_MODEL, prompt, 400);
+  if (!out.json) return { ok: false, error: 'Could not suggest a listing (' + out.why + ').' };
+  return { ok: true, title: String(out.json.title || ''), description: String(out.json.description || ''),
+           category: String(out.json.category || ''), type: String(out.json.type || 'PDF') };
 }

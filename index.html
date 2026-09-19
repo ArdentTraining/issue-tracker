@@ -1167,6 +1167,12 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l9-13 9 13"/><path d="M3 17c3 2 6 2 9 0s6-2 9 0"/></svg>
     <span class="ri-word">IRPCS</span>
   </button>
+  <!-- r187 (Edd): the downloads on the website's resources page. Its own
+       permission, hand-picked in Admin. -->
+  <button type="button" class="rail-item" id="railResources" onclick="railGo('resources')" title="Resources - the free downloads on the website">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 13 12 16 15 13"/><line x1="12" y1="10" x2="12" y2="16"/></svg>
+    <span class="ri-word">Resources</span>
+  </button>
   <button type="button" class="rail-item" id="railReports" onclick="railGo('reports')" title="Reports">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><polyline points="7 14 11 9 15 12 20 6"/></svg>
     <span class="ri-word">Reports</span>
@@ -1857,6 +1863,124 @@
     #customsView table.cu-items td { display: block; border: 0; padding: 3px 0; }
   }
 </style>
+<!-- r187 (Edd, 19 Sep): Resources. The downloads on ardent-training.com/resources
+     are built from their own Google Sheet; this page edits that sheet, with a
+     gallery and a list view of the same data. Gated on the 'resources'
+     permission, hand-picked in Admin; the backend checks the same key. -->
+<style>
+  #resourcesView .rs-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+  #resourcesView .rs-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .rs-toggle { display: inline-flex; gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+  .rs-toggle button { background: transparent; color: var(--muted); padding: 7px 12px; font-weight: 600; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+  .rs-toggle button.active { background: var(--surface-2); color: var(--text); }
+  .rs-toggle svg, .rs-handle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  #rs_q { width: 240px; }
+  .rs-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  .rs-chip { background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px; font-size: 13px; font-weight: 600; color: var(--text); }
+  .rs-chip .n { opacity: .6; font-weight: 500; margin-left: 6px; }
+  .rs-chip.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .rs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; padding-bottom: 90px; }
+  .rs-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px; text-align: left; color: var(--text); display: flex; flex-direction: column; gap: 10px; cursor: pointer; }
+  .rs-card:hover { filter: none; border-color: var(--accent); }
+  .rs-card.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .rs-card .t { font-weight: 700; font-size: 15px; line-height: 1.3; display: flex; gap: 7px; align-items: flex-start; }
+  .rs-card .d { display: block; font-size: 13px; color: var(--muted); line-height: 1.45; }
+  .rs-card .rs-cat { margin-top: auto; }
+  .rs-thumb { position: relative; display: flex; aspect-ratio: 4 / 3; width: 100%; background: var(--surface-2); border-radius: 10px; overflow: hidden; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
+  .rs-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; background: #fff; }
+  .rs-thumb.th { width: 56px; height: 44px; aspect-ratio: auto; border-radius: 6px; font-size: 0; }
+  .rs-thumb.big { aspect-ratio: 3 / 4; max-width: 190px; }
+  .rs-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); flex: 0 0 auto; margin-top: 6px; display: inline-block; }
+  .rs-cat { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .rs-cat i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .rs-groups { padding-bottom: 90px; }
+  .rs-group { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 14px; overflow: hidden; }
+  .rs-group-h { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; font-weight: 700; }
+  .rs-group-h .rs-cat { font-size: 15px; color: var(--text); }
+  .rs-row { display: grid; grid-template-columns: 20px 56px minmax(0, 1.1fr) minmax(0, 1.5fr) minmax(0, .8fr) 70px; gap: 14px; align-items: center; padding: 9px 16px; border-top: 1px solid var(--line); }
+  .rs-row.open { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+  .rs-row.dragging { opacity: .45; }
+  .rs-row.drop-before { box-shadow: inset 0 3px 0 var(--accent); }
+  .rs-row.drop-after { box-shadow: inset 0 -3px 0 var(--accent); }
+  .rs-row .rs-title { font-weight: 700; display: flex; gap: 8px; align-items: flex-start; }
+  .rs-row .rs-fname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rs-handle { cursor: grab; color: var(--muted); display: flex; }
+  .rs-inline { padding: 8px 16px 18px 52px; background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+  .rs-ed { display: grid; grid-template-columns: 190px minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+  .rs-ed.col { grid-template-columns: 1fr; gap: 16px; }
+  .rs-ed.col .rs-ed-thumb { display: grid; grid-template-columns: 130px 1fr; gap: 14px; align-items: start; }
+  .rs-ed .fld { margin-bottom: 12px; }
+  .rs-ed textarea { width: 100%; min-height: 76px; }
+  .rs-ed input { width: 100%; }
+  .rs-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .rs-count { float: right; font-size: 12px; color: var(--muted); }
+  .rs-count.over { color: var(--coral); font-weight: 700; }
+  .rs-file { display: flex; gap: 10px; align-items: center; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+  .rs-ficon { width: 38px; height: 38px; border-radius: 8px; background: rgba(255,145,144,.14); color: var(--high); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; flex: 0 0 auto; }
+  .rs-fmeta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .rs-fmeta .fn { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  a.rs-open { text-decoration: none; border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font-size: 13px; color: var(--text); }
+  .rs-ed-foot { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .rs-ed-foot .danger { color: var(--high); background: transparent; padding-left: 0; }
+  .rs-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 440px; max-width: 100vw; background: var(--surface); border-left: 1px solid var(--line); z-index: 70; display: flex; flex-direction: column; box-shadow: -20px 0 40px rgba(0,0,0,.3); }
+  .rs-drawer .rs-dh { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+  .rs-drawer .rs-lbl { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .rs-drawer .rs-dt { font-size: 18px; font-weight: 800; }
+  .rs-drawer .rs-dbody { padding: 18px 22px 110px; overflow-y: auto; flex: 1; }
+  .rs-savebar { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: var(--bg); border-radius: 14px; padding: 8px 10px 8px 18px; display: flex; gap: 12px; align-items: center; z-index: 75; box-shadow: 0 18px 40px rgba(0,0,0,.4); white-space: nowrap; }
+  .rs-savebar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--coral); }
+  .rs-savebar .msg { font-weight: 700; font-size: 14px; }
+  .rs-savebar button.ghost { color: var(--bg); border-color: var(--muted); }
+  body.rs-drawer-open .rs-savebar { left: calc(50% - 220px); }
+  .modal.rs-add { width: 780px; border-color: var(--line); }
+  .rs-drop { border: 2px dashed var(--line); border-radius: 12px; padding: 26px; text-align: center; }
+  .rs-drop.over { border-color: var(--accent); background: var(--surface-2); }
+  .rs-ai { background: rgba(91,105,225,.14); border: 1px solid rgba(91,105,225,.4); border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+  @media (max-width: 900px) {
+    .rs-ed { grid-template-columns: 1fr; }
+    .rs-row { grid-template-columns: 20px 48px minmax(0, 1fr) 70px; }
+    .rs-row .rs-desc, .rs-row .rs-fname { display: none; }
+    .rs-inline { padding-left: 16px; }
+    body.rs-drawer-open .rs-savebar { left: 50%; }
+  }
+  @media (max-width: 760px) {
+    #rs_q { width: 100%; }
+    .rs-savebar { bottom: 80px; }
+    .rs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  }
+</style>
+<div id="resourcesView" class="wrap hidden">
+  <div class="rs-head">
+    <div>
+      <h2 style="margin:0;">Resources</h2>
+      <p class="hint" id="rs_sub" style="margin:4px 0 0;">The free downloads on ardent-training.com/resources.</p>
+    </div>
+    <div class="rs-tools">
+      <div class="rs-toggle" role="group" aria-label="View">
+        <button type="button" id="rs_v_gallery" onclick="resSetView('gallery')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>Gallery</button>
+        <button type="button" id="rs_v_list" onclick="resSetView('list')"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg>List</button>
+      </div>
+      <input id="rs_q" placeholder="Search title or description" autocomplete="off" aria-label="Search resources" oninput="resSearch(this.value)" />
+      <button type="button" class="ghost small" onclick="resLoad(true)" title="Read the list again from the sheet">Refresh</button>
+      <button type="button" class="primary" onclick="resAddOpen()">+ Add resource</button>
+    </div>
+  </div>
+  <div class="rs-chips" id="rs_chips"></div>
+  <div id="rs_body"><p class="hint">Fetching the resources…</p></div>
+  <datalist id="rs_catlist"></datalist>
+  <datalist id="rs_typelist"></datalist>
+  <input type="file" id="rs_pick_file" class="hidden" onchange="resPicked(this)" />
+  <input type="file" id="rs_pick_thumb" class="hidden" accept="image/*" onchange="resPicked(this)" />
+  <aside class="rs-drawer hidden" id="rs_drawer" aria-label="Edit resource"></aside>
+  <div class="rs-savebar hidden" id="rs_savebar" role="status">
+    <span class="dot"></span><span class="msg" id="rs_barmsg"></span>
+    <button type="button" class="ghost small" id="rs_discard" onclick="resDiscard()">Discard</button>
+    <button type="button" class="primary small" id="rs_savebtn" onclick="resSave()">Save to website</button>
+  </div>
+</div>
+<div class="modal-bg" id="rs_addbg" onclick="if (event.target === this) resAddClose()">
+  <div class="modal rs-add" role="dialog" aria-label="Add a resource" id="rs_addbox"></div>
+</div>
 <div id="customsView" class="wrap hidden">
   <h2 style="margin-top:0;">Customs invoice</h2>
   <p class="hint" style="margin-top:-6px;">For when customs ask again for an invoice showing exactly what is in the pack. Start from the chat and the tracker finds what it can. Anything highlighted is still missing, so ask the student for it.</p>
@@ -2080,6 +2204,7 @@
              So a new permission key that is not also given a box here does not
              degrade quietly - it throws, and nobody can be invited at all. -->
         <label class="small"><input type="checkbox" id="inv_irpcs"> IRPCS</label>
+        <label class="small"><input type="checkbox" id="inv_resources"> Resources</label>
       </div>
       <label style="margin-top:8px;">Fixes they can be given<span class="helphost" data-help="This is who can be picked in Assigned to, not who can see the page. Anyone with Manage users sees both queues anyway, so leave these unticked for an admin who does not actually take fixes."></span></label>
       <div class="permrow">
@@ -2373,6 +2498,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="resources"><td><span class="ui">Resources</span></td><td>The free downloads on the website's resources page: edit them, add new ones, and change their order.</td></tr>
     <tr data-perm="log"><td><span class="ui">Customs</span></td><td>Make a commercial invoice for a student's pack when customs ask for one again.</td></tr>
     <tr data-perm="dev,users"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
     <tr data-perm="users"><td><span class="ui">RCA</span></td><td>Private diagnostic records on promoted issues, for a fault that needs investigating rather than just fixing.</td></tr>
@@ -2695,6 +2821,15 @@
   <p>The declaration at the bottom is signed by whoever makes the invoice. Set your own printed name, title and signature once under <span class="ui">Signed by</span>, by drawing it or uploading a photo of it on white paper. Without one, your name prints over a blank line to sign by hand. Nobody else can use or change yours.</p>
   <p><span class="ui">Make the invoice</span> downloads a PDF to send and a Word copy in case something needs tweaking, and saves both in the tracker's Drive folder. The totals are added up by the tracker, not typed, so they always match the lines.</p>
   <p>Everything made shows under <span class="ui">Made recently</span>. If customs ask a second time, <span class="ui">Download</span> gives the identical invoice again, same number and date. <span class="ui">Copy</span> starts a new one from its details, for when the address or contents have changed.</p>
+</section>
+
+<section id="man-resources" data-perm="resources" data-title="Website resources">
+  <h3>Website resources</h3>
+  <p>The free downloads on ardent-training.com/resources, the pro formas, checklists and reminders, are built from their own Google Sheet. <span class="ui">Resources</span> on the rail edits that sheet for us, so nobody needs to open it and hunt for the right row.</p>
+  <p>There are two views of the same list. <span class="ui">Gallery</span> shows the thumbnails, the way a student sees them, and clicking one opens it on the right to edit. <span class="ui">List</span> groups them by category in the order the website shows them. Drag a row to move it within its category, or open it and use <span class="ui">Move up</span> and <span class="ui">Move down</span>, which also work on a phone.</p>
+  <p>Changes wait in the bar at the bottom until we press <span class="ui">Save to website</span>, and then they all go at once. A coral dot marks anything not saved yet. If somebody has changed the sheet since the page loaded, the save stops and says so rather than writing over them. Press <span class="ui">Refresh</span> and make the change again.</p>
+  <p><span class="ui">Add resource</span> takes a PDF, puts it in the tracker's Website resources folder in Google Drive, makes the thumbnail from its first page, and has a go at the title, description and category. Check those over, as they are a first draft. <span class="ui">Replace</span> on a resource swaps its file or thumbnail the same way.</p>
+  <p><span class="ui">Hide from website</span> moves the row to a Hidden tab in the sheet, so nothing is ever deleted and <span class="ui">Put back on the website</span> undoes it. Every save is also written to the ResourcesLog tab of the tracker's own sheet, with what each resource looked like before.</p>
 </section>
 
 <section id="man-dev" data-perm="dev,users" data-title="Fixing what comes through">
@@ -3447,7 +3582,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r185 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r187 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -3947,7 +4082,7 @@ var RETRYABLE_READS = {
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1,
   getAssignees: 1, chatwootList: 1, chatScanList: 1, listVoiceGuides: 1, listContentSuggestions: 1,
-  listLiveCases: 1, chatBackSweepState: 1
+  listLiveCases: 1, chatBackSweepState: 1, resourcesList: 1
 };
 // If the backend rejects the session, drop it and show the login screen -
 // but only after a SECOND OPINION (r121, Edd: "I can be halfway through
@@ -4727,12 +4862,12 @@ function applyPermGates() {
   applyShell();
   var railGate = [["railNew", p.log], ["railCustoms", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
-                  ["railIrpcs", p.irpcs],
+                  ["railIrpcs", p.irpcs], ["railResources", p.resources],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
   // The divider only earns its place if there is something on both sides.
-  if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs) ? "" : "none";
+  if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs || p.resources) ? "" : "none";
 
   // Everybody gets to say whether a student is behind this report (Edd,
   // FB-0206). It used to be an admins-only "internal task" switch, which left
@@ -4756,7 +4891,7 @@ function permsKey_(p) {
 var VIEW_RAIL_ = {
   instructor: "railNew", customs: "railCustoms", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
   edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
-  irpcs: "railIrpcs", reports: "railReports", analytics: "railStats", users: "railUsers"
+  irpcs: "railIrpcs", resources: "railResources", reports: "railReports", analytics: "railStats", users: "railUsers"
 };
 
 // Called when a refresh brings a different permission set than the one the
@@ -7217,6 +7352,9 @@ function setView(v) {
   if ($("irpcsView")) $("irpcsView").classList.toggle("hidden", v !== "irpcs");
   if ($("customsView")) $("customsView").classList.toggle("hidden", v !== "customs");
   if (v === "customs") renderCustoms();
+  if ($("resourcesView")) $("resourcesView").classList.toggle("hidden", v !== "resources");
+  if (v !== "resources") document.body.classList.remove("rs-drawer-open");
+  if (v === "resources") renderResources();
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "rca") renderRcaHome();
@@ -7289,7 +7427,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railCustoms", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railCustoms", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -7326,6 +7464,7 @@ function railGo(v) {
   if (v === "tasks" && !isEddUser()) return;               // Phase 1 is solo; the endpoint scopes by ticket regardless
   if (v === "irpcs" && !(state.perms || {}).irpcs) return; // and the Edge Function checks the same key on every call
   if (v === "customs" && !(state.perms || {}).log) return;  // r182: the backend refuses the same people anyway
+  if (v === "resources" && !(state.perms || {}).resources) return;  // r187: and the backend checks the same key
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -7342,7 +7481,7 @@ function updateRail() {
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railCustoms", v === "customs"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
-               ["railIrpcs", v === "irpcs"],
+               ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual"],
                ["railRCA", v === "rca"]];
@@ -7360,6 +7499,647 @@ function updateRail() {
 // Two badges, and only two. Chats counts the open conversations. Issues
 // counts the things waiting on somebody, NOT the size of the log - a number
 // that only means work is a number worth looking at.
+// ===================== WEBSITE RESOURCES (r187) =====================
+// Edd, 19 Sep: a page to keep the downloads on ardent-training.com/resources
+// up to date without editing their spreadsheet by hand. Gallery and List are
+// two views of the same working copy; edits pile up in the bar at the bottom
+// and "Save to website" sends the lot in one go, against the version of the
+// sheet this page loaded (the backend refuses if somebody changed it since).
+// Reordering lives in List only, because dragging a grid is fiddly.
+var RES_PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+var RES_PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+var RES_DESC_GUIDE = 60;   // the longest description on the site today is 57 characters
+var RES_FIELDS = ["category", "title", "description", "url", "thumbnail", "type"];
+var res = {
+  loaded: false, loading: false, error: "", version: "", sheetUrl: "", last: null,
+  live: [], hid: [], base: null, seq: 0,
+  view: localGet("ait_res_view") === "list" ? "list" : "gallery",
+  cat: "", q: "", open: "", pdf: {}, busy: 0, saving: false, discardArm: false, reloadArm: false,
+  pickFor: null, add: null, dragUid: ""
+};
+var RES_GRIP = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>';
+
+function resFrom(it, hidden) {
+  var o = { uid: it.key || ("n" + (++res.seq)), key: it.key || "", touched: {} };
+  RES_FIELDS.forEach(function (f) { o[f] = String(it[f] || ""); });
+  return o;
+}
+function resPlain(o) {
+  var p = { key: o.key || "" };
+  RES_FIELDS.forEach(function (f) { p[f] = String(o[f] || "").trim(); });
+  return p;
+}
+function resFind(uid) {
+  if (!uid) return null;
+  var all = res.live.concat(res.hid);
+  for (var i = 0; i < all.length; i++) if (all[i].uid === uid) return all[i];
+  if (res.add && res.add.item && res.add.item.uid === uid) return res.add.item;
+  return null;
+}
+function resIsHidden(o) { return res.hid.indexOf(o) > -1; }
+function resCatOf(o) { return String(o.category || "").trim() || "Uncategorised"; }
+
+// Categories in the order they first appear, which is the order the website
+// meets them in the sheet.
+function resCats() {
+  var seen = [];
+  res.live.forEach(function (o) { var c = resCatOf(o); if (seen.indexOf(c) < 0) seen.push(c); });
+  return seen;
+}
+function resCatColour(c) {
+  var all = resCats();
+  res.hid.forEach(function (o) { if (all.indexOf(resCatOf(o)) < 0) all.push(resCatOf(o)); });
+  var pal = ["var(--course)", "var(--tech)", "var(--low)", "var(--coral)", "var(--medium)", "var(--accent)", "var(--high)"];
+  var i = all.indexOf(c);
+  return pal[(i < 0 ? 0 : i) % pal.length];
+}
+// Keep each category's rows together (stable), so the list we show is the
+// order we save. The first save of a sheet whose categories are scattered
+// therefore gathers them up, keeping each category where it first appeared.
+function resRegroup() {
+  var out = [];
+  resCats().forEach(function (c) { res.live.forEach(function (o) { if (resCatOf(o) === c) out.push(o); }); });
+  res.live = out;
+}
+
+function resItemChanged(o) {
+  if (!o.key || !res.base) return true;
+  var b = res.base.map[o.key];
+  if (!b || b.hidden !== resIsHidden(o)) return true;
+  for (var i = 0; i < RES_FIELDS.length; i++) {
+    if (String(o[RES_FIELDS[i]] || "").trim() !== b[RES_FIELDS[i]]) return true;
+  }
+  return false;
+}
+function resOrderChanged() {
+  if (!res.base) return false;
+  var liveKeys = {};
+  res.live.forEach(function (o) { if (o.key) liveKeys[o.key] = 1; });
+  var now = res.live.filter(function (o) { return o.key; }).map(function (o) { return o.key; }).join(",");
+  var was = res.base.order.filter(function (k) { return liveKeys[k]; }).join(",");
+  return now !== was;
+}
+function resChanges() {
+  if (!res.loaded) return 0;
+  var n = 0;
+  res.live.concat(res.hid).forEach(function (o) { if (resItemChanged(o)) n++; });
+  if (resOrderChanged()) n++;
+  return n;
+}
+
+function renderResources() {
+  resSyncToggle();
+  if (!res.loaded) resLoad(false); else resRender();
+}
+function resLoad(force) {
+  if (res.loading) return;
+  if (res.loaded && !force) { resRender(); return; }
+  if (force && resChanges() && !res.reloadArm) {
+    res.reloadArm = true;
+    toast("There are unsaved changes. Press Refresh again to throw them away and read the sheet afresh.", 6000);
+    setTimeout(function () { res.reloadArm = false; }, 6000);
+    return;
+  }
+  res.reloadArm = false;
+  res.loading = true; res.error = "";
+  if (!res.loaded && $("rs_body")) $("rs_body").innerHTML = '<p class="hint">Fetching the resources…</p>';
+  apiPost({ action: "resourcesList" }).then(function (r) {
+    res.loading = false;
+    if (!r || !r.ok) { res.error = (r && (r.message || r.error)) || "no reply"; if (res.loaded) toast("Could not read the sheet: " + res.error, 8000); resRender(); return; }
+    resTake(r);
+    if (force) toast("Read the resources sheet afresh.");
+  }).catch(function (e) {
+    res.loading = false; res.error = String((e && e.message) || e);
+    if (res.loaded) toastErr("Reading the resources sheet", e);
+    resRender();
+  });
+}
+function resTake(r) {
+  res.last = r;
+  res.version = r.version; res.sheetUrl = r.sheet_url || "";
+  res.live = (r.items || []).map(function (i) { return resFrom(i); });
+  res.hid = (r.hidden || []).map(function (i) { return resFrom(i); });
+  resRegroup();
+  var map = {};
+  res.live.forEach(function (o) { var p = resPlain(o); p.hidden = false; map[o.key] = p; });
+  res.hid.forEach(function (o) { var p = resPlain(o); p.hidden = true; map[o.key] = p; });
+  res.base = { map: map, order: res.live.map(function (o) { return o.key; }) };
+  res.loaded = true; res.error = ""; res.open = ""; res.pdf = {};
+  resRender();
+}
+
+function resSetView(v) {
+  res.view = v === "list" ? "list" : "gallery";
+  localSet("ait_res_view", res.view);
+  if (res.open) { resRegroup(); }
+  resRender();
+}
+function resSyncToggle() {
+  ["gallery", "list"].forEach(function (k) {
+    var b = $("rs_v_" + k); if (!b) return;
+    b.classList.toggle("active", res.view === k);
+    b.setAttribute("aria-pressed", res.view === k ? "true" : "false");
+  });
+}
+function resSearch(v) { res.q = String(v || ""); resRender(); }
+function resSetCat(c) { res.cat = c || ""; res.open = ""; resRender(); }
+
+function resVisible() {
+  var list = res.cat === "__hidden" ? res.hid : res.live;
+  var q = res.q.toLowerCase().trim();
+  return list.filter(function (o) {
+    if (res.cat && res.cat !== "__hidden" && resCatOf(o) !== res.cat) return false;
+    if (q && (o.title + " " + o.description + " " + o.category).toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+}
+
+function resRender() {
+  var body = $("rs_body"); if (!body) return;
+  resSyncToggle();
+  if (!res.loaded) {
+    if (res.error) body.innerHTML = '<div class="card"><p>Could not load the resources: ' + esc(res.error) + '</p><button type="button" class="ghost small" onclick="resLoad(true)">Try again</button></div>';
+    resBar(); return;
+  }
+  $("rs_sub").innerHTML = res.live.length + " on the website" + (res.hid.length ? ", " + res.hid.length + " hidden" : "") + "." +
+    (res.sheetUrl ? ' <a href="' + esc(res.sheetUrl) + '" target="_blank" rel="noopener">Open the sheet</a>.' : "") +
+    (res.view === "gallery" ? " Switch to List to change the order." : "");
+  resRenderChips();
+  var cats = resCats(), types = ["PDF"];
+  res.live.concat(res.hid).forEach(function (o) {
+    var c = resCatOf(o); if (cats.indexOf(c) < 0 && c !== "Uncategorised") cats.push(c);
+    var t = String(o.type || "").trim(); if (t && types.indexOf(t) < 0) types.push(t);
+  });
+  $("rs_catlist").innerHTML = cats.map(function (c) { return '<option value="' + esc(c) + '"></option>'; }).join("");
+  $("rs_typelist").innerHTML = types.map(function (t) { return '<option value="' + esc(t) + '"></option>'; }).join("");
+  var items = resVisible();
+  if (!items.length) body.innerHTML = '<p class="hint">' + (res.q ? "Nothing matches that search." : "Nothing here.") + "</p>";
+  else body.innerHTML = res.view === "list" ? resListHtml(items) : resGalleryHtml(items);
+  resDrawer();
+  resBar();
+}
+function resRenderChips() {
+  var counts = {};
+  res.live.forEach(function (o) { var c = resCatOf(o); counts[c] = (counts[c] || 0) + 1; });
+  var chips = [["", "All", res.live.length]].concat(resCats().map(function (c) { return [c, c, counts[c]]; }));
+  if (res.hid.length) chips.push(["__hidden", "Hidden", res.hid.length]);
+  if (!chips.some(function (c) { return c[0] === res.cat; })) res.cat = "";
+  $("rs_chips").innerHTML = chips.map(function (c) {
+    return '<button type="button" class="rs-chip' + (res.cat === c[0] ? " active" : "") + '" data-cat="' + esc(c[0]) +
+      '" onclick="resSetCat(this.getAttribute(\'data-cat\'))">' + esc(c[1]) + '<span class="n">' + c[2] + "</span></button>";
+  }).join("");
+}
+
+function resThumbHtml(o, cls) {
+  return '<span class="rs-thumb ' + (cls || "") + '"><span>No thumbnail</span>' +
+    (o.thumbnail ? '<img loading="lazy" alt="" src="' + esc(o.thumbnail) + '" onerror="this.remove()">' : "") + "</span>";
+}
+function resCatHtml(o) {
+  var c = resCatOf(o);
+  return '<span class="rs-cat"><i style="background:' + resCatColour(c) + '"></i>' + esc(c) + "</span>";
+}
+function resFileName(url) {
+  url = String(url || "");
+  if (!url) return "";
+  if (/drive\.google\.com\/file\/d\//.test(url)) return "File on Google Drive";
+  var last = url.split("?")[0].split("/").pop() || url;
+  try { last = decodeURIComponent(last); } catch (e) {}
+  return last;
+}
+function resHost(url) { var m = String(url || "").match(/^https?:\/\/([^\/]+)/); return m ? m[1] : ""; }
+
+function resGalleryHtml(items) {
+  return '<div class="rs-grid">' + items.map(function (o) {
+    return '<button type="button" class="rs-card' + (res.open === o.uid ? " sel" : "") + '" onclick="resOpen(\'' + o.uid + '\')">' +
+      resThumbHtml(o) +
+      '<span class="t">' + (resItemChanged(o) ? '<span class="rs-dot" title="Not saved yet"></span>' : "") + '<span id="rst_' + o.uid + '">' + esc(o.title || "Untitled") + "</span></span>" +
+      '<span class="d" id="rsd_' + o.uid + '">' + esc(o.description) + "</span>" +
+      (res.cat ? "" : resCatHtml(o)) +
+      "</button>";
+  }).join("") + "</div>";
+}
+
+function resListHtml(items) {
+  var groups = [], by = {};
+  items.forEach(function (o) { var c = resCatOf(o); if (!by[c]) { by[c] = []; groups.push(c); } by[c].push(o); });
+  var canDrag = res.cat !== "__hidden";
+  return '<div class="rs-groups">' + groups.map(function (c) {
+    return '<section class="rs-group"><div class="rs-group-h"><span class="rs-cat"><i style="background:' + resCatColour(c) + '"></i>' + esc(c) +
+      '</span><span class="small muted">' + by[c].length + (canDrag ? " · drag to change the order on the website" : " · not on the website") + "</span></div>" +
+      by[c].map(function (o) { return resRowHtml(o, canDrag); }).join("") + "</section>";
+  }).join("") + "</div>";
+}
+function resRowHtml(o, canDrag) {
+  var open = res.open === o.uid;
+  var drag = canDrag ? ' draggable="true" ondragstart="resDragStart(event)" ondragover="resDragOver(event)" ondragleave="resDragLeave(event)" ondrop="resDrop(event)" ondragend="resDragEnd(event)"' : "";
+  return '<div class="rs-row' + (open ? " open" : "") + '" data-uid="' + o.uid + '"' + drag + ">" +
+    '<span class="rs-handle">' + (canDrag ? RES_GRIP : "") + "</span>" +
+    resThumbHtml(o, "th") +
+    '<span class="rs-title">' + (resItemChanged(o) ? '<span class="rs-dot" title="Not saved yet"></span>' : "") + '<span id="rst_' + o.uid + '">' + esc(o.title || "Untitled") + "</span></span>" +
+    '<span class="rs-desc small muted" id="rsd_' + o.uid + '">' + esc(o.description) + "</span>" +
+    '<span class="rs-fname small muted" title="' + esc(o.url) + '">' + esc(resFileName(o.url)) + "</span>" +
+    '<button type="button" class="ghost small" onclick="resOpen(\'' + o.uid + '\')" aria-expanded="' + (open ? "true" : "false") + '">' + (open ? "Close" : "Edit") + "</button>" +
+    "</div>" + (open ? '<div class="rs-inline">' + resEditorHtml(o, "inline") + "</div>" : "");
+}
+
+// The editor, shared by the drawer (gallery), the row (list) and Add.
+function resEditorHtml(o, where) {
+  var u = o.uid, hidden = resIsHidden(o), isAdd = where === "add";
+  function fld(f, label, input, extra) {
+    return '<div class="fld"><label for="rsf_' + f + "_" + u + '">' + label + (extra || "") + "</label>" + input + "</div>";
+  }
+  function inp(f, attrs) {
+    return '<input id="rsf_' + f + "_" + u + '" value="' + esc(o[f]) + '" autocomplete="off" ' + (attrs || "") +
+      ' oninput="resEdit(\'' + u + "','" + f + "',this.value)\" />";
+  }
+  var len = String(o.description || "").trim().length;
+  var thumb = '<div class="rs-ed-thumb">' + resThumbHtml(o, "big") + "<div>" +
+    '<div class="rs-btns"><button type="button" class="ghost small" onclick="resPick(\'' + u + "','thumb')\">" + (o.thumbnail ? "Replace thumbnail" : "Add a thumbnail") + "</button>" +
+    (res.pdf[u] ? '<button type="button" class="ghost small" onclick="resThumbFromPdf(\'' + u + "')\">Use page 1</button>" : "") + "</div>" +
+    '<div class="small muted" id="rsst_thumb_' + u + '" style="margin-top:6px;"></div></div></div>';
+  var file = '<div class="fld"><label>File</label><div class="rs-file"><span class="rs-ficon">' + esc((o.type || "FILE").slice(0, 4).toUpperCase()) + "</span>" +
+    '<span class="rs-fmeta"><span class="fn">' + esc(resFileName(o.url) || "No file yet") + '</span><span class="small muted">' + esc(resHost(o.url)) + "</span></span>" +
+    (o.url ? '<a class="rs-open" href="' + esc(o.url) + '" target="_blank" rel="noopener">Open</a>' : "") +
+    '<button type="button" class="ghost small" onclick="resPick(\'' + u + "','file')\">" + (o.url ? "Replace" : "Upload") + "</button></div>" +
+    '<div class="small muted" id="rsst_file_' + u + '" style="margin-top:6px;"></div></div>' +
+    fld("url", "Link the website opens", inp("url", 'placeholder="Upload a file, or paste a link"'));
+  var main = fld("title", "Title", inp("title")) +
+    fld("description", "Description", '<textarea id="rsf_description_' + u + '" oninput="resEdit(\'' + u + "','description',this.value)\">" + esc(o.description) + "</textarea>",
+      '<span class="rs-count' + (len > RES_DESC_GUIDE ? " over" : "") + '" id="rsc_' + u + '">' + len + " / " + RES_DESC_GUIDE + "</span>");
+  var side = fld("category", "Category", inp("category", 'list="rs_catlist" placeholder="Pick one, or type a new one"')) +
+    fld("type", "Type", inp("type", 'list="rs_typelist"'));
+  var html = where === "inline"
+    ? '<div class="rs-ed">' + thumb + "<div>" + main + side + "</div><div>" + file + "</div></div>"
+    : '<div class="rs-ed col">' + thumb + main + side + file + "</div>";
+  if (isAdd) return html;
+  var order = (where === "inline" && !hidden)
+    ? '<button type="button" class="ghost small" onclick="resNudge(\'' + u + "',-1)\">Move up</button>" +
+      '<button type="button" class="ghost small" onclick="resNudge(\'' + u + "',1)\">Move down</button>" : "";
+  var changed = resItemChanged(o);
+  return html + '<div class="rs-ed-foot"><button type="button" class="' + (hidden ? "ghost small" : "danger small") + '" onclick="resToggleHidden(\'' + u + "')\">" +
+    (hidden ? "Put back on the website" : "Hide from website") + "</button>" +
+    '<div class="rs-btns" style="margin-top:0;">' + order +
+    (changed ? '<button type="button" class="ghost small" onclick="resUndo(\'' + u + "')\">Undo changes</button>" : "") +
+    '<button type="button" class="small" onclick="resClose()">Done</button></div></div>';
+}
+
+function resOpen(uid) {
+  if (res.open === uid) { resClose(); return; }
+  if (res.open) resRegroup();
+  res.open = uid;
+  resRender();
+  var t = $("rsf_title_" + uid);
+  if (t && res.view === "gallery") try { t.focus({ preventScroll: true }); } catch (e) {}
+}
+function resClose() { res.open = ""; resRegroup(); resRender(); }
+function resDrawer() {
+  var d = $("rs_drawer"); if (!d) return;
+  var o = (res.view === "gallery" && res.open) ? resFind(res.open) : null;
+  document.body.classList.toggle("rs-drawer-open", !!o);
+  if (!o) { d.classList.add("hidden"); d.innerHTML = ""; return; }
+  d.classList.remove("hidden");
+  d.innerHTML = '<div class="rs-dh"><div><div class="rs-lbl">' + (resIsHidden(o) ? "Hidden from the website" : "Editing") + '</div><div class="rs-dt" id="rsdt_' + o.uid + '">' + esc(o.title || "Untitled") + "</div></div>" +
+    '<button type="button" class="ghost small" aria-label="Close" onclick="resClose()">Close</button></div>' +
+    '<div class="rs-dbody">' + resEditorHtml(o, "drawer") + "</div>";
+}
+
+function resEdit(uid, f, v) {
+  var o = resFind(uid); if (!o) return;
+  o[f] = v; o.touched[f] = true;
+  if (f === "title") ["rst_", "rsdt_"].forEach(function (p) { var el = $(p + uid); if (el) el.textContent = v || "Untitled"; });
+  if (f === "description") {
+    var el = $("rsd_" + uid); if (el) el.textContent = v;
+    var c = $("rsc_" + uid), n = String(v || "").trim().length;
+    if (c) { c.textContent = n + " / " + RES_DESC_GUIDE; c.classList.toggle("over", n > RES_DESC_GUIDE); }
+  }
+  resBar();
+}
+
+function resToggleHidden(uid) {
+  var o = resFind(uid); if (!o) return;
+  var i = res.hid.indexOf(o);
+  if (i > -1) { res.hid.splice(i, 1); resInsertLive(o); }
+  else { res.live.splice(res.live.indexOf(o), 1); res.hid.push(o); }
+  res.open = "";
+  resRender();
+  toast(i > -1 ? "Back on the website once we save." : "Hidden from the website once we save. It moves to the Hidden tab of the sheet, nothing is deleted.", 5000);
+}
+function resInsertLive(o) {
+  var last = -1;
+  res.live.forEach(function (x, j) { if (resCatOf(x) === resCatOf(o)) last = j; });
+  if (last < 0) res.live.push(o); else res.live.splice(last + 1, 0, o);
+}
+function resUndo(uid) {
+  var o = resFind(uid); if (!o) return;
+  if (!o.key) {
+    res.live = res.live.filter(function (x) { return x !== o; });
+    res.hid = res.hid.filter(function (x) { return x !== o; });
+    res.open = ""; resRender(); return;
+  }
+  var b = res.base.map[o.key];
+  RES_FIELDS.forEach(function (f) { o[f] = b[f]; });
+  o.touched = {};
+  if (resIsHidden(o) !== b.hidden) {
+    if (b.hidden) { res.live.splice(res.live.indexOf(o), 1); res.hid.push(o); }
+    else { res.hid.splice(res.hid.indexOf(o), 1); resInsertLive(o); }
+  }
+  delete res.pdf[uid];
+  resRegroup();
+  resRender();
+}
+
+// ---- Reordering: drag in List, or Move up / Move down in the open row ----
+function resDragStart(e) {
+  var r = e.currentTarget;
+  if (e.target && e.target.closest && e.target.closest("input,textarea,button,a")) { e.preventDefault(); return; }
+  res.dragUid = r.getAttribute("data-uid");
+  try { e.dataTransfer.setData("text/plain", res.dragUid); e.dataTransfer.effectAllowed = "move"; } catch (x) {}
+  r.classList.add("dragging");
+}
+function resDragOver(e) {
+  var r = e.currentTarget, a = resFind(res.dragUid), b = resFind(r.getAttribute("data-uid"));
+  if (!a || !b || a === b || resCatOf(a) !== resCatOf(b)) return;   // order is within a category
+  e.preventDefault();
+  var rect = r.getBoundingClientRect(), after = e.clientY > rect.top + rect.height / 2;
+  r.classList.toggle("drop-before", !after);
+  r.classList.toggle("drop-after", after);
+}
+function resDragLeave(e) { e.currentTarget.classList.remove("drop-before", "drop-after"); }
+function resDrop(e) {
+  e.preventDefault();
+  var r = e.currentTarget, after = r.classList.contains("drop-after");
+  r.classList.remove("drop-before", "drop-after");
+  resMove(res.dragUid, r.getAttribute("data-uid"), after);
+}
+function resDragEnd(e) { e.currentTarget.classList.remove("dragging"); res.dragUid = ""; }
+function resMove(uid, targetUid, after) {
+  var a = resFind(uid), b = resFind(targetUid), L = res.live;
+  if (!a || !b || a === b || L.indexOf(a) < 0 || L.indexOf(b) < 0) return;
+  L.splice(L.indexOf(a), 1);
+  L.splice(L.indexOf(b) + (after ? 1 : 0), 0, a);
+  resRender();
+}
+function resNudge(uid, dir) {
+  var a = resFind(uid), L = res.live, i = L.indexOf(a);
+  if (i < 0) return;
+  var j = i + dir;
+  while (j >= 0 && j < L.length && resCatOf(L[j]) !== resCatOf(a)) j += dir;
+  if (j < 0 || j >= L.length) { toast(dir < 0 ? "Already first in " + resCatOf(a) + "." : "Already last in " + resCatOf(a) + "."); return; }
+  L.splice(i, 1); L.splice(j, 0, a);
+  resRender();
+}
+
+// ---- Files: uploaded to the tracker's "Website resources" Drive folder the
+// moment they are picked. The link only reaches the website on Save. ----
+function resPick(uid, kind) {
+  res.pickFor = { uid: uid, kind: kind };
+  var el = $(kind === "thumb" ? "rs_pick_thumb" : "rs_pick_file");
+  if (kind === "file") el.setAttribute("accept", ".pdf,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,image/*");
+  el.value = "";
+  el.click();
+}
+function resPicked(input) {
+  var f = input.files && input.files[0], p = res.pickFor;
+  res.pickFor = null;
+  if (!f || !p) return;
+  // A file for the one being added goes through resAddFile, which also reads
+  // it for the thumbnail and the suggested listing.
+  if (res.add && res.add.item.uid === p.uid && p.kind === "file") { resAddFile(f); return; }
+  resUploadFile(p.uid, f, p.kind);
+}
+function resIsPdf(f) { return /pdf$/i.test(f.type || "") || /\.pdf$/i.test(f.name || ""); }
+function resStatus(uid, kind, msg) { var el = $("rsst_" + kind + "_" + uid); if (el) el.textContent = msg || ""; }
+function resReadDataUrl(f) {
+  return new Promise(function (ok, no) {
+    var r = new FileReader();
+    r.onload = function () { ok(r.result); };
+    r.onerror = function () { no(r.error || new Error("could not read the file")); };
+    r.readAsDataURL(f);
+  });
+}
+// One upload; resolves with the Drive link or null. Keeps res.busy honest so
+// Save waits for it.
+function resSend(uid, kind, name, mime, dataUrl) {
+  res.busy++; resBar();
+  return apiPost({ action: "resourcesUpload", kind: kind, filename: name, mimeType: mime, base64: dataUrl }).then(function (r) {
+    res.busy--;
+    if (!r || !r.ok) { resStatus(uid, kind, ""); toast("Upload failed: " + ((r && (r.error || r.message)) || "no reply"), 8000); resBar(); return null; }
+    var o = resFind(uid);
+    if (o) { if (kind === "thumb") o.thumbnail = r.url; else o.url = r.url; }
+    return r.url;
+  }).catch(function (e) { res.busy--; resStatus(uid, kind, ""); resBar(); toastErr("The upload", e); return null; });
+}
+function resUploadFile(uid, f, kind) {
+  if (f.size > 25 * 1024 * 1024) { toast("That file is over 25 MB, which is too big to send through the tracker.", 6000); return Promise.resolve(null); }
+  var o = resFind(uid); if (!o) return Promise.resolve(null);
+  var pdf = kind === "file" && resIsPdf(f);
+  if (pdf) res.pdf[uid] = f;
+  resStatus(uid, kind, "Uploading " + f.name + "…");
+  return resReadDataUrl(f).then(function (dataUrl) {
+    return resSend(uid, kind, f.name, f.type || (kind === "thumb" ? "image/jpeg" : "application/octet-stream"), dataUrl);
+  }).then(function (url) {
+    if (!url) return null;
+    if (kind === "file" && pdf && !String(o.type || "").trim()) o.type = "PDF";
+    if (res.add && res.add.item === o) { resAddDraw(); return url; }
+    resRender();
+    resStatus(uid, kind, kind === "thumb" ? "New thumbnail uploaded. It goes on the website when we save."
+      : "New file uploaded. It goes on the website when we save." + (pdf ? " Use page 1 makes a thumbnail from it." : ""));
+    return url;
+  }).catch(function (e) { resStatus(uid, kind, ""); toastErr("Reading the file", e); return null; });
+}
+
+// ---- PDF reading, in the browser: page 1 as a thumbnail, and the text of
+// the first two pages for the suggested title and description. ----
+function resPdfLib() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (res.pdfP) return res.pdfP;
+  res.pdfP = new Promise(function (ok, no) {
+    var s = document.createElement("script");
+    s.src = RES_PDFJS;
+    s.onload = function () {
+      try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = RES_PDFJS_WORKER; ok(window.pdfjsLib); } catch (e) { res.pdfP = null; no(e); }
+    };
+    s.onerror = function () { res.pdfP = null; no(new Error("could not load the PDF reader")); };
+    document.head.appendChild(s);
+  });
+  return res.pdfP;
+}
+function resPdfRead(file) {
+  var doc;
+  return resPdfLib().then(function (lib) {
+    return file.arrayBuffer().then(function (buf) { return lib.getDocument({ data: buf }).promise; });
+  }).then(function (d) {
+    doc = d;
+    return doc.getPage(1);
+  }).then(function (page) {
+    var vp1 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: Math.min(3, 800 / vp1.width) });
+    var c = document.createElement("canvas");
+    c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    var ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function () { return c.toDataURL("image/jpeg", 0.85); });
+  }).then(function (jpeg) {
+    var texts = [], chain = Promise.resolve();
+    for (var i = 1; i <= Math.min(doc.numPages, 2); i++) (function (n) {
+      chain = chain.then(function () { return doc.getPage(n); }).then(function (p) { return p.getTextContent(); })
+        .then(function (tc) { texts.push(tc.items.map(function (x) { return x.str; }).join(" ")); });
+    })(i);
+    return chain.then(function () { return { jpeg: jpeg, text: texts.join("\n") }; });
+  });
+}
+function resThumbFromPdf(uid) {
+  var f = res.pdf[uid]; if (!f) return Promise.resolve(null);
+  resStatus(uid, "thumb", "Making a thumbnail from page 1…");
+  res.busy++; resBar();
+  var held = true;
+  function release() { if (held) { held = false; res.busy--; resBar(); } }
+  return resPdfRead(f).then(function (out) {
+    release();
+    return resSend(uid, "thumb", f.name.replace(/\.pdf$/i, "") + " - thumbnail.jpg", "image/jpeg", out.jpeg).then(function (url) {
+      if (url) { if (res.add && res.add.item && res.add.item.uid === uid) resAddDraw(); else { resRender(); resStatus(uid, "thumb", "Thumbnail made from page 1. It goes on the website when we save."); } }
+      return out;
+    });
+  }).catch(function (e) { release(); resStatus(uid, "thumb", ""); toast("Could not read that PDF: " + ((e && e.message) || e), 7000); return null; });
+}
+
+// ---- Adding one: pick the file, and the tracker uploads it, makes the
+// thumbnail from page 1 and has a go at the listing for us to check. ----
+function resAddOpen() {
+  if (!res.loaded) { toast("The list is still loading."); return; }
+  var item = resFrom({});
+  if (res.cat && res.cat !== "__hidden") item.category = res.cat;
+  res.add = { item: item, note: "", reading: false };
+  resAddDraw();
+  $("rs_addbg").classList.add("show");
+}
+function resAddClose() {
+  $("rs_addbg").classList.remove("show");
+  if (res.add) delete res.pdf[res.add.item.uid];
+  res.add = null;
+}
+function resAddDraw() {
+  var a = res.add; if (!a) return;
+  var o = a.item, box = $("rs_addbox");
+  var pending = resChanges();
+  var html = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;"><h3 style="margin:0;">Add a resource</h3>' +
+    '<button type="button" class="ghost small" onclick="resAddClose()">Close</button></div>';
+  if (!o.url && !a.reading) {
+    html += '<div class="rs-drop" id="rs_drop" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="resAddDrop(event)">' +
+      '<p style="margin:0 0 10px;">Drop a PDF here, or</p><button type="button" class="primary" onclick="resPick(\'' + o.uid + "','file')\">Choose a file</button>" +
+      '<p class="small muted" style="margin:12px 0 0;">A PDF gets its thumbnail made from page 1, and a first go at the title and description.</p></div>' +
+      '<p class="small muted" style="margin:14px 0 6px;">Or link to something already online:</p>' +
+      '<div style="display:flex;gap:8px;"><input id="rs_addlink" placeholder="https://" style="flex:1;" autocomplete="off" /><button type="button" class="ghost" onclick="resAddLink()">Use this link</button></div>';
+    box.innerHTML = html; return;
+  }
+  if (a.note) html += '<div class="rs-ai">' + esc(a.note) + "</div>";
+  html += resEditorHtml(o, "add");
+  html += '<div class="rs-ed-foot" style="margin-top:14px;"><span class="small muted">' +
+    (pending ? "This also saves the " + pending + " other change" + (pending === 1 ? "" : "s") + " waiting in the bar." : "It goes at the end of its category. Move it in List.") + "</span>" +
+    '<div class="rs-btns" style="margin-top:0;"><button type="button" class="ghost" onclick="resAddCommit(true)">Save as hidden</button>' +
+    '<button type="button" class="primary" onclick="resAddCommit(false)">Add to website</button></div></div>';
+  box.innerHTML = html;
+}
+function resAddDrop(e) {
+  e.preventDefault();
+  var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f && res.add) resAddFile(f);
+}
+function resAddLink() {
+  var v = String(($("rs_addlink") || {}).value || "").trim();
+  if (!/^https?:\/\//i.test(v)) { toast("That needs to be a full link, starting https://"); return; }
+  res.add.item.url = v;
+  if (/\.pdf($|\?)/i.test(v)) res.add.item.type = "PDF";
+  res.add.note = "Add a title, description, category and thumbnail, then add it.";
+  resAddDraw();
+}
+function resAddFile(f) {
+  var a = res.add, o = a.item;
+  a.reading = true;
+  a.note = resIsPdf(f) ? "Uploading " + f.name + " and reading it…" : "Uploading " + f.name + "…";
+  if (!o.touched.title) o.title = f.name.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ");
+  resAddDraw();
+  var up = resUploadFile(o.uid, f, "file");
+  if (!resIsPdf(f)) return up.then(function () { a.reading = false; a.note = "Uploaded. Add a thumbnail, check the details, then add it."; resAddDraw(); });
+  var read = resThumbFromPdf(o.uid).then(function (out) {
+    if (!out || !res.add) return;
+    return apiPost({ action: "resourcesSuggest", filename: f.name, text: out.text, categories: resCats(),
+                     examples: res.live.slice(0, 14).map(resPlain) }).then(function (r) {
+      if (!r || !r.ok || !res.add) return;
+      ["title", "description", "category", "type"].forEach(function (k) { if (r[k] && !o.touched[k]) o[k] = r[k]; });
+      res.add.suggested = true;
+    }).catch(function () {});
+  });
+  return Promise.all([up, read]).then(function () {
+    if (!res.add) return;
+    a.reading = false;
+    a.note = a.suggested ? "We read the PDF and filled these in. Check them over before it goes live."
+                         : "Uploaded. Fill in the details, then add it.";
+    resAddDraw();
+  });
+}
+function resAddCommit(hidden) {
+  var a = res.add; if (!a) return;
+  var o = a.item;
+  if (res.busy) { toast("Wait for the upload to finish first."); return; }
+  var miss = [];
+  if (!String(o.title).trim()) miss.push("a title");
+  if (!String(o.category).trim()) miss.push("a category");
+  if (!String(o.url).trim()) miss.push("a file or link");
+  if (miss.length) { toast("It still needs " + miss.join(", ") + "."); return; }
+  if (hidden) res.hid.push(o); else resInsertLive(o);
+  $("rs_addbg").classList.remove("show");
+  res.add = null;
+  resSave();
+}
+
+// ---- The bar, and saving ----
+function resBar() {
+  var b = $("rs_savebar"); if (!b) return;
+  var n = resChanges();
+  b.classList.toggle("hidden", !n && !res.saving);
+  $("rs_barmsg").textContent = res.saving ? "Saving to the website…"
+    : n + " unsaved change" + (n === 1 ? "" : "s") + (res.busy ? ", uploading…" : "");
+  $("rs_savebtn").disabled = !!(res.saving || res.busy);
+  $("rs_discard").disabled = !!res.saving;
+}
+function resDiscard() {
+  if (!res.discardArm) {
+    res.discardArm = true; $("rs_discard").textContent = "Sure? Discard";
+    setTimeout(function () { res.discardArm = false; var d = $("rs_discard"); if (d) d.textContent = "Discard"; }, 4000);
+    return;
+  }
+  res.discardArm = false; $("rs_discard").textContent = "Discard";
+  if (res.last) resTake(res.last);
+  toast("Changes thrown away. Nothing was saved.");
+}
+function resSave() {
+  if (res.saving) return;
+  if (res.busy) { toast("Wait for the upload to finish first."); return; }
+  if (res.open) resRegroup();
+  var bad = res.live.concat(res.hid).filter(function (o) {
+    return !String(o.title).trim() || !String(o.url).trim() || !String(o.category).trim();
+  });
+  if (bad.length) {
+    toast('"' + (bad[0].title || "Untitled") + '" needs a title, a category and a file or link before it can be saved.', 7000);
+    res.open = bad[0].uid; resRender(); return;
+  }
+  var n = resChanges();
+  res.saving = true; resBar();
+  apiPost({ action: "resourcesSave", version: res.version, live: res.live.map(resPlain), hidden: res.hid.map(resPlain) }).then(function (r) {
+    res.saving = false;
+    if (!r || !r.ok) {
+      resBar();
+      toast((r && r.message) || ("Save failed: " + ((r && r.error) || "no reply")), 10000);
+      return;
+    }
+    resTake(r);
+    toast("Saved " + n + " change" + (n === 1 ? "" : "s") + " to the resources sheet.");
+  }).catch(function (e) { res.saving = false; resBar(); toastErr("Saving the resources", e); });
+}
+window.addEventListener("beforeunload", function (e) {
+  try { if (res.loaded && resChanges()) { e.preventDefault(); e.returnValue = ""; } } catch (x) {}
+});
+
 // ===================== CUSTOMS INVOICES (r182) =====================
 // The page behind the Customs rail item. Everything that matters happens on
 // the server (the totals, the invoice number, the files); this only collects
@@ -9724,6 +10504,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 33, date: "2026-09-19", who: ["resources"], text: "Resources, on the rail, edits the free downloads on the website. Change a title, description, category or order, swap a file or thumbnail, or add a new PDF and it makes the thumbnail and a first draft of the listing. Nothing goes live until Save to website." },
   { n: 32, date: "2026-09-19", text: "The board loads quicker, most of all straight after somebody saves a change, which used to be the slowest open of all. Saving an update now refreshes just that issue rather than the whole list." },
   { n: 31, date: "2026-09-19", who: ["users"], text: "Admins can set an issue to With Edd from the Status box, next to With developers. Use it for lesson packages and course content, which are Edd's. The website and LMS stay with the developers." },
   { n: 30, date: "2026-09-18", text: "IRPCS questions come in three kinds now: one right answer, tick all that apply, and put these in order. Pick the kind at the top of a question. There is also a Topic box, which is how students will find a question without knowing its rule number, so use one that already exists where it fits." },
@@ -16354,7 +17135,10 @@ var PERM_LABELS = [
   // updateUser_ rebuilds the whole perms object from PERM_KEYS, so a key here
   // that is missing there (or the other way round) gets quietly wiped off every
   // account the next time an admin saves anybody.
-  { k: "irpcs", label: "IRPCS" }
+  { k: "irpcs", label: "IRPCS" },
+  // r187: the website resources page. Same two-list rule as above, and it
+  // needs its box on the invite form too (doInvite reads every key here).
+  { k: "resources", label: "Resources" }
 ];
 
 function invitePreset(kind) {
