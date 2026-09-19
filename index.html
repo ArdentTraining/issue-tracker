@@ -856,7 +856,8 @@
     body.shell.subrail-on #issuesSegWrap.on,
     body.shell.subrail-on #anaSeg,
     body.shell.subrail-on #usersSeg,
-    body.shell.subrail-on #devSeg { display: none; }
+    body.shell.subrail-on #devSeg,
+    body.shell.subrail-on .ship-seg { display: none; }
   }
   @media (max-width: 760px) {
     body.shell.subrail-on .subrail { display: none; }
@@ -1130,9 +1131,11 @@
   <!-- r182 (Edd): customs invoices, for when customs ask again for one
        showing exactly what is in the pack. Below the line with the other
        occasional tools (Edd, 18 Sep); instructors only, i.e. 'log'. -->
-  <button type="button" class="rail-item" id="railCustoms" onclick="railGo('customs')" title="Customs invoice - make a commercial invoice for a student's pack">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><polyline points="15 3 15 7 19 7"/><line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
-    <span class="ri-word">Customs</span>
+  <!-- r188 (Edd): Customs grew into Shipping, with the monthly report and the
+       customs invoice as its two sub-rail pages. Same people ('log'). -->
+  <button type="button" class="rail-item" id="railShipping" onclick="railGo('shipping')" title="Shipping - the monthly report and customs invoices">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><polyline points="3 7.5 12 12 21 7.5"/><line x1="12" y1="12" x2="12" y2="21"/><line x1="7.5" y1="5.2" x2="16.5" y2="9.8"/></svg>
+    <span class="ri-word">Shipping</span>
   </button>
   <button type="button" class="rail-item" id="railEdd" onclick="railGo('edd')" title="With Edd - the tools you build yourself">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4.6 4.6 0 0 0-6.1 5.6L3 17.5V21h3.5l5.6-5.6a4.6 4.6 0 0 0 6.1-6.1l-3 3-2.2-.4-.4-2.2 3-3a4.6 4.6 0 0 0-.9-.4z"/></svg>
@@ -1856,6 +1859,44 @@
   #customsView .cu-signimg { height: 46px; max-width: 220px; background: #fff; border-radius: 6px; padding: 2px 8px; border: 1px solid var(--line); }
   #customsView .cu-pad { width: 100%; max-width: 560px; height: 170px; background: #fff; border: 1px dashed var(--line); border-radius: 8px; touch-action: none; cursor: crosshair; display: block; }
   #customsView .cu-warn { color: var(--coral); }
+  /* r188: the shipping report */
+  #shipReportView .shr-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+  #shipReportView .shr-pick { display: flex; flex-direction: column; gap: 3px; min-width: 190px; }
+  #shipReportView .stat .d { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  #shipReportView .stat .d .up { color: var(--high); }
+  #shipReportView .stat .d .down { color: var(--low); }
+  #shipReportView .card { margin-bottom: 16px; }
+  #shipReportView .card h3 { margin-top: 0; }
+  #shipReportView .shr-stand { margin: 0; padding-left: 18px; }
+  #shipReportView .shr-stand li { margin: 6px 0; line-height: 1.45; }
+  #shipReportView .shr-trend { display: flex; align-items: flex-end; gap: 6px; height: 170px; padding: 22px 0 26px; }
+  #shipReportView .shr-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; position: relative; cursor: pointer; min-width: 0; }
+  #shipReportView .shr-col .seg-l { background: var(--accent); }
+  #shipReportView .shr-col .seg-c { background: var(--medium); }
+  #shipReportView .shr-col .seg-l:first-child, #shipReportView .shr-col .seg-c:first-child { border-radius: 3px 3px 0 0; }
+  #shipReportView .shr-col.cur { outline: 2px solid var(--coral); outline-offset: 2px; border-radius: 3px; }
+  #shipReportView .shr-col .top { position: absolute; top: -18px; left: -4px; right: -4px; text-align: center; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  #shipReportView .shr-col .rate { display: block; font-weight: 400; color: var(--muted); font-size: 10px; }
+  #shipReportView .shr-col .lab { position: absolute; bottom: -20px; left: -4px; right: -4px; text-align: center; font-size: 10px; color: var(--muted); }
+  #shipReportView .shr-col.nochat .seg-l { background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.18) 4px 6px); }
+  #shipReportView .shr-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  #shipReportView .shr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  #shipReportView .matrix td.l, #shipReportView .matrix th.l { text-align: left; }
+  #shipReportView .shr-bar { display: inline-block; height: 8px; border-radius: 3px; background: var(--accent); vertical-align: middle; margin-left: 6px; }
+  #shipReportView .shr-row { display: grid; grid-template-columns: 92px 1fr auto; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; align-items: start; }
+  #shipReportView .shr-row:first-child { border-top: 0; }
+  #shipReportView .shr-tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--surface-2); margin: 0 4px 2px 0; white-space: nowrap; }
+  #shipReportView .shr-scroll { overflow-x: auto; }
+  #shipReportView .shr-src { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  #shipReportView .shr-src > div { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  #shipReportView .shr-src .on { color: var(--low); font-weight: 600; }
+  #shipReportView .shr-src .off { color: var(--muted); font-weight: 600; }
+  #shipReportView .shr-src input { width: 100%; margin: 4px 0; }
+  @media (max-width: 760px) {
+    #shipReportView .shr-trend { gap: 3px; }
+    #shipReportView .shr-col .rate, #shipReportView .shr-ratekey { display: none; }
+    #shipReportView .shr-row { grid-template-columns: 1fr; gap: 4px; }
+  }
   #customsView .cu-hist td { padding: 6px; border-top: 1px solid var(--line); font-size: 13px; vertical-align: middle; }
   @media (max-width: 760px) {
     #customsView table.cu-items thead { display: none; }
@@ -1981,7 +2022,26 @@
 <div class="modal-bg" id="rs_addbg" onclick="if (event.target === this) resAddClose()">
   <div class="modal rs-add" role="dialog" aria-label="Add a resource" id="rs_addbox"></div>
 </div>
+<!-- r188: the monthly shipping report. Everything inside #shr_body is drawn
+     by renderShipReport from one shipReport call. -->
+<div id="shipReportView" class="wrap hidden">
+  <div class="seg ship-seg" style="margin-bottom:14px;"><button type="button" class="active" onclick="setView('shipreport')">Report</button><button type="button" onclick="setView('customs')">Customs invoice</button></div>
+  <div class="shr-head">
+    <div>
+      <h2 style="margin:0;">Shipping report</h2>
+      <p class="hint" style="margin:4px 0 0;">Parcel problems from the tracker and from the chats, set against how many packs we actually sent.</p>
+    </div>
+    <div class="shr-pick">
+      <label for="shr_month" class="small muted">Month</label>
+      <select id="shr_month" onchange="shipReportMonth(this.value)"></select>
+    </div>
+  </div>
+  <div id="shr_status" class="small muted" style="margin:8px 0;"></div>
+  <div id="shr_body"></div>
+</div>
+
 <div id="customsView" class="wrap hidden">
+  <div class="seg ship-seg" style="margin-bottom:14px;"><button type="button" onclick="setView('shipreport')">Report</button><button type="button" class="active" onclick="setView('customs')">Customs invoice</button></div>
   <h2 style="margin-top:0;">Customs invoice</h2>
   <p class="hint" style="margin-top:-6px;">For when customs ask again for an invoice showing exactly what is in the pack. Start from the chat and the tracker finds what it can. Anything highlighted is still missing, so ask the student for it.</p>
 
@@ -2499,7 +2559,7 @@
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
     <tr data-perm="resources"><td><span class="ui">Resources</span></td><td>The free downloads on the website's resources page: edit them, add new ones, and change their order.</td></tr>
-    <tr data-perm="log"><td><span class="ui">Customs</span></td><td>Make a commercial invoice for a student's pack when customs ask for one again.</td></tr>
+    <tr data-perm="log"><td><span class="ui">Shipping</span></td><td>The monthly shipping report, and a commercial invoice for a student's pack when customs ask for one again.</td></tr>
     <tr data-perm="dev,users"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
     <tr data-perm="users"><td><span class="ui">RCA</span></td><td>Private diagnostic records on promoted issues, for a fault that needs investigating rather than just fixing.</td></tr>
     <tr data-perm="course,users"><td><span class="ui">Course</span></td><td>The course-fix queue, which is every course error that has been logged.</td></tr>
@@ -2813,9 +2873,16 @@
   <p>For a fix that affected several people, <span class="ui">Draft "it's fixed" messages to all</span> in the issue detail writes one message per student, up to ten at a time. Nothing sends itself there either, so each one gets copied across and tweaked as you like.</p>
 </section>
 
+<section id="man-shipreport" data-perm="log" data-title="Shipping report">
+  <h3>Shipping report</h3>
+  <p><span class="ui">Shipping</span> on the rail opens on <span class="ui">Report</span>: one month of parcel problems, the last whole month to start with. Pick another month at the top, or tap a bar in the 12-month chart.</p>
+  <p>A problem is counted from two places. Everything logged in the tracker as Shipping, and the chats, which are read every night and sorted into the same types (not arrived, customs, damaged and so on). A chat that already became an issue is only counted once, and several DHL emails about one waybill count as one parcel. Chats nobody logged are listed under <span class="ui">Chats</span> with a <span class="ui">Log it</span> button, which takes the chat straight to the log form.</p>
+  <p>Where Stripe and ShipStation are connected, the problems are set against how many packs went out, so a busy month does not read as a bad one. Customs is measured against parcels sent abroad only, since a UK parcel cannot be held at customs. With ShipStation it also shows how many working days packs take to go out after payment, and any paid pack with no shipment after 3 working days.</p>
+  <p>A short summary of last month goes to the shipping channel at 09:00 on the 1st.</p>
+</section>
 <section id="man-customs" data-perm="log" data-title="Customs invoices">
   <h3>Customs invoices</h3>
-  <p>Every pack goes out with a commercial invoice on the parcel, but every so often customs in the student's country ask for it again. <span class="ui">Customs</span> on the rail makes a fresh one, so nobody has to open last time's Word file and type one student's address over another's.</p>
+  <p>Every pack goes out with a commercial invoice on the parcel, but every so often customs in the student's country ask for it again. <span class="ui">Shipping</span> on the rail, then <span class="ui">Customs invoice</span>, makes a fresh one, so nobody has to open last time's Word file and type one student's address over another's.</p>
   <p>Paste the Chatwoot chat link and press <span class="ui">Pull the details</span>. The tracker reads the chat for the address, phone number, waybill and which pack it was, and checks the student's contact card and any invoice we have made them before. Under each box it says where the answer came from. Anything it could not find is highlighted in coral, and that is the list to ask the student for. On a shipping issue, the <span class="ui">Customs invoice</span> button does the same starting from the issue.</p>
   <p>The contents fill in from the pack. If this parcel was different, a missing item or a replacement, change the lines here and it only affects this invoice. Prices, HS codes and weights for good live in the CustomsPacks and CustomsPackItems tabs of the tracker's Google Sheet, so when the RYA change a price it gets changed there once.</p>
   <p>The declaration at the bottom is signed by whoever makes the invoice. Set your own printed name, title and signature once under <span class="ui">Signed by</span>, by drawing it or uploading a photo of it on white paper. Without one, your name prints over a blank line to sign by hand. Nobody else can use or change yours.</p>
@@ -3582,7 +3649,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r187 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r188 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4860,7 +4927,7 @@ function applyPermGates() {
   // Round 60: the rail is gated by exactly the same permissions the tabs
   // were, one line each, so nothing can drift apart.
   applyShell();
-  var railGate = [["railNew", p.log], ["railCustoms", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
+  var railGate = [["railNew", p.log], ["railShipping", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railIrpcs", p.irpcs], ["railResources", p.resources],
                   ["railReports", p.analytics], ["railStats", p.analytics],
@@ -4889,7 +4956,7 @@ function permsKey_(p) {
 // is still the single source of what is visible, and this reads its result
 // rather than repeating the rule.
 var VIEW_RAIL_ = {
-  instructor: "railNew", customs: "railCustoms", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
+  instructor: "railNew", customs: "railShipping", shipreport: "railShipping", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
   edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
   irpcs: "railIrpcs", resources: "railResources", reports: "railReports", analytics: "railStats", users: "railUsers"
 };
@@ -4987,7 +5054,10 @@ function applyPerms(user) {
   var prefViewOk = (prefView === "admin" && (p.manage || p.log)) ||
                    (prefView === "instructor" && p.log) ||
                    (prefView === "live" && (p.log || p.users));
+  var wantMonth = null;
+  try { wantMonth = new URLSearchParams(window.location.search).get("month"); } catch (e) {}
   if (wantView === "reports" && p.analytics) { setView("reports"); }
+  else if (wantView === "shipreport" && p.log) { if (/^\d{4}-\d{2}$/.test(wantMonth || "")) shipr.month = wantMonth; setView("shipreport"); }
   else if (prefView && prefViewOk) { setView(prefView); }
   else if (SHELL_ON && (p.log || p.users)) { setView("live"); }   // FB-0315 (Edd): the tracker opens on Today, not Issues
   else setView(first);
@@ -7351,7 +7421,9 @@ function setView(v) {
   if ($("tasksView")) $("tasksView").classList.toggle("hidden", v !== "tasks");
   if ($("irpcsView")) $("irpcsView").classList.toggle("hidden", v !== "irpcs");
   if ($("customsView")) $("customsView").classList.toggle("hidden", v !== "customs");
-  if (v === "customs") renderCustoms();
+  if (v === "customs") { state.shipSub = "customs"; renderCustoms(); }
+  if ($("shipReportView")) $("shipReportView").classList.toggle("hidden", v !== "shipreport");
+  if (v === "shipreport") { state.shipSub = "shipreport"; renderShipReport(); }
   if ($("resourcesView")) $("resourcesView").classList.toggle("hidden", v !== "resources");
   if (v !== "resources") document.body.classList.remove("rs-drawer-open");
   if (v === "resources") renderResources();
@@ -7427,7 +7499,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railCustoms", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -7464,6 +7536,10 @@ function railGo(v) {
   if (v === "tasks" && !isEddUser()) return;               // Phase 1 is solo; the endpoint scopes by ticket regardless
   if (v === "irpcs" && !(state.perms || {}).irpcs) return; // and the Edge Function checks the same key on every call
   if (v === "customs" && !(state.perms || {}).log) return;  // r182: the backend refuses the same people anyway
+  // r188: Shipping lands on whichever of its two pages you used last, and on
+  // the report the first time.
+  if ((v === "shipping" || v === "shipreport") && !(state.perms || {}).log) return;
+  if (v === "shipping") v = state.shipSub === "customs" ? "customs" : "shipreport";
   if (v === "resources" && !(state.perms || {}).resources) return;  // r187: and the backend checks the same key
   if (v === "issues") {
     var seg = currentIssuesSeg();
@@ -7479,7 +7555,7 @@ function updateRail() {
   if (!$("rail")) return;
   var v = state.view;
   var onIssues = (v === "actions" || v === "admin");
-  var pairs = [["railNew", v === "instructor"], ["railCustoms", v === "customs"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
+  var pairs = [["railNew", v === "instructor"], ["railShipping", v === "customs" || v === "shipreport"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
                ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
@@ -8277,6 +8353,407 @@ function customsReset() {
   customs.items = []; customs.convId = ""; customs.issueId = ""; customs.sources = {}; customs.missing = [];
   $("cu_from").textContent = ""; $("cu_notes").innerHTML = ""; $("cu_status").textContent = "";
   customsDrawItems(); customsMarkMissing(); customsSources();
+}
+
+// ===================== SHIPPING REPORT (r188) =====================
+// Edd, 19 Sep: a monthly report on shipping problems, better than the one-off
+// ChatGPT read of the chats. The backend hands over monthly buckets (tracker
+// issues, sorted chats, parcels sent, customs invoices); every average, rate
+// and "what stands out" line is worked out here from those same buckets, so
+// the page and the Slack post on the 1st can never tell different stories.
+var SHIP_KIND_LABEL = {
+  not_arrived: "Delayed or not arrived", not_dispatched: "Not dispatched yet", customs: "Customs and import charges",
+  wrong_item: "Wrong or missing contents", damaged: "Damaged in transit", returned: "Failed delivery or returned",
+  wrong_address: "Address or label error", other: "Other"
+};
+var shipr = { month: "", data: null, loading: false, refreshing: false, error: "" };
+
+function shipMonthName(ym, short) {
+  var d = new Date(ym + "-15T12:00:00Z");
+  return d.toLocaleDateString("en-GB", short ? { month: "short" } : { month: "long", year: "numeric" });
+}
+function shipMonthOptions() {
+  var now = new Date(), out = [];
+  for (var i = 0; i < 26; i++) {
+    var d = new Date(Date.UTC(now.getFullYear(), now.getMonth() - i, 1));
+    var ym = d.getUTCFullYear() + "-" + ("0" + (d.getUTCMonth() + 1)).slice(-2);
+    out.push({ ym: ym, label: shipMonthName(ym) + (i === 0 ? " (so far)" : "") });
+  }
+  return out;
+}
+function renderShipReport() {
+  var sel = $("shr_month");
+  if (sel && !sel.options.length) {
+    sel.innerHTML = shipMonthOptions().map(function (o) { return '<option value="' + o.ym + '">' + esc(o.label) + "</option>"; }).join("");
+  }
+  // A monthly report opens on the last whole month; "so far" is one click away.
+  if (!shipr.month) { var o = shipMonthOptions(); shipr.month = o[1].ym; }
+  if (sel) sel.value = shipr.month;
+  if (shipr.data && shipr.data.month === shipr.month) { drawShipReport(); return; }
+  loadShipReport();
+}
+function shipReportMonth(ym) { shipr.month = ym; loadShipReport(); }
+function loadShipReport(quiet) {
+  if (shipr.loading) return;
+  shipr.loading = true; shipr.error = "";
+  if (!quiet) { $("shr_status").textContent = "Loading " + shipMonthName(shipr.month) + "…"; if (!shipr.data) $("shr_body").innerHTML = ""; }
+  apiPost({ action: "shipReport", month: shipr.month }).then(function (r) {
+    shipr.loading = false;
+    if (!r || !r.ok) { shipr.error = (r && r.error) || "no reply"; $("shr_status").textContent = "Could not load the report: " + shipr.error; return; }
+    shipr.data = r; shipr.month = r.month;
+    drawShipReport();
+    // Parcel counts come from Stripe and ShipStation and are kept in the
+    // sheet. Stale months are fetched after the page is up, then it redraws.
+    if (r.sources.volumes_stale && !shipr.refreshing) shipRefreshVolumes();
+  }).catch(function (e) { shipr.loading = false; $("shr_status").textContent = "Could not load the report."; console.error(e); });
+}
+function shipRefreshVolumes() {
+  shipr.refreshing = true;
+  $("shr_status").textContent = "Fetching parcel counts from " + shipSourceNames() + "…";
+  apiPost({ action: "shipVolumesRefresh", month: shipr.month }).then(function (r) {
+    if (r && r.errors && r.errors.length) { shipr.refreshing = false; $("shr_status").textContent = "Parcel counts: " + r.errors[0]; loadShipReport(true); return; }
+    if (r && r.ok && r.remaining > 0 && r.refreshed.length) { shipRefreshVolumes(); return; }
+    shipr.refreshing = false;
+    loadShipReport(true);
+  }).catch(function () { shipr.refreshing = false; $("shr_status").textContent = "Could not fetch parcel counts just now."; });
+}
+function shipSourceNames() {
+  var s = (shipr.data && shipr.data.sources) || {};
+  return [s.stripe ? "Stripe" : "", s.shipstation ? "ShipStation" : ""].filter(String).join(" and ") || "the shop";
+}
+
+// ---------------------------------------------------------------- the sums
+function shipBucket(m) { return (shipr.data.buckets || []).filter(function (b) { return b.month === m; })[0]; }
+// Problems in a month. Chats count only once they were being read; before
+// that a month has its logged issues and nothing else, and says so.
+function shipTotal(b) { return b.issues.n + (b.chats_counted ? b.chats.n : 0); }
+function shipKinds(b) {
+  var k = {};
+  [b.issues.kinds, b.chats_counted ? b.chats.kinds : {}].forEach(function (src) {
+    Object.keys(src || {}).forEach(function (x) { k[x] = (k[x] || 0) + src[x]; });
+  });
+  return k;
+}
+function shipCouriers(b) {
+  var k = {};
+  [b.issues.couriers, b.chats_counted ? b.chats.couriers : {}].forEach(function (src) {
+    Object.keys(src || {}).forEach(function (x) { k[x] = (k[x] || 0) + src[x]; });
+  });
+  return k;
+}
+// Parcels sent: ShipStation's shipments where we have them (what actually went
+// out), otherwise paid pack orders from Stripe (what was bought).
+function shipVol(b) {
+  var v = b.volumes || {};
+  if (v.shipstation && v.shipstation.n != null) return { n: v.shipstation.n, src: "shipstation", t: v.shipstation };
+  if (v.stripe && v.stripe.n != null) return { n: v.stripe.n, src: "stripe", t: v.stripe };
+  return null;
+}
+function shipIntl(b) { var v = shipVol(b); if (!v) return null; var r = v.t.by_region || {}; return (r.eu || 0) + (r.world || 0); }
+function per100(n, d) { return d ? Math.round(n / d * 1000) / 10 : null; }
+function shipAvg(list, f) { if (!list.length) return null; return list.reduce(function (s, b) { return s + f(b); }, 0) / list.length; }
+function shipR1(x) { return x == null ? "–" : String(Math.round(x * 10) / 10); }
+function shipDelta(now, before, lowerIsBetter) {
+  if (before == null || now == null) return "";
+  var diff = now - before;
+  if (Math.abs(diff) < 0.05) return '<span>level with</span> the 3-month average';
+  var bad = lowerIsBetter ? diff > 0 : diff < 0;
+  return '<span class="' + (bad ? "up" : "down") + '">' + (diff > 0 ? "up " : "down ") + shipR1(Math.abs(diff)) + "</span> on the 3-month average (" + shipR1(before) + ")";
+}
+
+// ---------------------------------------------------------------- drawing
+function drawShipReport() {
+  var d = shipr.data;
+  if (!d) return;
+  var i = d.buckets.length - 1, b = d.buckets[i];
+  var prev3 = d.buckets.slice(i - 3, i), last12 = d.buckets.slice(i - 11, i + 1);
+  var fair = b.chats_counted && prev3.every(function (x) { return x.chats_counted; });
+  var isCur = d.month === d.current_month;
+  $("shr_status").textContent = isCur ? "This month so far. Figures move until the month ends." : "";
+  var h = "";
+
+  // ---- tiles
+  var tot = shipTotal(b), vol = shipVol(b), rate = vol ? per100(tot, vol.n) : null;
+  var avgTot = fair ? shipAvg(prev3, shipTotal) : null;
+  var rates3 = prev3.map(function (x) { var v = shipVol(x); return v && v.n ? per100(shipTotal(x), v.n) : null; });
+  var avgRate = fair && rates3.every(function (x) { return x != null; }) ? shipAvg(rates3, function (x) { return x; }) : null;
+  var tiles = [];
+  tiles.push('<div class="stat"><div class="n">' + tot + '</div><div class="l">Shipping problems</div><div class="d">' +
+    (b.chats_counted ? b.issues.n + " logged, " + b.chats.n + " only in chats" : b.issues.n + " logged (chats not read for this month)") +
+    (avgTot != null ? "<br>" + shipDelta(tot, avgTot, true) : "") + "</div></div>");
+  tiles.push('<div class="stat"><div class="n">' + (rate == null ? "–" : rate) + '</div><div class="l">Per 100 parcels</div><div class="d">' +
+    (vol ? "of " + vol.n + " " + (vol.src === "shipstation" ? "shipments" : "paid pack orders") + (avgRate != null ? "<br>" + shipDelta(rate, avgRate, true) : "")
+         : "Connect Stripe or ShipStation below to see this") + "</div></div>");
+  var intl = shipIntl(b), cust = shipKinds(b).customs || 0;
+  tiles.push('<div class="stat"><div class="n">' + cust + '</div><div class="l">Customs problems</div><div class="d">' +
+    (intl ? per100(cust, intl) + " per 100 of the " + intl + " parcels sent abroad" : "") +
+    (b.customs_invoices ? (intl ? "<br>" : "") + b.customs_invoices + " customs invoice" + (b.customs_invoices === 1 ? "" : "s") + " made" : "") + "</div></div>");
+  tiles.push('<div class="stat"><div class="n">' + (b.resolved_median_days == null ? "–" : shipR1(b.resolved_median_days)) + '</div><div class="l">Days to sort (median)</div><div class="d">' +
+    (b.resolved_n ? "across the " + b.resolved_n + " issue" + (b.resolved_n === 1 ? "" : "s") + " from this month now closed" : "none from this month closed yet") + "</div></div>");
+  tiles.push('<div class="stat' + (d.open.length ? " alert" : "") + '"><div class="n">' + d.open.length + '</div><div class="l">Parcels open right now</div><div class="d">' +
+    (d.open.length ? "oldest " + d.open[0].days_open + " days" : "nothing waiting") + "</div></div>");
+  h += '<div class="summary-row">' + tiles.join("") + "</div>";
+
+  // ---- what stands out
+  var notes = shipStandOut(d, b, prev3, last12, fair);
+  if (notes.length) h += '<div class="card"><h3>What stands out</h3><ul class="shr-stand">' + notes.map(function (n) { return "<li>" + n + "</li>"; }).join("") + "</ul></div>";
+
+  // ---- trend
+  h += shipTrendCard(d, last12);
+
+  // ---- by type
+  h += shipKindCard(d, b, prev3, last12);
+
+  // ---- couriers and destinations
+  h += shipCourierCard(b, last12);
+
+  // ---- orders against shipments
+  h += shipOrdersCard(d, b);
+
+  // ---- chats
+  h += shipChatsCard(d, b, prev3);
+
+  // ---- open parcels
+  h += shipOpenCard(d);
+
+  // ---- sources
+  h += shipSourcesCard(d);
+  $("shr_body").innerHTML = h;
+}
+
+function shipStandOut(d, b, prev3, last12, fair) {
+  var out = [];
+  if (!b.chats_counted) out.push("The chats were not being read for " + esc(shipMonthName(d.month)) + ", so this month shows logged issues only." +
+    ((state.perms || {}).users ? " A back-fill, at the bottom of the page, fills that in." : ""));
+  // Types that moved. A jump from 0 to 1 is not news, so a type has to reach 3
+  // and double its average before it is called out, and a fall has to start
+  // from an average of 3 or more.
+  var k = shipKinds(b);
+  var avgK = {};
+  SHIP_KINDS_ORDER().forEach(function (x) { avgK[x] = shipAvg(prev3, function (p) { return (fair ? shipKinds(p) : p.issues.kinds)[x] || 0; }); });
+  var kNow = fair ? k : b.issues.kinds;
+  SHIP_KINDS_ORDER().forEach(function (x) {
+    var n = kNow[x] || 0, a = avgK[x] || 0;
+    if (n >= 3 && n >= 2 * a) out.push(esc(SHIP_KIND_LABEL[x]) + " is up: " + n + " against an average of " + shipR1(a) + (a < 1.5 ? ", from a low base" : "") + ".");
+    else if (a >= 3 && n <= a / 2) out.push(esc(SHIP_KIND_LABEL[x]) + " is down: " + n + " against an average of " + shipR1(a) + ".");
+  });
+  // Courier against courier, when we know how many each carried.
+  var vol = shipVol(b);
+  if (vol && vol.t.by_courier) {
+    var byC = shipCouriers(b), rates = [];
+    Object.keys(vol.t.by_courier).forEach(function (c) {
+      var p = vol.t.by_courier[c]; if (p >= 10) rates.push({ c: c, r: per100(byC[c] || 0, p), n: byC[c] || 0, p: p });
+    });
+    if (rates.length >= 2) {
+      rates.sort(function (x, y) { return y.r - x.r; });
+      out.push(rates.map(function (x) { return esc(x.c) + " " + x.r + " per 100 (" + x.n + " of " + x.p + ")"; }).join(", ") + ".");
+    }
+  }
+  var intl = shipIntl(b), cust = k.customs || 0;
+  if (intl >= 5 && cust) {
+    var r12 = 0, i12 = 0;
+    last12.forEach(function (x) { var ii = shipIntl(x); if (ii) { i12 += ii; r12 += shipKinds(x).customs || 0; } });
+    out.push("Customs hit " + per100(cust, intl) + " in every 100 international parcels" + (i12 ? ", against " + per100(r12, i12) + " over the last 12 months" : "") + ".");
+  }
+  if (b.chats_counted && b.chats.n) out.push(b.chats.n + " problem" + (b.chats.n === 1 ? " was" : "s were") + " only ever in a chat and never logged. They are listed under Chats below, with a Log it button.");
+  var x = b.volumes && b.volumes.xref;
+  if (x && x.unmatched_n) out.push(x.unmatched_n + " paid pack" + (x.unmatched_n === 1 ? " has" : "s have") + " no shipment in ShipStation after 3 working days.");
+  var pa = shipAvg(prev3, function (p) { return p.price; });
+  if (b.chats_counted && b.price >= 4 && pa != null && b.price >= 1.5 * pa) out.push(b.price + " people asked about postage costs or times before buying, against an average of " + shipR1(pa) + ". Worth checking the checkout makes the price and timing clear.");
+  if (d.open.length && d.open[0].days_open >= 14) out.push("The oldest open parcel has been waiting " + d.open[0].days_open + " days.");
+  return out;
+}
+function SHIP_KINDS_ORDER() { return (shipr.data && shipr.data.kinds) || Object.keys(SHIP_KIND_LABEL); }
+
+function shipTrendCard(d, last12) {
+  var max = Math.max.apply(null, last12.map(shipTotal).concat([1]));
+  var cols = last12.map(function (x) {
+    var l = x.issues.n, c = x.chats_counted ? x.chats.n : 0, v = shipVol(x), r = v && v.n ? per100(l + c, v.n) : null;
+    var lab = shipMonthName(x.month, true) + (x.month.slice(5) === "01" ? " " + x.month.slice(2, 4) : "");
+    return '<div class="shr-col' + (x.month === d.month ? " cur" : "") + (x.chats_counted ? "" : " nochat") + '" onclick="shipReportMonth(\'' + x.month + '\');$(\'shr_month\').value=\'' + x.month + '\'"' +
+      ' title="' + esc(shipMonthName(x.month)) + ": " + l + " logged" + (x.chats_counted ? ", " + c + " only in chats" : ", chats not read") + (r != null ? ", " + r + " per 100 parcels" : "") + '">' +
+      '<div class="top">' + (l + c) + (r != null ? '<span class="rate">' + r + "%</span>" : "") + "</div>" +
+      (c ? '<div class="seg-c" style="height:' + (c / max * 100) + '%"></div>' : "") +
+      '<div class="seg-l" style="height:' + Math.max(l ? 2 : 0, l / max * 100) + '%"></div>' +
+      '<div class="lab">' + esc(lab) + "</div></div>";
+  }).join("");
+  return '<div class="card"><h3>The last 12 months</h3><div class="shr-trend">' + cols + "</div>" +
+    '<div class="shr-legend"><span><i style="background:var(--accent)"></i>Logged in the tracker</span><span><i style="background:var(--medium)"></i>Only in chats</span>' +
+    "<span class=\"shr-ratekey\">Small figure: problems per 100 parcels</span><span>Striped: chats not read that month</span><span>Tap a month to open it</span></div></div>";
+}
+
+function shipKindCard(d, b, prev3, last12) {
+  var k = shipKinds(b), prevB = prev3[prev3.length - 1];
+  var k12 = {}, t12 = 0;
+  last12.forEach(function (x) { var kx = shipKinds(x); Object.keys(kx).forEach(function (y) { k12[y] = (k12[y] || 0) + kx[y]; t12 += kx[y]; }); });
+  var rows = SHIP_KINDS_ORDER().filter(function (x) { return k[x] || k12[x]; })
+    .sort(function (x, y) { return (k12[y] || 0) - (k12[x] || 0); });
+  if (!rows.length) return '<div class="card"><h3>By type of problem</h3><p class="muted small">Nothing in the last 12 months.</p></div>';
+  var maxN = Math.max.apply(null, rows.map(function (x) { return k[x] || 0; }).concat([1]));
+  var body = rows.map(function (x) {
+    var n = k[x] || 0;
+    return "<tr><th>" + esc(SHIP_KIND_LABEL[x] || x) + "</th><td>" + n + '<span class="shr-bar" style="width:' + (n / maxN * 60) + 'px"></span></td>' +
+      "<td>" + ((shipKinds(prevB)[x]) || 0) + "</td><td>" + shipR1(shipAvg(prev3, function (p) { return shipKinds(p)[x] || 0; })) + "</td>" +
+      "<td>" + (k12[x] || 0) + "</td><td>" + (t12 ? Math.round((k12[x] || 0) / t12 * 100) + "%" : "–") + "</td></tr>";
+  }).join("");
+  return '<div class="card"><h3>By type of problem</h3><div class="shr-scroll"><table class="matrix"><thead><tr><th class="l">Type</th><th>' +
+    esc(shipMonthName(d.month, true)) + "</th><th>" + esc(shipMonthName(prevB.month, true)) + "</th><th>3-month avg</th><th>12 months</th><th>Share</th></tr></thead><tbody>" + body +
+    '</tbody></table></div><p class="small muted" style="margin-bottom:0;">One problem can be two types (held at customs, then returned), so the types can add up to more than the total.</p></div>';
+}
+
+function shipCourierCard(b, last12) {
+  var vol = shipVol(b), byC = shipCouriers(b), c12 = {}, p12 = {};
+  last12.forEach(function (x) {
+    var cx = shipCouriers(x); Object.keys(cx).forEach(function (c) { c12[c] = (c12[c] || 0) + cx[c]; });
+    var v = shipVol(x); if (v && v.t.by_courier) Object.keys(v.t.by_courier).forEach(function (c) { p12[c] = (p12[c] || 0) + v.t.by_courier[c]; });
+  });
+  var names = Object.keys(c12).concat(Object.keys(p12)).filter(function (c, i, a) { return a.indexOf(c) === i; })
+    .sort(function (x, y) { return ((p12[y] || 0) + (c12[y] || 0)) - ((p12[x] || 0) + (c12[x] || 0)); });
+  if (!names.length) return "";
+  var pm = vol && vol.t.by_courier ? vol.t.by_courier : {};
+  var body = names.map(function (c) {
+    return "<tr><th>" + esc(c) + "</th><td>" + (byC[c] || 0) + "</td><td>" + (vol ? (pm[c] || 0) : "–") + "</td><td>" + (vol && pm[c] ? per100(byC[c] || 0, pm[c]) : "–") + "</td>" +
+      "<td>" + (c12[c] || 0) + "</td><td>" + (p12[c] || "–") + "</td><td>" + (p12[c] ? per100(c12[c] || 0, p12[c]) : "–") + "</td></tr>";
+  }).join("");
+  var reg = "";
+  if (vol && vol.t.by_region) {
+    var r = vol.t.by_region;
+    reg = '<p class="small muted" style="margin:8px 0 0;">Where they went this month: UK ' + (r.uk || 0) + ", EU " + (r.eu || 0) + ", rest of the world " + (r.world || 0) +
+      (r.unknown ? ", not known " + r.unknown : "") + (vol.src === "stripe" ? " (by billing country)" : "") + ".</p>";
+  }
+  return '<div class="card"><h3>By courier</h3><div class="shr-scroll"><table class="matrix"><thead><tr><th class="l">Courier</th><th>Problems</th><th>Parcels</th><th>Per 100</th>' +
+    "<th>Problems, 12m</th><th>Parcels, 12m</th><th>Per 100, 12m</th></tr></thead><tbody>" + body + "</tbody></table></div>" + reg +
+    '<p class="small muted" style="margin-bottom:0;">"Unknown" is a problem where nobody recorded the courier.</p></div>';
+}
+
+function shipOrdersCard(d, b) {
+  var v = b.volumes || {}, x = v.xref, st = v.stripe, ss = v.shipstation;
+  if (!st && !ss) return "";
+  var h = '<div class="card"><h3>Orders and shipments</h3>';
+  var bits = [];
+  if (st) bits.push(st.n + " paid pack order" + (st.n === 1 ? "" : "s") + " in Stripe" + (st.shipping_gbp ? ", £" + st.shipping_gbp.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " taken for postage" : ""));
+  if (ss) bits.push(ss.n + " shipment" + (ss.n === 1 ? "" : "s") + " in ShipStation");
+  h += "<p>" + bits.join(". ") + ".</p>";
+  if (x) {
+    h += "<p>" + x.matched + " of " + x.orders + " orders matched to a shipment. Paid to posted took " + (x.median_days == null ? "–" : shipR1(x.median_days)) +
+      " working days (median), and " + (x.matched ? Math.round(x.within_2 / x.matched * 100) : 0) + "% went within 2 working days.</p>";
+    if (x.unmatched && x.unmatched.length) {
+      h += '<p class="small" style="margin-bottom:4px;"><b>Paid, and no shipment found after 3 working days:</b></p>' + x.unmatched.map(function (u) {
+        return '<div class="shr-row"><div>' + esc(new Date(u.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })) + "</div><div>" + esc(u.email || "(no email)") +
+          '</div><div class="small muted">' + esc(u.courier || "") + (u.country ? " · " + esc(u.country) : "") + "</div></div>";
+      }).join("") + '<p class="small muted">Matched on the email address, so a pack sent under a different email shows here too. Worth a look in ShipStation before chasing.</p>';
+    }
+  } else if (st && !ss) h += '<p class="small muted">Connect ShipStation as well to see how long orders take to go out, and which paid packs have not shipped.</p>';
+  return h + "</div>";
+}
+
+function shipChatsCard(d, b, prev3) {
+  if (!b.chats_counted) return "";
+  var h = '<div class="card"><h3>Chats</h3><p>' + b.chats_all + " chat" + (b.chats_all === 1 ? "" : "s") + " about a parcel problem: " +
+    b.chats_logged + " already in the tracker, " + b.chats.n + " problem" + (b.chats.n === 1 ? "" : "s") + " only in chats" +
+    (b.courier_mail ? ", and " + b.courier_mail + " of the chats were the courier writing to us" : "") + ". " +
+    b.price + " postage question" + (b.price === 1 ? "" : "s") + " (cost, times, do we ship there)" +
+    (prev3.every(function (p) { return p.chats_counted; }) ? ", against an average of " + shipR1(shipAvg(prev3, function (p) { return p.price; })) : "") + ".</p>";
+  if (d.unlogged.length) {
+    h += d.unlogged.map(function (u) {
+      return '<div class="shr-row"><div class="small">' + esc(new Date(u.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })) + "</div><div>" +
+        u.kinds.map(function (k) { return '<span class="shr-tag">' + esc(SHIP_KIND_LABEL[k] || k) + "</span>"; }).join("") +
+        (u.courier ? '<span class="shr-tag">' + esc(u.courier) + "</span>" : "") + (u.from_courier ? '<span class="shr-tag">from the courier</span>' : "") +
+        "<div>" + esc(u.summary || "") + (u.also ? ' <span class="small muted">(+' + u.also + " more chat" + (u.also === 1 ? "" : "s") + " about the same parcel)</span>" : "") + "</div></div>" +
+        '<div style="white-space:nowrap;">' + (u.link ? '<a class="small" href="' + esc(u.link) + '" target="_blank" rel="noopener">Chat</a> · ' : "") +
+        '<a class="small" href="#" onclick="shipLogChat(\'' + esc(u.id) + '\');return false;">Log it</a></div></div>';
+    }).join("");
+  }
+  return h + "</div>";
+}
+function shipLogChat(id) {
+  railGo("instructor");
+  if ($("cwInput")) { $("cwInput").value = id; chatwootImport(); }
+}
+
+function shipOpenCard(d) {
+  if (!d.open.length) return "";
+  return '<div class="card"><h3>Parcels open right now</h3>' + d.open.map(function (o) {
+    return '<div class="shr-row"><div class="small"><b>' + o.days_open + "</b> days</div><div>" +
+      '<span class="shr-tag">' + esc(SHIP_KIND_LABEL[o.kind] || o.kind) + "</span>" + (o.courier && o.courier !== "Unknown" ? '<span class="shr-tag">' + esc(o.courier) + "</span>" : "") +
+      (o.tracking ? '<span class="shr-tag">' + esc(o.tracking) + "</span>" : "") +
+      "<div>" + esc(o.summary || "") + (o.student_name ? ' <span class="small muted">' + esc(o.student_name) + "</span>" : "") + "</div></div>" +
+      '<div style="white-space:nowrap;" class="small">' + (o.chase_at ? "chase " + esc(o.chase_at) + " · " : "") +
+      '<a href="#" onclick="shipOpenIssue(\'' + esc(o.issue_id) + '\');return false;">Open</a></div></div>';
+  }).join("") + "</div>";
+}
+function shipOpenIssue(id) {
+  var p = state.perms || {};
+  if (p.manage) setIssuesSeg("all"); else setView("live");
+  openIssueById(id);
+}
+
+function shipSourcesCard(d) {
+  var s = d.sources, admin = !!(state.perms || {}).users;
+  var since = s.chats_since ? new Date(s.chats_since).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  var bf = s.backfill, h = '<div class="card"><h3>Where the numbers come from</h3><div class="shr-src">';
+  h += "<div><b>Tracker</b> <span class=\"on\">always on</span><br>Every issue logged as Shipping, by the month it was logged. Several reports about one parcel count once.</div>";
+  h += "<div><b>Chats</b> " + (s.chatwoot ? '<span class="on">on</span>' : '<span class="off">not connected</span>') +
+    "<br>Read every night at 04:00 and sorted into the same types. " + (since ? "Counted from " + esc(since) + "." : "Not read yet; the first night starts it.") +
+    (s.nightly ? '<br><span class="small muted">Last night: ' + (s.nightly.listed || 0) + " chats looked at, " + (s.nightly.hits || 0) + " mentioned a parcel" + (s.nightly.note ? ". " + esc(s.nightly.note) : "") + ".</span>" : "");
+  if (bf) {
+    h += '<br><span class="small">' + (bf.running ? "Back-fill running: " : bf.done_at ? "Back-fill done: " : "Back-fill stopped: ") + (bf.listed || 0) + " chats looked at, " +
+      (bf.tagged || 0) + " sorted, $" + (bf.cost_usd || 0).toFixed(2) + " spent" + (bf.note ? ". " + esc(bf.note) : "") + ".</span>";
+  }
+  if (admin && s.chatwoot) {
+    h += bf && bf.running
+      ? '<br><button class="ghost small" onclick="shipBackfill(\'stop\')">Stop the back-fill</button>'
+      : '<br><button class="ghost small" onclick="shipBackfill(\'start\')" title="Reads older chats in the background, about 450 every 10 minutes">Back-fill the last 12 months</button>' +
+        '<div class="small muted">Roughly $3 to $6 of AI, and a few hours in the background. Chats already sorted are skipped.</div>';
+  }
+  h += "</div>";
+  h += "<div><b>Stripe</b> " + (s.stripe ? '<span class="on">connected</span>' : '<span class="off">not connected</span>') +
+    "<br>Paid orders that included postage, with the courier chosen at checkout and the billing country.";
+  if (admin) h += (s.stripe ? '<br><a href="#" class="small" onclick="shipDisconnect(\'stripe\');return false;">Disconnect</a>'
+    : '<input id="shr_sk" type="password" autocomplete="off" placeholder="Restricted key, rk_live_…"><div class="small muted">In Stripe: Developers, API keys, Create restricted key, with Checkout Sessions set to Read and nothing else.</div>');
+  h += "</div>";
+  h += "<div><b>ShipStation</b> " + (s.shipstation ? '<span class="on">connected</span>' : '<span class="off">not connected</span>') +
+    "<br>What actually went out, by carrier and destination, and how long after payment.";
+  if (admin) h += (s.shipstation ? '<br><a href="#" class="small" onclick="shipDisconnect(\'shipstation\');return false;">Disconnect</a>'
+    : '<input id="shr_ssk" type="password" autocomplete="off" placeholder="API key"><input id="shr_sss" type="password" autocomplete="off" placeholder="API secret"><div class="small muted">In ShipStation: Settings, Account, API Settings.</div>');
+  h += "</div></div>";
+  if (admin && (!s.stripe || !s.shipstation)) h += '<div style="margin-top:10px;"><button class="primary" id="shr_connect" onclick="shipConnect()">Connect</button> <span id="shr_cmsg" class="small muted">Keys are checked, stored on the server, and never shown again.</span></div>';
+  if (!admin && (!s.stripe || !s.shipstation)) h += '<p class="small muted" style="margin-bottom:0;">An admin can connect Stripe and ShipStation from this page.</p>';
+  h += '<p class="small muted" style="margin-bottom:0;">A Slack summary of last month goes to the shipping channel at 09:00 on the 1st. <a href="#" onclick="shipPreview();return false;">Preview it for this month</a></p><pre id="shr_preview" class="small" style="white-space:pre-wrap;display:none;"></pre>';
+  return h + "</div>";
+}
+function shipConnect() {
+  var body = { action: "setShipConfig" };
+  if ($("shr_sk") && $("shr_sk").value.trim()) body.stripe_key = $("shr_sk").value.trim();
+  if ($("shr_ssk") && ($("shr_ssk").value.trim() || $("shr_sss").value.trim())) { body.shipstation_key = $("shr_ssk").value.trim(); body.shipstation_secret = $("shr_sss").value.trim(); }
+  if (!body.stripe_key && !body.shipstation_key) { $("shr_cmsg").textContent = "Paste a key first."; return; }
+  $("shr_connect").disabled = true; $("shr_cmsg").textContent = "Checking…";
+  apiPost(body).then(function (r) {
+    $("shr_connect").disabled = false;
+    if (!r || !r.ok) { $("shr_cmsg").textContent = (r && r.error) || "Could not connect."; return; }
+    toast([r.stripe ? "Stripe connected" : "", r.shipstation ? "ShipStation connected" : ""].filter(String).join(", ") + ".");
+    loadShipReport();
+  }).catch(function () { $("shr_connect").disabled = false; $("shr_cmsg").textContent = "Could not connect."; });
+}
+function shipDisconnect(which) {
+  var body = { action: "setShipConfig" }; body["clear_" + which] = true;
+  apiPost(body).then(function (r) { if (r && r.ok) { toast("Disconnected."); loadShipReport(); } else toast((r && r.error) || "Could not disconnect."); });
+}
+function shipBackfill(op) {
+  var body = { action: "shipBackfill", op: op };
+  if (op === "start") body.months = 12;
+  apiPost(body).then(function (r) {
+    if (!r || !r.ok) { toast((r && r.error) || "Could not " + op + " the back-fill."); return; }
+    toast(op === "start" ? "Back-fill started. It runs in the background; come back later." : "Back-fill stopped.");
+    loadShipReport(true);
+  });
+}
+function shipPreview() {
+  var pre = $("shr_preview");
+  pre.style.display = ""; pre.textContent = "Writing it…";
+  apiPost({ action: "shipMonthlyPreview", month: shipr.month }).then(function (r) {
+    pre.textContent = r && r.ok ? r.text : "Could not write it: " + ((r && r.error) || "no reply");
+  });
 }
 
 // From a shipping issue's drawer: straight here, with the issue as the start.
@@ -10504,6 +10981,7 @@ function feedbackSeen(id, status) {
 // When a round ships something people will notice, add a line here in the same
 // commit. A round nobody would notice does not need one.
 var WHATS_NEW = [
+  { n: 34, date: "2026-09-19", who: ["log"], text: "Customs on the rail is now Shipping, with two pages: Report and Customs invoice. The report shows each month's parcel problems by type and courier, from the tracker and from the chats, against how many packs we sent, plus the parcels still open and any shipping chat nobody logged. A summary goes to the shipping channel on the 1st." },
   { n: 33, date: "2026-09-19", who: ["resources"], text: "Resources, on the rail, edits the free downloads on the website. Change a title, description, category or order, swap a file or thumbnail, or add a new PDF and it makes the thumbnail and a first draft of the listing. Nothing goes live until Save to website." },
   { n: 32, date: "2026-09-19", text: "The board loads quicker, most of all straight after somebody saves a change, which used to be the slowest open of all. Saving an update now refreshes just that issue rather than the whole list." },
   { n: 31, date: "2026-09-19", who: ["users"], text: "Admins can set an issue to With Edd from the Status box, next to With developers. Use it for lesson packages and course content, which are Edd's. The website and LMS stay with the developers." },
@@ -10743,6 +11221,11 @@ function subRailSpec() {
   if (v === "users") return {
     head: "Admin", cur: state.usersSection, go: setUsersSection,
     items: [{ key: "people", label: "People" }, { key: "feedback", label: "Feedback" }, { key: "playbook", label: "Playbook" }]
+  };
+  // r188: the two Shipping pages.
+  if (v === "shipreport" || v === "customs") return {
+    head: "Shipping", cur: v, go: function (k) { setView(k); },
+    items: [{ key: "shipreport", label: "Report" }, { key: "customs", label: "Customs invoice" }]
   };
   if (v === "irpcs") return {
     head: "IRPCS", cur: irpcs.tab, go: irpcsSetTab,

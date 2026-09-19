@@ -49,6 +49,7 @@ var SLACK_NOTICES = {
   high_priority_shipping: { on: true, to: 'SLACK_SHIPPING_ISSUES' }, // r144 (Edd): a parcel alert belongs in the shipping channel, not the tech one
   fasttrack_request: { on: true,  to: 'SLACK_ADMINS' },              // r151 (Edd): an instructor asked for a fast-track; admins decide
   shipping_chase:    { on: true,  to: 'SLACK_SHIPPING_ISSUES' },   // r109: shipping got its own channel
+  shipping_monthly:  { on: true,  to: 'SLACK_SHIPPING_ISSUES' },   // r188 (Edd): the monthly shipping report, on the 1st
   notify_student:    { on: true,  to: 'SLACK_INSTRUCTING_DAILY' },
   query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
   query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
@@ -680,6 +681,12 @@ function doPost(e) {
     if (action === 'chatwootImport') return jsonOut(chatwootImport_(body));
     if (action === 'chatwootList') return jsonOut(chatwootList_(body));
     if (action === 'customsPacks') return jsonOut(customsPacks_());
+    // r188: the shipping report
+    if (action === 'shipReport') return jsonOut(shipReport_(body));
+    if (action === 'shipVolumesRefresh') return jsonOut(shipVolumesRefresh_(body));
+    if (action === 'shipMonthlyPreview') return jsonOut(shipMonthlyPreview_(body));
+    if (action === 'shipBackfill') return jsonOut(shipBackfillAction_(body));
+    if (action === 'setShipConfig') return jsonOut(setShipConfig_(body));
     if (action === 'customsPrefill') return jsonOut(customsPrefill_(body));
     if (action === 'customsGenerate') return jsonOut(customsGenerate_(body));
     if (action === 'customsList') return jsonOut(customsList_());
@@ -920,6 +927,11 @@ function reqPerm_(action) {
     // same instructor job as chasing the parcel in the first place.
     case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': return 'log';
     case 'customsMySigner': case 'saveCustomsSigner': return 'log';   // always the caller's own row
+    // r188: the shipping report sits beside customs, for the same people.
+    // Starting a back-fill spends AI credit and connecting Stripe or
+    // ShipStation stores a key, so both of those are the admins'.
+    case 'shipReport': case 'shipVolumesRefresh': case 'shipMonthlyPreview': return 'log';
+    case 'shipBackfill': case 'setShipConfig': return 'users';
     // r187: the website resources page. Its own key, because it publishes
     // straight to the public website and Edd hand-picks who can.
     case 'resourcesList': case 'resourcesSave': case 'resourcesUpload': case 'resourcesSuggest': return 'resources';
@@ -1868,6 +1880,8 @@ var READ_ONLY_ACTIONS = {
   // r182: customs invoices live in their own three tabs and never touch an
   // issue row, so the cached issue list is still true after any of them.
   customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsMySigner: 1, saveCustomsSigner: 1,
+  // r188: the shipping report keeps its own two tabs and never writes an issue.
+  shipReport: 1, shipVolumesRefresh: 1, shipMonthlyPreview: 1, shipBackfill: 1, setShipConfig: 1,
   // r187: website resources live in a different spreadsheet altogether.
   resourcesList: 1, resourcesSave: 1, resourcesUpload: 1, resourcesSuggest: 1,
   caseDraftReply: 1, batchStudentDrafts: 1, chatwootImport: 1, login: 1, logout: 1,
@@ -6148,6 +6162,7 @@ function ensureTriggers_() {
   var haveDevTargets = false; // r170
   var haveWaiting = false;    // r175
   var haveInbox = false;      // r186
+  var haveShipTag = false, haveShipMonthly = false;   // r188
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -6162,6 +6177,8 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'devTargetSweep') haveDevTargets = true;
     if (t.getHandlerFunction() === 'waitingOnStudentSweep') haveWaiting = true;
     if (t.getHandlerFunction() === 'claudeInbox') haveInbox = true;
+    if (t.getHandlerFunction() === 'shipTagNightly') haveShipTag = true;
+    if (t.getHandlerFunction() === 'shipMonthlyPost') haveShipMonthly = true;
   });
   // r175: 08:00, so the chase list is sitting there when the day starts rather
   // than arriving on top of whatever else the morning brings.
@@ -6169,6 +6186,10 @@ function ensureTriggers_() {
   // the board about as fast as somebody typing it in; an empty inbox costs one
   // small fetch.
   if (!haveInbox) ScriptApp.newTrigger('claudeInbox').timeBased().everyMinutes(5).create();
+  // r188: sort the night's shipping chats before the 05:00 scan, and post last
+  // month's shipping report at 09:00 on the 1st.
+  if (!haveShipTag) ScriptApp.newTrigger('shipTagNightly').timeBased().everyDays(1).atHour(4).create();
+  if (!haveShipMonthly) ScriptApp.newTrigger('shipMonthlyPost').timeBased().onMonthDay(1).atHour(9).create();
   if (!haveWaiting) ScriptApp.newTrigger('waitingOnStudentSweep').timeBased().everyDays(1).atHour(8).create();
   if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
   if (!haveEnrich) ScriptApp.newTrigger('enrichContacts').timeBased().everyDays(1).atHour(19).create();   // r152: end of the working day
@@ -6400,7 +6421,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1 };
+var RUNNABLE_JOBS_ = { prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -8047,7 +8068,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r187 · 2026-09-19';
+var CODE_STAMP = 'r188 · 2026-09-19';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -13603,4 +13624,804 @@ function resourcesSuggest_(body) {
   if (!out.json) return { ok: false, error: 'Could not suggest a listing (' + out.why + ').' };
   return { ok: true, title: String(out.json.title || ''), description: String(out.json.description || ''),
            category: String(out.json.category || ''), type: String(out.json.type || 'PDF') };
+}
+
+// ===================== SHIPPING REPORT (r188) =====================
+// Edd, 19 Sep 2026: "Can we get a monthly report on shipping issues ... I am
+// sure we could do even better." The starting point was a one-off ChatGPT read
+// of every Chatwoot conversation. Three things make this one better:
+//
+//  1. Two sources, cross-referenced. The tracker's own shipping issues (typed,
+//     with courier, tracking number and a resolution date) AND a sweep of the
+//     Chatwoot chats, so a parcel somebody moaned about and nobody logged still
+//     counts, and we can say how many that was.
+//  2. A rate, not a count. Paid pack orders from Stripe and shipments from
+//     ShipStation give "problems per 100 parcels", so a busy month does not
+//     read as a bad one, and customs is measured against INTERNATIONAL parcels
+//     only, since a UK parcel cannot be held at customs.
+//  3. The same vocabulary everywhere. Chats are sorted into exactly the issue
+//     types a shipping issue already carries (ISSUE_TYPES_SHIPPING), so the
+//     two sources add up rather than sitting side by side in two languages.
+//
+// Nothing here writes to an issue row. Its state lives in two tabs of its own
+// (Ship Chat Tags, Ship Volumes) and a few script properties.
+
+var SHIP_KINDS_ = ['not_arrived', 'damaged', 'wrong_item', 'not_dispatched', 'customs', 'returned', 'wrong_address', 'other'];
+var SHIP_TAG_SHEET = 'Ship Chat Tags';
+var SHIP_TAG_HEADERS = ['conversation_id', 'created_at', 'last_activity_at', 'problem', 'kinds', 'price_enquiry',
+  'from_courier', 'courier', 'tracking', 'summary', 'student_email', 'tagged_at', 'source'];
+var SHIP_VOL_SHEET = 'Ship Volumes';
+var SHIP_VOL_HEADERS = ['month', 'fetched_at', 'stripe_json', 'shipstation_json', 'xref_json'];
+// Sorting a chat is a small, closed question, so it goes to the small model.
+// If that model name is ever retired the call falls back to the finder model
+// rather than quietly tagging nothing.
+var SHIP_TAG_MODEL = 'claude-haiku-4-5';
+var SHIP_TAG_BATCH = 8;
+var SHIP_TAG_TEXT_MAX = 2000;
+var SHIP_BF_TICK_MS = 4.5 * 60 * 1000;
+
+// A cheap first sieve, so the AI only ever reads a chat that mentions a parcel
+// in some way. It is deliberately loose (it catches "chartwork" and "delivery
+// of the course" too); the model is told most matches are nothing.
+var SHIP_KEYWORDS_ = /\b(dhl|royal ?mail|parcel ?force|evri|hermes|fedex|dpd|yodel|courier|parcels?|packages?|postage|posted|post office|shipping|shipped|dispatch(?:ed)?|deliver(?:y|ed|ies)?|tracking|waybill|customs|import (?:duty|tax|charges?|fees?)|duties|clearance|not (?:yet )?(?:arrived|received)|has(?:n'?t| not) arrived|student pack|course pack|almanac|plotter|return(?:ed)? to sender)\b/i;
+var SHIP_COURIER_SENDER_ = /dhl|royal ?mail|parcel ?force|ups\.com|fedex|dpd|evri|yodel/i;
+
+function shipKeywordHit_(text) { return SHIP_KEYWORDS_.test(String(text || '')); }
+
+// One name per courier, whatever the source calls it ("DHL Express Worldwide
+// 1200", "dhl_express_worldwide", "royal_mail").
+function shipCourier_(s) {
+  s = String(s || '').toLowerCase();
+  if (!s) return '';
+  if (/dhl/.test(s)) return 'DHL';
+  if (/royal.?mail|rm_|^rm\b/.test(s)) return 'Royal Mail';
+  if (/parcel.?force/.test(s)) return 'Parcelforce';
+  if (/\bups\b|^ups/.test(s)) return 'UPS';
+  if (/fedex/.test(s)) return 'FedEx';
+  if (/dpd/.test(s)) return 'DPD';
+  if (/evri|hermes/.test(s)) return 'Evri';
+  return 'Other';
+}
+var SHIP_EU_ = { AT:1, BE:1, BG:1, HR:1, CY:1, CZ:1, DK:1, EE:1, FI:1, FR:1, DE:1, GR:1, HU:1, IE:1, IT:1, LV:1, LT:1, LU:1,
+  MT:1, NL:1, PL:1, PT:1, RO:1, SK:1, SI:1, ES:1, SE:1 };
+function shipRegion_(cc) {
+  cc = String(cc || '').toUpperCase();
+  if (!cc) return 'unknown';
+  if (cc === 'GB' || cc === 'UK' || cc === 'IM' || cc === 'JE' || cc === 'GG') return 'uk';
+  if (SHIP_EU_[cc]) return 'eu';
+  return 'world';
+}
+function shipMonthOf_(v) {
+  if (!v) return '';
+  var d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM');
+}
+function shipMonthRange_(ym) {
+  var y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7)) - 1;
+  // Script time zone is London, so a month is London's month, the way the
+  // team counts it.
+  var tz = Session.getScriptTimeZone();
+  var start = Utilities.parseDate(ym + '-01 00:00:00', tz, 'yyyy-MM-dd HH:mm:ss');
+  var nx = new Date(Date.UTC(y, m + 1, 1));
+  var nym = nx.getUTCFullYear() + '-' + ('0' + (nx.getUTCMonth() + 1)).slice(-2);
+  var end = Utilities.parseDate(nym + '-01 00:00:00', tz, 'yyyy-MM-dd HH:mm:ss');
+  return { start: start, end: end, next: nym };
+}
+function shipMonthsBack_(ym, n) {
+  var y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7)) - 1, out = [];
+  for (var i = n - 1; i >= 0; i--) {
+    var d = new Date(Date.UTC(y, m - i, 1));
+    out.push(d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- the tabs
+function shipSheet_(name, headers) {
+  var ss = ss_(), sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
+  } else {
+    var have = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0];
+    if (have.length < headers.length || headers.some(function (h, i) { return have[i] !== h; })) {
+      sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
+  }
+  return sh;
+}
+function shipRows_(name, headers) {
+  var sh = shipSheet_(name, headers);
+  var last = sh.getLastRow();
+  if (last < 2) return { sh: sh, rows: [] };
+  var vals = sh.getRange(2, 1, last - 1, headers.length).getValues();
+  var rows = vals.map(function (r, i) {
+    var o = { _row: i + 2 };
+    headers.forEach(function (h, c) { o[h] = r[c] instanceof Date ? r[c].toISOString() : r[c]; });
+    return o;
+  }).filter(function (o) { return o[headers[0]] !== '' && o[headers[0]] != null; });
+  return { sh: sh, rows: rows };
+}
+// Writes rows keyed by the first column: an existing key is overwritten in
+// place, a new one goes on the end. Ids are pinned to text before writing
+// (appendRow ignores a column's format, r182.1; a long tracking number turns
+// into scientific notation, r26), then written with setValues.
+function shipUpsert_(name, headers, objs, textCols) {
+  if (!objs.length) return 0;
+  var cur = shipRows_(name, headers), sh = cur.sh, at = {};
+  cur.rows.forEach(function (r) { at[String(r[headers[0]])] = r._row; });
+  var next = Math.max(2, sh.getLastRow() + 1);
+  objs.forEach(function (o) {
+    var row = headers.map(function (h) { var v = o[h]; return v == null ? '' : v; });
+    var r = at[String(o[headers[0]])];
+    if (!r) { r = next++; at[String(o[headers[0]])] = r; }
+    (textCols || []).forEach(function (h) {
+      var c = headers.indexOf(h); if (c > -1) sh.getRange(r, c + 1).setNumberFormat('@');
+    });
+    sh.getRange(r, 1, 1, headers.length).setValues([row.map(function (v, i) {
+      return (textCols || []).indexOf(headers[i]) > -1 ? String(v) : v;
+    })]);
+  });
+  return objs.length;
+}
+
+// ---------------------------------------------------------------- Chatwoot
+// One page of the conversation list, newest activity first. The plain index
+// has refused status filters on this account before (r158), so it falls back
+// the same way chatwootList_ does, and reports which way it got there.
+function shipListPage_(page) {
+  var tries = ['/conversations?status=all&page=' + page, '/conversations?status=all&page=' + page];
+  var err = '';
+  for (var i = 0; i < tries.length; i++) {
+    try {
+      var out = chatwootCall_(tries[i]);
+      return { ok: true, list: (out && out.data && out.data.payload) || (out && out.payload) || [] };
+    } catch (e) { err = String(e.message || e); if (i === 0) Utilities.sleep(700); }
+  }
+  try {
+    var f = chatwootCall_('/conversations/filter?page=' + page, 'post', { payload: [
+      { attribute_key: 'created_at', filter_operator: 'is_greater_than', values: ['2020-01-01'], query_operator: null }] });
+    return { ok: true, degraded: true, list: (f && f.payload) || (f && f.data && f.data.payload) || [] };
+  } catch (e2) { return { ok: false, error: err + ' | filter: ' + String(e2.message || e2).slice(0, 120) }; }
+}
+// The messages of several conversations at once, flattened to a short
+// transcript each. A conversation that will not load is skipped, never fatal.
+function shipFetchTexts_(convs) {
+  var cfg = chatwootCfg_();
+  var base = CHATWOOT_BASE + '/api/v1/accounts/' + cfg.account;
+  var res = UrlFetchApp.fetchAll(convs.map(function (c) {
+    return { url: base + '/conversations/' + c.id + '/messages', method: 'get',
+             headers: { api_access_token: cfg.token }, muteHttpExceptions: true };
+  }));
+  var out = {};
+  res.forEach(function (r, i) {
+    if (r.getResponseCode() < 200 || r.getResponseCode() >= 300) return;
+    var body; try { body = JSON.parse(r.getContentText()); } catch (e) { return; }
+    out[String(convs[i].id)] = shipTranscript_(body);
+  });
+  return out;
+}
+function shipTranscript_(body) {
+  var list = (body && (body.payload || (body.data && body.data.payload))) || [];
+  var lines = [];
+  list.forEach(function (m) {
+    var t = Number(m.message_type);
+    if ((t !== 0 && t !== 1) || m.private) return;
+    var s = cleanChatwootBody_(m.content);
+    if (!s) return;
+    lines.push((t === 0 ? 'Customer: ' : 'Ardent: ') + s.slice(0, 500));
+  });
+  var text = lines.join('\n');
+  return text.length > SHIP_TAG_TEXT_MAX ? text.slice(0, SHIP_TAG_TEXT_MAX / 2) + '\n…\n' + text.slice(-SHIP_TAG_TEXT_MAX / 2) : text;
+}
+
+// ---------------------------------------------------------------- sorting
+function shipTagPrompt_(batch) {
+  return 'You are sorting support conversations for Ardent Training, an online RYA sailing theory school that posts ' +
+    'physical course packs (paper charts, almanacs, plotters, books) to students, by Royal Mail in the UK and DHL Express abroad.\n\n' +
+    'These conversations matched a shipping keyword, but MOST are not about shipping at all (chartwork, "delivery" of a course, ' +
+    'a question that "arrived"). Say so when that is the case.\n\n' +
+    'For each conversation decide:\n' +
+    '- problem: true only if something went WRONG with a physical delivery (a student saying so, or a courier writing about a student parcel).\n' +
+    '- kinds: if problem, one or more of: not_dispatched (not sent yet, no tracking number yet), not_arrived (in transit too long, lost, ' +
+    'not arrived), customs (held at customs, import duty, VAT or charges to pay, customs paperwork or an invoice requested), ' +
+    'wrong_item (missing, incomplete or wrong contents), damaged, returned (failed delivery, missed collection, returned to sender), ' +
+    'wrong_address (address or label error), other.\n' +
+    '- price_enquiry: true if someone asks what postage costs, how long delivery takes, or whether we ship to their country.\n' +
+    '- from_courier: true if the conversation is a courier\'s own email or notification rather than a person at Ardent\'s customer.\n' +
+    '- courier: DHL, Royal Mail, Parcelforce, UPS, FedEx, DPD, Evri, Other, or "" if none is named.\n' +
+    '- tracking: the waybill or tracking reference exactly as written, or "".\n' +
+    '- summary: one plain sentence saying what happened, no names or email addresses.\n\n' +
+    'CONVERSATIONS:\n' + batch.map(function (b) { return '### id ' + b.id + '\n' + b.text; }).join('\n\n') + '\n\n' +
+    'Return ONLY JSON: {"items":[{"id":"<id>","problem":true|false,"kinds":[],"price_enquiry":true|false,' +
+    '"from_courier":true|false,"courier":"","tracking":"","summary":""}]}. One item per conversation. No prose, no fences.';
+}
+var SHIP_TALLY_ = { calls: 0, in_tokens: 0, out_tokens: 0, model: '' };
+function shipClassify_(batch) {
+  var before = { c: AI_TALLY.calls, i: AI_TALLY.in_tokens, o: AI_TALLY.out_tokens };
+  var model = SHIP_TAG_MODEL;
+  var out = anthropicRaw_(model, shipTagPrompt_(batch), 1600);
+  if (!out.json && /HTTP 404|not_found|model/i.test(out.why)) { model = FINDER_MODEL; out = anthropicRaw_(model, shipTagPrompt_(batch), 1600); }
+  SHIP_TALLY_.calls += AI_TALLY.calls - before.c;
+  SHIP_TALLY_.in_tokens += AI_TALLY.in_tokens - before.i;
+  SHIP_TALLY_.out_tokens += AI_TALLY.out_tokens - before.o;
+  SHIP_TALLY_.model = model;
+  if (!out.json || !out.json.items) return { ok: false, why: out.why || 'no items' };
+  return { ok: true, items: out.json.items };
+}
+function shipCleanTag_(x, conv, source) {
+  var kinds = (x.kinds || []).map(function (k) { return String(k).toLowerCase(); })
+    .filter(function (k, i, a) { return SHIP_KINDS_.indexOf(k) > -1 && a.indexOf(k) === i; });
+  var problem = x.problem === true;
+  if (problem && !kinds.length) kinds = ['other'];
+  if (!problem) kinds = [];
+  var sender = (conv.meta && conv.meta.sender) || {};
+  return {
+    conversation_id: String(conv.id),
+    created_at: conv.created_at ? new Date(Number(conv.created_at) * 1000).toISOString() : '',
+    last_activity_at: conv.last_activity_at ? new Date(Number(conv.last_activity_at) * 1000).toISOString() : '',
+    problem: problem ? 'true' : 'false',
+    kinds: kinds.join(','),
+    price_enquiry: x.price_enquiry === true ? 'true' : 'false',
+    from_courier: (x.from_courier === true || SHIP_COURIER_SENDER_.test(String(sender.email || '') + ' ' + String(sender.name || ''))) ? 'true' : 'false',
+    courier: x.courier ? shipCourier_(x.courier) : '',
+    tracking: normaliseTracking_(x.tracking || ''),
+    summary: String(x.summary || '').slice(0, 300),
+    student_email: String(sender.email || '').toLowerCase(),
+    tagged_at: new Date().toISOString(),
+    source: source || ''
+  };
+}
+
+// Walks the conversation list from a page, reading and sorting what it finds,
+// until it passes `floorMs` (by last activity), runs out of pages, or runs out
+// of time. Shared by the nightly sweep and the back-fill, so there is one way
+// a chat gets tagged.
+function shipTagWalk_(opts) {
+  var started = Date.now();
+  var st = { pages: 0, listed: 0, read: 0, hits: 0, tagged: 0, problems: 0, reachedFloor: false, reachedEnd: false,
+             nextPage: opts.page || 1, note: '' };
+  var cfg = chatwootCfg_();
+  if (!cfg.token || !cfg.account) { st.note = 'Chatwoot is not configured'; return st; }
+  var known = {};
+  shipRows_(SHIP_TAG_SHEET, SHIP_TAG_HEADERS).rows.forEach(function (r) { known[String(r.conversation_id)] = String(r.last_activity_at || ''); });
+  var page = opts.page || 1, maxPages = opts.maxPages || 6;
+  while (st.pages < maxPages) {
+    if (Date.now() - started > opts.budgetMs) break;
+    var lp = shipListPage_(page);
+    if (!lp.ok) { st.note = 'list failed: ' + lp.error; break; }
+    if (lp.degraded) st.note = 'list came back by the filter route';
+    var chunk = lp.list;
+    st.pages++; page++; st.nextPage = page;
+    if (!chunk.length) { st.reachedEnd = true; break; }
+    st.listed += chunk.length;
+    var want = chunk.filter(function (c) {
+      var sender = (c.meta && c.meta.sender) || {};
+      var courierMail = SHIP_COURIER_SENDER_.test(String(sender.email || '') + ' ' + String(sender.name || ''));
+      if (!courierMail && isAutomatedNotice_(sender.name, sender.email)) return false;
+      var la = c.last_activity_at ? new Date(Number(c.last_activity_at) * 1000).toISOString() : '';
+      if (opts.floorMs && Number(c.last_activity_at || 0) * 1000 < opts.floorMs) return false;
+      // Already sorted, and nothing has been said since: nothing to pay for.
+      if (known[String(c.id)] && known[String(c.id)] >= la) return false;
+      return true;
+    });
+    if (want.length) {
+      var texts = shipFetchTexts_(want);
+      var hits = [];
+      want.forEach(function (c) {
+        var t = texts[String(c.id)];
+        if (t == null) return;
+        st.read++;
+        if (shipKeywordHit_(t)) hits.push({ id: String(c.id), text: t, conv: c });
+      });
+      st.hits += hits.length;
+      var tags = [];
+      for (var i = 0; i < hits.length; i += SHIP_TAG_BATCH) {
+        var batch = hits.slice(i, i + SHIP_TAG_BATCH);
+        var res = shipClassify_(batch);
+        if (!res.ok) { st.note = 'sorting failed: ' + String(res.why).slice(0, 160); continue; }
+        batch.forEach(function (b) {
+          var x = res.items.filter(function (it) { return String(it.id) === b.id; })[0];
+          if (!x) return;
+          var tg = shipCleanTag_(x, b.conv, opts.source);
+          tags.push(tg);
+          if (tg.problem === 'true') st.problems++;
+        });
+      }
+      st.tagged += shipUpsert_(SHIP_TAG_SHEET, SHIP_TAG_HEADERS, tags, ['conversation_id', 'tracking']);
+      tags.forEach(function (tg) { known[tg.conversation_id] = tg.last_activity_at; });
+    }
+    var oldest = Math.min.apply(null, chunk.map(function (c) { return Number(c.last_activity_at || 0) * 1000; }));
+    if (opts.floorMs && oldest < opts.floorMs) { st.reachedFloor = true; break; }
+  }
+  return st;
+}
+
+// Nightly, at 04:00, ahead of the 05:00 scan. Reads what has moved since the
+// last run. The first run starts three days back, and records that as the
+// earliest date the chats are counted from until a back-fill goes further.
+function shipTagNightly() {
+  var props = PropertiesService.getScriptProperties();
+  var started = Date.now();
+  var last = Number(props.getProperty('SHIP_TAG_LAST') || 0);
+  if (!last) {
+    last = started - 3 * 86400000;
+    if (!props.getProperty('SHIP_TAG_SINCE')) props.setProperty('SHIP_TAG_SINCE', new Date(last).toISOString());
+  }
+  SHIP_TALLY_ = { calls: 0, in_tokens: 0, out_tokens: 0, model: '' };
+  var st = shipTagWalk_({ page: 1, floorMs: last - 3600000, maxPages: 10, budgetMs: 4 * 60 * 1000, source: 'nightly' });
+  // Only move the pointer when the walk actually got back to it, so a run cut
+  // short by a Chatwoot wobble is caught up the next night rather than lost.
+  if (st.reachedFloor || st.reachedEnd) props.setProperty('SHIP_TAG_LAST', String(started));
+  st.at = new Date(started).toISOString();
+  st.ai = SHIP_TALLY_;
+  props.setProperty('SHIP_TAG_RUN', JSON.stringify(st));
+  return st;
+}
+
+// ---------------------------------------------------------------- back-fill
+function shipBfState_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('SHIP_BF') || '{}'); } catch (e) { return {}; }
+}
+function shipBfSave_(s) { PropertiesService.getScriptProperties().setProperty('SHIP_BF', JSON.stringify(s)); }
+function shipBfTrigger_(on) {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'shipBackfillTick') ScriptApp.deleteTrigger(t); });
+  if (on) ScriptApp.newTrigger('shipBackfillTick').timeBased().everyMinutes(10).create();
+}
+// What a model call costs, so the page can say what the back-fill has spent
+// rather than what it might. Haiku 4.5 at $1 / $5 per million, Sonnet at $3 / $15.
+function shipCostUsd_(t) {
+  var haiku = /haiku/.test(String(t.model || SHIP_TAG_MODEL));
+  return ((Number(t.in_tokens) || 0) * (haiku ? 1 : 3) + (Number(t.out_tokens) || 0) * (haiku ? 5 : 15)) / 1e6;
+}
+function shipBackfillStart_(data) {
+  var months = Math.max(1, Math.min(26, Number(data.months) || 12));
+  var s = shipBfState_();
+  if (s.running) return { ok: false, error: 'A back-fill is already running.' };
+  var floor = new Date(); floor.setMonth(floor.getMonth() - months); floor.setDate(1); floor.setHours(0, 0, 0, 0);
+  s = { running: true, months: months, floor_ms: floor.getTime(), page: 1, started_at: new Date().toISOString(),
+        by: String((data._user || {}).name || ''), updated_at: '', ticks: 0, listed: 0, read: 0, hits: 0, tagged: 0,
+        problems: 0, calls: 0, in_tokens: 0, out_tokens: 0, model: SHIP_TAG_MODEL, note: '' };
+  shipBfSave_(s);
+  shipBfTrigger_(true);
+  return { ok: true, backfill: shipBfPublic_(s) };
+}
+function shipBackfillStop_() {
+  var s = shipBfState_();
+  s.running = false; s.stopped_at = new Date().toISOString();
+  shipBfSave_(s); shipBfTrigger_(false);
+  return { ok: true, backfill: shipBfPublic_(s) };
+}
+function shipBackfillTick() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+  try {
+    var s = shipBfState_();
+    if (!s.running) { shipBfTrigger_(false); return; }
+    SHIP_TALLY_ = { calls: 0, in_tokens: 0, out_tokens: 0, model: '' };
+    var st = shipTagWalk_({ page: s.page || 1, floorMs: s.floor_ms, maxPages: 40, budgetMs: SHIP_BF_TICK_MS, source: 'backfill' });
+    s.ticks++; s.page = st.nextPage; s.updated_at = new Date().toISOString();
+    ['listed', 'read', 'hits', 'tagged', 'problems'].forEach(function (k) { s[k] = (s[k] || 0) + (st[k] || 0); });
+    s.calls += SHIP_TALLY_.calls; s.in_tokens += SHIP_TALLY_.in_tokens; s.out_tokens += SHIP_TALLY_.out_tokens;
+    if (SHIP_TALLY_.model) s.model = SHIP_TALLY_.model;
+    s.note = st.note || '';
+    if (st.reachedFloor || st.reachedEnd) {
+      s.running = false; s.done_at = s.updated_at;
+      // The chats are now counted from the floor, and the report can say so.
+      var since = PropertiesService.getScriptProperties().getProperty('SHIP_TAG_SINCE');
+      if (!since || new Date(since).getTime() > s.floor_ms) {
+        PropertiesService.getScriptProperties().setProperty('SHIP_TAG_SINCE', new Date(s.floor_ms).toISOString());
+      }
+      shipBfTrigger_(false);
+    }
+    // A list that keeps failing should stop rather than burn ticks all week.
+    if (/list failed/.test(s.note)) { s.fails = (s.fails || 0) + 1; if (s.fails >= 5) { s.running = false; shipBfTrigger_(false); s.note = 'Stopped after 5 failed tries: ' + s.note; } }
+    else s.fails = 0;
+    shipBfSave_(s);
+  } finally { lock.releaseLock(); }
+}
+function shipBfPublic_(s) {
+  s = s || shipBfState_();
+  if (!s.started_at) return null;
+  return { running: !!s.running, months: s.months, floor: s.floor_ms ? new Date(s.floor_ms).toISOString() : '',
+           started_at: s.started_at, updated_at: s.updated_at || '', done_at: s.done_at || '', stopped_at: s.stopped_at || '',
+           by: s.by || '', ticks: s.ticks || 0, listed: s.listed || 0, read: s.read || 0, hits: s.hits || 0, tagged: s.tagged || 0,
+           problems: s.problems || 0, calls: s.calls || 0, cost_usd: Math.round(shipCostUsd_(s) * 100) / 100, note: s.note || '' };
+}
+
+// ---------------------------------------------------------------- volumes
+function shipCfg_() {
+  var p = PropertiesService.getScriptProperties();
+  return { stripe: p.getProperty('STRIPE_READ_KEY') || '', ssKey: p.getProperty('SHIPSTATION_KEY') || '',
+           ssSecret: p.getProperty('SHIPSTATION_SECRET') || '' };
+}
+function shipStripeGet_(key, path) {
+  var r = UrlFetchApp.fetch('https://api.stripe.com/v1/' + path, { headers: { Authorization: 'Bearer ' + key }, muteHttpExceptions: true });
+  var code = r.getResponseCode(), body = r.getContentText();
+  if (code < 200 || code >= 300) {
+    var msg = ''; try { msg = JSON.parse(body).error.message; } catch (e) { msg = body.slice(0, 160); }
+    throw new Error('Stripe ' + code + ': ' + msg);
+  }
+  return JSON.parse(body);
+}
+// Every completed checkout between two moments that sent something in the
+// post. The checkout metadata names the service ("Royal Mail", "DHL Express
+// Worldwide 1200") and the billing country; a session with neither a service
+// nor a shipping id bought nothing physical (an extension, an SRC course).
+function shipStripeOrders_(key, fromDate, toDate) {
+  var a = Math.floor(fromDate.getTime() / 1000), b = Math.floor(toDate.getTime() / 1000), after = '', out = [], guard = 0;
+  while (guard++ < 40) {
+    var q = 'checkout/sessions?limit=100&status=complete&created%5Bgte%5D=' + a + '&created%5Blt%5D=' + b + (after ? '&starting_after=' + after : '');
+    var page = shipStripeGet_(key, q);
+    (page.data || []).forEach(function (s) {
+      var md = s.metadata || {};
+      if (s.payment_status && s.payment_status !== 'paid') return;
+      if (!md.shipping_provider && !md.shippingId) return;
+      var addr = (s.customer_details && s.customer_details.address) || {};
+      out.push({ at: new Date(Number(s.created) * 1000).toISOString(),
+                 email: String((s.customer_details && s.customer_details.email) || md.email || '').toLowerCase(),
+                 courier: shipCourier_(md.shipping_provider) || 'Other', country: String(addr.country || ''),
+                 region: shipRegion_(addr.country), shipping_gbp: Number(md.shipping_amount) || 0 });
+    });
+    if (!page.has_more || !(page.data || []).length) break;
+    after = page.data[page.data.length - 1].id;
+  }
+  return out;
+}
+function shipShipStationGet_(cfg, path) {
+  var auth = Utilities.base64Encode(cfg.ssKey + ':' + cfg.ssSecret);
+  var r = UrlFetchApp.fetch('https://ssapi.shipstation.com/' + path, { headers: { Authorization: 'Basic ' + auth }, muteHttpExceptions: true });
+  var code = r.getResponseCode();
+  if (code === 429) { Utilities.sleep(2000); r = UrlFetchApp.fetch('https://ssapi.shipstation.com/' + path, { headers: { Authorization: 'Basic ' + auth }, muteHttpExceptions: true }); code = r.getResponseCode(); }
+  if (code < 200 || code >= 300) throw new Error('ShipStation ' + code + ': ' + r.getContentText().slice(0, 160));
+  return JSON.parse(r.getContentText());
+}
+function shipShipStationShipments_(cfg, fromDay, toDay) {
+  var out = [], page = 1, pages = 1;
+  while (page <= pages && page <= 20) {
+    var res = shipShipStationGet_(cfg, 'shipments?shipDateStart=' + fromDay + '&shipDateEnd=' + toDay + '&pageSize=500&page=' + page);
+    pages = Number(res.pages) || 1;
+    (res.shipments || []).forEach(function (s) {
+      if (s.voided) return;
+      var to = s.shipTo || {};
+      out.push({ day: String(s.shipDate || '').slice(0, 10), email: String(s.customerEmail || '').toLowerCase(),
+                 courier: shipCourier_(s.carrierCode) || 'Other', country: String(to.country || ''), region: shipRegion_(to.country),
+                 tracking: normaliseTracking_(s.trackingNumber || '') });
+    });
+    page++;
+  }
+  return out;
+}
+function shipTally_(rows) {
+  var t = { n: rows.length, by_courier: {}, by_region: {} };
+  rows.forEach(function (r) {
+    t.by_courier[r.courier] = (t.by_courier[r.courier] || 0) + 1;
+    t.by_region[r.region] = (t.by_region[r.region] || 0) + 1;
+  });
+  return t;
+}
+function shipMedian_(a) {
+  if (!a.length) return null;
+  a = a.slice().sort(function (x, y) { return x - y; });
+  var m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+// Paid orders against what actually went out. A match is the same email with a
+// shipment dated from the day before the order to 30 days after it. Working
+// days, because nothing is posted at the weekend.
+function shipXref_(orders, shipments, now) {
+  var byEmail = {};
+  shipments.forEach(function (s) { if (s.email) (byEmail[s.email] = byEmail[s.email] || []).push(s); });
+  var lags = [], unmatched = [], matched = 0;
+  orders.forEach(function (o) {
+    var od = new Date(o.at), odDay = o.at.slice(0, 10);
+    var cands = (byEmail[o.email] || []).filter(function (s) {
+      var d = new Date(s.day + 'T12:00:00Z');
+      return d.getTime() >= od.getTime() - 86400000 * 1.5 && d.getTime() <= od.getTime() + 30 * 86400000;
+    }).sort(function (x, y) { return x.day < y.day ? -1 : 1; });
+    if (cands.length) {
+      matched++;
+      lags.push(shipWorkingDays_(odDay, cands[0].day));
+    } else if (shipWorkingDays_(odDay, Utilities.formatDate(now, 'Europe/London', 'yyyy-MM-dd')) > 3) {
+      unmatched.push({ at: o.at, email: o.email, courier: o.courier, country: o.country });
+    }
+  });
+  return { orders: orders.length, matched: matched, median_days: shipMedian_(lags),
+           within_2: lags.filter(function (x) { return x <= 2; }).length, unmatched: unmatched.slice(0, 40), unmatched_n: unmatched.length };
+}
+function shipWorkingDays_(fromDay, toDay) {
+  var a = new Date(fromDay + 'T12:00:00Z'), b = new Date(toDay + 'T12:00:00Z'), n = 0;
+  if (b <= a) return 0;
+  while (a < b) { a.setUTCDate(a.getUTCDate() + 1); var wd = a.getUTCDay(); if (wd !== 0 && wd !== 6) n++; }
+  return n;
+}
+// One month's volumes, from whichever sources are connected.
+function shipFetchMonth_(ym) {
+  var cfg = shipCfg_(), rng = shipMonthRange_(ym), now = new Date();
+  var row = { month: ym, fetched_at: now.toISOString(), stripe_json: '', shipstation_json: '', xref_json: '' };
+  var orders = null, ships = null, errs = [];
+  if (cfg.stripe) {
+    try { orders = shipStripeOrders_(cfg.stripe, rng.start, rng.end); var t = shipTally_(orders);
+      t.shipping_gbp = Math.round(orders.reduce(function (s, o) { return s + o.shipping_gbp; }, 0) * 100) / 100;
+      row.stripe_json = JSON.stringify(t); }
+    catch (e) { errs.push(String(e.message || e)); }
+  }
+  if (cfg.ssKey && cfg.ssSecret) {
+    try {
+      var tz = Session.getScriptTimeZone();
+      var d0 = Utilities.formatDate(rng.start, tz, 'yyyy-MM-dd');
+      var lastDay = Utilities.formatDate(new Date(rng.end.getTime() - 3600000), tz, 'yyyy-MM-dd');
+      // Read on past the month end so an order paid on the 30th can still find
+      // the parcel that went out on the 2nd.
+      var ext = new Date(Math.min(now.getTime(), rng.end.getTime() + 30 * 86400000));
+      ships = shipShipStationShipments_(cfg, d0, Utilities.formatDate(ext, tz, 'yyyy-MM-dd'));
+      row.shipstation_json = JSON.stringify(shipTally_(ships.filter(function (s) { return s.day >= d0 && s.day <= lastDay; })));
+    } catch (e2) { errs.push(String(e2.message || e2)); }
+  }
+  if (orders && ships) row.xref_json = JSON.stringify(shipXref_(orders, ships, now));
+  row._errors = errs;
+  return row;
+}
+// Which months want (re)fetching. A closed month is settled 35 days after it
+// ends (orders placed on the last day have had time to ship); until then it is
+// re-read every 12 hours, and the current month every 6.
+function shipStaleMonths_(months, rows, cfg) {
+  var have = {}; rows.forEach(function (r) { have[String(r.month)] = r; });
+  var now = Date.now(), cur = shipMonthOf_(new Date());
+  var connected = !!cfg.stripe || !!(cfg.ssKey && cfg.ssSecret);
+  if (!connected) return [];
+  return months.filter(function (m) {
+    if (m > cur) return false;
+    var r = have[m];
+    if (!r) return true;
+    // A source connected after this month was fetched needs another go.
+    if (cfg.stripe && !r.stripe_json) return true;
+    if (cfg.ssKey && !r.shipstation_json) return true;
+    var age = now - new Date(r.fetched_at).getTime();
+    var settled = new Date(r.fetched_at).getTime() > shipMonthRange_(m).end.getTime() + 35 * 86400000;
+    if (settled) return false;
+    return age > (m === cur ? 6 : 12) * 3600000;
+  });
+}
+function shipVolumesRefresh_(data) {
+  var started = Date.now(), cfg = shipCfg_();
+  var months = shipMonthsBack_(String(data.month || shipMonthOf_(new Date())), 15);
+  var cur = shipRows_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS);
+  var stale = shipStaleMonths_(months, cur.rows, cfg).reverse();   // newest first: the month on screen matters most
+  var done = [], errors = [];
+  for (var i = 0; i < stale.length; i++) {
+    if (Date.now() - started > 40000) break;
+    var row = shipFetchMonth_(stale[i]);
+    if (row._errors.length) errors = errors.concat(row._errors);
+    delete row._errors;
+    shipUpsert_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS, [row], ['month']);
+    done.push(stale[i]);
+  }
+  return { ok: true, refreshed: done, remaining: stale.length - done.length, errors: errors.filter(function (e, k, a) { return a.indexOf(e) === k; }).slice(0, 3) };
+}
+
+// Admins paste the keys into the page. They go straight into script
+// properties and are never sent back; the answer only says whether each one
+// works. An empty field leaves that key alone; "clear" removes it.
+function setShipConfig_(data) {
+  var p = PropertiesService.getScriptProperties(), out = { ok: true, stripe: null, shipstation: null };
+  if (data.clear_stripe) p.deleteProperty('STRIPE_READ_KEY');
+  if (data.clear_shipstation) { p.deleteProperty('SHIPSTATION_KEY'); p.deleteProperty('SHIPSTATION_SECRET'); }
+  var sk = String(data.stripe_key || '').trim();
+  if (sk) {
+    if (!/^(rk|sk)_(live|test)_/.test(sk)) return { ok: false, error: 'That does not look like a Stripe key. A restricted key starts rk_live_.' };
+    try { shipStripeGet_(sk, 'checkout/sessions?limit=1'); p.setProperty('STRIPE_READ_KEY', sk); out.stripe = 'connected'; }
+    catch (e) { return { ok: false, error: 'Stripe said no: ' + String(e.message || e).slice(0, 200) + '. Nothing was saved.' }; }
+  }
+  var k = String(data.shipstation_key || '').trim(), s = String(data.shipstation_secret || '').trim();
+  if (k || s) {
+    if (!k || !s) return { ok: false, error: 'ShipStation needs both the API key and the API secret.' };
+    try { shipShipStationGet_({ ssKey: k, ssSecret: s }, 'carriers'); p.setProperty('SHIPSTATION_KEY', k); p.setProperty('SHIPSTATION_SECRET', s); out.shipstation = 'connected'; }
+    catch (e2) { return { ok: false, error: 'ShipStation said no: ' + String(e2.message || e2).slice(0, 200) + '. Nothing was saved.' }; }
+  }
+  // New sources change every month's figures, so the cached ones go.
+  if (sk || k || data.clear_stripe || data.clear_shipstation) {
+    var vs = sheetByName_(SHIP_VOL_SHEET);
+    if (vs && vs.getLastRow() > 1) vs.getRange(2, 1, vs.getLastRow() - 1, SHIP_VOL_HEADERS.length).clearContent();
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- the report
+// Aggregates only. The page does the arithmetic of averages and rates, so the
+// numbers on screen and the numbers in Slack come from one set of buckets.
+function shipReport_(data) {
+  var cur = shipMonthOf_(new Date());
+  var month = /^\d{4}-\d{2}$/.test(String(data.month || '')) ? String(data.month) : cur;
+  if (month > cur) month = cur;
+  var months = shipMonthsBack_(month, 15);          // 12 for the trend, and 3 more for the first average
+  var inWin = {}; months.forEach(function (m) { inWin[m] = 1; });
+  var props = PropertiesService.getScriptProperties();
+  var cfg = shipCfg_(), cw = chatwootCfg_();
+
+  function bucket() { return { n: 0, kinds: {}, couriers: {} }; }
+  var B = {};
+  months.forEach(function (m) {
+    B[m] = { issues: bucket(), reports: 0, resolved_days: [], chats: bucket(), chats_all: 0, chats_logged: 0,
+             price: 0, courier_mail: 0, customs_invoices: 0 };
+  });
+
+  // ---- tracker issues
+  var issues = getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping'; });
+  var convToIssue = {}, trackToIssue = {}, emailIssues = {};
+  issues.forEach(function (i) {
+    var cid = String(i.chatwoot_conversation_id || '').replace(/\D/g, '');
+    if (cid) convToIssue[cid] = i.issue_id;
+    String(i.reports_json || '').replace(/conversations\/(\d+)|"(?:chatwoot_)?conversation_id"\s*:\s*"?(\d+)/g, function (m, a, b) {
+      convToIssue[a || b] = i.issue_id; return m;
+    });
+    var tr = normaliseTracking_(i.tracking_number);
+    if (tr) trackToIssue[tr] = i.issue_id;
+    var em = String(i.student_contact || '').trim().toLowerCase();
+    if (em.indexOf('@') > -1) (emailIssues[em] = emailIssues[em] || []).push(new Date(i.submitted_at).getTime());
+  });
+  var open = [];
+  issues.forEach(function (i) {
+    var st = String(i.status || 'open').toLowerCase();
+    var kind = SHIP_KINDS_.indexOf(String(i.issue_type || '')) > -1 ? String(i.issue_type) : 'other';
+    var courier = shipCourier_(i.courier) || 'Unknown';
+    var m = shipMonthOf_(i.submitted_at);
+    if (inWin[m]) {
+      var b = B[m];
+      b.issues.n++; b.reports += Number(i.report_count) || 1;
+      b.issues.kinds[kind] = (b.issues.kinds[kind] || 0) + 1;
+      b.issues.couriers[courier] = (b.issues.couriers[courier] || 0) + 1;
+      if (i.resolved_at && (st === 'resolved' || st === 'past')) {
+        var days = (new Date(i.resolved_at).getTime() - new Date(i.submitted_at).getTime()) / 86400000;
+        if (days >= 0 && isFinite(days)) b.resolved_days.push(Math.round(days * 10) / 10);
+      }
+    }
+    if (st !== 'resolved' && st !== 'past') {
+      open.push({ issue_id: i.issue_id, submitted_at: i.submitted_at, kind: kind, courier: courier,
+        tracking: normaliseTracking_(i.tracking_number), chase_at: dayStr_(i.chase_at), status: st,
+        summary: String(i.summary || '').slice(0, 200), student_name: i.student_name || '',
+        days_open: Math.floor((Date.now() - new Date(i.submitted_at).getTime()) / 86400000) });
+    }
+  });
+  open.sort(function (a, b) { return b.days_open - a.days_open; });
+
+  // ---- chats
+  var tags = shipRows_(SHIP_TAG_SHEET, SHIP_TAG_HEADERS).rows;
+  var seenKey = {}, unloggedList = [];
+  var linkBase = cw.account ? CHATWOOT_BASE + '/app/accounts/' + cw.account + '/conversations/' : '';
+  tags.forEach(function (t) {
+    var m = shipMonthOf_(t.created_at);
+    if (!inWin[m]) return;
+    var b = B[m];
+    if (String(t.price_enquiry) === 'true') b.price++;
+    if (String(t.problem) !== 'true') return;
+    var cid = String(t.conversation_id), tr = String(t.tracking || '');
+    var at = new Date(t.created_at).getTime();
+    var logged = !!(convToIssue[cid] || (tr && trackToIssue[tr]));
+    if (!logged && t.student_email && emailIssues[t.student_email]) {
+      logged = emailIssues[t.student_email].some(function (x) { return Math.abs(x - at) <= 21 * 86400000; });
+    }
+    b.chats_all++;
+    if (String(t.from_courier) === 'true') b.courier_mail++;
+    if (logged) { b.chats_logged++; return; }
+    // One parcel, one problem: DHL writes several emails about the same waybill,
+    // and a student often opens a second chat about the same parcel.
+    // The kinds are pooled across the chats about that one parcel, so a DHL
+    // "held at customs" email and a later "returned to sender" one still say
+    // both things, while counting as one problem.
+    var key = m + '|' + (tr || t.student_email || cid);
+    var kinds = String(t.kinds || 'other').split(',').filter(String);
+    var prior = seenKey[key];
+    if (!prior) {
+      prior = seenKey[key] = { kinds: {} };
+      b.chats.n++;
+      var c = t.courier || 'Unknown';
+      b.chats.couriers[c] = (b.chats.couriers[c] || 0) + 1;
+      if (m === month) unloggedList.push(prior.item = { id: cid, link: linkBase ? linkBase + cid : '', at: t.created_at, kinds: [],
+        courier: t.courier || '', from_courier: String(t.from_courier) === 'true', summary: t.summary || '', also: 0 });
+    } else if (prior.item) prior.item.also++;
+    kinds.forEach(function (k) {
+      if (prior.kinds[k]) return;
+      prior.kinds[k] = 1;
+      b.chats.kinds[k] = (b.chats.kinds[k] || 0) + 1;
+      if (prior.item) prior.item.kinds.push(k);
+    });
+  });
+
+  // ---- customs invoices made, per month
+  try {
+    var cl = sheetByName_(CUSTOMS_LOG_SHEET);
+    if (cl && cl.getLastRow() > 1) {
+      var cv = cl.getRange(2, 2, cl.getLastRow() - 1, 1).getValues();
+      cv.forEach(function (r) { var m = shipMonthOf_(r[0]); if (inWin[m]) B[m].customs_invoices++; });
+    }
+  } catch (e) {}
+
+  // ---- volumes (cached; the page asks for a refresh when some are stale)
+  var vol = shipRows_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS).rows, V = {};
+  vol.forEach(function (r) {
+    if (!inWin[String(r.month)]) return;
+    function pj(s) { try { return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+    V[String(r.month)] = { stripe: pj(r.stripe_json), shipstation: pj(r.shipstation_json), xref: pj(r.xref_json), fetched_at: r.fetched_at };
+  });
+
+  var since = props.getProperty('SHIP_TAG_SINCE') || '';
+  var run = null; try { run = JSON.parse(props.getProperty('SHIP_TAG_RUN') || 'null'); } catch (e) {}
+  return {
+    ok: true, month: month, current_month: cur, months: months,
+    buckets: months.map(function (m) {
+      var b = B[m];
+      return { month: m, issues: b.issues, reports: b.reports, resolved_median_days: shipMedian_(b.resolved_days),
+               resolved_n: b.resolved_days.length, chats: b.chats, chats_all: b.chats_all, chats_logged: b.chats_logged,
+               price: b.price, courier_mail: b.courier_mail, customs_invoices: b.customs_invoices,
+               chats_counted: !!since && m >= shipMonthOf_(since), volumes: V[m] || null };
+    }),
+    open: open, unlogged: unloggedList.sort(function (a, b) { return a.at < b.at ? 1 : -1; }),
+    sources: {
+      stripe: !!cfg.stripe, shipstation: !!(cfg.ssKey && cfg.ssSecret), chatwoot: !!(cw.token && cw.account),
+      chats_since: since, nightly: run ? { at: run.at, listed: run.listed, hits: run.hits, tagged: run.tagged, note: run.note || '' } : null,
+      backfill: shipBfPublic_(), volumes_stale: shipStaleMonths_(months, vol, cfg).length
+    },
+    kinds: SHIP_KINDS_
+  };
+}
+
+// ---------------------------------------------------------------- Slack on the 1st
+// Last month in a handful of lines, and a link to the page. Written from the
+// same report the page draws, so the two never disagree.
+function shipSummaryText_(rep) {
+  var bs = rep.buckets, i = bs.length - 1, b = bs[i];
+  var LABEL = { not_arrived: 'delayed or not arrived', damaged: 'damaged', wrong_item: 'wrong or missing contents',
+    not_dispatched: 'not dispatched', customs: 'customs and import charges', returned: 'failed delivery or returned',
+    wrong_address: 'address or label', other: 'other' };
+  function total(x) { return x.issues.n + (x.chats_counted ? x.chats.n : 0); }
+  function parcels(x) { var v = x.volumes || {}; return (v.shipstation && v.shipstation.n) || (v.stripe && v.stripe.n) || 0; }
+  var prev3 = bs.slice(i - 3, i), avg = prev3.reduce(function (s, x) { return s + total(x); }, 0) / 3;
+  var tot = total(b), p = parcels(b);
+  // Like with like. Before the chats were being read, a month only has its
+  // logged issues, so comparing a month that counts chats against one that
+  // cannot would make any month look worse than the last.
+  var fair = b.chats_counted && prev3.every(function (x) { return x.chats_counted; });
+  var avgIssues = prev3.reduce(function (s, x) { return s + x.issues.n; }, 0) / 3;
+  var dt = new Date(rep.month + '-15T12:00:00Z');
+  var name = Utilities.formatDate(dt, 'Europe/London', 'MMMM yyyy');
+  var lines = [':package: *Shipping report, ' + name + '*'];
+  var head = '• ' + tot + ' shipping problem' + (tot === 1 ? '' : 's');
+  if (b.chats_counted && b.chats.n) head += ' (' + b.issues.n + ' logged, ' + b.chats.n + ' only in chats)';
+  if (p) head += ', ' + (Math.round(tot / p * 1000) / 10) + ' per 100 of the ' + p + ' parcels sent';
+  head += fair ? '. The three months before averaged ' + (Math.round(avg * 10) / 10) + '.'
+              : '. Logged issues: ' + b.issues.n + ', against an average of ' + (Math.round(avgIssues * 10) / 10) + ' over the three months before.';
+  lines.push(head);
+  var kinds = {};
+  [b.issues.kinds, b.chats_counted ? b.chats.kinds : {}].forEach(function (k) { Object.keys(k).forEach(function (x) { kinds[x] = (kinds[x] || 0) + k[x]; }); });
+  var top = Object.keys(kinds).sort(function (x, y) { return kinds[y] - kinds[x]; }).slice(0, 3);
+  if (top.length) lines.push('• Most common: ' + top.map(function (k) { return LABEL[k] + ' ' + kinds[k]; }).join(', ') + '.');
+  if (b.resolved_median_days != null) lines.push('• Issues from this month that are sorted took ' + b.resolved_median_days + ' days (median).');
+  var x = b.volumes && b.volumes.xref;
+  if (x && x.median_days != null) lines.push('• Paid to posted: ' + x.median_days + ' working days (median).' + (x.unmatched_n ? ' ' + x.unmatched_n + ' paid pack' + (x.unmatched_n === 1 ? '' : 's') + ' with no shipment found yet.' : ''));
+  if (rep.open.length) lines.push('• ' + rep.open.length + ' parcel' + (rep.open.length === 1 ? '' : 's') + ' still open, the oldest ' + rep.open[0].days_open + ' days.');
+  var url = getAppUrl_();
+  if (url) lines.push('Full report: ' + url + (url.indexOf('?') > -1 ? '&' : '?') + 'view=shipreport&month=' + rep.month);
+  return lines.join('\n');
+}
+function shipMonthlyPost() {
+  var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  var ym = shipMonthOf_(d);
+  try { shipVolumesRefresh_({ month: ym }); } catch (e) {}
+  var text = shipSummaryText_(shipReport_({ month: ym }));
+  var chan = PropertiesService.getScriptProperties().getProperty('SLACK_SHIPPING_CHANNEL_ID');
+  var sent = chan ? slackBotPost_(chan, text) : { ok: false };
+  if (!sent.ok) slackPost_('shipping_monthly', text);
+}
+function shipMonthlyPreview_(data) {
+  var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  var ym = /^\d{4}-\d{2}$/.test(String(data.month || '')) ? String(data.month) : shipMonthOf_(d);
+  return { ok: true, month: ym, text: shipSummaryText_(shipReport_({ month: ym })) };
+}
+function shipBackfillAction_(data) {
+  if (data.op === 'start') return shipBackfillStart_(data);
+  if (data.op === 'stop') return shipBackfillStop_();
+  return { ok: true, backfill: shipBfPublic_() };
 }
