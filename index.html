@@ -1889,7 +1889,7 @@
   #shipReportView .shr-col .top { position: absolute; top: -18px; left: -4px; right: -4px; text-align: center; font-size: 11px; font-weight: 600; white-space: nowrap; }
   #shipReportView .shr-col .rate { display: block; font-weight: 400; color: var(--muted); font-size: 10px; }
   /* r191: a change we made to how we ship, marked on its month. */
-  #shipReportView .shr-col .chg { position: absolute; left: 50%; bottom: 18px; top: -30px; width: 0; border-left: 2px dashed var(--coral); pointer-events: none; }
+  #shipReportView .shr-col .chg { position: absolute; left: 50%; bottom: 18px; top: 0; width: 0; border-left: 2px dashed var(--coral); pointer-events: none; }
   #shipReportView .shr-col .chg-n { position: absolute; top: -34px; left: 50%; transform: translateX(-50%); background: var(--coral); color: #111; font-size: 10px; font-weight: 700;
     border-radius: 9px; min-width: 16px; height: 16px; line-height: 16px; text-align: center; padding: 0 4px; }
   #shipReportView .shr-trend.has-chg { padding-top: 40px; }
@@ -3686,7 +3686,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r192 · 2026-09-19";  // bump this with each round, it lands on every feedback report
+var BUILD = "r192.1 · 2026-09-19";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9880,7 +9880,7 @@ function irpcsRuleForm(e) {
     var opts = Array.isArray(cq.options) ? cq.options : [];
     return '<div class="irpcs-cq">' +
       '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px;">' +
-        '<div class="small muted">Check question ' + (i + 1) + (i === 0 ? '' : ', asked if the one before is got wrong') + '</div>' +
+        '<div class="small muted">Check question ' + (i + 1) + (i === 0 ? '' : ', asked next if a student gets the one before it wrong') + '</div>' +
         (cqs.length > 1 ? '<button class="ghost small" style="padding:2px 8px;" onclick="irpcsCqRemove(' + i + ')" title="Take this one out of the bank. Saved with the rest of the rule.">Remove</button>' : '') +
       '</div>' +
       '<div class="fld"><label>Question</label>' +
