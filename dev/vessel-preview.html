@@ -1529,10 +1529,13 @@ function createVesselView(spec = {}, doc = document) {
   let lastFrame = 0;
   function schedule() {
     if (raf || dead) return;
-    const rafFn = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : null;
-    if (!animated) { raf = rafFn ? rafFn(paint) : setTimeout(paint, 16); return; }
+    // requestAnimationFrame is called by name, never through a saved reference:
+    // detached from window it throws "Illegal invocation", quietly, inside a
+    // timer, and the canvas stays blank. Found on the first preview of this.
+    const hasRaf = typeof requestAnimationFrame === 'function';
+    if (!animated) { raf = hasRaf ? requestAnimationFrame(paint) : setTimeout(paint, 16); return; }
     const wait = Math.max(0, FRAME_MS - (Date.now() - lastFrame));
-    raf = setTimeout(() => { lastFrame = Date.now(); if (rafFn) raf = rafFn(paint); else paint(); }, wait);
+    raf = setTimeout(() => { lastFrame = Date.now(); if (hasRaf) raf = requestAnimationFrame(paint); else paint(); }, wait);
   }
 
   // --- dragging ---
