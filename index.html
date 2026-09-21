@@ -11101,7 +11101,7 @@ var IRPCS_LEVELS = [
 // float the likely ones to the top when a rule is being edited.
 var IRPCS_MODELS = [
   { preset: "power_under50",   label: "Power-driven vessel under 50m, underway",      rule: 23 },
-  { preset: "power_over50",    label: "Power-driven vessel of 50m or more, underway", rule: 23 },
+  { preset: "power_over50",    label: "Power-driven vessel, probably ≥50m, underway", rule: 23 },
   { preset: "sailing",         label: "Sailing vessel underway",                      rule: 25 },
   { preset: "sail_motoring",   label: "Sailing vessel under engine",                  rule: 25 },
   { preset: "towing",          label: "Power-driven vessel towing, tow under 200m",   rule: 24 },
@@ -11112,26 +11112,30 @@ var IRPCS_MODELS = [
   { preset: "constrained",     label: "Vessel constrained by her draught",            rule: 28 },
   { preset: "pilot",           label: "Pilot vessel on duty",                         rule: 29 },
   { preset: "anchored_under50",label: "Vessel at anchor, under 50m",                  rule: 30 },
-  { preset: "anchored_over50", label: "Vessel at anchor, 50m or more",                rule: 30 },
+  { preset: "anchored_over50", label: "Vessel at anchor, probably ≥50m",                rule: 30 },
+  // r196 (Stuart, FB-0414): the small craft Rules 23(d) and 25(d) allow for.
+  { preset: "power_under12",   label: "Power-driven vessel under 12m, all-round white and sidelights", rule: 23 },
+  { preset: "power_under7",    label: "Power-driven vessel under 7m, not more than 7 knots", rule: 23 },
+  { preset: "rowing",          label: "Vessel under oars",                            rule: 25 },
   // r190: the rest of the catalogue, added for the identify questions.
   { preset: "wig",             label: "WIG craft, near the surface",                  rule: 23 },
   { preset: "air_cushion",     label: "Air-cushion vessel, non-displacement mode",    rule: 23 },
   { preset: "sailing_tricolour", label: "Sailing vessel under 20m, tricolour lantern", rule: 25 },
   { preset: "sailing_optional", label: "Sailing vessel with the optional red over green", rule: 25 },
-  { preset: "trawling_over50", label: "Vessel trawling, 50m or more",                 rule: 26 },
-  { preset: "ram_over50",      label: "Restricted in ability to manoeuvre, 50m or more", rule: 27 },
+  { preset: "trawling_over50", label: "Vessel trawling, probably ≥50m",                 rule: 26 },
+  { preset: "ram_over50",      label: "Restricted in ability to manoeuvre, probably ≥50m", rule: 27 },
   { preset: "ram_anchored_under50", label: "Restricted in ability to manoeuvre, at anchor, under 50m", rule: 27 },
-  { preset: "ram_anchored_over50",  label: "Restricted in ability to manoeuvre, at anchor, 50m or more", rule: 27 },
+  { preset: "ram_anchored_over50",  label: "Restricted in ability to manoeuvre, at anchor, probably ≥50m", rule: 27 },
   { preset: "mine_under50",    label: "Mine clearance, under 50m",                    rule: 27 },
-  { preset: "mine_over50",     label: "Mine clearance, 50m or more",                  rule: 27 },
+  { preset: "mine_over50",     label: "Mine clearance, probably ≥50m",                  rule: 27 },
   { preset: "mine_anchored_under50", label: "Mine clearance, at anchor, under 50m",   rule: 27 },
-  { preset: "mine_anchored_over50",  label: "Mine clearance, at anchor, 50m or more", rule: 27 },
-  { preset: "constrained_over50", label: "Vessel constrained by her draught, 50m or more", rule: 28 },
+  { preset: "mine_anchored_over50",  label: "Mine clearance, at anchor, probably ≥50m", rule: 27 },
+  { preset: "constrained_over50", label: "Vessel constrained by her draught, probably ≥50m", rule: 28 },
   { preset: "pilot_anchored_under50", label: "Pilot vessel on duty, at anchor, under 50m", rule: 29 },
-  { preset: "pilot_anchored_over50",  label: "Pilot vessel on duty, at anchor, 50m or more", rule: 29 },
-  { preset: "anchored_over100", label: "Vessel at anchor, 100m or more, decks lit",   rule: 30 },
+  { preset: "pilot_anchored_over50",  label: "Pilot vessel on duty, at anchor, probably ≥50m", rule: 29 },
+  { preset: "anchored_over100", label: "Vessel at anchor, probably ≥100m, decks lit",   rule: 30 },
   { preset: "aground_under50", label: "Vessel aground, under 50m",                    rule: 30 },
-  { preset: "aground_over50",  label: "Vessel aground, 50m or more",                  rule: 30 }
+  { preset: "aground_over50",  label: "Vessel aground, probably ≥50m",                  rule: 30 }
 ];
 function irpcsModelLabel(preset) {
   var m = IRPCS_MODELS.filter(function (x) { return x.preset === preset; })[0];
