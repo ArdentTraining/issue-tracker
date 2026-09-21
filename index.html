@@ -9064,7 +9064,6 @@ function shipCostCard(d) {
     '<div class="shc-controls">' +
       '<span>Close enough: within £<input type="number" id="shc_gbp" min="0" max="50" step="0.5" value="' + tol.gbp + '" oninput="shipCostTolInput()"> or ' +
       '<input type="number" id="shc_pct" min="0" max="100" step="1" value="' + tol.pct + '" oninput="shipCostTolInput()">% of the label, whichever is bigger</span>' +
-      '<label style="display:inline-flex;gap:6px;align-items:center;"><input type="checkbox" id="shc_free"' + (tol.free_uk === "count" ? " checked" : "") + ' onchange="shipCostTolInput()"> Count free UK postage as undercharged</label>' +
       '<label style="display:inline-flex;gap:6px;align-items:center;">Lists and groups: <select id="shc_period" onchange="shipr.period=this.value;shipr.showAll={};shipCostRedraw()">' +
         per.map(function (o) { return '<option value="' + o[0] + '"' + (shipr.period === o[0] ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + "</select></label>" +
       (admin ? '<button class="ghost small" onclick="shipCostTolSave()" title="Makes these the settings everyone opens on, and the ones the Slack summary uses">Save for everyone</button>' : "") +
@@ -9072,12 +9071,13 @@ function shipCostCard(d) {
 }
 function shipCostTolInput() {
   var g = Number(($("shc_gbp") || {}).value), p = Number(($("shc_pct") || {}).value);
-  shipr.tol = { gbp: isFinite(g) && g >= 0 ? g : 0, pct: isFinite(p) && p >= 0 ? p : 0, free_uk: ($("shc_free") || {}).checked ? "count" : "separate" };
+  // UK postage is free by policy (Edd, FB-0413), so free UK orders always sit apart.
+  shipr.tol = { gbp: isFinite(g) && g >= 0 ? g : 0, pct: isFinite(p) && p >= 0 ? p : 0, free_uk: "separate" };
   shipCostRedraw();
 }
 function shipCostTolSave() {
   var t = shipr.tol;
-  apiPost({ action: "shipCostTolerance", gbp: t.gbp, pct: t.pct, free_uk: t.free_uk }).then(function (r) {
+  apiPost({ action: "shipCostTolerance", gbp: t.gbp, pct: t.pct }).then(function (r) {
     if (!r || !r.ok) { toast((r && r.error) || "That did not save."); return; }
     if (shipr.cost) shipr.cost.tolerance = r.tolerance;
     toast("Saved. Everyone opens on within £" + r.tolerance.gbp + " or " + r.tolerance.pct + "% now, and the Slack summary uses it too.");
@@ -9127,8 +9127,8 @@ function shipCostBody(d) {
   h += "<p>" + said(mt, esc(shipMonthName(d.month))) + "</p>";
   if (shipr.period !== "month") h += '<p class="small">' + said(pt, esc(({ "3": "Last 3 months", "12": "Last 12 months", all: "All time" })[shipr.period])) + "</p>";
   var freeN = pt.free, freeGbp = pt.freeGbp;
-  if (freeN) h += '<p class="small muted">' + freeN + " UK order" + (freeN === 1 ? " was" : "s were") + " posted free in that time, " + shipGBP(freeGbp) +
-    " of labels we covered. Not counted above; tick the box to count free postage as undercharged.</p>";
+  if (freeN) h += '<p class="small muted">UK postage is free, so the ' + freeN + " UK order" + (freeN === 1 ? " that had" : "s that had") + " a label price in ShipStation (" + shipGBP(freeGbp) +
+    ") " + (freeN === 1 ? "is" : "are") + " left out of the figures above.</p>";
 
   // ---- accuracy over time
   var changes = d.changes || [], byMonth = {};

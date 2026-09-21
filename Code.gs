@@ -14452,15 +14452,17 @@ function shipCostTol_() {
   try { t = JSON.parse(PropertiesService.getScriptProperties().getProperty(SHIP_COST_TOL_KEY_) || '{}') || {}; } catch (e) { t = {}; }
   // Within £1 or 10% of the label, whichever is the bigger: £1 on a £4 Royal
   // Mail label, about £4 on a £40 DHL one.
+  // r195 (Edd, FB-0413): "We don't charge for shipping in UK", so free UK
+  // postage is the policy, never an undercharge, and there is no switch.
   return { gbp: isFinite(Number(t.gbp)) && t.gbp !== '' && t.gbp != null ? Number(t.gbp) : 1,
            pct: isFinite(Number(t.pct)) && t.pct !== '' && t.pct != null ? Number(t.pct) : 10,
-           free_uk: t.free_uk === 'count' ? 'count' : 'separate' };
+           free_uk: 'separate' };
 }
 function shipCostToleranceSave_(data) {
   var gbp = Number(data.gbp), pct = Number(data.pct);
   if (!isFinite(gbp) || gbp < 0 || gbp > 50) return { ok: false, error: 'The pounds figure wants to be between 0 and 50.' };
   if (!isFinite(pct) || pct < 0 || pct > 100) return { ok: false, error: 'The percentage wants to be between 0 and 100.' };
-  var t = { gbp: Math.round(gbp * 100) / 100, pct: Math.round(pct * 10) / 10, free_uk: data.free_uk === 'count' ? 'count' : 'separate',
+  var t = { gbp: Math.round(gbp * 100) / 100, pct: Math.round(pct * 10) / 10,
             by: (data._user && data._user.name) || '', at: new Date().toISOString() };
   PropertiesService.getScriptProperties().setProperty(SHIP_COST_TOL_KEY_, JSON.stringify(t));
   return { ok: true, tolerance: shipCostTol_() };
@@ -14565,7 +14567,7 @@ function shipCostLine_(ym) {
   function gbp(x) { return '£' + (Math.round(x * 100) / 100).toFixed(2); }
   return '• Postage charged against label cost: ' + Math.round(n.in / cmp * 100) + '% of ' + cmp + ' orders within ' + gbp(tol.gbp) +
     ' or ' + tol.pct + '% of the label. ' + n.over + ' overcharged (' + gbp(overGbp) + ' more than the labels), ' +
-    n.under + ' undercharged (' + gbp(underGbp) + ' short).' + (n.free ? ' ' + n.free + ' UK order' + (n.free === 1 ? '' : 's') + ' posted free, not counted.' : '');
+    n.under + ' undercharged (' + gbp(underGbp) + ' short).' + (n.free ? ' UK postage is free, so the ' + n.free + ' UK order' + (n.free === 1 ? ' is' : 's are') + ' not counted.' : '');
 }
 
 // Admins paste the keys into the page. They go straight into script
