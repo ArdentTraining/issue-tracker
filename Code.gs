@@ -396,7 +396,7 @@ var HEADERS = [
   'checklist_json',    // AB pre-dev troubleshooting checklist state (tech issues), JSON map of item -> done | na | todo
   'request_kind',      // AC fix | improvement  (improvement = a feature/enhancement request, handled as a calmer backlog)
   'assignee',          // AD name of the person this is assigned to fix (course dev or developer), blank if unassigned
-  'media_kind',        // AE course issues: video | text | other  (which part of the lesson)
+  'media_kind',        // AE course issues: what the fix needs. text | voiceover | video | new_slide | rework | other (r197; legacy image = text)
   'double_checked',    // AF course issues: true if the submitter verified it themselves, not just the student's word
   'impact',            // AG improvements: low | medium | high  (rough impact, for backlog prioritisation)
   'section',           // AH which part of the platform: website | instructor_portal | partner_portal | course_player | app | other (mainly for tech and internal issues)
@@ -689,6 +689,7 @@ function doPost(e) {
     if (action === 'shipMonthlyPreview') return jsonOut(shipMonthlyPreview_(body));
     if (action === 'shipBackfill') return jsonOut(shipBackfillAction_(body));
     if (action === 'setShipConfig') return jsonOut(setShipConfig_(body));
+    if (action === 'courseRepair') return jsonOut(courseRepair_(body));
     if (action === 'shipCost') return jsonOut(shipCost_(body));
     if (action === 'shipCostHistory') return jsonOut(shipCostHistory_(body));
     if (action === 'shipCostTolerance') return jsonOut(shipCostToleranceSave_(body));
@@ -947,6 +948,8 @@ function reqPerm_(action) {
     // the admins'.
     case 'shipCost': case 'shipCostHistory': return 'log';
     case 'shipCostTolerance': return 'users';
+    // r197: bulk repairs on the Course Errors tab. Admin only.
+    case 'courseRepair': return 'users';
     // r187: the website resources page. Its own key, because it publishes
     // straight to the public website and Edd hand-picks who can.
     case 'resourcesList': case 'resourcesSave': case 'resourcesUpload': case 'resourcesSuggest': return 'resources';
@@ -7876,7 +7879,7 @@ function extractionStaticPrompt_() {
       '- severity: how badly this hits ONE person, ignoring how many people have hit it. "severe" = it stops them continuing the course or buying one: they cannot log in, cannot open a lesson, cannot sit an exam, cannot pay, or an error would make them fail an assessment. "moderate" = it gets in the way but they can carry on, with a workaround or by skipping past it. "low" = an annoyance, a cosmetic fault, or a typo that misleads nobody. Judge the FAULT, not how upset the message sounds, and judge it as the thread ENDS: if the student is already through (a workaround worked, or they were sorted by hand), nobody is stopped any more, so a tech fault is "moderate" at most.',
       '- category: use "friction" when NOTHING is broken but the design cost the student money or time - they paid without spotting a discount code box, missed a deadline because a date was buried, bought the wrong thing because two options read the same. A friction report has a working system and an avoidable loss. If something actually failed, it is not friction.',
       '- request_kind: "improvement" if the report is asking for a NEW feature, an enhancement, or an "it would be nice if" change rather than reporting something broken or wrong (this applies to both course content and the platform, for example "could we add a glossary" or "the player should remember playback speed"); otherwise "fix" for a bug, an error, or something not working or incorrect as it stands. When in doubt, choose "fix". Most reports are "fix".',
-    '- media_kind: for a course_error only, which part of the lesson it concerns: "video" if it is about a video or animation, "text" if it is about written text, a diagram, or quiz wording, otherwise "other". Return null for tech_issue.',
+    '- media_kind: for a course_error only, what the fix will need doing: "text" if it is only on-screen text, a diagram, an image or quiz wording; "voiceover" if an existing slide and what is said over it both change; "video" if a video or animation has to be re-filmed, re-cut or re-animated; "new_slide" if a slide (or speech bubble slide) has to be added; "rework" if a whole lesson or module needs remaking or restructuring; otherwise "other". Return null for tech_issue.',
     '- impact: for an improvement only, a rough impact rating of "low", "medium", or "high" based on how much it would benefit students. Return null for a fix.',
     '- summary: one or two plain-English sentences summarising the issue. Keep the specific detail someone would need to reproduce it: which page or view, and HOW it is reached when that matters (e.g. "opened via the three-dots menu on the Students page" rather than just "the student profile page"). If the report describes two different symptoms, name both rather than blending them into one vague sentence.',
     '- priority: one of ["high", "medium", "low"]',
@@ -14568,6 +14571,60 @@ function shipCostLine_(ym) {
   return '• Postage charged against label cost: ' + Math.round(n.in / cmp * 100) + '% of ' + cmp + ' orders within ' + gbp(tol.gbp) +
     ' or ' + tol.pct + '% of the label. ' + n.over + ' overcharged (' + gbp(overGbp) + ' more than the labels), ' +
     n.under + ' undercharged (' + gbp(underGbp) + ' short).' + (n.free ? ' UK postage is free, so the ' + n.free + ' UK order' + (n.free === 1 ? ' is' : 's are') + ' not counted.' : '');
+}
+
+// ---------------------------------------------------------------- course queue repairs
+// r197 (Stuart, FB-0416 and FB-0419, via Edd 22 Sep 2026). Two bulk jobs on
+// the Course Errors tab, admin only, written straight to the sheet in one
+// pass rather than three hundred updateIssue calls:
+//   summaries  The July import of the old form cut every summary at about 140
+//              characters and added "…". The full wording was kept in the raw
+//              report as its "Details:" line, so the summary is put back from
+//              there. Only where the cut summary really is the start of the
+//              details, so nothing that was rewritten by hand is touched.
+//              updated_at is left alone: this is a repair, not activity.
+//   parts      Sets media_kind (what the fix needs) for a list of issues.
+// Both take dry: true to report without writing.
+var COURSE_PARTS_ = { text: 1, voiceover: 1, video: 1, new_slide: 1, rework: 1, other: 1, image: 1 };
+function courseDetailsFromRaw_(raw) {
+  var m = String(raw || '').match(/Details:\s*([\s\S]*?)(?:\n(?:Screenshots|Done|Fixed|Notes|Who to fix):|$)/);
+  return m ? m[1].replace(/\s+/g, ' ').replace(/\s*Who to fix:.*$/i, '').trim() : '';
+}
+function courseRepair_(data) {
+  var sheet = sheetByName_(COURSE_SHEET);
+  if (!sheet) return { ok: false, error: 'Course Errors tab missing.' };
+  var values = sheet.getDataRange().getValues(), head = values[0], col = {};
+  head.forEach(function (h, i) { col[h] = i; });
+  var dry = !!data.dry, changed = [], skipped = 0;
+  if (data.op === 'summaries') {
+    var norm = function (t) { return String(t || '').replace(/\s+/g, ' ').trim().toLowerCase(); };
+    for (var r = 1; r < values.length; r++) {
+      var sum = String(values[r][col.summary] || ''), raw = String(values[r][col.raw_text] || '');
+      if (!/^Imported from/.test(raw) || !/(…|\.\.\.)\s*$/.test(sum)) continue;
+      var details = courseDetailsFromRaw_(raw);
+      var stem = norm(sum.replace(/(…|\.\.\.)\s*$/, ''));
+      if (!details || details.length <= stem.length || norm(details).indexOf(stem.slice(0, Math.min(60, stem.length))) !== 0) { skipped++; continue; }
+      if (details.length > 1500) details = details.slice(0, 1500).replace(/\s+\S*$/, '') + '…';
+      changed.push({ id: values[r][0], from: sum.slice(-40), to: details.slice(-60) });
+      if (!dry) sheet.getRange(r + 1, col.summary + 1).setValue(details);
+    }
+    return { ok: true, op: 'summaries', dry: dry, changed: changed.length, skipped: skipped, sample: changed.slice(0, 5) };
+  }
+  if (data.op === 'parts') {
+    var want = {};
+    (data.items || []).forEach(function (x) { if (x && x.id && COURSE_PARTS_[x.media_kind]) want[String(x.id)] = x.media_kind; });
+    var missing = Object.keys(want).length;
+    for (var r2 = 1; r2 < values.length; r2++) {
+      var id = String(values[r2][0]);
+      if (!want[id]) continue;
+      missing--;
+      if (String(values[r2][col.media_kind] || '') === want[id]) continue;
+      changed.push(id);
+      if (!dry) sheet.getRange(r2 + 1, col.media_kind + 1).setValue(want[id]);
+    }
+    return { ok: true, op: 'parts', dry: dry, changed: changed.length, not_found: missing };
+  }
+  return { ok: false, error: 'Unknown repair.' };
 }
 
 // Admins paste the keys into the page. They go straight into script

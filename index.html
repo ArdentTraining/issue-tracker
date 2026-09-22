@@ -1478,12 +1478,15 @@
           <div class="field"><label>Slide / question</label><input id="f_lesson" autocomplete="off" placeholder="e.g. DS.07.06.11-16, or the question" /></div>
         </div>
         <div class="field" id="field_media">
-          <label>Which part of the lesson? (auto-detected, change if wrong)</label>
+          <label>What will the fix need? (auto-detected, change if wrong)</label>
           <select id="f_media_kind">
             <option value="">—</option>
-            <option value="video">Video / animation</option>
-            <option value="text">Text / diagram / quiz</option>
-            <option value="other">Other</option>
+            <option value="text">Text only (on-screen text, a diagram, an image or quiz wording)</option>
+            <option value="voiceover">Slide and voiceover</option>
+            <option value="video">Video or animation</option>
+            <option value="new_slide">A new slide (or speech bubble slide)</option>
+            <option value="rework">Rework a lesson or module</option>
+            <option value="other">Other, or not sure</option>
           </select>
         </div>
       </details>
@@ -3076,6 +3079,9 @@
   <p>It is the same pane the developers use, with the course wording swapped in, so <span class="ui">What we need</span> comes first, then the facts, the assignee, the size, the checklist, notes, and the questions.</p>
   <p data-noperm="users">Priority is a badge rather than a dropdown, the same as for the developers. Pick what it ought to be from <span class="ui">Change to…</span>, press <span class="ui">Ask for it</span>, and it writes the opening line of a question to the admins for us to finish. Marking it fixed asks what was causing it and what changed, both required.</p>
   <p data-perm="users">Priority is a dropdown here, because you hold Manage users. Marking it fixed asks what was causing it and what changed, both required.</p>
+  <h4>What each fix needs</h4>
+  <p>Every course fix says what it will take: <span class="ui">Text only</span>, <span class="ui">Slide and voiceover</span>, <span class="ui">Video</span>, <span class="ui">New slide</span>, <span class="ui">Rework</span> or <span class="ui">Other</span>. It shows on the card, and <span class="ui">Filter</span> has it as <span class="ui">Needs</span>, so the quick text fixes can be picked off in one sitting while the voiceover and filming jobs wait for a session of their own.</p>
+  <p data-perm="manage">Inside a card, <span class="ui">Needs</span> and <span class="ui">Filed against</span> can be changed on the spot. Type the corrected code into <span class="ui">Filed against</span> and press <span class="ui">Save</span>, and the course and module follow it. Priority stays an ask from here, unless you hold Manage users.</p>
   <h4>Check the priorities</h4>
   <p>This one reads the whole open queue and comes back with a list of suggested changes, each with a reason and a before-and-after, and applies none of them until we press <span class="ui">Apply</span> on that row. It takes about a minute.</p>
   <p>If the run fails it says so in a panel that stays on screen rather than a toast that slides away, because a message nobody managed to read leaves "the button does not work" as the only thing left.</p>
@@ -4741,10 +4747,79 @@ function assignFromDetail(id) {
     { action: "assignIssue", issue_id: id, assignee: who },
     { failMsg: "That assignment didn't save", noRefresh: true });
 }
+// r197 (Stuart, FB-0416): what a course fix needs doing, so the quick text
+// fixes can be found and cleared apart from the ones that need a voiceover, a
+// film crew or a new slide. The old form's "image" reads as text: it was a
+// diagram change, which is the same kind of job.
+var COURSE_PARTS = [
+  ["text", "Text only", "Text only (on-screen text, a diagram, an image or quiz wording)"],
+  ["voiceover", "Slide and voiceover", "Slide and voiceover (the slide and what is said over it)"],
+  ["video", "Video", "Video or animation (re-film, re-cut or re-animate)"],
+  ["new_slide", "New slide", "A new slide (or speech bubble slide)"],
+  ["rework", "Rework", "Rework a lesson or module"],
+  ["other", "Other", "Other, or not sure"]
+];
+function partOf(i) {
+  var m = String((i && i.media_kind) || "").toLowerCase();
+  if (m === "image") return "text";
+  for (var k = 0; k < COURSE_PARTS.length; k++) if (COURSE_PARTS[k][0] === m) return m;
+  return "other";
+}
 function mediaLabel(m) {
-  return m === "video" ? "Video / animation" : m === "text" ? "Text / diagram / quiz" : m === "other" ? "Other" : "";
+  m = String(m || "").toLowerCase();
+  if (!m) return "";
+  if (m === "image") m = "text";
+  for (var k = 0; k < COURSE_PARTS.length; k++) if (COURSE_PARTS[k][0] === m) return COURSE_PARTS[k][1];
+  return "Other";
 }
 function isTrue(v) { return v === true || v === "true" || v === "TRUE"; }
+
+// r197 (Stuart, FB-0415 and FB-0416): fix the lesson a course issue is filed
+// against, and say what the fix needs, without leaving the Course tab. Only
+// for people who can edit an issue anyway (the manage permission, the same
+// rule updateIssue_ holds on the server). Severity and priority stay out of
+// here on purpose (Edd, 22 Sep 2026): from this queue those are asked for.
+function canEditCourseFix() { return !!(state.perms && state.perms.manage); }
+function courseFixEditHtml(issue) {
+  var id = esc(issue.issue_id), cur = issue.media_kind ? partOf(issue) : "";
+  var ref = String(issue.lesson || issue.lesson_code || "");
+  return '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;margin:8px 0 14px;font-size:13px;">' +
+    '<label for="cfxPart" class="muted">Needs</label>' +
+    '<select id="cfxPart" style="width:auto;max-width:100%;" onchange="courseSetPart(\'' + id + '\', this.value)">' +
+      (cur ? "" : '<option value="" selected>Not set</option>') +
+      COURSE_PARTS.map(function (p) { return '<option value="' + p[0] + '"' + (p[0] === cur ? " selected" : "") + '>' + esc(p[2]) + '</option>'; }).join("") +
+    '</select>' +
+    '<label for="cfxLesson" class="muted">Filed against</label>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="cfxLesson" value="' + esc(ref) + '" placeholder="e.g. DS.12.12.22" style="width:14em;" onkeydown="if(event.key===\'Enter\')courseSetLesson(\'' + id + '\')">' +
+    '<button class="ghost small" style="padding:4px 10px;" onclick="courseSetLesson(\'' + id + '\')">Save</button></div>' +
+  '</div>';
+}
+function courseSetPart(id, v) {
+  if (!v) return;
+  optimistic(id, { media_kind: v }, { action: "updateIssue", issue_id: id, media_kind: v },
+    { failMsg: "That didn't save", noRefresh: true, done: function () { toast("Saved: " + mediaLabel(v) + "."); } });
+}
+function courseSetLesson(id) {
+  var raw = String(($("cfxLesson") || {}).value || "").trim();
+  var m = raw.match(/\b(EN|DS|YM|FT)[\s.]*?(\d{1,2})(?:[\s.]+(\d{1,3}))?/i);
+  if (!m) { toast("That needs a code like DS.12.12.22."); return; }
+  var pfx = m[1].toUpperCase(), mod = parseInt(m[2], 10), les = m[3] ? parseInt(m[3], 10) : null;
+  var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+  var fields = {
+    lesson: raw.toUpperCase().replace(/^(EN|DS|YM|FT)\s*(\d)/, "$1.$2"),
+    lesson_code: pfx + "." + pad(mod) + (les != null ? "." + pad(les) : ""),
+    course: COURSE_NAMES[pfx] || "",
+    // The saved module wins over the one worked out from the code, so it has
+    // to move with the code or the drawer goes on showing the old one.
+    module: (MODULE_TITLES[pfx] || {})[mod] || ""
+  };
+  optimistic(id, fields, Object.assign({ action: "updateIssue", issue_id: id }, fields),
+    { failMsg: "That didn't save", noRefresh: true, done: function () {
+      toast("Filed against " + fields.lesson_code + " now.");
+      var cur = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
+      if (cur && typeof openDevDetail === "function") openDevDetail(id);
+    } });
+}
 
 // ---- view-as: let a super admin see the app as another role would ----------
 // Frontend-only simulation: the real login stays active and every action is
@@ -15876,7 +15951,7 @@ function openDetail(issue) {
     kv("Type", issue.issue_type) +
     kv("Part of platform", issue.section ? (SECTION_LABEL[issue.section] || issue.section) : "") +
     (catOf(issue) === "tech_issue" ? kv("Device / OS / browser", issue.device_info) : "") +
-    (catOf(issue) === "course_error" ? kv("Which part", mediaLabel(issue.media_kind)) : "") +
+    (catOf(issue) === "course_error" ? kv("Needs", mediaLabel(issue.media_kind)) : "") +
     (catOf(issue) === "course_error" ? kv("Double-checked", isTrue(issue.double_checked) ? "Yes" : "No") : "") +
     (kindOf(issue) === "improvement" ? kv("Impact", issue.impact) : "") +
     (catOf(issue) === "shipping" ? kv("Courier", issue.courier) : "") +
@@ -17319,7 +17394,7 @@ function courseCardHtml(i) {
   var reps = reportCount(i);
   var st = (i.status || "").toLowerCase();
   var done = st === "dev_fixed" || st === "resolved";
-  var part = String(i.media_kind || "").toLowerCase();
+  var part = i.media_kind ? partOf(i) : "";
   // Fix-first card: the code and what needs doing, fluff behind the drawer.
   var lessonLine = dispLesson(i);
   // Round 65 badge pass. This queue is already filtered to course errors, so
@@ -17328,8 +17403,7 @@ function courseCardHtml(i) {
   // status on this queue that changes what you do next - the r65 rule read the
   // way it applies to a single-category queue.
   var extra = [];
-  if (part === "video") extra.push("Video");
-  else if (part === "text") extra.push("Text");
+  if (part) extra.push(mediaLabel(part));
   return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
     '<div class="top">' +
       priBadge(i.priority) +
@@ -17393,7 +17467,7 @@ function renderCourse() {
     if (state.courseModule !== "all" && (dispModule(i) || "") !== state.courseModule) return false;
     if (state.courseLesson !== "all" && String(i.lesson_code || "") !== state.courseLesson) return false;
     if (state.courseType !== "all" && refType(i) !== state.courseType) return false;
-    if (state.coursePart !== "all" && String(i.media_kind || "other").toLowerCase() !== state.coursePart) return false;
+    if (state.coursePart !== "all" && partOf(i) !== state.coursePart) return false;
     if (state.courseAssignee !== "all") {
       var a = String(i.assignee || "").trim();
       if (state.courseAssignee === "unassigned") { if (a) return false; }
@@ -17455,12 +17529,11 @@ var COURSE_BULK_FIELDS = {
   type: {
     label: "item type",
     opts: [["kc", "a knowledge check"], ["ma", "a module assessment"], ["lesson", "a lesson slide"],
-           ["video", "a video"], ["text", "text, a diagram or a quiz"], ["other", "anything else"]],
+           ["text", "a text-only fix"], ["voiceover", "a slide and voiceover fix"], ["video", "a video fix"],
+           ["new_slide", "a new slide"], ["rework", "a lesson rework"], ["other", "anything else"]],
     match: function (i, v) {
       if (v === "kc" || v === "ma" || v === "lesson") return refType(i) === v;
-      var m = String(i.media_kind || "").toLowerCase();
-      if (v === "video" || v === "text") return m === v;
-      return m !== "video" && m !== "text";
+      return partOf(i) === v;
     }
   },
   course: {
@@ -17751,7 +17824,7 @@ function renderCourseFilters(statusPool) {
     drop("courseModule", "setCourseSel('courseModule', this.value)", listOpts("Module", modules)) +
     drop("courseLesson", "setCourseSel('courseLesson', this.value)", listOpts("Lesson", lessons)) +
     drop("courseType", "setCourseSel('courseType', this.value)", [["all", "Type: all"], ["lesson", "Lessons"], ["kc", "Knowledge checks"], ["ma", "Module assessments"]]) +
-    drop("coursePart", "setCourseSel('coursePart', this.value)", [["all", "Part: all"], ["text", "Text"], ["video", "Video"], ["other", "Other"]]) +
+    drop("coursePart", "setCourseSel('coursePart', this.value)", [["all", "Needs: all"]].concat(COURSE_PARTS.map(function (p) { return [p[0], p[1]]; }))) +
     drop("courseAssignee", "setCourseSel('courseAssignee', this.value)", listOpts("Assignee", assignees, [["unassigned", "Unassigned"]]));
   var sortSel = $("courseSortSel");
   if (sortSel) sortSel.value = state.courseSort || "priority";
@@ -17950,13 +18023,14 @@ function openDevDetail(id) {
       kv("Time open", timeOpen) +
       kv("Reports", String(reportCount(issue))) +
       (catOf(issue) === "tech_issue" ? kv("Device / OS / browser", issue.device_info) : "") +
-      (catOf(issue) === "course_error" ? kv("Which part", mediaLabel(issue.media_kind)) : "") +
+      (catOf(issue) === "course_error" && !canEditCourseFix() ? kv("Needs", mediaLabel(issue.media_kind)) : "") +
       (catOf(issue) === "course_error" ? kv("Double-checked", isTrue(issue.double_checked) ? "Yes" : "No") : "") +
       (kindOf(issue) === "improvement" ? kv("Impact", issue.impact) : "") +
       kv("Course", dispCourse(issue)) +
       kv("Module", dispModule(issue)) +
       kv("Lesson", dispLesson(issue)) +
-    '</div>';
+    '</div>' +
+    (catOf(issue) === "course_error" && canEditCourseFix() ? courseFixEditHtml(issue) : "");
 
   // FB-0249/0250 (Charlie). The pane carried everything and led with nothing:
   // a developer opening it met a wall of fields and had to read the whole
