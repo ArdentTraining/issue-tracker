@@ -8102,7 +8102,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r188.7 · 2026-09-19';
+var CODE_STAMP = 'r198 · 2026-09-22';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12584,6 +12584,21 @@ function customsModel_(data) {
   } };
 }
 
+// The statement on origin (r198). DHL/customs will only give the goods UK
+// preferential origin if this exact declaration is on the invoice with our
+// exporter reference in the brackets, which is our GB EORI (a REX number is the
+// same slot for anyone who has one). The EORI is already in the Sender block at
+// the top, but the declaration has to carry it in its own text or it is
+// refused, so both stay.
+function customsOriginLines_(m) {
+  return [
+    'The exporter of the products covered by this document (Exporter Reference No. ' + m.sender.eori + ') declares that, ' +
+      'except where otherwise clearly indicated, these products are of UK preferential origin.',
+    'Place and date: UK, ' + m.date,
+    'Name of the exporter: ' + m.sender.company
+  ];
+}
+
 function customsEsc_(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -12622,17 +12637,20 @@ function customsHtml_(m) {
   }).join('');
   return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
     '@page{size:A4;margin:12mm;}' +
-    'body{font-family:Arial,Helvetica,sans-serif;font-size:8.5pt;color:#000;margin:0;}' +
+    'body{font-family:Arial,Helvetica,sans-serif;font-size:7.8pt;color:#000;margin:0;}' +
     'table{border-collapse:collapse;width:100%;}' +
-    'td,th{vertical-align:top;padding:2px 4px;font-family:Arial,Helvetica,sans-serif;font-size:8.5pt;}' +
+    'td,th{vertical-align:top;padding:1px 4px;font-family:Arial,Helvetica,sans-serif;font-size:7.8pt;}' +
     '.box{border:1px solid #000;}' +
-    '.box > tbody > tr > td{border:1px solid #000;padding:5px 6px;}' +
-    'h1{font-size:15pt;margin:0 0 2px 0;}' +
+    '.box > tbody > tr > td{border:1px solid #000;padding:4px 6px;}' +
+    'h1{font-size:14pt;margin:0 0 2px 0;}' +
     '.bt{font-weight:bold;font-size:9pt;margin:0 0 3px 0;}' +
     '.kv td{padding:0 3px 1px 0;}' +
     '.kv td.k{width:40%;color:#333;white-space:nowrap;}' +
-    '.goods th{border:1px solid #000;background:#e8e8e8;font-size:8pt;text-align:left;padding:3px 4px;}' +
-    '.goods td{border:1px solid #000;font-size:8pt;padding:3px 4px;}' +
+    '.goods th{border:1px solid #000;background:#e8e8e8;font-size:7.6pt;text-align:left;padding:2px 4px;}' +
+    '.goods td{border:1px solid #000;font-size:7.4pt;padding:2px 4px;}' +
+    // The declaration, the certification and the signature are one thing: a
+    // signature stranded on a second page looks like an unsigned invoice.
+    '.foot{page-break-inside:avoid;break-inside:avoid;}' +
     '.goods td.n,.goods th.n{text-align:right;white-space:nowrap;}' +
     '.goods td.desc{width:52%;}' +
     '.tot td{padding:1px 4px;}' +
@@ -12673,12 +12691,15 @@ function customsHtml_(m) {
         '<tr><td>Carrier:</td><td class="v">DHL</td></tr>' +
       '</table></td>' +
     '</tr></table><br>' +
+    '<div class="foot"><table class="box"><tr><td>' + customsOriginLines_(m).map(function (line, i) {
+      return '<div' + (i ? ' style="margin-top:2px;"' : '') + '>' + e(line) + '</div>';
+    }).join('') + '</td></tr></table><br>' +
     '<div>I/we certify the information on this invoice is true and correct and that the contents of this shipment are as stated above.</div><br>' +
     '<table><tr><td style="width:34%;">Name: ' + e(m.sender.signatory) + '</td><td style="width:22%;">Title: ' + e(m.sender.signatory_title) + '</td>' +
       '<td>Date: ' + e(m.date) + '</td></tr>' +
     '<tr><td>E-mail: ' + e(m.sender.email) + '</td><td colspan="2">Signature: ' +
       (m._sig ? '<img src="data:image/png;base64,' + m._sig + '" style="height:14mm;max-width:60mm;vertical-align:middle;">' : '______________________________') +
-    '</td></tr></table>' +
+    '</td></tr></table></div>' +
     '</body></html>';
 }
 
@@ -12753,7 +12774,10 @@ function customsDocxXml_(m) {
     [cell(para('E-mail: ' + m.sender.email), 3500), cell(m._sig ? '<w:p><w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>' + run('Signature: ') + customsSigDrawing_(m._sig) + '</w:p>'
                   : para('Signature: ______________________________'), 6966, { span: 2 })]
   ], false);
-  var body = head + para('') + table(gw, goodsRows) + para('') + tot + para('') +
+  var origin = table([W], [[cell(customsOriginLines_(m).map(function (line, i) {
+    return para(line, { after: i === 2 ? 0 : 40 });
+  }).join(''), W)]]);
+  var body = head + para('') + table(gw, goodsRows) + para('') + tot + para('') + origin + para('') +
     para('I/we certify the information on this invoice is true and correct and that the contents of this shipment are as stated above.') +
     para('') + sign;
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
