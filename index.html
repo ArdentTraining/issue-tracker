@@ -3725,7 +3725,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r194.1 · 2026-09-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r198 · 2026-09-22";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -12034,6 +12034,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 42, date: "2026-09-22", who: ["log"], text: "Customs invoices now carry the statement on origin at the bottom, with our EORI number inside it. Customs would not accept the declaration without it, so it goes on every invoice from now on." },
   { n: 41, date: "2026-09-20", who: ["irpcs"], text: "IRPCS: two new kinds of question, put the lights or shapes on a vessel, and sort items under headings. A question or an answer can carry a picture the app draws itself: a day shape, a flag or a vessel by day." },
   { n: 40, date: "2026-09-19", who: ["users"], text: "RCA takes screenshots and files. Attach them, or paste or drop them into the box." },
   { n: 39, date: "2026-09-19", who: ["log"], text: "Shipping report: note a change to how we ship and it is marked on the chart." },
