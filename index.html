@@ -3011,6 +3011,7 @@
   </ul>
   <p>The reason for insisting is on the box itself: this is what the next person reads when it happens again, and what an admin checks before telling the student it is sorted. A one-word note fails both jobs, so a few words is refused with <em>Say what was actually causing it - a few words is not enough to be useful later.</em></p>
   <p>There is a tick, <span class="ui">Notify student? (asks the instructors on Slack to pass the good news on)</span>, which comes pre-ticked when there are student contacts on the issue. We do not message students ourselves; it puts it on the instructors to do.</p>
+  <p>Once it is saved, the tracker reads the issue back to check the fix really landed before it says <em>Marked fixed.</em> The fix goes on the issue's trail with our name on it. If a student hits the same fault after that, the issue reopens and we get a Slack message saying so. A report from before the fix counts towards the total, but it does not reopen anything.</p>
   <p>The full report sits at the very bottom under <span class="ui">Transcript</span>, folded away, because it is reference rather than the job.</p>
   <div class="man-note" data-noperm="users">
     <strong>Handing work over is not yours</strong>
@@ -3725,7 +3726,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r199 · 2026-09-22";  // bump this with each round, it lands on every feedback report
+var BUILD = "r200 · 2026-09-29";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -12045,6 +12046,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 44, date: "2026-09-29", who: ["dev", "course"], text: "Mark fixed now checks the fix has saved before saying so, and if something you fixed comes back, you get a Slack message." },
   { n: 43, date: "2026-09-22", who: ["irpcs"], text: "IRPCS models: eight new vessels (the rest of the towing pictures, underwater works, diving, fishing with the gear out, a pilot vessel off duty), big ships now drawn as ships, small boats drawn small, and rain or fog can be shown by day with the lights on." },
   { n: 42, date: "2026-09-22", who: ["log"], text: "Customs invoices now carry the statement on origin at the bottom, with our EORI number inside it. Customs would not accept the declaration without it, so it goes on every invoice from now on." },
   { n: 41, date: "2026-09-20", who: ["irpcs"], text: "IRPCS: two new kinds of question, put the lights or shapes on a vessel, and sort items under headings. A question or an answer can carry a picture the app draws itself: a day shape, a flag or a vessel by day." },
@@ -18329,12 +18331,15 @@ function devMarkFixed(id) {
   // A course fix is a slide edit - the summary already says what changed, so
   // it marks straight off with the queue's notes as the record.
   var rec = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
+  // r200: the notes box belongs to whichever drawer was last open. Pressing
+  // Mark fixed on a list row must not pick up ANOTHER issue's notes.
+  var ownBox = $("markFixedBtn") && $("markFixedBtn").getAttribute("data-issue") === id;
   if (rec && String(rec.category) === "course_error") {
-    var note = ($("dev_notes") ? $("dev_notes").value : "") || "Course content corrected.";
+    var note = (ownBox && $("dev_notes") ? $("dev_notes").value : "") || "Course content corrected.";
     devMarkFixedSend(id, note);
     return;
   }
-  var pre = $("dev_notes") ? $("dev_notes").value : "";
+  var pre = ownBox && $("dev_notes") ? $("dev_notes").value : "";
   $("fixNoteCause").value = "";
   $("fixNoteFix").value = pre || "";
   $("fixNoteMsg").textContent = "";
@@ -18354,7 +18359,7 @@ function devMarkFixedConfirmed(id) {
     return;
   }
   var notes = "Cause: " + cause + "\n\nFix: " + fix;
-  if ($("dev_notes")) $("dev_notes").value = notes;
+  if ($("dev_notes") && $("markFixedBtn") && $("markFixedBtn").getAttribute("data-issue") === id) $("dev_notes").value = notes;
   $("fixNoteModal").classList.remove("show");
   devMarkFixedSend(id, notes);
 }

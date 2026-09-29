@@ -139,7 +139,7 @@ function stampSlackThread_(issueId, channel, ts, kind) {
     if (!fr || col < 1) return;
     var cur = slackThreadsOf_(fr.record);
     cur.unshift({ channel: String(channel), ts: String(ts), kind: kind || '' });
-    fr.sheet.getRange(fr.rowNum, col).setValue(JSON.stringify(cur.slice(0, 5)));
+    writeIssueCell_(fr, 'slack_thread', JSON.stringify(cur.slice(0, 5)));
   } catch (e) {}
 }
 
@@ -179,7 +179,7 @@ function slackDeleteAlerts_(issueId) {
       if (!out.ok && String(out.error) !== 'message_not_found') kept.push(t);
     });
     var col = HEADERS.indexOf('slack_thread') + 1;
-    if (col > 0) fr.sheet.getRange(fr.rowNum, col).setValue(kept.length ? JSON.stringify(kept) : '');
+    if (col > 0) writeIssueCell_(fr, 'slack_thread', kept.length ? JSON.stringify(kept) : '');
   } catch (e) {}
 }
 var SLACK_ALERT_CLOSED_ = { resolved: 1, resolved_tbc: 1, parked: 1, past: 1 };
@@ -1442,7 +1442,8 @@ function resurfaceIssue_(body) {
   if (!found) return { ok: false, error: 'No issue found with id ' + (body && body.issue_id) };
   found.record.prelaunch = '';
   found.record.updated_at = new Date().toISOString();
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(found.record)]);
+  var wr200 = writeIssueRow_(found, found.record);
+  if (!wr200.ok) return wr200;
   return { ok: true };
 }
 
@@ -1525,7 +1526,8 @@ function saveDevNotes_(body) {
   if (body.hasOwnProperty('dev_notes')) found.record.dev_notes = body.dev_notes || '';
   if (body.hasOwnProperty('dev_ask')) found.record.dev_ask = body.dev_ask || '';
   found.record.updated_at = new Date().toISOString();
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(found.record)]);
+  var wr200 = writeIssueRow_(found, found.record);
+  if (!wr200.ok) return wr200;
   return { ok: true };
 }
 
@@ -1874,7 +1876,20 @@ function cacheGetChunked_(key) {
   } catch (e) { return null; }
 }
 
+// r200: the list cache has a generation number. Every drop bumps it, and a
+// list that was being BUILT while the drop happened is not allowed to put
+// itself in afterwards. Without this, somebody opening the board as a fix was
+// saved could read the sheet a moment before the save, cache that, and show
+// the fix as not done for the next ten minutes.
+var ISSUE_GEN_KEY = 'ait_issues_gen';
+function issueCacheGen_() {
+  try { return CacheService.getScriptCache().get(ISSUE_GEN_KEY) || ''; } catch (e) { return ''; }
+}
+function bumpIssueCacheGen_() {
+  try { CacheService.getScriptCache().put(ISSUE_GEN_KEY, String(Date.now()) + '.' + Math.floor(Math.random() * 1e6), 21600); } catch (e) {}
+}
 function invalidateIssueCache_() {
+  bumpIssueCacheGen_();
   try {
     var c = CacheService.getScriptCache();
     var keys = [ISSUE_CACHE_KEY + '_n'];
@@ -1955,6 +1970,7 @@ function maybeInvalidate_() {
 // a patch must never extend it. Returns false to fall back to a full drop.
 function patchIssueCache_(ids) {
   try {
+    var gen200 = issueCacheGen_();
     var raw = cacheGetChunked_(ISSUE_CACHE_KEY);
     if (!raw) return true;                 // nothing cached, nothing stale
     var p = JSON.parse(raw);
@@ -1979,7 +1995,13 @@ function patchIssueCache_(ids) {
     p.built_at = p.built_at || p.generated_at;
     p.generated_at = new Date().toISOString();
     delete p.from_cache;
-    return cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(p), left);
+    // r200: another save landed while we patched - our copy of the rest of the
+    // list may be the older one, so drop it rather than put it back.
+    if (issueCacheGen_() !== gen200) return false;
+    var put200 = cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(p), left);
+    // Anything still building from before this save must not overwrite it.
+    bumpIssueCacheGen_();
+    return put200;
   } catch (e) { return false; }
 }
 
@@ -2046,6 +2068,7 @@ function getIssuesList_() {
   }
   // Straight off the sheet into the projection: building 900 full objects
   // and then 900 slim ones was double the work for no reason.
+  var gen200 = issueCacheGen_();
   var out = [];
   ISSUE_SHEETS.forEach(function (name) {
     var sheet = sheetByName_(name);
@@ -2072,7 +2095,8 @@ function getIssuesList_() {
   });
   var nowIso = new Date().toISOString();
   var payload = { ok: true, generated_at: nowIso, built_at: nowIso, issues: out };
-  cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(payload), ISSUE_CACHE_SECONDS);
+  // r200: only if nothing was saved while we were reading.
+  if (issueCacheGen_() === gen200) cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(payload), ISSUE_CACHE_SECONDS);
   return payload;
 }
 
@@ -2760,8 +2784,25 @@ function addReportToIssue_(id, data, report) {
   // looks at resolved and dev_fixed rows, so reopening takes this off its list.
   // The trail says so anyway, because the next person reading it should not go
   // back to somebody who was sorted weeks ago.
-  var reopened177 = false;
+  var reopened177 = false, heldClosed200 = '';
+  // r200 (Aman, 29 Sep 2026): "sometimes it says fixed but in reality it
+  // doesn't get marked." One way that happened: a report of the fault from
+  // BEFORE the fix - an older chat the overnight scan picked up, or a late
+  // filing - joined the closed issue and reopened it, so the developer's fix
+  // looked like it had never saved. A report only says "the fix did not hold"
+  // if the student hit it AFTER we closed it. Earlier than that, it still
+  // counts (the score keeps the truth) but the issue stays closed.
   if (String(rec.status).toLowerCase() === 'resolved') {
+    var closedAt200 = Date.parse(String(rec.resolved_at || rec.dev_fixed_at || ''));
+    var hitAt200 = reportEventAt_(data);
+    if (!isNaN(closedAt200) && hitAt200 && hitAt200 < closedAt200) {
+      heldClosed200 = new Date(hitAt200).toISOString().slice(0, 10);
+      rec.raw_text = capAppend_(rec.raw_text, '\n\n--- reported again, but the student hit it on ' + heldClosed200 +
+        ', before we closed this on ' + new Date(closedAt200).toISOString().slice(0, 10) +
+        ', so it stays closed. It still counts as another report. ---');
+    }
+  }
+  if (String(rec.status).toLowerCase() === 'resolved' && !heldClosed200) {
     var closedFor = Math.max(0, Math.round(
       (Date.now() - new Date(rec.resolved_at || rec.updated_at || Date.now()).getTime()) / (24 * 3600 * 1000)));
     rec.status = 'open';
@@ -2806,7 +2847,8 @@ function addReportToIssue_(id, data, report) {
   }
 
   rec.updated_at = new Date().toISOString();
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
   slackTidyIfClosed_(rec);
 
   // If the bump just pushed it to high, let Slack know once, but never ping for
@@ -2822,6 +2864,9 @@ function addReportToIssue_(id, data, report) {
   // says, because somebody decided it was finished and it was not.
   if (reopened177 && !data._suppress_slack) {
     try { sendReopenedSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
+    // r200: and the person who marked it fixed hears it directly, so a fix
+    // coming undone is never something they only find out about later.
+    try { tellFixerReopened_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
   if (WORKAROUND_CLOSED_[String(rec.status).toLowerCase()]) {
@@ -2840,6 +2885,56 @@ function addReportToIssue_(id, data, report) {
     } catch (e) { mergeNote = String(e).slice(0, 200); }
   }
   return { ok: true, issue: rec, merged: true, report_count: rec.report_count, repeat_filing: repeatFiling || undefined, note_error: mergeNote || undefined };
+}
+
+// r200: WHEN did this student actually hit the fault? Not when it was filed:
+// the overnight scan files chats that can be days old. In order of trust:
+//   - a legacy import's own date;
+//   - the Chatwoot message the report was made from (r178 stores its id);
+//   - failing that, the newest thing the student said in that conversation;
+//   - failing that (typed in by hand, or Chatwoot not answering), now - which
+//     is exactly how every report was treated before this.
+// Returns epoch ms. Never throws.
+function reportEventAt_(data) {
+  var now = Date.now();
+  try {
+    if (data && data._import_date) {
+      var t0 = Date.parse(String(data._import_date));
+      if (!isNaN(t0)) return t0;
+    }
+    var conv = data && chatwootConvId_(data.chatwoot_conversation_id);
+    if (!conv) return now;
+    var msgs = chatwootCall_('/conversations/' + conv + '/messages');
+    var list = (msgs && (msgs.payload || (msgs.data && msgs.data.payload))) || [];
+    var wantId = String((data && data.chatwoot_message_id) || '').trim();
+    var byId = 0, newestIn = 0;
+    list.forEach(function (m) {
+      var at = Number(m.created_at || 0) * 1000;
+      if (!at) return;
+      if (wantId && String(m.id) === wantId) byId = at;
+      if (Number(m.message_type) === 0 && !m.private && at > newestIn) newestIn = at;
+    });
+    return byId || newestIn || now;
+  } catch (e) { return now; }
+}
+
+// r200: a fix came undone - tell the person who marked it, by name, from the
+// trail entry markDevFixed_ now leaves. Older fixes carry no name, so they fall
+// back to the channel notice alone, which already went.
+function tellFixerReopened_(rec, appUrl) {
+  var t = readTrail_(rec);
+  if (t.broken) return;
+  var fixer = null;
+  for (var i = t.reps.length - 1; i >= 0; i--) {
+    if (t.reps[i] && t.reps[i].fixed) { fixer = t.reps[i]; break; }
+  }
+  if (!fixer || !fixer.instructor_email) return;
+  var n = Math.max(1, Number(rec.report_count || 1));
+  slackDm_(fixer.instructor_email,
+    ':arrows_counterclockwise: Something you marked fixed on ' + String(fixer.date || '').slice(0, 10) + ' has come back.\n' +
+    returningClip_(slackSummary_(rec)) + (rec.lesson_code ? ' (' + rec.lesson_code + ')' : '') + '\n' +
+    'A student hit it after the fix, so it is open again with ' + n + ' report' + (n === 1 ? '' : 's') + '. ' +
+    'Your fix note is still on it. ' + issueLink_(rec, appUrl));
 }
 
 // Raise priority one level toward high, but never below the incoming report's
@@ -3169,11 +3264,137 @@ function findRow_(id) {
         var obj = {};
         for (var c = 0; c < head.length; c++) obj[head[c]] = values[r][c];
         touchIssue_(id);   // r185: this request may change this row, see patchIssueCache_
-        return { sheetName: ISSUE_SHEETS[s], sheet: sheet, rowNum: r + 1, record: obj };
+        // r200: a copy of the row as it was read, so the write can tell what
+        // THIS request changed from what somebody else changed meanwhile.
+        var orig = {};
+        for (var k in obj) orig[k] = obj[k];
+        return { sheetName: ISSUE_SHEETS[s], sheet: sheet, rowNum: r + 1, record: obj, original: orig };
       }
     }
   }
   return null;
+}
+
+// ---- r200: writing an issue row safely --------------------------------------
+// Aman, 29 Sep 2026: "sometimes it says fixed but in reality it doesn't get
+// marked." Every save used to read the whole row, change it, and write the
+// WHOLE row back to the row NUMBER it was read from, with nothing in between
+// to stop anyone else. Two ways that loses a fix:
+//   - somebody else saves the same issue in the same few seconds, and the
+//     second whole-row write puts the first one's fields back as they were;
+//   - somebody merges or deletes an issue higher up the tab, the rows shift
+//     up one, and the write lands on the NEXT issue down - the fixed one stays
+//     unfixed and its neighbour is overwritten with a copy of it.
+// So a write now finds the row again BY ID at the moment it writes, re-reads
+// it, and changes only the fields this request actually changed. The trail and
+// the running text are merged rather than replaced, so two people adding to
+// them at once both land. The window left is a few milliseconds, not seconds.
+function issueCellKey_(v) {
+  if (v instanceof Date) return 'D' + v.getTime();
+  return String(v == null ? '' : v);
+}
+// Where the row with this id is NOW. Checks the remembered row first (one
+// cell, the common case), then the id column of each issue tab.
+function relocateIssue_(found) {
+  var id = found.record && found.record.issue_id;
+  if (!id && found.original) id = found.original.issue_id;
+  if (!id) return null;
+  try {
+    if (found.sheet.getRange(found.rowNum, 1).getValue() === id) return { sheet: found.sheet, sheetName: found.sheetName, rowNum: found.rowNum };
+  } catch (e) {}
+  var names = [found.sheetName].concat(ISSUE_SHEETS.filter(function (n) { return n !== found.sheetName; }));
+  for (var s = 0; s < names.length; s++) {
+    var sh = names[s] === found.sheetName ? found.sheet : sheetByName_(names[s]);
+    if (!sh) continue;
+    var last = sh.getLastRow();
+    if (last < 2) continue;
+    var ids = sh.getRange(2, 1, last - 1, 1).getValues();
+    for (var r = 0; r < ids.length; r++) {
+      if (ids[r][0] === id) return { sheet: sh, sheetName: names[s], rowNum: r + 2 };
+    }
+  }
+  return null;
+}
+function trailEntryKey_(e) {
+  e = e || {};
+  return [e.date || '', e.kind || 'report', e.instructor_name || '', String(e.summary || '').slice(0, 60),
+    String(e.raw_text || '').slice(0, 60)].join('|');
+}
+function parseTrailSafe_(s) {
+  if (!s) return [];
+  try { var a = JSON.parse(String(s)); return (a && a.length !== undefined) ? a : null; } catch (e) { return null; }
+}
+// The row this request means to write: the fresh row, with this request's own
+// changes laid over it. Pure, so issue-write-tests.js can run it without Sheets.
+function mergeIssueRow_(freshRow, origRow, wantRow) {
+  var out = freshRow.slice();
+  var rjCol = HEADERS.indexOf('reports_json'), rtCol = HEADERS.indexOf('raw_text');
+  for (var c = 0; c < HEADERS.length; c++) {
+    var mine = issueCellKey_(wantRow[c]) !== issueCellKey_(origRow[c]);
+    var theirs = issueCellKey_(freshRow[c]) !== issueCellKey_(origRow[c]);
+    if (!mine) continue;                 // untouched here: keep whatever is there now
+    if (!theirs) { out[c] = wantRow[c]; continue; }
+    // Both of us changed it. The trail keeps every entry either side added;
+    // anything else, this request wins, as the last save always did.
+    if (c === rjCol) {
+      var o = parseTrailSafe_(origRow[c]), f = parseTrailSafe_(freshRow[c]), w = parseTrailSafe_(wantRow[c]);
+      if (o && f && w) {
+        var had = {}, mineHas = {};
+        o.forEach(function (e) { had[trailEntryKey_(e)] = 1; });
+        w.forEach(function (e) { mineHas[trailEntryKey_(e)] = 1; });
+        var added = f.filter(function (e) { var k = trailEntryKey_(e); return !had[k] && !mineHas[k]; });
+        out[c] = added.length ? capReports_(w.concat(added).sort(function (a, b) {
+          return String(a.date || '') < String(b.date || '') ? -1 : (String(a.date || '') > String(b.date || '') ? 1 : 0);
+        })) : wantRow[c];
+        continue;
+      }
+    }
+    if (c === rtCol) {
+      var os = String(origRow[c] || ''), fs = String(freshRow[c] || ''), ws = String(wantRow[c] || '');
+      if (fs.indexOf(os) === 0 && ws.indexOf(os) === 0) {
+        var theirAdd = fs.slice(os.length);
+        out[c] = ws.indexOf(theirAdd) >= 0 ? ws : capAppend_(ws, theirAdd);
+        continue;
+      }
+    }
+    out[c] = wantRow[c];
+  }
+  return out;
+}
+// Write this request's changes to the issue. Returns { ok } or { ok:false,
+// error } when the issue has gone (merged or deleted while we were working).
+function writeIssueRow_(found, rec) {
+  var want = recordToRow_(rec || found.record);
+  var loc = relocateIssue_(found);
+  if (!loc) return { ok: false, error: 'That issue was merged or deleted a moment ago, so nothing was saved. Refresh and try again.' };
+  var fresh = loc.sheet.getRange(loc.rowNum, 1, 1, HEADERS.length).getValues()[0];
+  var row = found.original ? mergeIssueRow_(fresh, recordToRow_(found.original), want) : want;
+  loc.sheet.getRange(loc.rowNum, 1, 1, HEADERS.length).setValues([row]);
+  found.sheet = loc.sheet; found.sheetName = loc.sheetName; found.rowNum = loc.rowNum;
+  // What is on the row now is the new baseline for any second write this
+  // request makes, so it does not re-apply the first as a "change".
+  var now = {};
+  for (var i = 0; i < HEADERS.length; i++) now[HEADERS[i]] = row[i];
+  found.original = now;
+  return { ok: true, row: row };
+}
+// A single cell, same rule: find the row by id first.
+function writeIssueCell_(found, key, value) {
+  var col = HEADERS.indexOf(key);
+  if (col < 0) return { ok: false, error: 'no column ' + key };
+  var loc = relocateIssue_(found);
+  if (!loc) return { ok: false, error: 'issue gone' };
+  loc.sheet.getRange(loc.rowNum, col + 1).setValue(value);
+  found.sheet = loc.sheet; found.sheetName = loc.sheetName; found.rowNum = loc.rowNum;
+  if (found.original) found.original[key] = value;
+  return { ok: true };
+}
+// Delete the row that holds THIS issue, wherever it has moved to.
+function deleteIssueRow_(found) {
+  var loc = relocateIssue_(found);
+  if (!loc) return false;
+  loc.sheet.deleteRow(loc.rowNum);
+  return true;
 }
 
 // r129 (Edd): "an alert for admins whenever the devs queue drops to 3 or
@@ -3275,14 +3496,22 @@ function updateIssue_(data) {
 
   var targetName = targetSheetName_(record.category);
   var row = recordToRow_(record);
+  var fromSheet = found.sheetName;
 
   if (targetName === found.sheetName) {
-    // Same tab: rewrite the row in place.
-    found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([row]);
+    // Same tab: rewrite the row in place (r200: by id, only our fields).
+    var wU = writeIssueRow_(found, record);
+    if (!wU.ok) return wU;
   } else {
-    // Category changed: move the row to the other tab.
-    found.sheet.deleteRow(found.rowNum);
-    sheetByName_(targetName).appendRow(row);
+    // Category changed: move the row to the other tab. r200: find it by id
+    // first - deleting by a remembered row number deleted whichever issue had
+    // shifted into that slot.
+    var locU = relocateIssue_(found);
+    if (!locU) return { ok: false, error: 'That issue was merged or deleted a moment ago, so nothing was saved. Refresh and try again.' };
+    var freshU = locU.sheet.getRange(locU.rowNum, 1, 1, HEADERS.length).getValues()[0];
+    var mergedU = mergeIssueRow_(freshU, recordToRow_(found.original), row);
+    locU.sheet.deleteRow(locU.rowNum);
+    sheetByName_(targetName).appendRow(mergedU);
   }
 
   // When a tech issue first reaches resolved with a note, let the AI consider
@@ -3295,7 +3524,7 @@ function updateIssue_(data) {
   // r137: the alert has done its job once the issue is off the open list.
   if (SLACK_ALERT_CLOSED_[String(record.status || '').toLowerCase()]) slackDeleteAlerts_(id);
   maybeDevQueueAlert_();
-  return { ok: true, issue_id: id, moved: targetName !== found.sheetName, sheet: targetName };
+  return { ok: true, issue_id: id, moved: targetName !== fromSheet, sheet: targetName };
 }
 
 function normaliseImageUrls_(value) {
@@ -3324,7 +3553,7 @@ function saveChecklist_(data) {
 function setCellOnIssue_(found, key, value) {
   var col = HEADERS.indexOf(key);
   if (col < 0) return;
-  found.sheet.getRange(found.rowNum, col + 1).setValue(value);
+  writeIssueCell_(found, key, value);
 }
 
 // Assign (or unassign) an issue to a person who will fix it. assignee is a name
@@ -3574,7 +3803,8 @@ function addUpdate_(data) {
   }
 
   if (!isNudge) rec.updated_at = new Date().toISOString();
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
   slackTidyIfClosed_(rec);
 
   if (String(rec.priority).toLowerCase() === 'high' && priorityBefore !== 'high' &&
@@ -3599,7 +3829,8 @@ function deleteIssue_(data) {
   var isOwn = found.record.instructor_name && user.name &&
     String(found.record.instructor_name).trim().toLowerCase() === String(user.name).trim().toLowerCase();
   if (!perms.users && !isOwn) return { ok: false, error: 'You can only delete issues you logged.' };
-  found.sheet.deleteRow(found.rowNum);
+  // r200: by id, never by a row number that may have shifted since the read.
+  if (!deleteIssueRow_(found)) return { ok: false, error: 'That issue has already gone.' };
   maybeDevQueueAlert_();
   return { ok: true };
 }
@@ -3643,8 +3874,9 @@ function linkIssues_(data) {
   t.priority = order[pi];
   t.updated_at = new Date().toISOString();
 
-  tgt.sheet.getRange(tgt.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(t)]);
-  src.sheet.deleteRow(src.rowNum);
+  var wT = writeIssueRow_(tgt, t);
+  if (!wT.ok) return wT;
+  deleteIssueRow_(src);
   maybeDevQueueAlert_();
   return { ok: true, target_id: targetId };
 }
@@ -3872,7 +4104,8 @@ function passToDev_(data) {
   rec.dev_fixed_at = '';            // if it was previously fixed and is going back
   rec.status = 'with_dev';
   rec.updated_at = new Date().toISOString();
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
   return { ok: true };
 }
 
@@ -3901,7 +4134,42 @@ function markDevFixed_(data) {
   }
   if (data.dev_notes != null) rec.dev_notes = data.dev_notes;
   rec.updated_at = new Date().toISOString();
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  // r200 (Aman, 29 Sep 2026: "sometimes it says fixed but in reality it
+  // doesn't get marked"): the fix goes on the trail with WHO marked it, so a
+  // fix that is later undone is visible, and the person can be told if it is.
+  var who200 = (data._user && data._user.name) || 'someone';
+  var tF = readTrail_(rec);
+  if (!tF.broken) {
+    var repsF = tF.reps;
+    // An older row with no trail yet: seed its own student first, exactly as
+    // addReportToIssue_ does, or a later report would find a non-empty trail,
+    // skip the seed, and the first student would drop out of the count.
+    if (!repsF.length) {
+      repsF.push({
+        student_name: rec.student_name || '', student_contact: rec.student_contact || '',
+        device_info: rec.device_info || '', instructor_name: rec.instructor_name || '',
+        summary: rec.summary || '', priority: String(rec.priority || '').toLowerCase(),
+        raw_text: rec.raw_text || '', date: rec.submitted_at || ''
+      });
+    }
+    repsF.push({
+      kind: 'update', fixed: true,
+      instructor_name: who200, instructor_email: (data._user && data._user.email) || '',
+      summary: 'Marked fixed',
+      raw_text: String(data.dev_notes || '').trim() || (isCourse ? 'Course content corrected.' : 'Marked fixed.'),
+      date: rec.dev_fixed_at
+    });
+    rec.reports_json = capReports_(repsF);
+  }
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
+  // And read it back. "Marked fixed" on screen is now a fact about the sheet,
+  // not a hope about it.
+  var locF = relocateIssue_(found);
+  var stF = locF ? String(locF.sheet.getRange(locF.rowNum, HEADERS.indexOf('status') + 1).getValue()).toLowerCase() : '';
+  if (stF !== 'resolved') {
+    return { ok: false, error: 'The fix did not stick - the issue reads "' + (stF || 'missing') + '" straight after saving. Try again, and tell Edd if it happens twice.' };
+  }
   slackTidyIfClosed_(rec);
   if (data.notify_student) {
     try { sendNotifyStudentSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
@@ -3929,7 +4197,7 @@ function studentToldCheck_(data) {
     if (convId) {
       rec.chatwoot_conversation_id = convId;
       var col146 = HEADERS.indexOf('chatwoot_conversation_id') + 1;
-      if (col146 > 0) found.sheet.getRange(found.rowNum, col146).setValue(convId);
+      if (col146 > 0) writeIssueCell_(found, 'chatwoot_conversation_id', convId);
     }
   }
   if (!convId) return { ok: true, told: false, why: 'no Chatwoot conversation on this issue' };
@@ -3967,7 +4235,7 @@ function studentToldCheck_(data) {
   if (out.told) {
     rec.notified_students = 'true';
     rec.updated_at = new Date().toISOString();
-    found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+    writeIssueRow_(found, rec);
     addUpdate_({ issue_id: rec.issue_id, text: 'Student already told, found in the chat: "' + String(out.quote || '').slice(0, 200) + '" (checked automatically, FB-0333)', keep_status: true, _system: true });
   }
   return { ok: true, told: !!out.told, quote: out.quote || '', checked: msgs.length };
@@ -4052,7 +4320,8 @@ function flagQuery_(data) {
   rec.reports_json = capReports_(reps);
   rec.report_count = realReportCount_(reps);
 
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
   try { sendQueryRaisedSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   return { ok: true };
 }
@@ -4165,7 +4434,8 @@ function answerQuery_(data) {
   rec.dev_query_target = '';
   rec.updated_at = now;
 
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
   // r123: an answer typed IN the Slack thread needs no threaded echo - the
   // room already watched it happen. Answers from the tracker still post.
   if (!data._from_slack) { try { sendQueryAnsweredSlack_(rec, question, reply, asker, data.app_url || getAppUrl_()); } catch (e) {} }
@@ -4218,7 +4488,8 @@ function requestRecheck_(data) {
   var rec = found.record;
   rec.recheck_at = new Date().toISOString();
   rec.updated_at = rec.recheck_at;
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
   try { sendRecheckSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   return { ok: true };
 }
@@ -6542,7 +6813,7 @@ function enrichContactOn_(found) {
     if (touched) rec.reports_json = JSON.stringify(reps);
   } catch (e) {}
   rec.updated_at = new Date().toISOString();
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  writeIssueRow_(found, rec);
   try {
     addUpdate_({ issue_id: rec.issue_id, text: 'Student email found in Chatwoot: ' + got.email + (before ? ' (was ' + before + ')' : '') + ' (filled automatically)', keep_status: true, _system: true });
   } catch (e) {}
@@ -6729,7 +7000,8 @@ function splitIssue_(data) {
   rec.report_count = 1;
   rec.reports_json = capReports_([first].concat(history));
   rec.updated_at = now;
-  sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
 
   // Each remaining report becomes its own open row in the same sheet.
   for (var i = 1; i < reports.length; i++) {
@@ -6888,7 +7160,8 @@ function attachImages_(data) {
   var existing = rec.image_urls ? String(rec.image_urls).split(',') : [];
   rec.image_urls = existing.concat(urls.split(',')).filter(Boolean).join(',');
   rec.updated_at = new Date().toISOString();
-  found.sheet.getRange(found.rowNum, 1, 1, HEADERS.length).setValues([recordToRow_(rec)]);
+  var wr200 = writeIssueRow_(found, rec);
+  if (!wr200.ok) return wr200;
   return { ok: true, attached: urls.split(',').length };
 }
 
@@ -8102,7 +8375,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r198 · 2026-09-22';
+var CODE_STAMP = 'r200 · 2026-09-29';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
