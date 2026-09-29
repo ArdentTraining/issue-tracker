@@ -520,6 +520,11 @@
 
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--line); padding: 12px 18px; border-radius: 10px; z-index: 100; display: none; }
   .toast.show { display: block; }
+  /* r201: the one save indicator, top right beside "updating". */
+  .save-chip { flex: 0 0 auto; max-width: max-content; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; margin-right: 10px; border: 1px solid var(--line); background: var(--surface-2); white-space: nowrap; cursor: default; }
+  .save-chip.ok { color: var(--low); border-color: var(--low); }
+  .save-chip.bad { color: var(--high); border-color: var(--high); cursor: pointer; }
+  .save-chip .save-x { margin-left: 6px; opacity: .8; }
   .fab { position: fixed; bottom: 20px; right: 20px; z-index: 60; background: var(--accent); color: #fff; font-weight: 600; border-radius: 999px; padding: 11px 18px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: none; transition: bottom .12s ease; }
   /* FB-0373 (Edd): "The feedback button is getting hidden." The log form's
      submit row is sticky at the bottom and was given z-index 65 back in July so
@@ -1252,6 +1257,7 @@
          (Edd, FB-0177) - clicking it cycles without closing the menu. -->
     <!-- Round 54: the page draws from the last copy it saw and refreshes
          behind that, so this says quietly when a refresh is in the air. -->
+    <span id="saveChip" class="save-chip" style="display:none;" role="status" aria-live="polite" onclick="saveChipClick()"></span>
     <span class="small muted" id="updatingChip" style="display:none;margin-right:10px;"><span class="spinner"></span> updating&hellip;</span>
     <div class="small muted" id="userbox" style="display:none;">
       <button class="ghost small" style="padding:4px 10px;" onclick="toggleUserMenu(event)"><span id="whoami"></span> &#9662;</button>
@@ -3726,7 +3732,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r200 · 2026-09-29";  // bump this with each round, it lands on every feedback report
+var BUILD = "r201 · 2026-09-29";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4175,6 +4181,7 @@ function apiPost(payload) {
   var startedAt = Date.now();
   var action = payload.action || "?";
   var busyEl = markCallBusy();   // the button that started this, if a press did
+  var saveTok = SAVE_ACTIONS[action] ? saveStart_(action) : 0;   // r201: the one save indicator
   // Apps Script sometimes answers a burst of calls with a Google error PAGE
   // rather than our JSON - seen live when the six bootstrap calls went out
   // together and listPlaybookSuggestions came back as HTML after 14 seconds.
@@ -4213,14 +4220,79 @@ function apiPost(payload) {
     throw e;
   }).then(function (res) {
     releaseCallBusy(busyEl);
+    if (saveTok) saveEnd_(saveTok, !(res && res.ok === false), res && res.error);
     diagApi(action, startedAt, (res && res.ok === false) ? ("error: " + (res.error || "unknown")) : "ok");
     return gateCheck(res);
   }).catch(function (e) {
     releaseCallBusy(busyEl);
+    if (saveTok) saveEnd_(saveTok, false, e && e.aitNotJson ? "no answer - check before sending again" : "no connection");
     diagApi(action, startedAt, "failed: " + (e && e.aitNotJson ? ("not JSON: " + e.aitBody) : e));
     throw e;
   });
 }
+
+// ---- the save indicator (r201) --------------------------------------------
+// Edd, 29 Sep: "clunky and uncertain". A click changed the screen at once
+// (optimistic) but nothing ever said whether the write behind it had landed,
+// and a failure arrived as a toast ten seconds later that was easy to miss.
+// Every write now shows in one place at the top: Saving (with a count and,
+// once it is slow, the seconds), then Saved, or Didn't save with the reason,
+// which stays until it is clicked away. Leaving the page mid-save asks first.
+var SAVE_ACTIONS = {
+  updateIssue: 1, addUpdate: 1, addIssue: 1, assignIssue: 1, saveChecklist: 1, markDevFixed: 1,
+  passToDev: 1, saveDevNotes: 1, flagQuery: 1, answerQuery: 1, resurfaceIssue: 1, linkIssues: 1,
+  splitIssue: 1, deleteIssue: 1, bulkAssign: 1, requestRecheck: 1, caseNote: 1, caseCheckpoint: 1,
+  caseClose: 1, caseIgnoreLog: 1, chatScanReview: 1, updateFeedback: 1, deleteFeedback: 1,
+  savePlaybook: 1, resolvePlaybookSuggestion: 1, resolveKnownFixFlag: 1, resolveContentSuggestion: 1,
+  flagKnownFix: 1, attachImages: 1, updateUser: 1, inviteUser: 1, deleteUser: 1, setEddTools: 1,
+  courseReview: 1, addFeedback: 1
+};
+var saveState = { inFlight: 0, seq: 0, started: {}, timer: null, failed: null };
+function saveStart_(action) {
+  var tok = ++saveState.seq;
+  saveState.started[tok] = Date.now();
+  saveState.inFlight++;
+  saveState.failed = null;
+  saveRender_();
+  if (!saveState.timer) saveState.timer = setInterval(saveRender_, 1000);
+  return tok;
+}
+function saveEnd_(tok, ok, why) {
+  if (!saveState.started[tok]) return;
+  delete saveState.started[tok];
+  saveState.inFlight = Math.max(0, saveState.inFlight - 1);
+  if (!ok) saveState.failed = String(why || "unknown");
+  else if (!saveState.inFlight) saveState.savedAt = Date.now();
+  if (!saveState.inFlight && saveState.timer) { clearInterval(saveState.timer); saveState.timer = null; }
+  saveRender_();
+  if (ok && !saveState.inFlight) setTimeout(saveRender_, 2600);
+}
+function saveRender_() {
+  var el = $("saveChip");
+  if (!el) return;
+  var cls = "", html = "";
+  if (saveState.failed && !saveState.inFlight) {
+    cls = "bad";
+    html = "&#9888; Didn't save: " + esc(saveState.failed) + " <span class=\"save-x\">&times;</span>";
+  } else if (saveState.inFlight) {
+    var oldest = Infinity;
+    Object.keys(saveState.started).forEach(function (k) { oldest = Math.min(oldest, saveState.started[k]); });
+    var secs = Math.round((Date.now() - oldest) / 1000);
+    cls = "busy";
+    html = '<span class="spinner"></span> Saving' + (saveState.inFlight > 1 ? " " + saveState.inFlight + " changes" : "") +
+      (secs >= 5 ? " &middot; " + secs + "s" : "") + "&hellip;";
+  } else if (saveState.savedAt && Date.now() - saveState.savedAt < 2500) {
+    cls = "ok";
+    html = "&#10003; Saved";
+  }
+  el.className = "save-chip " + cls;
+  el.innerHTML = html;
+  el.style.display = html ? "" : "none";
+}
+function saveChipClick() { saveState.failed = null; saveRender_(); }
+window.addEventListener("beforeunload", function (e) {
+  if (saveState.inFlight > 0) { e.preventDefault(); e.returnValue = "A change is still saving."; return e.returnValue; }
+});
 // Reads only. Anything that changes a row stays off this list on purpose.
 var RETRYABLE_READS = {
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
@@ -5237,8 +5309,17 @@ function saveBootCache(res) {
     if (state.viewAs) return;   // never cache a simulated board as the real one
     var who = (res.user && (res.user.email || res.user.name)) || "";
     if (who) localSet("ait_boot_who", who);
+    // r201: a row whose full text was fetched is saved as the preview it
+    // arrived as, so the saved board stays the size it was and its
+    // fingerprint still matches what the server sent.
+    var slim = (res.issues || []).map(function (i) {
+      if (!i._preview) return i;
+      var o = {}; Object.keys(i).forEach(function (k) { if (k !== "_preview") o[k] = i[k]; });
+      Object.keys(i._preview).forEach(function (k) { if (i._preview[k] === undefined) delete o[k]; else o[k] = i._preview[k]; });
+      return o;
+    });
     var str = JSON.stringify({
-      user: res.user, generated_at: res.generated_at, issues: res.issues, assignees: res.assignees,
+      user: res.user, generated_at: res.generated_at, issues: slim, row_hashes: res.row_hashes || state._rowHash, full_at: state._lastFullAt || 0, assignees: res.assignees,
       instructors: res.instructors, live_cases: res.live_cases, scans: res.scans,
       playbook_suggestions: res.playbook_suggestions
     });
@@ -5283,6 +5364,16 @@ function applyBootstrap(res) {
   // An issue comes back automatically when a matching report merges into it
   // (the backend clears the stamp), or when an admin presses Resurface.
   state.issuesRaw = state.issues.slice();   // FB-0304: keep the unfiltered list so view-as can re-derive
+  // r201: fingerprints for the changed-rows refresh. A copy off the saved
+  // board carries its own; an older saved copy gets them worked out here,
+  // before anything below can change a row.
+  if (res.full_at && !(state._lastFullAt > res.full_at)) state._lastFullAt = res.full_at;
+  if (res.row_hashes) state._rowHash = res.row_hashes;
+  else {
+    state._rowHash = {};
+    state.issuesRaw.forEach(function (i) { state._rowHash[i.issue_id] = rowHash(JSON.stringify(i)); });
+  }
+  applyPending_();
   if (!(state.perms && state.perms.users)) {
     state.issues = state.issues.filter(function (i) { return String(i.prelaunch) !== "true"; });
   }
@@ -5319,6 +5410,29 @@ function renderCurrentView() {
 // Draw from the cache immediately, then swap in the fresh copy. Keeps the
 // name loadIssues so the thirty-odd "reload after a write" callers, and the
 // promise they chain onto, carry on working unchanged.
+//
+// r201 (Edd, 29 Sep: "still not responsive enough, way too clunky and
+// uncertain"). Three things made a save look like it had not stuck:
+//  1. Every write fired its own full refresh, so three quick clicks meant
+//     three 3 MB downloads racing, and whichever landed last won - often one
+//     that set off BEFORE the latest click reached the server, flipping the
+//     row back for a few seconds. Now only one refresh is ever in the air;
+//     anything asked for meanwhile is folded into one more after it.
+//  2. Rows being saved (or just saved) are re-applied over any refresh that
+//     set off before the save finished, so a stale copy cannot undo them.
+//  3. The refresh only downloads rows that changed (see deltaIssues_ in
+//     Code.gs): the client sends a fingerprint of each row it holds.
+function rowHash(str) {
+  // Must match rowHash_ in Code.gs exactly.
+  var h1 = 0x811c9dc5, h2 = 5381;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619);
+    h2 = (Math.imul(h2, 33) + c) | 0;
+  }
+  return ("00000000" + (h1 >>> 0).toString(16)).slice(-8) + ("00000000" + (h2 >>> 0).toString(16)).slice(-8);
+}
+var FULL_REFRESH_MS = 20 * 60 * 1000;   // a full list now and then, in case a row drifted
 function loadIssues(isRetry) {
   if (!state._issuesLoaded) {
     var cached = readBootCache();
@@ -5328,8 +5442,33 @@ function loadIssues(isRetry) {
       openDeepLinkedIssue();
     }
   }
+  if (state._bootFlight && !isRetry) {
+    if (!state._bootQueued) {
+      state._bootQueued = state._bootFlight.then(function () {
+        state._bootQueued = null;
+        return loadIssues();
+      });
+    }
+    return state._bootQueued;
+  }
+  var flight = runBootstrap_(isRetry, false);
+  state._bootFlight = flight;
+  return flight.then(function (r) {
+    if (state._bootFlight === flight) state._bootFlight = null;
+    return r;
+  }, function (e) {
+    if (state._bootFlight === flight) state._bootFlight = null;
+    throw e;
+  });
+}
+function runBootstrap_(isRetry, forceFull) {
   showUpdating(true);
-  return apiPost({ action: "bootstrap" }).then(function (res) {
+  var startedAt = Date.now();
+  var payload = { action: "bootstrap" };
+  var useDelta = !forceFull && !state.viewAs && state._rowHash && state.issuesRaw &&
+    state.issuesRaw.length && (Date.now() - (state._lastFullAt || 0) < FULL_REFRESH_MS);
+  if (useDelta) payload.have = Object.keys(state._rowHash).map(function (k) { return state._rowHash[k]; });
+  return apiPost(payload).then(function (res) {
     if (res && res.ok === false && res.error === "unauthorized") {
       clearBootCache();   // apiPost's gate has already shown the login screen
       showUpdating(false);
@@ -5339,19 +5478,44 @@ function loadIssues(isRetry) {
       console.warn("bootstrap failed", res);
       // A silent failure used to leave stale content sitting on the page.
       // Retry once, then say so.
-      if (!isRetry) { setTimeout(function () { loadIssues(true); }, 2000); return; }
+      if (!isRetry) return new Promise(function (ok) { setTimeout(ok, 2000); }).then(function () { return runBootstrap_(true, forceFull); });
       showUpdating(false);
       toast("Could not load the issue list. Reload the page to try again.");
       return;
     }
+    // Turn the answer into a whole list with a fingerprint per row, taken
+    // BEFORE anything on this page can change a row.
+    var hashes = {}, changed = null;
+    if (res.issues_delta) {
+      var have = {};
+      (state.issuesRaw || []).forEach(function (i) { have[i.issue_id] = i; });
+      var fresh = {};
+      changed = {};
+      (res.issues || []).forEach(function (i) { fresh[i.issue_id] = i; changed[i.issue_id] = 1; hashes[i.issue_id] = rowHash(JSON.stringify(i)); });
+      var list = [], missing = false;
+      (res.issue_ids || []).forEach(function (id) {
+        if (fresh[id]) list.push(fresh[id]);
+        else if (have[id]) { list.push(have[id]); hashes[id] = state._rowHash[id]; }
+        else missing = true;
+      });
+      // Something we cannot place: never guess, fetch the lot.
+      if (missing || list.length !== (res.issue_ids || []).length) return runBootstrap_(isRetry, true);
+      res.issues = list;
+      delete res.issue_ids;
+    } else {
+      (res.issues || []).forEach(function (i) { hashes[i.issue_id] = rowHash(JSON.stringify(i)); });
+      state._lastFullAt = Date.now();
+    }
     showUpdating(false);
     hideBoot();
-    // Every write goes through here on its way back, and a write can change
-    // what the next action ought to be. Drop what we are holding rather than
-    // guess which writes matter; the server still answers from its own cache
-    // unless something material actually moved, so this costs a round trip,
-    // not an AI call (Round 55).
-    state.naCache = {}; state._naTried = {};
+    // A write can change what the next action ought to be. A full answer
+    // drops every cached next action; a changed-rows answer drops just those.
+    if (changed) {
+      Object.keys(changed).forEach(function (id) {
+        if (state.naCache) delete state.naCache[id];
+        if (state._naTried) delete state._naTried[id];
+      });
+    } else { state.naCache = {}; state._naTried = {}; }
     state._freshMs = Math.round(performance.now());
     if (res.backend) diag.backend = res.backend;   // which build feedback came from
     if (res.user) {
@@ -5372,12 +5536,59 @@ function loadIssues(isRetry) {
       }
     }
     state._fromCache = false;
+    state._rowHash = hashes;
+    res.row_hashes = hashes;
+    prunePending_(startedAt);
     applyBootstrap(res);
     saveBootCache(res);
     openDeepLinkedIssue();
     openJustLogged();
     if (!state._myFeedbackLoaded) { state._myFeedbackLoaded = true; loadMyFeedback(); }
   }).catch(function (e) { showUpdating(false); console.error(e); });
+}
+
+// ---- saves in the air (r201) ----------------------------------------------
+// id -> { fields, done, doneAt }. A row being saved keeps its new values on
+// screen through any refresh that set off before the save finished.
+function pendingSet_(id, fields) {
+  if (!state._pend) state._pend = {};
+  var p = state._pend[id] || (state._pend[id] = { fields: {} });
+  Object.keys(fields).forEach(function (k) { p.fields[k] = fields[k]; });
+  p.done = false; p.doneAt = 0; p.n = (p.n || 0) + 1;
+  return p.n;
+}
+function pendingDone_(id, ok, n) {
+  var p = state._pend && state._pend[id];
+  if (!p || (n && p.n !== n)) return;   // a later save on the same row owns it now
+  if (!ok) { delete state._pend[id]; return; }
+  p.done = true; p.doneAt = Date.now();
+}
+// A refresh that set off after a save finished has the server's own copy.
+function prunePending_(startedAt) {
+  if (!state._pend) return;
+  Object.keys(state._pend).forEach(function (id) {
+    var p = state._pend[id];
+    if (p.done && p.doneAt <= startedAt) delete state._pend[id];
+  });
+}
+function applyPending_() {
+  if (!state._pend) return;
+  var byId = {};
+  (state.issuesRaw || state.issues || []).forEach(function (i) { byId[i.issue_id] = i; });
+  Object.keys(state._pend).forEach(function (id) {
+    var iss = byId[id]; if (!iss) return;
+    var f = state._pend[id].fields;
+    Object.keys(f).forEach(function (k) { iss[k] = f[k]; });
+  });
+}
+// After a write, one refresh a moment later rather than one per write.
+function scheduleRefresh() {
+  if (state._refreshT) clearTimeout(state._refreshT);
+  state._refreshT = setTimeout(function () {
+    state._refreshT = null;
+    if (saveState.inFlight > 0) { scheduleRefresh(); return; }
+    loadIssues();
+  }, 700);
 }
 
 // ---- full text on demand --------------------------------------------------
@@ -5405,6 +5616,7 @@ function hydrateIssue(id, onDone) {
     if (res && res.ok && res.issue) {
       // Merge the two text fields only. Replacing the whole row would undo
       // any optimistic change made while this was in the air.
+      if (!iss._preview) iss._preview = { raw_text: iss.raw_text, reports_json: iss.reports_json, clipped: iss.clipped };
       iss.raw_text = res.issue.raw_text;
       iss.reports_json = res.issue.reports_json;
       delete iss.clipped;
@@ -5417,6 +5629,32 @@ function hydrateIssue(id, onDone) {
     waiting.forEach(function (f) { f(iss); });
   });
 }
+
+// r201: fetch a row's full text while the pointer rests on it, so the pane
+// opens whole instead of drawing twice three seconds apart. Only the plain
+// getIssue read (no AI - the next action still loads on open, since that one
+// can cost a model call). Two at a time at most, and each row once.
+(function () {
+  var timer = null, flying = 0;
+  function rowId(t) {
+    var row = t && t.closest ? t.closest(".issue-card[data-id], .act-row[data-id], .action-card[data-id]") : null;
+    return row ? row.getAttribute("data-id") : "";
+  }
+  function warm(id) {
+    if (!id || flying >= 2) return;
+    var iss = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+    if (!iss || !iss.clipped || (state._hydrating && state._hydrating[id])) return;
+    flying++;
+    hydrateIssue(id, function () { flying = Math.max(0, flying - 1); });
+  }
+  document.addEventListener("pointerover", function (e) {
+    if (e.pointerType && e.pointerType !== "mouse") return;
+    var id = rowId(e.target);
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (id) timer = setTimeout(function () { warm(id); }, 180);
+  }, true);
+  document.addEventListener("pointerdown", function (e) { warm(rowId(e.target)); }, true);
+})();
 
 // ---- optimistic writes ----------------------------------------------------
 // A click has to look like it landed straight away, so we change the row on
@@ -5439,20 +5677,25 @@ function revertIssue(id, before) {
 function optimistic(id, fields, payload, opts) {
   opts = opts || {};
   var before = patchIssue(id, fields);
+  var pn = pendingSet_(id, fields);   // r201: survives any refresh already in the air
   updateActionsTabCount();
   renderCurrentView();
   return apiPost(payload).then(function (res) {
     if (!res || !res.ok) {
+      pendingDone_(id, false, pn);
       revertIssue(id, before);
       renderCurrentView();
       toast((opts.failMsg || "That didn't save") + " (" + ((res && res.error) || "unknown") + ") - put back as it was.");
       return res;
     }
+    pendingDone_(id, true, pn);
     if (opts.done) opts.done(res);
     // Quietly bring the row back in line with the server, without the wait.
-    if (!opts.noRefresh) loadIssues();
+    // One refresh for a burst of clicks, not one each (r201).
+    if (!opts.noRefresh) scheduleRefresh();
     return res;
   }).catch(function (e) {
+    pendingDone_(id, false, pn);
     revertIssue(id, before);
     renderCurrentView();
     toast((opts.failMsg || "That didn't save") + " - put back as it was.");
@@ -12046,6 +12289,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 45, date: "2026-09-29", text: "Saves now show at the top right (Saving, Saved, or Didn't save and why), the screen no longer freezes while they go through, and the board refreshes quicker." },
   { n: 44, date: "2026-09-29", who: ["dev", "course"], text: "Mark fixed now checks the fix has saved before saying so, and if something you fixed comes back, you get a Slack message." },
   { n: 43, date: "2026-09-22", who: ["irpcs"], text: "IRPCS models: eight new vessels (the rest of the towing pictures, underwater works, diving, fishing with the gear out, a pilot vessel off duty), big ships now drawn as ships, small boats drawn small, and rain or fog can be shown by day with the lights on." },
   { n: 42, date: "2026-09-22", who: ["log"], text: "Customs invoices now carry the statement on origin at the bottom, with our EORI number inside it. Customs would not accept the declaration without it, so it goes on every invoice from now on." },
@@ -15504,22 +15748,8 @@ function kanbanDrop(ev) {
   if (!issue || (issue.status || "open").toLowerCase() === status) return;
   // Optimistic move so the board feels instant, then save; put it back if the
   // save fails so the board never lies about what's stored.
-  var oldStatus = issue.status;
-  issue.status = status;
-  renderAdmin();
-  apiPost({ action: "updateIssue", issue_id: id, status: status }).then(function (res) {
-    if (!res || !res.ok) {
-      issue.status = oldStatus;
-      renderAdmin();
-      toast("Could not move it: " + ((res && res.error) || "unknown"));
-    } else {
-      loadIssues();
-    }
-  }).catch(function (e) {
-    issue.status = oldStatus;
-    renderAdmin();
-    toast("Could not move it. See console."); console.error(e);
-  });
+  optimistic(id, { status: status }, { action: "updateIssue", issue_id: id, status: status },
+    { failMsg: "Could not move it" });
 }
 
 function clearLessonFilter(quiet) {
@@ -18318,13 +18548,11 @@ function openDevDetailQa(id) {
 }
 function devParkIssue(id) {
   if (!confirm("Park this issue? It leaves the developer queue and wakes itself up if anyone reports the same thing again.")) return;
-  busyShow("Parking it…");
-  apiPost({ action: "updateIssue", issue_id: id, status: "parked", resolution_note: "Parked from the developer queue by an admin." }).then(function (res) {
-    busyHide();
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Parked.");
-    closeDetail(); loadIssues();
-  }).catch(function (e) { busyHide(); toastErr("That", e); });
+  // r201: off the queue at once; the save indicator says when it has landed.
+  closeDetail();
+  optimistic(id, { status: "parked", resolution_note: "Parked from the developer queue by an admin." },
+    { action: "updateIssue", issue_id: id, status: "parked", resolution_note: "Parked from the developer queue by an admin." },
+    { failMsg: "That park didn't save" });
 }
 function devMarkFixed(id) {
   // FB-0289 (Edd): the what-caused-it dialog earns its keep on TECH fixes.
@@ -18371,19 +18599,29 @@ function devMarkFixedSend(id, notes) {
   // drawer kept it in the DOM, so the next Mark fixed from the list found the
   // stale button and returned here without a word. The guard is now per
   // issue, and the button is always put back.
+  //
+  // r201 (Edd, "clunky and uncertain"): the drawer used to sit on a spinner
+  // for the whole 8-15s round trip. Now it closes and the row moves off the
+  // queue at once; the save indicator at the top says Saving, then Saved or
+  // Didn't save, and a failure puts the row back where it was.
   var btn = $("markFixedBtn");
   if (btn && btn.getAttribute("data-issue") !== id) btn = null;
-  if (btn) { if (btn.disabled) return; btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> marking…'; }
-  var restore = function () { if (btn) { btn.disabled = false; btn.textContent = "Mark fixed"; } };
-  apiPost({ action: "markDevFixed", issue_id: id, dev_notes: notes, notify_student: notify, app_url: APP_URL }).then(function (res) {
-    restore();
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast(notify ? "Marked fixed. Instructors asked to tell the student." : "Marked fixed.");
-    closeDetail(); loadIssues();
-  }).catch(function (e) {
-    restore();
-    toastErr("That", e);
-  });
+  if (btn && btn.disabled) return;
+  if (state._markingFixed && state._markingFixed[id]) return;   // a double press, not a second fix
+  state._markingFixed = state._markingFixed || {};
+  state._markingFixed[id] = 1;
+  var now = new Date().toISOString();
+  var was = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
+  var fields = { status: "resolved", dev_fixed_at: now, resolved_at: now, dev_notes: notes };
+  if (!was.dev_passed_at) fields.dev_passed_at = now;
+  closeDetail();
+  // r200's promise holds: it only SAYS fixed once the server has confirmed
+  // it. The row moves straight away; the words wait for the answer.
+  optimistic(id, fields,
+    { action: "markDevFixed", issue_id: id, dev_notes: notes, notify_student: notify, app_url: APP_URL },
+    { failMsg: "Mark fixed didn't save", done: function () {
+      toast(notify ? "Marked fixed and saved. Instructors asked to tell the student." : "Marked fixed and saved.");
+    } }).then(function () { delete state._markingFixed[id]; });
 }
 
 // Priority tweak from the Developers / Course fixes drawer.
@@ -18391,37 +18629,25 @@ function devSetSize(id) {
   var sel = $("devSizeSel");
   if (!sel) return;
   var v = sel.value;
-  apiPost({ action: "updateIssue", issue_id: id, fix_size: v }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    var iss = state.issues.filter(function (i) { return i.issue_id === id; })[0];
-    if (iss) iss.fix_size = v;
-    toast(v ? "Sized as " + v + "." : "Size cleared.");
-    if (state.view === "dev") renderDev();
-    else if (state.view === "course") renderCourse();
-  }).catch(function (e) { toastErr("That", e); });
+  // r201: shows at once, saves behind (the indicator says when it lands).
+  optimistic(id, { fix_size: v }, { action: "updateIssue", issue_id: id, fix_size: v },
+    { failMsg: "That size didn't save", noRefresh: true });
 }
 
 function devSetPriority(id) {
   var sel = $("devPrioritySel");
   if (!sel) return;
   var v = sel.value;
-  apiPost({ action: "updateIssue", issue_id: id, priority: v }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    var iss = state.issues.filter(function (i) { return i.issue_id === id; })[0];
-    if (iss) iss.priority = v;
-    toast("Priority set to " + v + ".");
-    if (state.view === "dev") renderDev();
-    else if (state.view === "course") renderCourse();
-    else if (state.view === "admin") renderAdmin();
-  }).catch(function (e) { toastErr("That", e); });
+  // r201: shows at once, saves behind.
+  optimistic(id, { priority: v }, { action: "updateIssue", issue_id: id, priority: v },
+    { failMsg: "That priority didn't save" });
 }
 
 function devSaveNotes(id) {
   var notes = $("dev_notes") ? $("dev_notes").value : "";
-  apiPost({ action: "saveDevNotes", issue_id: id, dev_notes: notes }).then(function (res) {
-    if (!res || !res.ok) { toast("Save failed."); return; }
-    toast("Notes saved."); loadIssues();
-  }).catch(function (e) { toast("Save error."); console.error(e); });
+  // r201: no reload of the whole board for a notes box; the indicator says Saved.
+  optimistic(id, { dev_notes: notes }, { action: "saveDevNotes", issue_id: id, dev_notes: notes },
+    { failMsg: "Those notes didn't save", noRefresh: true });
 }
 
 // Admin (from Track) asks the instructor who logged an issue for more info.
@@ -18450,13 +18676,18 @@ function passDevGo() {
   var id = state._passDevId, size = $("passDevSize") ? $("passDevSize").value : "";
   if (!id) return;
   $("passDevModal").classList.remove("show");
-  apiPost({ action: "passToDev", issue_id: id, fix_size: size }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast(size === "ask"
-      ? "Passed to developers, with a request to size it themselves."
-      : size ? "Passed to developers, sized " + size + "." : "Passed to developers.");
-    closeDetail(); loadIssues();
-  }).catch(function (e) { toastErr("That", e); });
+  // r201: moves across at once; the indicator says when it has landed.
+  var now = new Date().toISOString();
+  var was = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
+  var fields = { status: "with_dev", dev_fixed_at: "" };
+  if (!was.dev_passed_at) fields.dev_passed_at = now;
+  if (size) fields.fix_size = size;
+  closeDetail();
+  toast(size === "ask"
+    ? "Passed to developers, with a request to size it themselves."
+    : size ? "Passed to developers, sized " + size + "." : "Passed to developers.");
+  optimistic(id, fields, { action: "passToDev", issue_id: id, fix_size: size },
+    { failMsg: "Passing it to the developers didn't save" });
 }
 function passDevCancel() { $("passDevModal").classList.remove("show"); state._passDevId = null; }
 

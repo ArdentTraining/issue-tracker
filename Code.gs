@@ -653,7 +653,7 @@ function doPost(e) {
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
-    if (action === 'bootstrap') return jsonOut(bootstrap_(user));
+    if (action === 'bootstrap') return jsonOut(bootstrap_(user, body));
     if (action === 'getIssuesList') return jsonOut(getIssuesList_());
     if (action === 'getIssue') return jsonOut(getIssueFull_(body));
     if (action === 'getIssues') return jsonOut(getIssues_());
@@ -1923,6 +1923,14 @@ var READ_ONLY_ACTIONS = {
   // opening What's new, the bell or feedback saves one, and each of those was
   // throwing the whole board away for nothing.
   setPrefs: 1,
+  // r201 (Edd, "still not responsive enough"): these only read, and none of
+  // them was on this list, so each one threw the whole cached board away.
+  // myFeedback runs on EVERY page open and peekStudentActivity once per
+  // follow-up row on Today, so the server cache was almost never warm: measured
+  // 29 Sep, bootstrap 6.1s cached, 11.3s straight after one myFeedback.
+  // caseTouch writes the live-case sheet only (unread flag), never an issue row.
+  myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
+  tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, caseTouch: 1,
   // nextAction DOES write one cell (its own cached answer), and it still
   // belongs here. The list projection leaves next_action_json out entirely, so
   // there is no way for a held cache to show a stale next action - and dropping
@@ -1947,7 +1955,12 @@ var CURRENT_ACTION_ = '';
  * these five ever gains a write that does not go through findRow_, take it
  * off the list.
  */
-var PATCHABLE_ACTIONS = { updateIssue: 1, addUpdate: 1, addIssue: 1, assignIssue: 1, saveChecklist: 1 };
+var PATCHABLE_ACTIONS = { updateIssue: 1, addUpdate: 1, addIssue: 1, assignIssue: 1, saveChecklist: 1,
+  // r201: Mark fixed, pass to dev, dev notes and the two query actions were
+  // dropping the whole list (next open 11s). Walked 29 Sep: every issue-row
+  // write in each goes through findRow_ (the Slack stamps and alert tidy-up
+  // included, same row), so each touches only its own issue.
+  markDevFixed: 1, passToDev: 1, saveDevNotes: 1, flagQuery: 1, answerQuery: 1 };
 var PATCH_MAX_ROWS = 12;
 var TOUCHED_IDS_ = null;
 function touchIssue_(id) { if (TOUCHED_IDS_ && id) TOUCHED_IDS_[String(id)] = 1; }
@@ -2031,7 +2044,10 @@ var PURE_READS_ = {
   // own cached answer on the issue row, setPrefs the person's preferences.
   // nextAction runs every time an issue opens, so dropping on it would empty
   // this cache all day.
-  nextAction: 1, setPrefs: 1
+  nextAction: 1, setPrefs: 1,
+  // r201: pure reads that were missing, and each dropped every extra.
+  myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
+  tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1
 };
 function bootExtra_(name, build) {
   var c = null;
@@ -2053,6 +2069,7 @@ function dropBootExtras_(names) {
 function maybeDropBootExtras_(action) {
   if (PURE_READS_[action]) return;
   if (PATCHABLE_ACTIONS[action]) { dropBootExtras_(['live_cases']); return; }
+  if (action === 'caseTouch') { dropBootExtras_(['live_cases']); return; }   // r201: unread flag on one case
   dropBootExtras_(Object.keys(BOOT_EXTRAS_));
 }
 
@@ -2142,7 +2159,37 @@ function getIssueFull_(data) {
 // permission-gated the same way its own action is, and each is wrapped so one
 // slow or broken corner (Chatwoot, say) cannot take the whole load down with
 // it - the app still opens, just without that panel.
-function bootstrap_(user) {
+/* r201: the board refresh sends back only the rows that changed.
+ * Measured 29 Sep: a cached bootstrap is ~0.9s of server work but 6s end to
+ * end, because Google then has to serve 3.1 MB back through its redirect;
+ * ping alone is 3.1s. The front end sends a fingerprint of every row it
+ * already holds ('have'); any row whose fingerprint is on that list is left
+ * out, and issue_ids says the full order so deletions and merges drop out
+ * too. The fingerprint is two 32-bit string hashes of the row's JSON, done
+ * identically by rowHash() in index.html. A client that sends nothing gets
+ * the whole list exactly as before. */
+function rowHash_(str) {
+  var h1 = 0x811c9dc5, h2 = 5381;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619);
+    h2 = (Math.imul(h2, 33) + c) | 0;
+  }
+  return ('00000000' + (h1 >>> 0).toString(16)).slice(-8) + ('00000000' + (h2 >>> 0).toString(16)).slice(-8);
+}
+function deltaIssues_(issues, have) {
+  if (!Array.isArray(have) || !have.length) return null;
+  var set = {};
+  for (var i = 0; i < have.length; i++) set[String(have[i])] = 1;
+  var changed = [], ids = [];
+  for (var j = 0; j < issues.length; j++) {
+    ids.push(issues[j].issue_id);
+    if (!set[rowHash_(JSON.stringify(issues[j]))]) changed.push(issues[j]);
+  }
+  return { changed: changed, ids: ids };
+}
+
+function bootstrap_(user, body) {
   var out = {
     ok: true,
     generated_at: new Date().toISOString(),
@@ -2179,6 +2226,11 @@ function bootstrap_(user) {
   if (hasPerm_(user, reqPerm_('listKnownFixFlags'))) {
     try { out.knownfix_corrections = bootExtra_('knownfix_corrections', function () { return getKfCorrections_() || []; }); } catch (e) {}
   }
+  // r201: only now, because the live cases above were built from the FULL list.
+  try {
+    var d = deltaIssues_(out.issues, body && body.have);
+    if (d) { out.issues = d.changed; out.issue_ids = d.ids; out.issues_delta = true; }
+  } catch (e) { out.delta_error = String(e); }
   ms.total = Date.now() - t0;
   out.ms = ms;   // cumulative milliseconds at each step
   return out;
@@ -8375,7 +8427,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r200 · 2026-09-29';
+var CODE_STAMP = 'r201 · 2026-09-29';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
