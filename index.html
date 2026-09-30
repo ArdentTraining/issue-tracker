@@ -3757,7 +3757,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r205 · 2026-09-30";  // bump this with each round, it lands on every feedback report
+var BUILD = "r205b · 2026-09-30";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -20289,6 +20289,23 @@ function igDraw() {
   var r = state._ig, doc = $("igDoc");
   if (!r || !doc) return;
   doc.innerHTML = igMarkdown(r.markdown || "");
+  // Links inside the doc to its own headings jump to them here.
+  if (!doc._igLinks) {
+    doc._igLinks = true;
+    doc.addEventListener("click", function (e) {
+      var a = e.target.closest && e.target.closest("a[data-ig]");
+      if (!a) return;
+      e.preventDefault();
+      var key = a.getAttribute("data-ig");
+      var hit = null;
+      doc.querySelectorAll("[data-anchor]").forEach(function (el) { if (!hit && el.getAttribute("data-anchor") === key) hit = el; });
+      if (!hit) return;
+      var sec = hit.tagName === "SECTION" ? hit : hit.closest("section");
+      if (sec && sec.classList.contains("gone")) { $("igQ").value = ""; igFilter(); }
+      if (sec) state.igAt = sec.id;
+      hit.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
   // The doc's own contents page is links into Google Docs; the sub-rail does
   // that job here, so it goes.
   igSections().forEach(function (sec) { if (/^contents$/i.test(sec.getAttribute("data-title") || "")) sec.parentNode.removeChild(sec); });
@@ -20332,6 +20349,7 @@ function igInline(t) {
     return /^(https:|data:image\/)/i.test(u) ? put('<img src="' + esc(u) + '" alt="' + esc(alt) + '" loading="lazy" style="max-width:100%;">') : "";
   });
   t = t.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, function (m, label, u) {
+    if (/^#/.test(u)) return put('<a href="#" data-ig="' + esc(u.slice(1)) + '">' + igInline(label) + '</a>');
     return /^(https?:|mailto:)/i.test(u) ? put('<a href="' + esc(u) + '" target="_blank" rel="noopener">' + igInline(label) + '</a>') : label;
   });
   t = t.replace(/<(https?:\/\/[^>\s]+)>/g, function (m, u) { return put('<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u) + '</a>'); });
@@ -20348,20 +20366,26 @@ function igMarkdown(md) {
   var closeLists = function (toIndent) {
     while (listStack.length && listStack[listStack.length - 1].indent >= toIndent) { out.push("</li></" + listStack.pop().tag + ">"); }
   };
-  var startSection = function (title) {
+  var startSection = function (title, anchor) {
     if (open) out.push("</section>");
     n++; open = true;
-    out.push('<section id="ig-' + n + '" data-title="' + esc(title) + '">');
+    out.push('<section id="ig-' + n + '" data-title="' + esc(title) + '"' + (anchor ? ' data-anchor="' + esc(anchor) + '"' : "") + '>');
   };
   for (var i = 0; i < lines.length; i++) {
     var ln = lines[i];
     var h = /^(#{1,6})\s+(.*)$/.exec(ln);
     if (h) {
       flushPara(); closeLists(0);
-      var lvl = h[1].length, text = h[2].replace(/\\/g, "").trim();
+      // Google's export tags headings with their anchor, "Title {#title}".
+      var anc = /\\?\{#([^}\\]*)\\?\}\s*$/.exec(h[2]);
+      var raw = anc ? h[2].slice(0, anc.index).trim() : h[2];
+      var lvl = h[1].length, text = raw.replace(/\\/g, "").trim();
       if (!text) continue;
-      if (lvl === 1) { startSection(text.replace(/[*_]/g, "")); out.push("<h3>" + igInline(h[2]) + "</h3>"); }
-      else { if (!open) startSection(text); out.push("<h4" + (lvl > 2 ? ' style="font-size:' + (lvl > 3 ? "13.5" : "14") + 'px;"' : "") + ">" + igInline(h[2]) + "</h4>"); }
+      if (lvl === 1) { startSection(text.replace(/[*_]/g, ""), anc && anc[1]); out.push("<h3>" + igInline(raw) + "</h3>"); }
+      else {
+        if (!open) startSection(text, anc && anc[1]);
+        out.push("<h4" + (anc ? ' data-anchor="' + esc(anc[1]) + '"' : "") + (lvl > 2 ? ' style="font-size:' + (lvl > 3 ? "13.5" : "14") + 'px;"' : "") + ">" + igInline(raw) + "</h4>");
+      }
       continue;
     }
     var li = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(ln);
