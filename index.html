@@ -3757,7 +3757,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r205c · 2026-09-30";  // bump this with each round, it lands on every feedback report
+var BUILD = "r206 · 2026-09-30";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4335,6 +4335,9 @@ var RETRYABLE_READS = {
 // not an invalid token).
 var gateRechecking = false;
 function gateCheck(res) {
+  // Already signed out on this page: nothing more to check, and another
+  // "session ended" would only bury the one that said why.
+  if (res && res.ok === false && res.error === "unauthorized" && !getToken()) return res;
   if (res && res.ok === false && res.error === "unauthorized") {
     if (res.why) diagApi("session-denied", Date.now(), String(res.why));
     if (gateRechecking) return res;
@@ -4346,6 +4349,10 @@ function gateCheck(res) {
         .then(function (second) {
           gateRechecking = false;
           if (second && second.ok) return;   // a blip, not a logout - carry on
+          // r206: keep the reason. The page's call log only holds its last few
+          // calls, so the first refusal was being pushed out by the ones after
+          // it, and nobody could say afterwards why a session had ended.
+          localSet("ait_last_logout", JSON.stringify({ at: new Date().toISOString(), why: (second && second.why) || (res && res.why) || "unknown", first: res && res.why || "" }));
           clearToken();
           showLogin();
           toast("Your session ended" + (second && second.why ? " (" + second.why + ")" : "") + " - sign in again and carry on where you were.");
@@ -12432,6 +12439,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 48, date: "2026-09-30", text: "Fewer surprise sign-outs: a new sign-in now drops the device you have not used for longest, rather than one you use every day, and devices unused for a fortnight are tidied away." },
   { n: 47, date: "2026-09-30", who: ["manage"], text: "The instructor notes are now inside the tracker: Help, then For instructors. Always the latest copy of the doc, with a search box." },
   { n: 46, date: "2026-09-30", who: ["dev", "course"], text: "Opening a fix or marking it fixed no longer throws the list back to the top." },
   { n: 45, date: "2026-09-29", text: "Saves now show at the top right (Saving, Saved, or Didn't save and why), the screen no longer freezes while they go through, and the board refreshes quicker." },
@@ -19711,6 +19719,8 @@ function captureFeedbackContext() {
     // running code we may already have replaced, which explains a fair few
     // "still broken" reports on its own.
     page_age_mins: Math.round((Date.now() - PAGE_LOADED_AT) / 60000),
+    // r206: why this browser was last signed out, if it ever was.
+    last_logout: (function () { try { return JSON.parse(localGet("ait_last_logout") || "null"); } catch (e) { return null; } })(),
     viewport: window.innerWidth + "x" + window.innerHeight,
     scroll_y: Math.round(window.scrollY || 0),
     browser: browserLabel(),

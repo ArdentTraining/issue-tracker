@@ -585,7 +585,7 @@ function doGet(e) {
     if (action === 'importLegacyBatch') return jsonOut(importLegacyBatch_(p));
     if (action === 'slackThreadReply') return jsonOut(slackThreadReply_(p));   // WRITE, DEPLOY_KEY-gated: r122, a thread reply in Slack answers the question // WRITE, DEPLOY_KEY-gated: r102 legacy-form catch-up
 
-    var user = userForToken_(p.token);
+    var user = userForToken_(p.token, action);
     if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
@@ -645,7 +645,7 @@ function doPost(e) {
     if (action === 'acceptInvite') return jsonOut(acceptInvite_(body));
     if (action === 'requestPasswordReset') return jsonOut(requestPasswordReset_(body));
 
-    var user = userForToken_(body.token);
+    var user = userForToken_(body.token, action);
     if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
     if (action === 'logout') return jsonOut(logout_(body.token));
     if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
@@ -865,30 +865,70 @@ function findUserByEmail_(email) { return findUserByField_('email', email); }
 var SESSION_REFRESH_DAYS = 7;
 var UNAUTH_WHY_ = '';   // r121: why the last userForToken_ said no
 
-function userForToken_(token) {
+function userForToken_(token, action) {
   UNAUTH_WHY_ = '';
   if (!token) { UNAUTH_WHY_ = 'no token sent'; return null; }
   var f = findUserBySession_(token);
-  if (!f) { UNAUTH_WHY_ = 'token not found on any account'; return null; }
-  if (String(f.user.status).toLowerCase() !== 'active') { UNAUTH_WHY_ = 'account disabled'; return null; }
+  if (!f) { UNAUTH_WHY_ = 'token not found on any account'; sessionLog_('refused', '', token, UNAUTH_WHY_, action); return null; }
+  if (String(f.user.status).toLowerCase() !== 'active') { UNAUTH_WHY_ = 'account disabled'; sessionLog_('refused', f.user.email, token, UNAUTH_WHY_, action); return null; }
   if (f.legacy) {
     // Legacy single-token row: expiry lives in the column, as it always did.
     // Deliberately NOT slid. The Claude service account is one of these and its
     // expiry is a hand-minted five years, so "extending" it to thirty days
     // would be a large step backwards.
     var exp = new Date(f.user.session_expires);
-    if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) { UNAUTH_WHY_ = 'legacy session expired'; return null; }
+    if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) { UNAUTH_WHY_ = 'legacy session expired'; sessionLog_('refused', f.user.email, token, UNAUTH_WHY_, action); return null; }
   } else {
-    if (!f.entry || !isFinite(Number(f.entry.e)) || Number(f.entry.e) < Date.now()) { UNAUTH_WHY_ = 'session expired'; return null; }
-    if (Number(f.entry.e) - Date.now() < SESSION_REFRESH_DAYS * 24 * 3600 * 1000) touchSession_(f, token);
+    if (!f.entry || !isFinite(Number(f.entry.e)) || Number(f.entry.e) < Date.now()) { UNAUTH_WHY_ = 'session expired'; sessionLog_('refused', f.user.email, token, UNAUTH_WHY_, action); return null; }
+    // r206: note when this device was last used, at most once a day, so that
+    // when a thirteenth device signs in the one dropped is the one nobody is
+    // using (see startSession_). And slide the expiry as before.
+    var nearEnd = Number(f.entry.e) - Date.now() < SESSION_REFRESH_DAYS * 24 * 3600 * 1000;
+    var stale = !isFinite(Number(f.entry.u)) || Date.now() - Number(f.entry.u) > SESSION_USED_EVERY_MS;
+    if (nearEnd || stale) touchSession_(f, token, nearEnd);
   }
   return f.user;
+}
+
+// r206 (Edd, 30 Sep 2026: "why did it get logged out?"). The reason went back
+// to the page and nowhere else, and the page's own log kept only its last few
+// calls, so by the time anyone asked, it was gone. Every refused session and
+// every device dropped at sign-in is now written here, with the reason and a
+// short fingerprint of the token (never the token): enough to match one line
+// to another, not enough to sign in with.
+var SESSION_LOG_SHEET = 'SessionLog';
+var SESSION_USED_EVERY_MS = 24 * 3600 * 1000;
+var SESSION_IDLE_DAYS = 14;
+function tokenPrint_(token) {
+  if (!token) return '';
+  try {
+    var d = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'ait-session:' + String(token));
+    return bytesToHex_(d).slice(0, 10);
+  } catch (e) { return ''; }
+}
+function sessionLog_(what, email, token, why, action) {
+  try {
+    var ss = ss_();
+    var sh = ss.getSheetByName(SESSION_LOG_SHEET);
+    if (!sh) { sh = ss.insertSheet(SESSION_LOG_SHEET); sh.appendRow(['at', 'what', 'email', 'token_print', 'why', 'action']); sh.setFrozenRows(1); }
+    sh.appendRow([new Date().toISOString(), what, email || '', typeof token === 'string' && token.length > 12 ? tokenPrint_(token) : String(token || ''), String(why || '').slice(0, 300), String(action || '')]);
+    // Keep it to the last couple of thousand lines; it is a flight recorder, not an archive.
+    var n = sh.getLastRow();
+    if (n > 2500) sh.deleteRows(2, n - 2000);
+  } catch (e) {}
+}
+/** When a device was last used, for an entry written before r206: its login,
+ *  which is its expiry less the session length. */
+function sessionUsedAt_(x) {
+  var u = Number(x && x.u);
+  if (isFinite(u) && u > 0) return u;
+  return Number(x && x.e) - SESSION_DAYS * 24 * 3600 * 1000;
 }
 
 // Push this one device's expiry back out. Every part of this is best-effort on
 // purpose: a session that could not be extended is still a valid session, so a
 // busy lock or a failed write must never turn itself into a logout.
-function touchSession_(f, token) {
+function touchSession_(f, token, extend) {
   try {
     withSessionLock_(function () {
       var entries = sessionEntries_(readSessionCell_(f));
@@ -896,7 +936,8 @@ function touchSession_(f, token) {
       var hit = false;
       for (var i = 0; i < entries.length; i++) {
         if (String(entries[i].t) === String(token)) {
-          entries[i].e = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
+          if (extend !== false) entries[i].e = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
+          entries[i].u = Date.now();
           hit = true;
         }
       }
@@ -1219,14 +1260,52 @@ function startSession_(f) {
       var legacyExp = new Date(f.user.session_expires).getTime();
       entries = [{ t: String(cell), e: isFinite(legacyExp) ? legacyExp : expiry }];
     } else if (!entries) entries = [];
-    entries.unshift({ t: token, e: expiry });
-    entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > Date.now(); });
+    var now = Date.now();
+    entries.unshift({ t: token, e: expiry, u: now });
+    entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > now; });
+    // r206: a device nobody has used for a fortnight goes, and past the cap
+    // the one used longest ago goes. Before this the cap dropped the entry
+    // nearest EXPIRY, and expiry only moves in a session's last week, so a
+    // laptop used every day since it signed in three weeks ago looked older
+    // than a browser tried once last Tuesday, and was the one thrown out.
+    var dropped = [];
+    entries = entries.filter(function (x) {
+      // Only entries that have recorded a use can be called idle. One written
+      // before r206 has no `u`, and a laptop used daily since it signed in
+      // three weeks ago must not be thrown out on the day this goes live.
+      var idle = isFinite(Number(x.u)) && now - Number(x.u) > SESSION_IDLE_DAYS * 24 * 3600 * 1000;
+      if (idle && x.t !== token) dropped.push({ x: x, why: 'unused for ' + SESSION_IDLE_DAYS + ' days' });
+      return !idle || x.t === token;
+    });
     if (entries.length > MAX_SESSIONS) {
-      entries.sort(function (a, b) { return Number(b.e) - Number(a.e); });  // keep the freshest expiries
+      entries.sort(function (a, b) { return sessionUsedAt_(b) - sessionUsedAt_(a); });   // most recently used first
+      entries.slice(MAX_SESSIONS).forEach(function (x) { dropped.push({ x: x, why: 'over ' + MAX_SESSIONS + ' devices, least recently used' }); });
       entries = entries.slice(0, MAX_SESSIONS);
     }
     writeSessionCell_(f, entries);
+    dropped.forEach(function (d) {
+      sessionLog_('dropped at sign-in', f.user.email, d.x.t, d.why + ', last used ' + new Date(sessionUsedAt_(d.x)).toISOString(), 'login');
+    });
   });
+  // r206: the lock above goes ahead without the lock when the script is busy,
+  // so a write racing ours can put back an array without us in it, and the
+  // device that has just signed in is out again on its first call. Check,
+  // and put ourselves back if so.
+  for (var tries = 0; tries < 3; tries++) {
+    Utilities.sleep(250);
+    var check = sessionEntries_(readSessionCell_(f));
+    var there = check && check !== 'legacy' && check.some(function (x) { return String(x.t) === token; });
+    if (there) break;
+    sessionLog_('sign-in overwritten, putting it back', f.user.email, token, 'try ' + (tries + 1), 'login');
+    withSessionLock_(function () {
+      var again = sessionEntries_(readSessionCell_(f));
+      if (!again || again === 'legacy') again = [];
+      if (!again.some(function (x) { return String(x.t) === token; })) {
+        again.unshift({ t: token, e: expiry, u: Date.now() });
+        writeSessionCell_(f, again.slice(0, MAX_SESSIONS));
+      }
+    });
+  }
   setCell_(f, 'session_expires', new Date(expiry).toISOString());
   return token;
 }
@@ -1306,6 +1385,7 @@ function logout_(token) {
     // Log out THIS device only. The others stay signed in, which is the point.
     writeSessionCell_(f, entries.filter(function (x) { return String(x.t) !== String(token); }));
   });
+  sessionLog_('signed out', f.user.email, token, 'Sign out pressed', 'logout');
   return { ok: true };
 }
 
@@ -8314,8 +8394,15 @@ function deleteFeedback_(data) {
 function updateFeedback_(data) {
   var sheet = sheetByName_(FEEDBACK_SHEET);
   if (!sheet) return { ok: false, error: 'Feedback sheet missing.' };
-  var values = sheet.getDataRange().getValues();
-  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  // r206: read the header and the id column, not the whole sheet. Every row
+  // carries its report's diagnostics in `context`, so the whole-sheet read was
+  // what made a two-cell status change take 10 to 40 seconds.
+  var lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+  var head = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  if (idx['id'] == null || lastRow < 2) return { ok: false, error: 'Feedback not found.' };
+  var ids = sheet.getRange(2, idx['id'] + 1, lastRow - 1, 1).getValues();
+  var values = [head].concat(ids.map(function (row) { var a = []; a[idx['id']] = row[0]; return a; }));
   for (var r = 1; r < values.length; r++) {
     if (values[r][idx['id']] === data.id) {
       if (data.status) sheet.getRange(r + 1, idx['status'] + 1).setValue(data.status);
@@ -8594,7 +8681,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r205 · 2026-09-30';
+var CODE_STAMP = 'r206 · 2026-09-30';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
