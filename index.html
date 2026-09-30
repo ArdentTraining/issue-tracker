@@ -1019,6 +1019,10 @@
   .man-doc { max-width: 820px; font-size: 14.5px; line-height: 1.6; margin-top: 26px; }
   .man-doc section { scroll-margin-top: 76px; padding-bottom: 10px; }
   .man-doc section.gone { display: none; }
+  .ig-doc img { border-radius: 6px; margin: 6px 0; }
+  .ig-doc table.ig-table { border-collapse: collapse; margin: 0 0 14px; font-size: 13.5px; }
+  .ig-doc table.ig-table th, .ig-doc table.ig-table td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+  .ig-doc ul ul, .ig-doc ol ul, .ig-doc ul ol { margin: 4px 0 6px; }
   .man-doc section + section { border-top: 1px solid var(--line); padding-top: 26px; margin-top: 12px; }
   .man-doc h3 {
     font-family: "Hedvig Letters Serif", Georgia, serif; font-weight: 400; font-size: 21px;
@@ -2558,6 +2562,27 @@
   </div>
 </div>
 </div>
+<!-- r205 (FB-0435): the For Instructors doc, read live from Google Docs.
+     Its words never live in this file: this repo is public and the doc holds
+     the team's shared logins. -->
+<div id="instructorsView" class="wrap hidden">
+  <div class="man-top">
+    <h2>For instructors</h2>
+    <span class="man-who" id="igWho"></span>
+    <div class="man-acts">
+      <button class="ghost small" style="padding:5px 12px;" onclick="igLoad(true)" title="Fetch the latest copy of the doc now">Refresh</button>
+      <a class="ghost small" id="igEdit" target="_blank" rel="noopener" style="padding:5px 12px;text-decoration:none;" title="Open the Google Doc to edit it">Edit the doc</a>
+    </div>
+  </div>
+  <div class="man-bar">
+    <input id="igQ" name="ait-igq" type="search" autocomplete="one-time-code" placeholder="Search the instructor notes"
+           oninput="igFilter()" autocapitalize="off" autocorrect="off" spellcheck="false"
+           data-1p-ignore data-lpignore="true" data-form-type="other" aria-label="Search the instructor notes">
+  </div>
+  <div class="man-found" id="igFound"></div>
+  <article class="man-doc ig-doc" id="igDoc"><p class="muted small">Loading&hellip;</p></article>
+</div>
+
 <div id="manualView" class="wrap hidden">
   <div class="man-top">
     <h2>User manual</h2>
@@ -3732,7 +3757,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r203 · 2026-09-30";  // bump this with each round, it lands on every feedback report
+var BUILD = "r205 · 2026-09-30";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8057,6 +8082,7 @@ function setView(v) {
   // Round 104: the manual is a view too, so Help behaves like every other
   // rail item rather than throwing a panel over whatever you were reading.
   if ($("manualView")) $("manualView").classList.toggle("hidden", v !== "manual");
+  if ($("instructorsView")) $("instructorsView").classList.toggle("hidden", v !== "instructors");
   // 24 Aug: RCA is a page too - open investigations keep their own presence.
   if ($("rcaView")) $("rcaView").classList.toggle("hidden", v !== "rca");
   if ($("tasksView")) $("tasksView").classList.toggle("hidden", v !== "tasks");
@@ -8070,6 +8096,7 @@ function setView(v) {
   if (v === "resources") renderResources();
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
+  if (v === "instructors") renderInstructors();
   if (v === "rca") renderRcaHome();
   if (v === "tasks") renderTasks();
   if (v === "irpcs") renderIrpcs();
@@ -8200,7 +8227,7 @@ function updateRail() {
                ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
                ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
-               ["railReports", v === "reports"], ["railHelp", v === "manual"],
+               ["railReports", v === "reports"], ["railHelp", v === "manual" || v === "instructors"],
                ["railRCA", v === "rca"]];
   pairs.forEach(function (p) { var el = $(p[0]); if (el) el.classList.toggle("active", !!p[1]); });
   // The segment bar belongs to Issues, so it only shows there.
@@ -12402,6 +12429,8 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 47, date: "2026-09-30", who: ["manage"], text: "The instructor notes are now inside the tracker: Help, then For instructors. Always the latest copy of the doc, with a search box." },
+  { n: 46, date: "2026-09-30", who: ["dev", "course"], text: "Opening a fix or marking it fixed no longer throws the list back to the top." },
   { n: 45, date: "2026-09-29", text: "Saves now show at the top right (Saving, Saved, or Didn't save and why), the screen no longer freezes while they go through, and the board refreshes quicker." },
   { n: 44, date: "2026-09-29", who: ["dev", "course"], text: "Mark fixed now checks the fix has saved before saying so, and if something you fixed comes back, you get a Slack message." },
   { n: 43, date: "2026-09-22", who: ["irpcs"], text: "IRPCS models: eight new vessels (the rest of the towing pictures, underwater works, diving, fishing with the gear out, a pilot vessel off duty), big ships now drawn as ships, small boats drawn small, and rain or fog can be shown by day with the lights on." },
@@ -12666,11 +12695,23 @@ function subRailSpec() {
   // growing a contents column of its own. Built from the sections that
   // survived the permission cut, so there is never a link to a page that is
   // not there, and a search that hides some of them hides their links too.
-  if (v === "manual") {
-    var secs = manualSections().filter(function (x) { return !x.classList.contains("gone"); });
+  // r205: Help has two pages now, the tracker manual and (for instructors and
+  // admins) the For Instructors doc. Both sit at the top of the bar, with the
+  // open page's contents underneath.
+  if (v === "manual" || v === "instructors") {
+    var pages = [{ key: "@manual", label: "Bug tracker help" }];
+    if (p.manage) pages.push({ key: "@instructors", label: "For instructors" });
+    var secs = (v === "manual" ? manualSections() : igSections()).filter(function (x) { return !x.classList.contains("gone"); });
     return {
-      head: "Contents", cur: state.manualAt, go: manualGoTo,
-      items: secs.map(function (x) { return { key: x.id, label: x.getAttribute("data-title") || x.id }; })
+      head: "Help", cur: v === "manual" ? (state.manualAt || "@manual") : (state.igAt || "@instructors"),
+      go: function (k) {
+        if (k === "@manual") { if (state.view !== "manual") setView("manual"); return; }
+        if (k === "@instructors") { if (state.view !== "instructors") setView("instructors"); return; }
+        if (state.view === "manual") manualGoTo(k); else igGoTo(k);
+      },
+      pageKey: v === "manual" ? "@manual" : "@instructors",
+      items: pages.concat(secs.length ? [{ head: true, label: "Contents" }] : [],
+        secs.map(function (x) { return { key: x.id, label: x.getAttribute("data-title") || x.id }; }))
     };
   }
   return null;
@@ -12691,7 +12732,9 @@ function renderSubRail() {
   state._subRailGo = spec.go;
   bar.innerHTML = '<div class="subrail-head">' + esc(spec.head) + '</div>' +
     spec.items.map(function (it) {
-      return '<button type="button" class="subrail-item' + (it.key === spec.cur ? " active" : "") + '" ' +
+      if (it.head) return '<div class="subrail-head" style="margin-top:14px;">' + esc(it.label) + '</div>';
+      var on = it.key === spec.cur || (spec.pageKey && it.key === spec.pageKey);
+      return '<button type="button" class="subrail-item' + (on ? " active" : "") + '" data-key="' + esc(it.key) + '" ' +
         'onclick="subRailGo(\'' + esc(it.key) + '\')">' + esc(it.label) +
         (it.n ? '<span class="sn">' + (it.n > 99 ? "99+" : it.n) + '</span>' : '') + '</button>';
     }).join("");
@@ -16607,16 +16650,50 @@ function splitTargetFor(kind) {
   if (state.view === "edd") return { host: $("eddSplitHost"), dock: $("eddDock") };
   return null;
 }
+// r205 (FB-0454, Stuart): docking the detail beside the list turns the list
+// into its own scrolling column, and that column started at the top every
+// time, so the card just clicked (half way down 300 fixes) was suddenly 1,800
+// pixels out of sight. Mark fixed, click the next one, back to the top again.
+// Now the clicked card stays where it was on screen, a re-render of an open
+// pane keeps the column where it is, and closing puts the page back where the
+// column was.
+function scrollParent_(el, stop) {
+  for (var p = el && el.parentElement; p && p !== stop && p !== document.body; p = p.parentElement) {
+    var oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight + 4) return p;
+  }
+  return null;
+}
+function cardFor_(host, id) {
+  if (!host || !id) return null;
+  return host.querySelector('.act-row[data-id="' + id + '"], .issue-card[data-id="' + id + '"], .action-card[data-id="' + id + '"]');
+}
 function presentDetail(kind) {
   var drawer = $("drawer");
-  closeSplit();
   var target = splitTargetFor(kind);
+  var host = target && target.host;
+  // Where the clicked card sits on screen now, before any layout changes.
+  var wasDocked = !!(host && host.classList.contains("split-on"));
+  var card0 = cardFor_(host, state.detailId);
+  var keepTop = card0 ? card0.getBoundingClientRect().top : null;
+  var col0 = wasDocked && card0 ? scrollParent_(card0, host) : null;
+  var colTop0 = col0 ? col0.scrollTop : null;
+  closeSplit(true);
   if (target && target.host && target.dock) {
     target.dock.appendChild(drawer);
     target.host.classList.add("split-on");
     target.dock.style.display = "";
     $("overlay").classList.remove("show");
     state._splitOpen = true;
+    try {
+      var card = cardFor_(host, state.detailId), col = card ? scrollParent_(card, host) : null;
+      if (col && colTop0 != null) col.scrollTop = colTop0;              // same pane, redrawn: stay put
+      else if (col && keepTop != null) {
+        var box = col.getBoundingClientRect();
+        var want = Math.min(Math.max(keepTop, box.top + 8), box.bottom - 80);
+        col.scrollTop += card.getBoundingClientRect().top - want;
+      }
+    } catch (e) {}
     // On Today the actions list sits below the chats, so bring the pane up.
     if (state.view === "live") { try { target.host.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {} }
   } else {
@@ -16626,7 +16703,28 @@ function presentDetail(kind) {
   markActiveCard();
   scheduleSaveBar();
 }
-function closeSplit() {
+function closeSplit(redocking) {
+  // r205: closing for good puts the page where the docked column was looking,
+  // so the list does not jump when the pane goes away.
+  var anchor = null, anchorTop = 0;
+  if (!redocking && state._splitOpen) {
+    try {
+      ["adminSplitHost", "devSplitHost", "courseSplitHost", "actionsSplitHost", "eddSplitHost"].forEach(function (id) {
+        var h = $(id);
+        if (anchor || !h || !h.classList.contains("split-on")) return;
+        var cards = h.querySelectorAll(".act-row[data-id], .issue-card[data-id], .action-card[data-id]");
+        var col = cards.length ? scrollParent_(cards[0], h) : null;
+        var top = col ? col.getBoundingClientRect().top : 0;
+        var bottom = col ? col.getBoundingClientRect().bottom : window.innerHeight;
+        var act = h.querySelector(".active[data-id]");
+        if (act) { var ra = act.getBoundingClientRect(); if (ra.bottom > top + 4 && ra.top < bottom - 4) { anchor = act; anchorTop = ra.top; return; } }
+        for (var i = 0; i < cards.length; i++) {
+          var r = cards[i].getBoundingClientRect();
+          if (r.bottom > top + 4) { anchor = cards[i]; anchorTop = r.top; break; }
+        }
+      });
+    } catch (e) { anchor = null; }
+  }
   ["adminSplitHost", "devSplitHost", "courseSplitHost", "actionsSplitHost", "eddSplitHost"].forEach(function (id) {
     var h = $(id);
     if (!h) return;
@@ -16637,6 +16735,9 @@ function closeSplit() {
   var drawer = $("drawer");
   if (drawer && drawer.parentElement !== $("overlay")) $("overlay").appendChild(drawer);
   state._splitOpen = false;
+  if (anchor && anchor.isConnected) {
+    try { window.scrollBy(0, anchor.getBoundingClientRect().top - anchorTop); } catch (e) {}
+  }
 }
 // Draggable list column (Edd, FB-0170): grab the bar between the list and
 // the detail, set the split how you like it, and it's remembered per browser.
@@ -20147,6 +20248,158 @@ function manualPermSig() {
   return ["log", "manage", "analytics", "dev", "course", "users"]
     .map(function (k) { return p[k] ? k : ""; }).join(",");
 }
+// ===================== r205: FOR INSTRUCTORS (FB-0435) =====================
+// Stuart: "What about importing the 'For instructors' info into here ... rather
+// than opening yet another google doc page". Edd: under Help, beside the
+// tracker's own manual.
+//
+// The doc is fetched live through Apps Script (instructorGuide, 'manage' only)
+// as Markdown and drawn here. It is held in memory for the page's life and
+// never written to localStorage: it carries the shared logins.
+function igSections() {
+  var doc = $("igDoc");
+  return doc ? Array.prototype.slice.call(doc.querySelectorAll("section")) : [];
+}
+function renderInstructors() {
+  if (!(state.perms && state.perms.manage)) {
+    $("igDoc").innerHTML = '<p class="muted">This page is for instructors.</p>';
+    renderSubRail();
+    return;
+  }
+  if (state._ig) { igDraw(); return; }
+  igLoad(false);
+}
+function igLoad(refresh) {
+  var doc = $("igDoc");
+  if (doc && !state._ig) doc.innerHTML = '<p class="muted small"><span class="spinner"></span> Fetching the latest copy of the doc&hellip;</p>';
+  if (refresh) toast("Fetching the latest copy of the doc…");
+  apiPost({ action: "instructorGuide", refresh: !!refresh }).then(function (r) {
+    if (!r || !r.ok) {
+      if (!state._ig && doc) doc.innerHTML = '<p>Could not load the doc' + (r && r.error ? ' (' + esc(r.error) + ')' : '') + '.' +
+        (r && r.url ? ' <a href="' + esc(r.url) + '" target="_blank" rel="noopener">Open it in Google Docs</a>.' : '') + '</p>';
+      else toast("Could not refresh the doc" + (r && r.error ? ": " + r.error : "") + ".");
+      return;
+    }
+    state._ig = r;
+    igDraw();
+    if (refresh) toast("Up to date.");
+  }).catch(function (e) { if (!state._ig && doc) doc.innerHTML = '<p>Could not load the doc. Try Refresh in a moment.</p>'; console.error(e); });
+}
+function igDraw() {
+  var r = state._ig, doc = $("igDoc");
+  if (!r || !doc) return;
+  doc.innerHTML = igMarkdown(r.markdown || "");
+  // The doc's own contents page is links into Google Docs; the sub-rail does
+  // that job here, so it goes.
+  igSections().forEach(function (sec) { if (/^contents$/i.test(sec.getAttribute("data-title") || "")) sec.parentNode.removeChild(sec); });
+  var ed = $("igEdit"); if (ed) ed.href = r.url || "#";
+  var who = $("igWho");
+  if (who) who.textContent = r.updated_at ? ("Doc last edited " + new Date(r.updated_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) : "";
+  var first = igSections()[0];
+  state.igAt = first ? first.id : null;
+  igFilter();
+}
+function igGoTo(id) {
+  var s = document.getElementById(id);
+  if (!s) return;
+  if (s.classList.contains("gone")) { $("igQ").value = ""; igFilter(); }
+  state.igAt = id;
+  s.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+// Section-level search, the same way the manual filters: a section with no
+// match goes, the rest stay whole so the answer is read in its context.
+function igFilter() {
+  var q = String(($("igQ") && $("igQ").value) || "").trim().toLowerCase();
+  var shown = 0;
+  igSections().forEach(function (sec) {
+    var hit = !q || sec.textContent.toLowerCase().indexOf(q) >= 0;
+    sec.classList.toggle("gone", !hit);
+    if (hit) shown++;
+  });
+  var f = $("igFound");
+  if (f) f.textContent = q ? (shown ? shown + " section" + (shown === 1 ? "" : "s") + " mention “" + q + "”" : "Nothing in the doc mentions “" + q + "”.") : "";
+  renderSubRail();
+}
+// A small, strict Markdown reader for Google's own export. Everything is
+// escaped first; only headings, lists, tables, links (http, https, mailto),
+// images (https or data:image), bold, italic and code are let back in.
+function igInline(t) {
+  var keep = [];
+  var put = function (h) { keep.push(h); return "\u0000" + (keep.length - 1) + "\u0000"; };
+  t = t.replace(/\\([\\`*_{}\[\]()#+\-.!|<>~])/g, function (m, c) { return put(esc(c)); });
+  t = t.replace(/`([^`]+)`/g, function (m, c) { return put("<code>" + esc(c) + "</code>"); });
+  t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, function (m, alt, u) {
+    return /^(https:|data:image\/)/i.test(u) ? put('<img src="' + esc(u) + '" alt="' + esc(alt) + '" loading="lazy" style="max-width:100%;">') : "";
+  });
+  t = t.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, function (m, label, u) {
+    return /^(https?:|mailto:)/i.test(u) ? put('<a href="' + esc(u) + '" target="_blank" rel="noopener">' + igInline(label) + '</a>') : label;
+  });
+  t = t.replace(/<(https?:\/\/[^>\s]+)>/g, function (m, u) { return put('<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u) + '</a>'); });
+  t = t.replace(/<([^@>\s]+@[^>\s]+)>/g, function (m, e) { return put('<a href="mailto:' + esc(e) + '">' + esc(e) + '</a>'); });
+  t = esc(t);
+  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  t = t.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>").replace(/(^|\W)_([^_\s][^_]*)_(?=\W|$)/g, "$1<em>$2</em>");
+  return t.replace(/\u0000(\d+)\u0000/g, function (m, i) { return keep[+i]; });
+}
+function igMarkdown(md) {
+  var lines = String(md).replace(/\r/g, "").split("\n");
+  var out = [], para = [], listStack = [], n = 0, open = false;
+  var flushPara = function () { if (para.length) { out.push("<p>" + igInline(para.join(" ")) + "</p>"); para = []; } };
+  var closeLists = function (toIndent) {
+    while (listStack.length && listStack[listStack.length - 1].indent >= toIndent) { out.push("</li></" + listStack.pop().tag + ">"); }
+  };
+  var startSection = function (title) {
+    if (open) out.push("</section>");
+    n++; open = true;
+    out.push('<section id="ig-' + n + '" data-title="' + esc(title) + '">');
+  };
+  for (var i = 0; i < lines.length; i++) {
+    var ln = lines[i];
+    var h = /^(#{1,6})\s+(.*)$/.exec(ln);
+    if (h) {
+      flushPara(); closeLists(0);
+      var lvl = h[1].length, text = h[2].replace(/\\/g, "").trim();
+      if (!text) continue;
+      if (lvl === 1) { startSection(text.replace(/[*_]/g, "")); out.push("<h3>" + igInline(h[2]) + "</h3>"); }
+      else { if (!open) startSection(text); out.push("<h4" + (lvl > 2 ? ' style="font-size:' + (lvl > 3 ? "13.5" : "14") + 'px;"' : "") + ">" + igInline(h[2]) + "</h4>"); }
+      continue;
+    }
+    var li = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(ln);
+    if (li) {
+      flushPara();
+      if (!open) startSection("Notes");
+      var ind = li[1].length, tag = /\d/.test(li[2]) ? "ol" : "ul";
+      var top = listStack[listStack.length - 1];
+      if (!top || ind > top.indent) { out.push("<" + tag + "><li>"); listStack.push({ indent: ind, tag: tag }); }
+      else { closeLists(ind + 1); out.push("</li><li>"); }
+      out.push(igInline(li[3]));
+      continue;
+    }
+    if (/^\s*\|/.test(ln)) {
+      flushPara(); closeLists(0);
+      if (!open) startSection("Notes");
+      var rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { rows.push(lines[i]); i++; }
+      i--;
+      var cells = function (r) { return r.trim().replace(/^\||\|$/g, "").split("|").map(function (c) { return c.trim(); }); };
+      var body = rows.filter(function (r) { return !/^\s*\|?\s*:?-{2,}/.test(r); });
+      out.push('<div style="overflow-x:auto;"><table class="ig-table">' + body.map(function (r, k) {
+        var tg = k === 0 ? "th" : "td";
+        return "<tr>" + cells(r).map(function (c) { return "<" + tg + ">" + igInline(c) + "</" + tg + ">"; }).join("") + "</tr>";
+      }).join("") + "</table></div>");
+      continue;
+    }
+    if (!ln.trim()) { flushPara(); continue; }
+    if (listStack.length && /^\s{2,}\S/.test(ln)) { out.push(" " + igInline(ln.trim())); continue; }
+    closeLists(0);
+    if (!open) startSection("Notes");
+    para.push(ln.trim());
+  }
+  flushPara(); closeLists(0);
+  if (open) out.push("</section>");
+  return out.join("") || '<p class="muted">The doc is empty.</p>';
+}
+
 function manualSections() {
   var doc = $("manDoc");
   return doc ? Array.prototype.slice.call(doc.querySelectorAll("section")) : [];
@@ -20401,9 +20654,12 @@ function manualSpy() {
 function manualMarkCurrent(id) {
   var bar = $("subRail");
   if (!bar) return;
-  var ids = manualSections().filter(function (s) { return !s.classList.contains("gone"); }).map(function (s) { return s.id; });
-  var btns = Array.prototype.slice.call(bar.querySelectorAll(".subrail-item"));
-  btns.forEach(function (b, i) { b.classList.toggle("active", ids[i] === id); });
+  // r205: matched by key, not position, now the Help pages sit above the contents.
+  Array.prototype.slice.call(bar.querySelectorAll(".subrail-item[data-key]")).forEach(function (b) {
+    var k = b.getAttribute("data-key");
+    if (k.charAt(0) === "@") return;   // the page buttons keep their own highlight
+    b.classList.toggle("active", k === id);
+  });
 }
 
 // ---------------------------------------------------------------- the PDF

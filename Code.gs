@@ -661,6 +661,7 @@ function doPost(e) {
     // Script; it only ever reads the board, the same thing the session can.
     if (action === 'trackerTicket') return jsonOut(mintPortalTicket_(user, null, 12 * 60));
     if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
+    if (action === 'instructorGuide') return jsonOut(instructorGuide_(body));          // r205: the For Instructors doc, live
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
@@ -1031,6 +1032,10 @@ function reqPerm_(action) {
     case 'tasksTicket': return 'any';
     case 'trackerTicket': return 'any';
     case 'mirrorSyncNow': return 'users';
+    // r205: the For Instructors doc carries the shared logins (phone, the
+    // instructor Gmail, ShipStation...), so it is for instructors and admins
+    // ('manage') and never for the outside developers ('dev' only).
+    case 'instructorGuide': return 'manage';
     // The IRPCS section. Both of these hand a credential to another system, so
     // both are gated here AND checked again where they are minted - the UI
     // hiding the rail item is cosmetic, this is the rule.
@@ -1984,6 +1989,39 @@ function mirrorFullSync() {
   return out;
 }
 
+/* r205 (FB-0435, Stuart): the For Instructors Google Doc, inside the tracker
+ * under Help, rather than one more tab to go and find.
+ *
+ * Read LIVE from the doc (as Markdown, through the Drive export) so the doc
+ * stays the one place it is edited, and held for ten minutes. It is NEVER
+ * copied into index.html: that file is in a public GitHub repo, and this doc
+ * holds the team's shared logins. For the same reason the page only ever
+ * keeps it in memory, never in the browser's saved board. */
+var INSTRUCTOR_GUIDE_ID = '1ZwuJXqhRkHtsd5n56wFbID9PZ5t-w511kw72zqGqpbU';
+var INSTRUCTOR_GUIDE_KEY = 'ait_instr_guide_v1';
+function instructorGuide_(data) {
+  var url = 'https://docs.google.com/document/d/' + INSTRUCTOR_GUIDE_ID + '/edit';
+  if (!(data && data.refresh)) {
+    var hit = cacheGetChunked_(INSTRUCTOR_GUIDE_KEY);
+    if (hit) { try { var o = JSON.parse(hit); o.cached = true; return o; } catch (e) {} }
+  }
+  var res;
+  try {
+    res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + INSTRUCTOR_GUIDE_ID +
+      '/export?mimeType=' + encodeURIComponent('text/markdown') + '&supportsAllDrives=true', {
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true
+    });
+  } catch (e) { return { ok: false, error: 'could not reach the doc (' + String(e).slice(0, 120) + ')', url: url }; }
+  if (res.getResponseCode() !== 200) {
+    return { ok: false, error: 'the doc said HTTP ' + res.getResponseCode() + ' (' + String(res.getContentText()).slice(0, 160) + ')', url: url };
+  }
+  var updated = '';
+  try { updated = DriveApp.getFileById(INSTRUCTOR_GUIDE_ID).getLastUpdated().toISOString(); } catch (e) {}
+  var out = { ok: true, markdown: res.getContentText(), updated_at: updated, fetched_at: new Date().toISOString(), url: url };
+  try { cachePutChunked_(INSTRUCTOR_GUIDE_KEY, JSON.stringify(out), 600); } catch (e) {}
+  return out;
+}
+
 // r200: the list cache has a generation number. Every drop bumps it, and a
 // list that was being BUILT while the drop happened is not allowed to put
 // itself in afterwards. Without this, somebody opening the board as a fix was
@@ -2040,6 +2078,7 @@ var READ_ONLY_ACTIONS = {
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, caseTouch: 1,
   trackerTicket: 1, mirrorSyncNow: 1,   // r202: neither touches a sheet
+  instructorGuide: 1,                   // r205: reads a Google Doc
   // nextAction DOES write one cell (its own cached answer), and it still
   // belongs here. The list projection leaves next_action_json out entirely, so
   // there is no way for a held cache to show a stale next action - and dropping
@@ -2157,7 +2196,8 @@ var PURE_READS_ = {
   nextAction: 1, setPrefs: 1,
   // r201: pure reads that were missing, and each dropped every extra.
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
-  tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, trackerTicket: 1, mirrorSyncNow: 1
+  tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, trackerTicket: 1, mirrorSyncNow: 1,
+  instructorGuide: 1
 };
 function bootExtra_(name, build) {
   var c = null;
@@ -8554,7 +8594,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r204 · 2026-09-30';
+var CODE_STAMP = 'r205 · 2026-09-30';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
