@@ -652,7 +652,10 @@ function doPost(e) {
     // history and logs; bodies don't). The GET versions below still work.
     if (action === 'reportsTicket') return jsonOut(reportsTicket_(user));
     if (action === 'tasksTicket') return jsonOut(tasksTicket_(user));
-    if (action === 'trackerTicket') return jsonOut(mintPortalTicket_(user, null));   // r202: reads from the Supabase mirror
+    // r202/r203: reads from the Supabase mirror. Twelve hours, because the page
+    // keeps it with the saved board so an open does not first wait on Apps
+    // Script; it only ever reads the board, the same thing the session can.
+    if (action === 'trackerTicket') return jsonOut(mintPortalTicket_(user, null, 12 * 60));
     if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
@@ -8541,7 +8544,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r202 · 2026-09-30';
+var CODE_STAMP = 'r203 · 2026-09-30';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12406,7 +12409,7 @@ function irpcsTicket_(user) {
  * in this file having got its wiring right. Pass null to require nothing
  * beyond the authenticated session the dispatcher has already established.
  */
-function mintPortalTicket_(user, requiredPerm) {
+function mintPortalTicket_(user, requiredPerm, minutes) {
   var secret = PropertiesService.getScriptProperties().getProperty('REPORTS_TICKET_SECRET');
   if (!secret) {
     // Configuration fault, not a permissions one, and worth saying so plainly:
@@ -12430,7 +12433,7 @@ function mintPortalTicket_(user, requiredPerm) {
     // permission later needs no change on this side.
     perms: perms,
     iat: now,
-    exp: now + REPORTS_TICKET_MINUTES * 60
+    exp: now + (minutes || REPORTS_TICKET_MINUTES) * 60
   };
 
   var payloadB64 = b64UrlEncode_(Utilities.newBlob(JSON.stringify(payload)).getBytes());

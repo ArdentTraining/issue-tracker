@@ -3732,7 +3732,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r202 · 2026-09-30";  // bump this with each round, it lands on every feedback report
+var BUILD = "r203 · 2026-09-30";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5464,10 +5464,28 @@ function loadIssues(isRetry) {
 function runBootstrap_(isRetry, forceFull) {
   showUpdating(true);
   var startedAt = Date.now();
+  // r203: when the switch is on, the board is drawn from the Supabase mirror
+  // (~0.3s) while this Apps Script refresh is still on its way, and the
+  // Apps Script answer still lands on top a few seconds later, exactly as the
+  // saved board has always been corrected. Never on a first sign-in (no board
+  // yet to build on) and never while viewing as someone else.
+  var bootSeq = state._bootSeq = (state._bootSeq || 0) + 1;
+  if (mirrorFirstOn_() && !state.viewAs && state._rowHash && state.issuesRaw && state.issuesRaw.length) {
+    mirrorBoardFirst_(bootSeq, startedAt);
+  }
   var payload = { action: "bootstrap" };
   var useDelta = !forceFull && !state.viewAs && state._rowHash && state.issuesRaw &&
     state.issuesRaw.length && (Date.now() - (state._lastFullAt || 0) < FULL_REFRESH_MS);
-  if (useDelta) payload.have = Object.keys(state._rowHash).map(function (k) { return state._rowHash[k]; });
+  // r203: what we told the server we hold, kept as it was when we asked. A
+  // row the server calls unchanged is rebuilt from THIS copy, not from
+  // whatever is on screen by the time it answers, so a mirror row that got
+  // there first can never outlive an Apps Script answer that says otherwise.
+  var sentRows = {}, sentHash = {};
+  if (useDelta) {
+    (state.issuesRaw || []).forEach(function (i) { sentRows[i.issue_id] = i; });
+    Object.keys(state._rowHash).forEach(function (k) { sentHash[k] = state._rowHash[k]; });
+    payload.have = Object.keys(sentHash).map(function (k) { return sentHash[k]; });
+  }
   return apiPost(payload).then(function (res) {
     if (res && res.ok === false && res.error === "unauthorized") {
       clearBootCache();   // apiPost's gate has already shown the login screen
@@ -5487,15 +5505,17 @@ function runBootstrap_(isRetry, forceFull) {
     // BEFORE anything on this page can change a row.
     var hashes = {}, changed = null;
     if (res.issues_delta) {
-      var have = {};
-      (state.issuesRaw || []).forEach(function (i) { have[i.issue_id] = i; });
       var fresh = {};
       changed = {};
       (res.issues || []).forEach(function (i) { fresh[i.issue_id] = i; changed[i.issue_id] = 1; hashes[i.issue_id] = rowHash(JSON.stringify(i)); });
       var list = [], missing = false;
       (res.issue_ids || []).forEach(function (id) {
         if (fresh[id]) list.push(fresh[id]);
-        else if (have[id]) { list.push(have[id]); hashes[id] = state._rowHash[id]; }
+        else if (sentRows[id] && sentHash[id]) {
+          list.push(sentRows[id]); hashes[id] = sentHash[id];
+          // The mirror had swapped in a different copy meanwhile; Apps Script's word wins.
+          if (state._rowHash && state._rowHash[id] !== sentHash[id]) changed[id] = 1;
+        }
         else missing = true;
       });
       // Something we cannot place: never guess, fetch the lot.
@@ -5539,6 +5559,7 @@ function runBootstrap_(isRetry, forceFull) {
     state._rowHash = hashes;
     res.row_hashes = hashes;
     prunePending_(startedAt);
+    state._bootApplied = bootSeq;
     applyBootstrap(res);
     saveBootCache(res);
     mirrorCheckSoon_();   // r202: the side-by-side week
@@ -5557,14 +5578,65 @@ function runBootstrap_(isRetry, forceFull) {
 // and a failure here is logged and forgotten.
 var MIRROR_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-mirror";
 var MIRROR_CHECK_EVERY_MS = 2 * 60 * 1000;
+// r203: the ticket is kept with the saved board (same per-person key family,
+// cleared on sign-out), so opening the tracker does not first wait ~2.5s on
+// Apps Script just to be allowed to read the mirror.
+function mirrorTicketKey_() { return BOOT_CACHE_PREFIX + "mt:" + ((state.realUser || state.user || {}).email || ""); }
 function mirrorTicket_() {
   var m = state._mirrorTicket;
-  if (m && m.exp * 1000 - Date.now() > 60000) return Promise.resolve(m.ticket);
+  if (!m) { try { m = JSON.parse(localGet(mirrorTicketKey_()) || "null"); } catch (e) { m = null; } }
+  if (m && m.exp * 1000 - Date.now() > 60000) { state._mirrorTicket = m; return Promise.resolve(m.ticket); }
   return apiPost({ action: "trackerTicket" }).then(function (r) {
     if (!r || !r.ok || !r.ticket) throw new Error((r && r.error) || "no ticket");
     state._mirrorTicket = { ticket: r.ticket, exp: r.expires_at };
+    localSet(mirrorTicketKey_(), JSON.stringify(state._mirrorTicket));
     return r.ticket;
   });
+}
+// The switch lives in Supabase (tracker.sync_state 'mirror_first'), so it can
+// be turned on or off without a deploy. Every mirror answer carries it; the
+// page remembers the last one it saw.
+function mirrorFirstOn_() {
+  if (state._mirrorFirst == null) state._mirrorFirst = localGet("ait_mirror_first") === "1";
+  return state._mirrorFirst;
+}
+function mirrorLearnFlag_(r) {
+  if (!r || r.mirror_first == null) return;
+  state._mirrorFirst = !!r.mirror_first;
+  localSet("ait_mirror_first", state._mirrorFirst ? "1" : "0");
+}
+function mirrorBoardFirst_(bootSeq, startedAt) {
+  var h = state._rowHash || {};
+  var have = Object.keys(h).map(function (k) { return h[k]; });
+  var t0 = Date.now();
+  mirrorCall_({ action: "board", have: have }).then(function (res) {
+    mirrorLearnFlag_(res);
+    // Apps Script got here first, or the switch has just been turned off:
+    // the mirror has nothing to add.
+    if (!res || !res.ok || !res.issues_delta || !state._mirrorFirst) { diagApi("mirror.board", t0, "skipped"); return; }
+    if ((state._bootApplied || 0) >= bootSeq) { diagApi("mirror.board", t0, "late"); return; }
+    var byId = {};
+    (state.issuesRaw || []).forEach(function (i) { byId[i.issue_id] = i; });
+    var fresh = {}, hashes = {}, changed = {};
+    (res.issues || []).forEach(function (i) { fresh[i.issue_id] = i; changed[i.issue_id] = 1; hashes[i.issue_id] = rowHash(JSON.stringify(i)); });
+    var list = [], missing = false;
+    (res.issue_ids || []).forEach(function (id) {
+      if (fresh[id]) list.push(fresh[id]);
+      else if (byId[id]) { list.push(byId[id]); hashes[id] = state._rowHash[id]; }
+      else missing = true;
+    });
+    if (missing) { diagApi("mirror.board", t0, "missing rows, left to Apps Script"); return; }
+    Object.keys(changed).forEach(function (id) {
+      if (state.naCache) delete state.naCache[id];
+      if (state._naTried) delete state._naTried[id];
+    });
+    state._rowHash = hashes;
+    prunePending_(startedAt);
+    applyBootstrap({ issues: list, row_hashes: hashes });
+    hideBoot();
+    state._freshMs = state._freshMs || Math.round(performance.now());
+    diagApi("mirror.board", t0, "applied " + Object.keys(changed).length + " changed");
+  }).catch(function (e) { diagApi("mirror.board", t0, "failed: " + e); });
 }
 function mirrorCall_(body) {
   return mirrorTicket_().then(function (t) {
@@ -5582,6 +5654,7 @@ function mirrorCheckSoon_() {
     var pairs = Object.keys(h).map(function (id) { return [id, h[id]]; });
     var t0 = Date.now();
     mirrorCall_({ action: "check", pairs: pairs, build: BUILD }).then(function (r) {
+      mirrorLearnFlag_(r);
       diagApi("mirror.check", t0, r && r.ok ? ("ok changed=" + r.changed + " missing=" + r.missing) : ("error: " + ((r && r.error) || "?")));
     }).catch(function (e) { diagApi("mirror.check", t0, "failed: " + e); });
   }, 1500);
