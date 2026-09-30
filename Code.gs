@@ -279,11 +279,15 @@ function ensureFeedbackHeaders_(sheet) {
 // suggestions: Sonnet is markedly better at the judgement calls (does this
 // really match a past fix? is this one issue or three?) for a few extra
 // seconds per call. Volume is small, so the cost difference is pennies.
-var ANTHROPIC_MODEL = 'claude-sonnet-5';
-var EXTRACTION_MODEL = 'claude-sonnet-5';
+// r204 (30 Sep 2026, Edd): up a generation. Sonnet 5.5 is the same price as
+// Sonnet 5; Opus 5.5 is cheaper than Opus 5 ($4/$20 against $5/$25 per million
+// tokens, cache reads half the price). Spot-checked on ten real past reports
+// against the old models before switching (see extractCompare below).
+var ANTHROPIC_MODEL = 'claude-sonnet-5-5';
+var EXTRACTION_MODEL = 'claude-sonnet-5-5';
 // Student-facing drafts use the strongest model: they carry an instructor's
 // name and voice, so quality beats cost (Edd, 8 Aug).
-var DRAFT_MODEL = 'claude-opus-5';
+var DRAFT_MODEL = 'claude-opus-5-5';
 
 // Deploys: pushing a change to Code.gs on main now auto-deploys the backend
 // via .github/workflows/deploy-backend.yml (GitHub Action -> deployBackend).
@@ -5814,8 +5818,8 @@ var SCAN_SHEET = 'Chat Scan';
 var SCAN_HEADERS = ['conversation_id', 'scanned_at', 'confidence', 'summary', 'category', 'lesson_code',
                     'student_name', 'student_contact', 'status', 'issue_id', 'reviewed_by', 'reviewed_at', 'verifier_note',
                     'kind', 'verdict', 'outcome', 'outcome_note'];
-var FINDER_MODEL = 'claude-sonnet-5';
-var VERIFIER_MODEL = 'claude-opus-5';
+var FINDER_MODEL = 'claude-sonnet-5-5';     // r204
+var VERIFIER_MODEL = 'claude-opus-5-5';     // r204
 
 // Running tally of AI usage inside one execution, so batch jobs (the backtest,
 // mainly) can report what they actually spent rather than guessing (r46).
@@ -7364,6 +7368,7 @@ function fillSubIssues_(fields) {
   return fields;
 }
 
+var EXTRACT_COMPARE_MODELS_ = { 'claude-sonnet-5': 1, 'claude-sonnet-5-5': 1, 'claude-opus-5-5': 1 };
 function extract_(data) {
   var rawText = data.raw_text || '';
   if (!rawText) return { ok: false, error: 'extract needs raw_text' };
@@ -7402,7 +7407,11 @@ function extract_(data) {
   // and says to raise max_tokens if a stronger model is ever used here. The
   // model was upgraded; this number was not. The priority check on the same
   // model already runs at 16000 after 4000 burned the lot thinking (9 Aug).
-  var call = anthropicCachedFetch_(EXTRACTION_MODEL, extractionStaticPrompt_(), rawText + '\n"""' + tail, 16000);
+  // r204: an admin can ask for the same read on another model, to compare an
+  // upgrade on real reports before trusting it. Whitelisted; nobody else can.
+  var model = EXTRACTION_MODEL;
+  if (data.compare_model && EXTRACT_COMPARE_MODELS_[data.compare_model] && data._user && permsOf_(data._user).users === true) model = data.compare_model;
+  var call = anthropicCachedFetch_(model, extractionStaticPrompt_(), rawText + '\n"""' + tail, 16000);
   if (!call.res) return { ok: false, error: 'Anthropic call failed: ' + (call.why || 'unknown') };
   var res = call.res;
 
@@ -7466,6 +7475,7 @@ function extract_(data) {
   // extraction can be looked at rather than guessed about.
   var u = parsed.usage || {};
   return { ok: true, fields: fields, diag: {
+    model: model,
     ms: Date.now() - t0,
     cache_read: Number(u.cache_read_input_tokens) || 0,
     cache_written: Number(u.cache_creation_input_tokens) || 0,
@@ -8544,7 +8554,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r203 · 2026-09-30';
+var CODE_STAMP = 'r204 · 2026-09-30';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -14155,7 +14165,10 @@ var SHIP_VOL_HEADERS = ['month', 'fetched_at', 'stripe_json', 'shipstation_json'
 // Sorting a chat is a small, closed question, so it goes to the small model.
 // If that model name is ever retired the call falls back to the finder model
 // rather than quietly tagging nothing.
-var SHIP_TAG_MODEL = 'claude-haiku-4-5';
+// r204: Haiku 4.5 is due to retire on or after 15 Oct 2026 with no small
+// successor listed yet, so the sort moves to Sonnet 5.5. Eight chats a batch,
+// once a night: pennies either way.
+var SHIP_TAG_MODEL = 'claude-sonnet-5-5';
 var SHIP_TAG_BATCH = 8;
 var SHIP_TAG_TEXT_MAX = 2000;
 var SHIP_BF_TICK_MS = 4.5 * 60 * 1000;

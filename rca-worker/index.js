@@ -17,7 +17,7 @@
 // ============================================================================
 
 const MAX_TOOL_ROUNDS = 8;
-const MODEL = "claude-sonnet-5";
+const MODEL = "claude-sonnet-5-5";   // r204: same price, newer model
 // r44's lesson from the tracker, relearned here on day one: sonnet-5 THINKS,
 // and the thinking spends from the same max_tokens pot. 3000 produced a
 // response that was all thought and no words. Budget for both.
