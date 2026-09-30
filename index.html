@@ -3757,7 +3757,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r205b · 2026-09-30";  // bump this with each round, it lands on every feedback report
+var BUILD = "r205c · 2026-09-30";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11601,9 +11601,12 @@ var IRPCS_MODELS = [
   { preset: "towing_over200",  label: "Power-driven vessel towing, tow over 200m",     rule: 24 },
   { preset: "pushing_ahead",   label: "Power-driven vessel pushing ahead or towing alongside", rule: 24 },
   { preset: "towed_vessel",    label: "Vessel being towed, tow over 200m",             rule: 24 },
+  { preset: "towed_vessel_under200", label: "Vessel being towed, tow 200m or less",   rule: 24 },
   { preset: "towed_partly_submerged", label: "Partly submerged object under tow",      rule: 24 },
   { preset: "fishing_gear_extending", label: "Fishing, other than trawling, gear extending over 150m", rule: 26 },
+  { preset: "fishing_gear_extending_port", label: "Fishing, other than trawling, gear extending over 150m to port", rule: 26 },
   { preset: "underwater_works", label: "Vessel engaged in underwater operations",      rule: 27 },
+  { preset: "underwater_works_anchored", label: "Vessel engaged in underwater operations, at anchor", rule: 27 },
   { preset: "diving",          label: "Vessel engaged in diving operations",           rule: 27 },
   { preset: "pilot_off_duty",  label: "Pilot vessel not on pilotage duty",             rule: 29 }
 ];
