@@ -3757,7 +3757,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r206 · 2026-09-30";  // bump this with each round, it lands on every feedback report
+var BUILD = "r206.1 · 2026-09-30";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4237,7 +4237,24 @@ function apiPost(payload) {
       }
     });
   }
-  return send().catch(function (e) {
+  // r206: the cause of this afternoon's sign-outs. Under load, Google's front
+  // end sometimes hands the script our POST with the body gone, so the script
+  // sees no action and no token and answers "unauthorized: no token sent" to a
+  // page that did send one. Nothing ran on the far side (no action arrived),
+  // so it is safe to send again, write or not, and it must never be read as
+  // the session ending.
+  function bodyLost(res) {
+    return res && res.ok === false && res.error === "unauthorized" && res.why === "no token sent" && !!payload.token;
+  }
+  function sendHard(tries) {
+    return send().then(function (res) {
+      if (!bodyLost(res)) return res;
+      diagApi(action + " (arrived without its body)", startedAt, "retrying");
+      if (tries >= 3) return { ok: false, error: "The tracker's server is very busy and dropped the request. Nothing was saved; try again in a minute.", why: "body lost", bodyLost: true };
+      return new Promise(function (ok) { setTimeout(ok, 1200 * (tries + 1)); }).then(function () { return sendHard(tries + 1); });
+    });
+  }
+  return sendHard(0).catch(function (e) {
     // One retry, and only for calls that just read. Retrying a write on a
     // response we could not read risks doing it twice, and a doubled issue or
     // a doubled update is worse than an error message.
@@ -4349,6 +4366,9 @@ function gateCheck(res) {
         .then(function (second) {
           gateRechecking = false;
           if (second && second.ok) return;   // a blip, not a logout - carry on
+          // The recheck can lose its body the same way (see apiPost). We sent a
+          // token, so the server not seeing one says nothing about the session.
+          if (second && second.why === "no token sent" && getToken()) return;
           // r206: keep the reason. The page's call log only holds its last few
           // calls, so the first refusal was being pushed out by the ones after
           // it, and nobody could say afterwards why a session had ended.
