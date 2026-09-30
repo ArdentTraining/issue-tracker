@@ -573,6 +573,7 @@ function doGet(e) {
     var action = p.action || '';
     CURRENT_ACTION_ = action;
     TOUCHED_IDS_ = {};
+    MIRROR_FULL_ = {};
     if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
     if (action === 'getInvite') return jsonOut(getInvite_(p.token));   // public: validate an invite link
     if (action === 'mirror') return jsonOut(mirror_(p));               // read-only, key-gated mirror for the local Cowork sync
@@ -609,6 +610,7 @@ function doPost(e) {
     var action = body.action || '';
     CURRENT_ACTION_ = action;
     TOUCHED_IDS_ = {};
+    MIRROR_FULL_ = {};
 
     // Public auth actions (no session yet).
     // Self-deploy: gated by its own DEPLOY_KEY (script property), not a user
@@ -650,6 +652,8 @@ function doPost(e) {
     // history and logs; bodies don't). The GET versions below still work.
     if (action === 'reportsTicket') return jsonOut(reportsTicket_(user));
     if (action === 'tasksTicket') return jsonOut(tasksTicket_(user));
+    if (action === 'trackerTicket') return jsonOut(mintPortalTicket_(user, null));   // r202: reads from the Supabase mirror
+    if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
@@ -1018,6 +1022,8 @@ function reqPerm_(action) {
     // user's own and the Edge Function scopes every read and write to the email
     // inside the ticket. Nothing here to hold a permission key over.
     case 'tasksTicket': return 'any';
+    case 'trackerTicket': return 'any';
+    case 'mirrorSyncNow': return 'users';
     // The IRPCS section. Both of these hand a credential to another system, so
     // both are gated here AND checked again where they are minted - the UI
     // hiding the rail item is cosmetic, this is the rule.
@@ -1876,6 +1882,101 @@ function cacheGetChunked_(key) {
   } catch (e) { return null; }
 }
 
+/* ============================================================================
+ * r202 (phase 2, step 1): the Supabase read mirror.
+ *
+ * Apps Script stays the record. After every write, the rows that request
+ * touched (TOUCHED_IDS_, the same set r185 uses to patch the cache) are pushed
+ * to the tracker-mirror Edge Function; every ten minutes mirrorFullSync
+ * reconciles the lot, which catches scheduled jobs and hand edits that never
+ * pass through a request. A failed push never fails the save: the full sync is
+ * the safety net, and the page keeps Apps Script as its source until the
+ * side-by-side week says the mirror can be trusted.
+ *
+ * Signed with the portal ticket secret as mirror@ardent-training.com carrying
+ * perms.mirror_sync, which the function accepts for sync and nothing else.
+ * ============================================================================ */
+var MIRROR_URL = 'https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-mirror';
+var MIRROR_PUSH_MAX = 12;
+var MIRROR_CHUNK = 120;
+var MIRROR_FULL_ = {};   // id -> getIssueFull_ result already read in this request
+
+function mirrorGetFull_(id) {
+  if (!MIRROR_FULL_[id]) MIRROR_FULL_[id] = getIssueFull_({ issue_id: id });
+  return MIRROR_FULL_[id];
+}
+function mirrorTicket_() {
+  var t = mintPortalTicket_({ email: 'mirror@ardent-training.com', name: 'Tracker mirror',
+    perms_json: JSON.stringify({ mirror_sync: true }) }, 'mirror_sync');
+  if (!t.ok) throw new Error('no mirror ticket: ' + t.error);
+  return t.ticket;
+}
+function mirrorCall_(body, ticket) {
+  var res = UrlFetchApp.fetch(MIRROR_URL, {
+    method: 'post', contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + (ticket || mirrorTicket_()) },
+    payload: JSON.stringify(body), muteHttpExceptions: true
+  });
+  var out = {};
+  try { out = JSON.parse(res.getContentText()); } catch (e) { out = { error: res.getContentText().slice(0, 200) }; }
+  if (res.getResponseCode() !== 200 || !out.ok) throw new Error('mirror ' + (body.op || body.action) + ': HTTP ' + res.getResponseCode() + ' ' + (out.error || ''));
+  return out;
+}
+// The full record minus the per-issue AI cache, blanks dropped, so a row read
+// by id and the same row read off the whole sheet come out the same.
+function mirrorFullOf_(obj) {
+  var o = {};
+  for (var k in obj) {
+    if (!Object.prototype.hasOwnProperty.call(obj, k) || k === 'next_action_json') continue;
+    var v = obj[k];
+    if (v === null || v === '' || v === undefined) continue;
+    o[k] = v;
+  }
+  return o;
+}
+function mirrorRow_(obj, ord) {
+  var listText = JSON.stringify(issueListRow_(obj));
+  var fullText = JSON.stringify(mirrorFullOf_(obj));
+  var r = { issue_id: String(obj.issue_id), list_row: listText, list_hash: rowHash_(listText),
+            full_row: fullText, full_hash: rowHash_(fullText) };
+  if (ord != null) r.ord = ord;
+  return r;
+}
+function mirrorPushTouched_() {
+  var ids = TOUCHED_IDS_ ? Object.keys(TOUCHED_IDS_) : [];
+  if (!ids.length || ids.length > MIRROR_PUSH_MAX) return;   // too many: the full sync has it
+  var rows = [], gone = [];
+  ids.forEach(function (id) {
+    delete MIRROR_FULL_[id];   // re-read AFTER the write, never a copy from before it
+    var got = mirrorGetFull_(id);
+    if (got && got.ok && got.issue) rows.push(mirrorRow_(got.issue, null));
+    else gone.push(id);
+  });
+  var ticket = mirrorTicket_();
+  if (rows.length) mirrorCall_({ action: 'sync', op: 'upsert', rows: rows }, ticket);
+  if (gone.length) mirrorCall_({ action: 'sync', op: 'delete', ids: gone }, ticket);
+}
+// Scheduled every ten minutes (ensureTriggers_), and on demand for admins.
+function mirrorFullSync() {
+  var t0 = Date.now(), byId = {}, items = [], ord = 0;
+  readIssueObjs_(function (obj) {
+    var r = mirrorRow_(obj, ++ord);
+    byId[r.issue_id] = r;
+    items.push([r.issue_id, r.list_hash, r.full_hash, r.ord]);
+  });
+  if (!items.length) return { ok: false, error: 'no issues read' };
+  var ticket = mirrorTicket_();
+  var m = mirrorCall_({ action: 'sync', op: 'manifest', items: items }, ticket);
+  var want = m.want || [];
+  for (var i = 0; i < want.length; i += MIRROR_CHUNK) {
+    var chunk = want.slice(i, i + MIRROR_CHUNK).map(function (id) { return byId[id]; }).filter(Boolean);
+    if (chunk.length) mirrorCall_({ action: 'sync', op: 'upsert', full: true, rows: chunk }, ticket);
+  }
+  var out = { ok: true, issues: items.length, upserted: want.length, removed: m.gone || 0, ms: Date.now() - t0 };
+  Logger.log('mirrorFullSync: ' + JSON.stringify(out));
+  return out;
+}
+
 // r200: the list cache has a generation number. Every drop bumps it, and a
 // list that was being BUILT while the drop happened is not allowed to put
 // itself in afterwards. Without this, somebody opening the board as a fix was
@@ -1931,6 +2032,7 @@ var READ_ONLY_ACTIONS = {
   // caseTouch writes the live-case sheet only (unread flag), never an issue row.
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, caseTouch: 1,
+  trackerTicket: 1, mirrorSyncNow: 1,   // r202: neither touches a sheet
   // nextAction DOES write one cell (its own cached answer), and it still
   // belongs here. The list projection leaves next_action_json out entirely, so
   // there is no way for a held cache to show a stale next action - and dropping
@@ -1970,6 +2072,7 @@ function maybeInvalidate_() {
   var action = CURRENT_ACTION_;
   maybeDropBootExtras_(action);
   if (READ_ONLY_ACTIONS[action]) return;
+  try { mirrorPushTouched_(); } catch (e) { console.warn('mirror push: ' + e); }   // r202
   if (PATCHABLE_ACTIONS[action] && TOUCHED_IDS_) {
     var ids = Object.keys(TOUCHED_IDS_);
     if (ids.length && ids.length <= PATCH_MAX_ROWS && patchIssueCache_(ids)) return;
@@ -1995,7 +2098,7 @@ function patchIssueCache_(ids) {
     for (var i = 0; i < list.length; i++) at[list[i].issue_id] = i;
     var gone = {};
     ids.forEach(function (id) {
-      var got = getIssueFull_({ issue_id: id });
+      var got = mirrorGetFull_(id);
       if (got && got.ok && got.issue) {
         var row = issueListRow_(got.issue);
         if (at[id] != null) list[at[id]] = row;
@@ -2047,7 +2150,7 @@ var PURE_READS_ = {
   nextAction: 1, setPrefs: 1,
   // r201: pure reads that were missing, and each dropped every extra.
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
-  tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1
+  tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, trackerTicket: 1, mirrorSyncNow: 1
 };
 function bootExtra_(name, build) {
   var c = null;
@@ -2073,20 +2176,9 @@ function maybeDropBootExtras_(action) {
   dropBootExtras_(Object.keys(BOOT_EXTRAS_));
 }
 
-// The list payload: cached projection, or built and cached.
-function getIssuesList_() {
-  var cached = cacheGetChunked_(ISSUE_CACHE_KEY);
-  if (cached) {
-    try {
-      var p = JSON.parse(cached);
-      p.from_cache = true;
-      return p;
-    } catch (e) {}
-  }
-  // Straight off the sheet into the projection: building 900 full objects
-  // and then 900 slim ones was double the work for no reason.
-  var gen200 = issueCacheGen_();
-  var out = [];
+// r202: every issue off the sheets, one object per row, in sheet order. Shared
+// by the board list and the Supabase mirror so both build rows identically.
+function readIssueObjs_(each) {
   ISSUE_SHEETS.forEach(function (name) {
     var sheet = sheetByName_(name);
     if (!sheet) return;
@@ -2107,9 +2199,26 @@ function getIssuesList_() {
       // back as one, and the front end's .trim() on it threw mid-render.
       if (obj.student_contact != null) obj.student_contact = String(obj.student_contact);
       if (obj.chatwoot_conversation_id != null) obj.chatwoot_conversation_id = String(obj.chatwoot_conversation_id);
-      out.push(issueListRow_(obj));
+      each(obj);
     }
   });
+}
+
+// The list payload: cached projection, or built and cached.
+function getIssuesList_() {
+  var cached = cacheGetChunked_(ISSUE_CACHE_KEY);
+  if (cached) {
+    try {
+      var p = JSON.parse(cached);
+      p.from_cache = true;
+      return p;
+    } catch (e) {}
+  }
+  // Straight off the sheet into the projection: building 900 full objects
+  // and then 900 slim ones was double the work for no reason.
+  var gen200 = issueCacheGen_();
+  var out = [];
+  readIssueObjs_(function (obj) { out.push(issueListRow_(obj)); });
   var nowIso = new Date().toISOString();
   var payload = { ok: true, generated_at: nowIso, built_at: nowIso, issues: out };
   // r200: only if nothing was saved while we were reading.
@@ -6519,6 +6628,7 @@ function ensureTriggers_() {
   var haveDevTargets = false; // r170
   var haveWaiting = false;    // r175
   var haveInbox = false;      // r186
+  var haveMirror = false;     // r202
   var haveShipTag = false, haveShipMonthly = false;   // r188
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
@@ -6534,6 +6644,7 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'devTargetSweep') haveDevTargets = true;
     if (t.getHandlerFunction() === 'waitingOnStudentSweep') haveWaiting = true;
     if (t.getHandlerFunction() === 'claudeInbox') haveInbox = true;
+    if (t.getHandlerFunction() === 'mirrorFullSync') haveMirror = true;
     if (t.getHandlerFunction() === 'shipTagNightly') haveShipTag = true;
     if (t.getHandlerFunction() === 'shipMonthlyPost') haveShipMonthly = true;
   });
@@ -6543,6 +6654,9 @@ function ensureTriggers_() {
   // the board about as fast as somebody typing it in; an empty inbox costs one
   // small fetch.
   if (!haveInbox) ScriptApp.newTrigger('claudeInbox').timeBased().everyMinutes(5).create();
+  // r202: reconcile the Supabase read mirror. Ten minutes, the same window the
+  // board cache has always allowed for writes that skip a request.
+  if (!haveMirror) ScriptApp.newTrigger('mirrorFullSync').timeBased().everyMinutes(10).create();
   // r188: sort the night's shipping chats before the 05:00 scan, and post last
   // month's shipping report at 09:00 on the 1st.
   if (!haveShipTag) ScriptApp.newTrigger('shipTagNightly').timeBased().everyDays(1).atHour(4).create();
@@ -6778,7 +6892,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1 };
+var RUNNABLE_JOBS_ = { prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -8427,7 +8541,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r201 · 2026-09-29';
+var CODE_STAMP = 'r202 · 2026-09-30';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

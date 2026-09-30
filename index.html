@@ -3732,7 +3732,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r201 · 2026-09-29";  // bump this with each round, it lands on every feedback report
+var BUILD = "r202 · 2026-09-30";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4298,7 +4298,7 @@ var RETRYABLE_READS = {
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1,
   getAssignees: 1, chatwootList: 1, chatScanList: 1, listVoiceGuides: 1, listContentSuggestions: 1,
-  listLiveCases: 1, chatBackSweepState: 1, resourcesList: 1
+  listLiveCases: 1, chatBackSweepState: 1, resourcesList: 1, trackerTicket: 1
 };
 // If the backend rejects the session, drop it and show the login screen -
 // but only after a SECOND OPINION (r121, Edd: "I can be halfway through
@@ -5541,10 +5541,50 @@ function runBootstrap_(isRetry, forceFull) {
     prunePending_(startedAt);
     applyBootstrap(res);
     saveBootCache(res);
+    mirrorCheckSoon_();   // r202: the side-by-side week
     openDeepLinkedIssue();
     openJustLogged();
     if (!state._myFeedbackLoaded) { state._myFeedbackLoaded = true; loadMyFeedback(); }
   }).catch(function (e) { showUpdating(false); console.error(e); });
+}
+
+// ---- the Supabase read mirror, side by side (r202) --------------------------
+// Phase 2, step 1. Apps Script is still where the board comes from. After each
+// refresh, the page quietly asks the mirror how far its copy is from what
+// Apps Script just said, and the mirror writes the answer down
+// (tracker.mirror_checks). A week of those is what decides whether the board
+// can be read from the mirror instead. Nothing here changes what anyone sees,
+// and a failure here is logged and forgotten.
+var MIRROR_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-mirror";
+var MIRROR_CHECK_EVERY_MS = 2 * 60 * 1000;
+function mirrorTicket_() {
+  var m = state._mirrorTicket;
+  if (m && m.exp * 1000 - Date.now() > 60000) return Promise.resolve(m.ticket);
+  return apiPost({ action: "trackerTicket" }).then(function (r) {
+    if (!r || !r.ok || !r.ticket) throw new Error((r && r.error) || "no ticket");
+    state._mirrorTicket = { ticket: r.ticket, exp: r.expires_at };
+    return r.ticket;
+  });
+}
+function mirrorCall_(body) {
+  return mirrorTicket_().then(function (t) {
+    return fetch(MIRROR_URL, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + t },
+      body: JSON.stringify(body) }).then(function (r) { return r.json(); });
+  });
+}
+function mirrorCheckSoon_() {
+  if (state.viewAs || !state._rowHash) return;
+  if (Date.now() - (state._mirrorCheckedAt || 0) < MIRROR_CHECK_EVERY_MS) return;
+  state._mirrorCheckedAt = Date.now();
+  // Let the refresh settle on screen first; this is housekeeping.
+  setTimeout(function () {
+    var h = state._rowHash || {};
+    var pairs = Object.keys(h).map(function (id) { return [id, h[id]]; });
+    var t0 = Date.now();
+    mirrorCall_({ action: "check", pairs: pairs, build: BUILD }).then(function (r) {
+      diagApi("mirror.check", t0, r && r.ok ? ("ok changed=" + r.changed + " missing=" + r.missing) : ("error: " + ((r && r.error) || "?")));
+    }).catch(function (e) { diagApi("mirror.check", t0, "failed: " + e); });
+  }, 1500);
 }
 
 // ---- saves in the air (r201) ----------------------------------------------
