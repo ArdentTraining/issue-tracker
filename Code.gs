@@ -2051,7 +2051,7 @@ function mirrorTicket_() {
 function mirrorCall_(body, ticket) {
   var res = UrlFetchApp.fetch(MIRROR_URL, {
     method: 'post', contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + (ticket || mirrorTicket_()) },
+    headers: { Authorization: 'Bearer ' + (ticket || mirrorTicket_()), 'x-region': 'eu-west-2' },   // r208.1: run next to the database
     payload: JSON.stringify(body), muteHttpExceptions: true
   });
   var out = {};
@@ -2148,7 +2148,10 @@ function storeTicket_() {
 function storeCall_(body) {
   var res = UrlFetchApp.fetch(STORE_URL, {
     method: 'post', contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + storeTicket_() },
+    // The database is in London (eu-west-2). Apps Script calls from the US, so
+    // without this the function runs in us-east-1 and every query crosses the
+    // Atlantic: ~2s a call in the first self-test. Pinned, it is one crossing.
+    headers: { Authorization: 'Bearer ' + storeTicket_(), 'x-region': 'eu-west-2' },
     payload: JSON.stringify(body), muteHttpExceptions: true
   });
   var out = {};
@@ -9109,7 +9112,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r208 · 2026-10-01';   // redeployed after the version-cap clear-out
+var CODE_STAMP = 'r208.1 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
