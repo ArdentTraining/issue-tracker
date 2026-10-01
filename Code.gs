@@ -2084,8 +2084,15 @@ function mirrorRow_(obj, ord) {
   return r;
 }
 function mirrorPushTouched_() {
+  var jobs = mirrorPushJobs_();
+  jobs.forEach(function (j) { j.done(UrlFetchApp.fetch(j.request.url, j.request)); });
+}
+// r208.5: the push as requests, so the end of a request can send it together
+// with the store's shadow batch (UrlFetchApp.fetchAll) instead of one after
+// the other.
+function mirrorPushJobs_() {
   var ids = TOUCHED_IDS_ ? Object.keys(TOUCHED_IDS_) : [];
-  if (!ids.length || ids.length > MIRROR_PUSH_MAX) return;   // too many: the full sync has it
+  if (!ids.length || ids.length > MIRROR_PUSH_MAX) return [];   // too many: the full sync has it
   var rows = [], gone = [];
   ids.forEach(function (id) {
     delete MIRROR_FULL_[id];   // re-read AFTER the write, never a copy from before it
@@ -2093,9 +2100,17 @@ function mirrorPushTouched_() {
     if (got && got.ok && got.issue) rows.push(mirrorRow_(got.issue, null));
     else gone.push(id);
   });
-  var ticket = mirrorTicket_();
-  if (rows.length) mirrorCall_({ action: 'sync', op: 'upsert', rows: rows }, ticket);
-  if (gone.length) mirrorCall_({ action: 'sync', op: 'delete', ids: gone }, ticket);
+  var ticket = mirrorTicket_(), jobs = [];
+  var job = function (body) {
+    return {
+      request: { url: MIRROR_URL, method: 'post', contentType: 'application/json', headers: { Authorization: 'Bearer ' + ticket, 'x-region': 'eu-west-2' },
+        payload: JSON.stringify(body), muteHttpExceptions: true },
+      done: function (res) { if (res.getResponseCode() !== 200) console.warn('mirror ' + body.op + ': HTTP ' + res.getResponseCode() + ' ' + String(res.getContentText()).slice(0, 120)); }
+    };
+  };
+  if (rows.length) jobs.push(job({ action: 'sync', op: 'upsert', rows: rows }));
+  if (gone.length) jobs.push(job({ action: 'sync', op: 'delete', ids: gone }));
+  return jobs;
 }
 // Scheduled every ten minutes (ensureTriggers_), and on demand for admins.
 function mirrorFullSync() {
@@ -2394,6 +2409,25 @@ function storeShadowMoved_(tab, id, before) {
     storeShadow_({ op: 'move', tbl: 'issues', key: String(id), tab: tab });
     storeShadowRow_({ sheet: sheet, rowNum: r }, before);
   } catch (e) { storeShadowNote_('move', String(e)); }
+}
+function storeShadowJob_() {
+  if (!STORE_JOURNAL_.length) return null;
+  var ops = STORE_JOURNAL_;
+  STORE_JOURNAL_ = [];
+  return {
+    request: { url: STORE_URL, method: 'post', contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + storeTicket_(), 'x-region': 'eu-west-2' },
+      payload: JSON.stringify({ op: 'batch', ops: ops, by: 'shadow' }), muteHttpExceptions: true },
+    done: function (res) {
+      var out = {};
+      try { out = JSON.parse(res.getContentText()); } catch (e) {}
+      if (res.getResponseCode() !== 200) { storeShadowNote_('flush', 'HTTP ' + res.getResponseCode() + ' ' + (out.error || '')); return; }
+      var bad = (out.results || []).filter(function (x) { return !x.ok || x.forced; });
+      if (bad.length) storeShadowNote_('batch', bad.slice(0, 4).map(function (x) {
+        return x.op + ' ' + x.key + (x.forced ? ' forced over ' + (x.conflicts || []).join('/') : ' failed: ' + (x.error || ''));
+      }).join('; '));
+    }
+  };
 }
 function storeShadowFlush_() {
   if (!STORE_JOURNAL_.length) return;
@@ -2814,9 +2848,17 @@ function maybeInvalidate_() {
   if (!CURRENT_ACTION_) return;
   var action = CURRENT_ACTION_;
   maybeDropBootExtras_(action);
-  try { storeShadowFlush_(); } catch (e) { console.warn('store shadow: ' + e); }   // r208.3
+  // r208.5: the store's shadow batch and the mirror push go out together.
+  var endJobs = [];
+  try { var sj = storeShadowJob_(); if (sj) endJobs.push(sj); } catch (e) { console.warn('store shadow: ' + e); }
+  if (!READ_ONLY_ACTIONS[action]) { try { endJobs = endJobs.concat(mirrorPushJobs_()); } catch (e) { console.warn('mirror push: ' + e); } }   // r202
+  if (endJobs.length) {
+    try {
+      var endRes = UrlFetchApp.fetchAll(endJobs.map(function (j) { return j.request; }));
+      endRes.forEach(function (r, i) { try { endJobs[i].done(r); } catch (e) {} });
+    } catch (e) { console.warn('end-of-request sends: ' + e); }
+  }
   if (READ_ONLY_ACTIONS[action]) return;
-  try { mirrorPushTouched_(); } catch (e) { console.warn('mirror push: ' + e); }   // r202
   if (PATCHABLE_ACTIONS[action] && TOUCHED_IDS_) {
     var ids = Object.keys(TOUCHED_IDS_);
     if (ids.length && ids.length <= PATCH_MAX_ROWS && patchIssueCache_(ids)) return;
@@ -9519,7 +9561,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r208.4 · 2026-10-01';
+var CODE_STAMP = 'r208.5 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
