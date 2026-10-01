@@ -2722,6 +2722,33 @@ function slackHistory_(data) {
   return { ok: true, channel: channel, total: (out.messages || []).length, bot_or_system: msgs };
 }
 
+// r208.8: a dry run of Supabase mode's readers against the live data, without
+// switching anything: the whole issue list and a sample of single issues read
+// both ways, compared field by field, and timed.
+function storeDryRun_() {
+  var t0 = Date.now(), sheetList = getIssues_().issues, tSheet = Date.now() - t0;
+  var t1 = Date.now(), storeRows = storeListIssues_(), tStore = Date.now() - t1;
+  var mine = {};
+  storeRows.forEach(function (r) { var o = storeTidyObj_(storeRowToObj_(r, null), true); mine[o.issue_id] = o; });
+  var diffs = [], fieldsSeen = {}, missing = 0;
+  sheetList.forEach(function (a) {
+    var b = mine[a.issue_id];
+    if (!b) { missing++; return; }
+    Object.keys(a).concat(Object.keys(b)).forEach(function (k) {
+      if (issueCellKey_(a[k] == null ? '' : a[k]) !== issueCellKey_(b[k] == null ? '' : b[k])) {
+        fieldsSeen[k] = (fieldsSeen[k] || 0) + 1;
+        if (diffs.length < 8) diffs.push(a.issue_id.slice(0, 8) + ' ' + k + ': ' + String(a[k]).slice(0, 40) + ' | ' + String(b[k]).slice(0, 40));
+      }
+    });
+  });
+  var sample = sheetList.slice(-5).map(function (a) {
+    var s0 = Date.now(), f = storeFindIssue_(a.issue_id), ms = Date.now() - s0;
+    return a.issue_id.slice(0, 8) + (f ? ' found ' : ' MISSING ') + ms + 'ms';
+  });
+  return { ok: true, sheet_rows: sheetList.length, store_rows: storeRows.length, missing_in_store: missing,
+    fields_differing: fieldsSeen, examples: diffs, list_ms: { sheet: tSheet, store: tStore }, single_reads: sample };
+}
+
 function storeAdmin_(data) {
   var what = String((data && data.what) || '');
   if (what === 'selftest') return storeSelfTest();
@@ -2739,6 +2766,7 @@ function storeAdmin_(data) {
   if (what === 'compare') return storeShadowCompare();
   if (what === 'go_live') return storeGoLive_();
   if (what === 'go_back') return storeGoBack_();
+  if (what === 'dryrun') return storeDryRun_();
   return { ok: false, error: 'storeAdmin: what = selftest | import | mode | shadow_on | shadow_off | compare' };
 }
 
@@ -9583,7 +9611,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r208.7 · 2026-10-01';
+var CODE_STAMP = 'r208.8 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
