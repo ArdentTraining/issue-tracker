@@ -4001,9 +4001,12 @@ function addUpdate_(data) {
   // there (Edd, 19 Aug 2026). Read it before this update touches the record.
   var priorityBefore = String(rec.priority || '').toLowerCase();
 
-  var who = (data._user && data._user.name) || data.instructor_name || 'someone';
+  var who = (data._user && data._user.name) || data.instructor_name || (data._system ? 'Tracker' : 'someone');
   var stamp = new Date().toISOString().slice(0, 10);
-  var note = data.raw_text || data.summary || '';
+  // r207: the automatic notes (already told, email found) pass `text`, which
+  // was never read, so they landed on the trail as a blank line from
+  // "someone". They say what they found now.
+  var note = data.raw_text || data.summary || data.text || '';
   // The day-3 check-in on an unconfirmed fix (Edd, 22 Aug 2026). It records
   // itself on the trail so everyone can see the student was asked, but it must
   // NOT touch updated_at: that field drives both the follow-up card and the
@@ -4463,9 +4466,10 @@ function markDevFixed_(data) {
     return { ok: false, error: 'The fix did not stick - the issue reads "' + (stF || 'missing') + '" straight after saving. Try again, and tell Edd if it happens twice.' };
   }
   slackTidyIfClosed_(rec);
-  if (data.notify_student) {
-    try { sendNotifyStudentSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
-  }
+  // r207 (Edd, FB-0455): the "Notify student?" tick is gone. Whether the
+  // student needs telling, and whether they already know, is decided by
+  // tellStudentsSweep for every way an issue can close, not by one box in one
+  // drawer that the list's own Mark fixed button never saw.
   maybeDevQueueAlert_();
   return { ok: true };
 }
@@ -6760,6 +6764,7 @@ function ensureTriggers_() {
   var haveWaiting = false;    // r175
   var haveInbox = false;      // r186
   var haveMirror = false;     // r202
+  var haveTell = false;       // r207
   var haveShipTag = false, haveShipMonthly = false;   // r188
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
@@ -6776,6 +6781,7 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'waitingOnStudentSweep') haveWaiting = true;
     if (t.getHandlerFunction() === 'claudeInbox') haveInbox = true;
     if (t.getHandlerFunction() === 'mirrorFullSync') haveMirror = true;
+    if (t.getHandlerFunction() === 'tellStudentsSweep') haveTell = true;
     if (t.getHandlerFunction() === 'shipTagNightly') haveShipTag = true;
     if (t.getHandlerFunction() === 'shipMonthlyPost') haveShipMonthly = true;
   });
@@ -6788,6 +6794,10 @@ function ensureTriggers_() {
   // r202: reconcile the Supabase read mirror. Ten minutes, the same window the
   // board cache has always allowed for writes that skip a request.
   if (!haveMirror) ScriptApp.newTrigger('mirrorFullSync').timeBased().everyMinutes(10).create();
+  // r207: does anyone need to tell a student about something that has just
+  // been closed? Ten minutes, so the ask reaches #instructing-daily while the
+  // fix is still news.
+  if (!haveTell) ScriptApp.newTrigger('tellStudentsSweep').timeBased().everyMinutes(10).create();
   // r188: sort the night's shipping chats before the 05:00 scan, and post last
   // month's shipping report at 09:00 on the 1st.
   if (!haveShipTag) ScriptApp.newTrigger('shipTagNightly').timeBased().everyDays(1).atHour(4).create();
@@ -7023,7 +7033,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1 };
+var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -7149,13 +7159,173 @@ function studentToldSweep() {
     if (done >= STUDENT_TOLD_SWEEP_MAX) return;
     var st = String(i.status || '').toLowerCase();
     if (st !== 'resolved' && st !== 'dev_fixed') return;
-    if (String(i.notified_students) === 'true' || String(i.student_sorted) === 'true') return;
+    if (String(i.notified_students) === 'true' || String(i.notified_students) === 'not_needed' || String(i.student_sorted) === 'true') return;
     if (!String(i.chatwoot_conversation_id || '').trim() && !String(i.chatwoot_contact_id || '').trim()) return;
     if (!(String(i.student_contact || '').trim() || String(i.student_name || '').trim())) return;
     done++;
     try { var r = studentToldCheck_({ issue_id: i.issue_id }); if (r && r.told) told++; } catch (e) {}
   });
   Logger.log('studentToldSweep: checked ' + done + ', told ' + told);
+}
+
+// ---- r207: who needs telling, and has anyone told them (Edd, FB-0455) ------
+//
+// "There is a lot of waiting 'student told' here. Is there a way to get bug
+// tracker to already check if the student has been told? And double check if
+// they really need to be told? And ... are these definitely getting posted to
+// instructing daily too?"
+//
+// They were not. The Slack ask only went out from one tick box in the
+// developer's drawer, so a fix marked from a list row (how the course team
+// works) or an issue an admin resolved never asked anyone, and nothing had
+// been posted since at least 20 September. Meanwhile the lane took anything
+// resolved with a student's name on it: a "not a bug, his access had
+// expired", a student already walked through it in the chat, a report about
+// an instructor email, and one student's seven typos as seven separate jobs.
+//
+// Now every closed issue comes through here once, whatever closed it:
+//   1. internal reports, parcels and anything with no student drop out;
+//   2. one AI read of the issue, its trail and the Chatwoot chat decides
+//      whether there is anything to tell, and whether they already know;
+//   3. what is left is asked for in #instructing-daily, ONE message per
+//      student however many of their reports were fixed.
+// notified_students carries the answer: 'true' told, 'asked' the instructors
+// have been asked on Slack (still in the lane until somebody tells them),
+// 'not_needed' nothing to tell, with the reason on the trail.
+//
+// Only issues closed after this first ran are looked at, so switching it on
+// never floods the channel with a backlog.
+var TELL_SWEEP_MAX = 8;
+function tellStudentsSweep() {
+  var props = PropertiesService.getScriptProperties();
+  var since = props.getProperty('TELL_SWEEP_SINCE');
+  if (!since) { props.setProperty('TELL_SWEEP_SINCE', new Date().toISOString()); return { ok: true, started: true }; }
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: true, busy: true };
+  var decided = { told: 0, not_needed: 0, asked: 0 };
+  try {
+    var appUrl = getAppUrl_();
+    var todo = getIssues_().issues.filter(function (i) {
+      var st = String(i.status || '').toLowerCase();
+      if (st !== 'resolved' && st !== 'dev_fixed') return false;
+      var n = String(i.notified_students || '').toLowerCase();
+      if (n === 'true' || n === 'asked' || n === 'not_needed') return false;
+      if (String(i.student_sorted) === 'true') return false;
+      if (!(String(i.student_contact || '').trim() || String(i.student_name || '').trim())) return false;
+      var closed = String(i.resolved_at || i.dev_fixed_at || '');
+      return closed && closed >= since;
+    }).slice(0, TELL_SWEEP_MAX);
+    var ask = {};
+    todo.forEach(function (i) {
+      var v = tellDecision_(i);
+      if (!v) return;                                   // could not decide: try again next run
+      if (v.told) {
+        tellMark_(i.issue_id, 'true', 'Student already knows, found in the chat' + (v.quote ? ': "' + String(v.quote).slice(0, 200) + '"' : '') + ' (checked automatically)');
+        decided.told++;
+      } else if (!v.needs) {
+        tellMark_(i.issue_id, 'not_needed', 'No need to tell the student: ' + String(v.reason || 'nothing for them to hear').slice(0, 240) + ' (checked automatically)');
+        decided.not_needed++;
+      } else {
+        var key = String(i.student_contact || i.student_name || '').trim().toLowerCase();
+        (ask[key] = ask[key] || []).push(i);
+      }
+    });
+    Object.keys(ask).forEach(function (key) {
+      var list = ask[key];
+      if (!sendTellStudentSlack_(list, appUrl)) return;   // not posted: left blank, tried again next run
+      list.forEach(function (i) {
+        tellMark_(i.issue_id, 'asked', 'Asked the instructors in #instructing-daily to tell ' + (String(i.student_name || '').trim() || 'the student') + (list.length > 1 ? ' (one message covering ' + list.length + ' fixes)' : '') + '.');
+        decided.asked++;
+      });
+    });
+  } finally { lock.releaseLock(); }
+  Logger.log('tellStudentsSweep: ' + JSON.stringify(decided));
+  return { ok: true, decided: decided };
+}
+
+function tellMark_(issueId, value, note) {
+  try {
+    var found = findRow_(issueId);
+    if (!found) return;
+    writeIssueCell_(found, 'notified_students', value);
+    addUpdate_({ issue_id: issueId, text: note, keep_status: true, _system: true });
+  } catch (e) {}
+}
+
+/** One read of everything we know about a closed issue: does the student need
+ *  telling, and do they already know? Returns {needs, told, reason, quote},
+ *  or null if it could not be decided (the next run tries again). */
+function tellDecision_(i) {
+  if (String(i.audience || '').toLowerCase() === 'internal') return { needs: false, told: false, reason: 'an internal report, not about a student' };
+  if (String(i.category || '').toLowerCase() === 'shipping') return { needs: false, told: false, reason: 'a parcel that has arrived, which the student knows' };
+  var trail = [];
+  try {
+    var t = readTrail_(i);
+    trail = (t.reps || []).slice(-8).map(function (r) {
+      return '[' + String(r.date || '').slice(0, 16) + '] ' + (r.kind || 'report') + ' by ' + (r.instructor_name || '?') + ': ' + String(r.raw_text || r.summary || '').replace(/\s+/g, ' ').slice(0, 400);
+    });
+  } catch (e) {}
+  var chat = [];
+  var convId = String(i.chatwoot_conversation_id || '').trim();
+  if (!convId && String(i.chatwoot_contact_id || '').trim()) {
+    try { convId = conversationForContact_(String(i.chatwoot_contact_id).trim(), i.submitted_at); } catch (e) { convId = ''; }
+  }
+  if (convId) {
+    try {
+      var th = chatwootTurns_(convId);
+      (th.turns || []).forEach(function (tt) {
+        if (!tt.body) return;
+        if (i.submitted_at && tt.at && tt.at < String(i.submitted_at)) return;
+        chat.push('[' + tt.at + '] ' + (tt.who === 'agent' ? 'US' : 'STUDENT') + ': ' + String(tt.body).slice(0, 500));
+      });
+    } catch (e) {}
+  }
+  var prompt = 'A sailing training company logs faults and course errors that students report. This one has just been closed. ' +
+    'Decide two things.\n\n' +
+    'NEEDS: is there something the student should now be told? Usually yes when a real fault or course error they reported has been fixed. ' +
+    'NO when: it turned out not to be a fault (their access had expired, they were clicking the wrong button, a setting on their side); ' +
+    'it was explained or sorted with them in the chat already; it was closed because they stopped replying after being given what they needed; ' +
+    'or the report is not really about a student at all (an instructor or staff problem).\n' +
+    'TOLD: does the student already know? YES if the chat shows us telling them it is fixed or explaining what to do, or them saying it now works. ' +
+    'Do not infer it from politeness or from us being in touch about something else. If in doubt, no.\n\n' +
+    'THE ISSUE\nSummary: ' + String(i.summary || '').slice(0, 300) +
+    '\nCategory: ' + (i.category || '') + '\nStudent: ' + (i.student_name || '(no name)') +
+    '\nHow it was closed: ' + String(i.resolution_note || '').slice(0, 400) +
+    (i.dev_notes ? '\nFixer\'s notes: ' + String(i.dev_notes).slice(0, 300) : '') +
+    '\n\nTHE TRAIL (latest last)\n' + (trail.join('\n') || '(none)') +
+    '\n\nTHE CHAT WITH THE STUDENT SINCE THE REPORT\n' + (chat.join('\n---\n').slice(0, 6000) || '(no chat linked)') +
+    '\n\nReturn ONLY JSON: {"needs": true|false, "told": true|false, "reason": "<one short plain sentence>", "quote": "<the few words from the chat that show they know, or empty>"}';
+  var out = null;
+  try { out = anthropicJson_(ANTHROPIC_MODEL, prompt, 300); } catch (e) { out = null; }
+  if (!out || typeof out.needs === 'undefined') return null;
+  return { needs: !!out.needs, told: !!out.told, reason: out.reason || '', quote: out.quote || '' };
+}
+
+/** One message per student, however many of their reports have been fixed.
+ *  Returns true when it was posted (or Slack is switched off on purpose). */
+function sendTellStudentSlack_(list, appUrl) {
+  if (!slackOn_('notify_student')) return true;
+  var url = slackUrlFor_('notify_student');
+  if (!url) return false;
+  var first = list[0];
+  var student = String(first.student_name || '').trim();
+  var contact = String(first.student_contact || '').trim();
+  var lines = [':white_check_mark: *Fixed - tell ' + (student || 'the student') + (contact ? ' (' + contact + ')' : '') + '*' +
+    (list.length > 1 ? ' - ' + list.length + ' fixes, one message' : '')];
+  list.slice(0, 8).forEach(function (i) {
+    var notes = String(i.dev_notes || '').trim();
+    lines.push((list.length > 1 ? '- ' : '') + truncateForSlack_(slackSummary_(i), 160) +
+      (i.lesson_code ? ' (' + i.lesson_code + ')' : '') +
+      (notes && !/^(na|n\/a|none|-)\b/i.test(notes) && list.length === 1 ? '\n_' + truncateForSlack_(notes, 160) + '_' : '') +
+      ' <' + issueLink_(i, appUrl) + '|open>');
+  });
+  if (list.length > 8) lines.push('...and ' + (list.length - 8) + ' more on the tracker.');
+  lines.push('Mark it told on the Actions tab once they know.');
+  try {
+    var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ text: lines.join('\n') }) });
+    return res.getResponseCode() >= 200 && res.getResponseCode() < 300;
+  } catch (e) { return false; }
 }
 
 // r146, one-off but re-runnable: issues logged before the conversation id was
@@ -8685,7 +8855,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r206.1 · 2026-09-30';
+var CODE_STAMP = 'r207 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

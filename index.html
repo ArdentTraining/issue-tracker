@@ -3757,7 +3757,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r206.1 · 2026-09-30";  // bump this with each round, it lands on every feedback report
+var BUILD = "r207 · 2026-10-01";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5950,7 +5950,13 @@ function myActionItems() {
     // so there's nobody to notify (resolved_at at/before logging = chat-resolved).
     var chatResolved = st === "resolved" && i.resolved_at &&
       (new Date(i.resolved_at) - new Date(i.submitted_at)) < 2 * 60 * 1000;
+    // r207 (Edd, FB-0455): "double check if they really need to be told". The
+    // tracker now decides that itself when an issue closes (tellStudentsSweep):
+    // 'not_needed' means nothing to tell, and an internal report never had a
+    // student to tell in the first place.
     if ((st === "dev_fixed" || st === "resolved") && !isTrue(i.notified_students) && !chatResolved &&
+        String(i.notified_students || "").toLowerCase() !== "not_needed" &&
+        String(i.audience || "").toLowerCase() !== "internal" &&
         !isTrue(i.student_sorted) && (i.student_contact || i.student_name)) out.notify.push(i);
     if (st === "resolved_tbc" && (now - new Date(i.updated_at || i.submitted_at)) > ACTIONS_TBC_FOLLOWUP_DAYS * day) out.followups.push(i);
     // Parcels due a chase. The date is the whole point of a shipping issue, so
@@ -5994,8 +6000,19 @@ function updateActionsTabCount() {
   var t = $("tabActions");
   if (!t || t.style.display === "none") return;
   var a = myActionItems();
-  var n = a.questions.length + a.verify.length + a.notify.length + a.followups.length;
+  var n = a.questions.length + a.verify.length + notifyGroups(a.notify).length + a.followups.length;
   t.textContent = n ? "Actions (" + n + ")" : "Actions";
+}
+// r207 (FB-0455): one job per STUDENT, not per fix. Paul Flint's seven typo
+// reports were seven "tell the student" rows for what is one message.
+function notifyGroups(list) {
+  var by = {}, order = [];
+  (list || []).forEach(function (i) {
+    var key = String(i.student_contact || i.student_name || i.issue_id).trim().toLowerCase();
+    if (!by[key]) { by[key] = []; order.push(key); }
+    by[key].push(i);
+  });
+  return order.map(function (k) { return { lead: by[k][0], items: by[k] }; });
 }
 function actionCardTop(i) {
   return '<div style="margin-bottom:4px;">' + priBadge(i.priority) + " " + statusBadge(i.status, i) +
@@ -6405,7 +6422,12 @@ function actionRows() {
         act: "A reply was drafted here but nothing was logged. Log it, or leave it." };
     }))
     .concat((a.verify || []).map(function (i) { return { i: i, kind: "verify", word: "Fixed", colour: "var(--low)", act: "Check and resolve" }; }))
-    .concat(a.notify.map(function (i) { return { i: i, kind: "notify", word: "Fixed", colour: "var(--low)", act: "Tell the student" }; }))
+    .concat(notifyGroups(a.notify).map(function (g) {
+      var name = String(g.lead.student_name || "").trim().split(" ")[0] || "the student";
+      var asked = g.items.some(function (x) { return String(x.notified_students || "").toLowerCase() === "asked"; });
+      var act = g.items.length > 1 ? "Tell " + name + " about " + g.items.length + " fixes, in one message" : "Tell the student";
+      return { i: g.lead, group: g.items, kind: "notify", word: "Fixed", colour: "var(--low)", act: act + (asked ? " (asked in #instructing-daily)" : "") };
+    }))
     .concat(a.followups.map(function (i) {
       // Edd's flow (22 Aug 2026): fix given -> resolved TBC -> ONE nudge to the
       // student at day 3 -> resolves itself at day 7 total. The nudge is
@@ -6488,7 +6510,7 @@ function renderActions() {
     else if (r.kind === "adminq") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetailQa(\'' + id + '\')">Answer</button>';
     else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" title="You have checked it yourself and it works: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
-    else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + id + '\')">Student told</button>' +
+    else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + esc((r.group || [i]).map(function (x) { return x.issue_id; }).join(",")) + '\')">Student told</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'draftEmailFor(\'' + id + '\', \'fixed\')">Draft email</button>' +
       // FB-0333 (Edd): "check the chat history to see if the student has been
       // informed." Reads what we actually sent them after the fix; only a
@@ -6520,6 +6542,7 @@ function renderActions() {
     if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
     if ((r.kind === "question" || r.kind === "adminq") && i.dev_query) sub.push('"' + String(i.dev_query).slice(0, 60) + '"');
     if (r.kind === "longopen") sub.push(Math.floor((Date.now() - new Date(i.submitted_at)) / 864e5) + " days open");
+    if (r.kind === "notify" && r.group && r.group.length > 1) sub.push("+" + (r.group.length - 1) + " more for the same student");
     // r65: the one badge that was sitting inside the row title joins the rest of
     // the facts on the sub-line. The coloured action word is the only tag an
     // Actions row needs, and it is already the loudest thing on it.
@@ -7880,11 +7903,15 @@ function actionsAnswer(id) {
     loadIssues();
   }).catch(function (e) { toastErr("That", e); });
 }
-function actionsMarkNotified(id) {
-  toast("Marked as told.");
-  optimistic(id, { notified_students: "true" },
-    { action: "updateIssue", issue_id: id, notified_students: true },
-    { failMsg: "That tick didn't save" });
+function actionsMarkNotified(ids) {
+  // r207: one press covers every fix for that student.
+  var list = String(ids || "").split(",").filter(Boolean);
+  toast(list.length > 1 ? "Marked as told, all " + list.length + "." : "Marked as told.");
+  list.forEach(function (id) {
+    optimistic(id, { notified_students: "true" },
+      { action: "updateIssue", issue_id: id, notified_students: true },
+      { failMsg: "That tick didn't save" });
+  });
 }
 // "I've told the student we're still on it" - logs the reassurance as an
 // update, which bumps updated_at and drops the card off the long-open list.
@@ -12459,6 +12486,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 49, date: "2026-10-01", text: "Telling students about fixes looks after itself: when something closes, the tracker checks whether the student needs telling or already knows, and if they need telling it asks in #instructing-daily. One job per student, however many of their reports were fixed." },
   { n: 48, date: "2026-09-30", text: "Fewer surprise sign-outs: a new sign-in now drops the device you have not used for longest, rather than one you use every day, and devices unused for a fortnight are tidied away." },
   { n: 47, date: "2026-09-30", who: ["manage"], text: "The instructor notes are now inside the tracker: Help, then For instructors. Always the latest copy of the doc, with a search box." },
   { n: 46, date: "2026-09-30", who: ["dev", "course"], text: "Opening a fix or marking it fixed no longer throws the list back to the top." },
@@ -18707,11 +18735,10 @@ function openDevDetail(id) {
       '</div>' +
       '<div class="row"><button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
   } else {
-    // "Notify student?" books a Slack ask to the instructors when it's ticked;
-    // unticked, marking fixed is quiet (no more "verify every fix" pings).
-    html += '<label style="display:block;margin-bottom:8px;font-size:13px;color:var(--text);">' +
-      '<input type="checkbox" id="notifyStudentTick" style="width:auto;margin-right:6px;vertical-align:-1px;"' + (state._copyContacts ? ' checked' : '') + '>' +
-      'Notify student? (asks the instructors on Slack to pass the good news on)</label>' +
+    // r207 (FB-0455): no "Notify student?" tick any more. When it closes, the
+    // tracker works out whether the student needs telling and, if so, asks the
+    // instructors in #instructing-daily itself.
+    html += '<div class="small muted" style="margin-bottom:8px;">If the student needs to hear about it, the instructors are asked automatically.</div>' +
       '<div class="row">' +
       '<button class="primary" id="markFixedBtn" data-issue="' + esc(issue.issue_id) + '" onclick="devMarkFixed(\'' + esc(issue.issue_id) + '\')">Mark fixed</button>' +
       // FB-0292 (Edd): admins triaging the dev queue can park an item without
