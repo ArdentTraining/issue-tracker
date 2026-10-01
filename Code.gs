@@ -7722,11 +7722,11 @@ function migrateAudience() {
       var aud = String(values[r][idx.audience] || '').toLowerCase();
       if (cat === 'internal') {
         var sec = String(values[r][idx.section] || '').toLowerCase();
-        sheet.getRange(r + 1, idx.category + 1).setValue('tech_issue');
-        sheet.getRange(r + 1, idx.audience + 1).setValue(internalSections[sec] ? 'internal' : 'student');
+        // r208.6: by id through the helpers, so the store sees it too.
+        setIssueFields_(values[r][idx.issue_id], { category: 'tech_issue', audience: internalSections[sec] ? 'internal' : 'student' });
         moved++;
       } else if (!aud) {
-        sheet.getRange(r + 1, idx.audience + 1).setValue('student');
+        setIssueFields_(values[r][idx.issue_id], { audience: 'student' });
         stamped++;
       }
     }
@@ -9561,7 +9561,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r208.5 · 2026-10-01';
+var CODE_STAMP = 'r208.6 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12216,6 +12216,9 @@ function importLegacyBatch_(p) {
 
 
 function importHistoricalIssues() {
+  // r208.6: a bulk write straight onto the tabs. Only while the Sheet is the
+  // record; in Supabase mode it would land in the copy and be overwritten.
+  if (storeLive_()) return { ok: false, error: 'importHistoricalIssues writes the Sheet directly; switch back (go_back) before running it.' };
   // Guard: refuse to run if imported rows already exist in either sheet.
   var already = 0;
   ISSUE_SHEETS.forEach(function (name) {
@@ -12431,7 +12434,7 @@ function patchImportedLessonRefs() {
     if (!m) continue;
     var ref = m[1].replace(/\s+/g, ' ').trim();
     if (/^(EN|DS|YM|FT)[\s.]*\d/i.test(ref)) ref = ref.toUpperCase();
-    sheet.getRange(r + 1, idx['lesson'] + 1).setValue(ref);
+    setIssueFields_(row[idx['issue_id']], { lesson: ref });   // r208.6
     patched++;
   }
   Logger.log('patchImportedLessonRefs: filled the lesson column on ' + patched + ' imported row(s).');
@@ -16090,7 +16093,7 @@ function courseRepair_(data) {
       if (!details || details.length <= stem.length || norm(details).indexOf(stem.slice(0, Math.min(60, stem.length))) !== 0) { skipped++; continue; }
       if (details.length > 1500) details = details.slice(0, 1500).replace(/\s+\S*$/, '') + '…';
       changed.push({ id: values[r][0], from: sum.slice(-40), to: details.slice(-60) });
-      if (!dry) sheet.getRange(r + 1, col.summary + 1).setValue(details);
+      if (!dry) setIssueFields_(values[r][0], { summary: details });   // r208.6
     }
     return { ok: true, op: 'summaries', dry: dry, changed: changed.length, skipped: skipped, sample: changed.slice(0, 5) };
   }
@@ -16104,7 +16107,7 @@ function courseRepair_(data) {
       missing--;
       if (String(values[r2][col.media_kind] || '') === want[id]) continue;
       changed.push(id);
-      if (!dry) sheet.getRange(r2 + 1, col.media_kind + 1).setValue(want[id]);
+      if (!dry) setIssueFields_(id, { media_kind: want[id] });   // r208.6
     }
     return { ok: true, op: 'parts', dry: dry, changed: changed.length, not_found: missing };
   }
