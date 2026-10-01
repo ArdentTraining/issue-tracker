@@ -218,6 +218,32 @@ function slackUrlFor_(kind) {
 }
 // Every Slack message in the app goes through here. One choke point, so what
 // the channel carries is decided in the map above and nowhere else.
+// r207.1 (Edd, 1 Oct: "I didn't see any fixed messages on slack"). Asks each
+// route's webhook whether it is alive WITHOUT posting anything: a body with no
+// text is refused by a live webhook as "no_text" (HTTP 400) and by a dead or
+// revoked one with something else. Never returns the URLs themselves.
+function slackProbe_() {
+  var out = {};
+  var props = PropertiesService.getScriptProperties();
+  var seen = {};
+  Object.keys(SLACK_NOTICES).forEach(function (kind) {
+    var n = SLACK_NOTICES[kind];
+    if (!n.on) return;
+    var prop = n.to || 'SLACK_WEBHOOK_URL';
+    var url = slackUrlFor_(kind);
+    var fellBack = !!(n.to && !props.getProperty(n.to));
+    if (!url) { out[kind] = { prop: prop, code: 0, body: 'no webhook set' }; return; }
+    // Which webhook, as a short fingerprint, so two routes sharing one show it.
+    var print = '';
+    try { print = bytesToHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(url))).slice(0, 8); } catch (e) {}
+    try {
+      var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true, payload: '{}' });
+      out[kind] = { prop: prop, fell_back: fellBack, webhook: print, code: res.getResponseCode(), body: String(res.getContentText()).slice(0, 80) };
+    } catch (e) { out[kind] = { prop: prop, webhook: print, code: -1, body: String(e).slice(0, 80) }; }
+  });
+  return { ok: true, routes: out };
+}
+
 function slackPost_(kind, text) {
   if (!slackOn_(kind)) return;
   var url = slackUrlFor_(kind);
@@ -665,7 +691,8 @@ function doPost(e) {
     // Script; it only ever reads the board, the same thing the session can.
     if (action === 'trackerTicket') return jsonOut(mintPortalTicket_(user, null, 12 * 60));
     if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
-    if (action === 'instructorGuide') return jsonOut(instructorGuide_(body));          // r205: the For Instructors doc, live
+    if (action === 'instructorGuide') return jsonOut(instructorGuide_(body));
+    if (action === 'slackProbe') return jsonOut(slackProbe_());                          // r207.1: is each Slack route alive, without posting          // r205: the For Instructors doc, live
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
@@ -1081,6 +1108,7 @@ function reqPerm_(action) {
     // instructor Gmail, ShipStation...), so it is for instructors and admins
     // ('manage') and never for the outside developers ('dev' only).
     case 'instructorGuide': return 'manage';
+    case 'slackProbe': return 'users';
     // The IRPCS section. Both of these hand a credential to another system, so
     // both are gated here AND checked again where they are minted - the UI
     // hiding the rail item is cosmetic, this is the rule.
@@ -7196,6 +7224,7 @@ function studentToldSweep() {
 // Only issues closed after this first ran are looked at, so switching it on
 // never floods the channel with a backlog.
 var TELL_SWEEP_MAX = 8;
+var TELL_SLACK_SAID_ = '';
 function tellStudentsSweep() {
   var props = PropertiesService.getScriptProperties();
   var since = props.getProperty('TELL_SWEEP_SINCE');
@@ -7234,7 +7263,7 @@ function tellStudentsSweep() {
       var list = ask[key];
       if (!sendTellStudentSlack_(list, appUrl)) return;   // not posted: left blank, tried again next run
       list.forEach(function (i) {
-        tellMark_(i.issue_id, 'asked', 'Asked the instructors in #instructing-daily to tell ' + (String(i.student_name || '').trim() || 'the student') + (list.length > 1 ? ' (one message covering ' + list.length + ' fixes)' : '') + '.');
+        tellMark_(i.issue_id, 'asked', 'Asked the instructors in #instructing-daily to tell ' + (String(i.student_name || '').trim() || 'the student') + (list.length > 1 ? ' (one message covering ' + list.length + ' fixes)' : '') + '. Slack said: ' + (TELL_SLACK_SAID_ || 'nothing'));
         decided.asked++;
       });
     });
@@ -7324,6 +7353,7 @@ function sendTellStudentSlack_(list, appUrl) {
   try {
     var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
       payload: JSON.stringify({ text: lines.join('\n') }) });
+    TELL_SLACK_SAID_ = res.getResponseCode() + ' ' + String(res.getContentText()).slice(0, 40);
     return res.getResponseCode() >= 200 && res.getResponseCode() < 300;
   } catch (e) { return false; }
 }
@@ -8855,7 +8885,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r207 · 2026-10-01';
+var CODE_STAMP = 'r207.1 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
