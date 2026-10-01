@@ -1861,6 +1861,10 @@ function mirror_(p) {
 
 function getIssues_() {
   var all = [];
+  if (storeLive_()) {   // r208.4
+    storeListIssues_().forEach(function (r) { all.push(storeTidyObj_(storeRowToObj_(r, null), true)); });
+    return { ok: true, issues: all };
+  }
   ISSUE_SHEETS.forEach(function (name) {
     var sheet = sheetByName_(name);
     if (!sheet) return;
@@ -2445,7 +2449,10 @@ function storeShadowCompare() {
           return k + ': ' + Object.keys(f).join(', ');
         } catch (e) { return k + ': ?'; }
       });
-      if (storeMode_() === 'shadow' && (missing.length || changed.length || extra.length)) {
+      if (tbl === 'issues' && storeLive_()) {
+        // r208.4: the store is the record now, so it is the Sheet copy that is put right.
+        if (missing.length || changed.length || extra.length) res.sheet_put_right = storeSheetCatchUp_();
+      } else if ((storeMode_() === 'shadow' || storeLive_()) && (missing.length || changed.length || extra.length)) {
         var fix = missing.concat(changed).map(function (k) { var r = recOf[k]; return { op: 'put', tbl: tbl, key: k, tab: r.tab, data: JSON.stringify(r.data) }; })
           .concat(extra.map(function (k) { return { op: 'delete', tbl: tbl, key: k }; }));
         var fixed = 0;
@@ -2466,7 +2473,7 @@ function storeShadowCompare() {
   return out;
 }
 // Only does anything while shadowing, so the trigger can sit there harmlessly.
-function storeShadowCompareNightly() { if (storeMode_() === 'shadow') storeShadowCompare(); }
+function storeShadowCompareNightly() { var m = storeMode_(); if (m === 'shadow' || m === 'supabase') storeShadowCompare(); }
 function storeSetMode_(mode) {
   storeCall_({ op: 'set_mode', mode: mode });
   PropertiesService.getScriptProperties().setProperty('STORE_MODE', mode);
@@ -2481,6 +2488,184 @@ function storeShadowOn_() {
   return { ok: true, mode: 'shadow', import: imp.tables.map(function (t) { return t.table + ' ' + t.rows + (t.match ? ' match' : ' MISMATCH'); }) };
 }
 
+/* ---- r208.4: Supabase mode (issues) ----------------------------------------
+ * STORE_MODE 'supabase': the store is the record for issues. The helpers read
+ * from it and save to it first, with the same rule as the r200 Sheet write
+ * (only the fields this request changed; if someone else changed the same
+ * field meanwhile, mergeIssueRow_ decides and we try again). Each save is then
+ * copied into the Sheet by issue id, so the Sheet stays a current copy people
+ * can look at, and going back is just a switch. Feedback, users and
+ * instructors stay on the Sheet for now.
+ *
+ * go_live only from shadow, and only when the comparison is level; go_back
+ * first makes the Sheet match the store, then returns to shadow.
+ * ------------------------------------------------------------------------- */
+function storeLive_() { try { return storeMode_() === 'supabase'; } catch (e) { return false; } }
+// A store record shaped like a Sheet row: every column present, blanks as `blank`.
+function storeRowToObj_(row, blank) {
+  var d = storeDec_((row && row.data) || {}), o = {};
+  HEADERS.forEach(function (h) { o[h] = (h in d) ? d[h] : blank; });
+  for (var k in d) if (!(k in o)) o[k] = d[k];
+  return o;
+}
+// As the Sheet readers do. getIssues_ never turned numbers to text (only the
+// list and single-issue readers did), so it asks for the dates and tracking only.
+function storeTidyObj_(obj, datesOnly) {
+  if (obj.chase_at) obj.chase_at = dayStr_(obj.chase_at);
+  if (obj.tracking_number) obj.tracking_number = normaliseTracking_(obj.tracking_number);
+  if (datesOnly) return obj;
+  if (obj.student_contact != null && obj.student_contact !== '') obj.student_contact = String(obj.student_contact);
+  if (obj.chatwoot_conversation_id != null && obj.chatwoot_conversation_id !== '') obj.chatwoot_conversation_id = String(obj.chatwoot_conversation_id);
+  return obj;
+}
+function storeListIssues_() {
+  var out = storeCall_({ op: 'list', tbl: 'issues' });
+  if (!out.ok) throw new Error('store list: ' + (out.error || 'failed'));
+  return out.rows || [];
+}
+function storeFindIssue_(id) {
+  var out = storeCall_({ op: 'get', tbl: 'issues', key: String(id) });
+  if (!out.ok || !out.row) return null;
+  var obj = storeRowToObj_(out.row, '');
+  touchIssue_(id);
+  var orig = {};
+  for (var k in obj) orig[k] = obj[k];
+  return { store: true, sheetName: out.row.tab, sheet: null, rowNum: 0, record: obj, original: orig, version: out.row.version };
+}
+function storeDiff_(from, to) {
+  var set = {}, base = {}, n = 0;
+  for (var c = 0; c < HEADERS.length; c++) {
+    if (issueCellKey_(from[c]) === issueCellKey_(to[c])) continue;
+    set[HEADERS[c]] = storeEncVal_(to[c]); base[HEADERS[c]] = storeEncVal_(from[c]); n++;
+  }
+  return n ? { set: set, base: base } : null;
+}
+// Save this request's changes to the store, then copy the result to the Sheet.
+function storeWriteRow_(found, rec) {
+  var id = String((found.original && found.original.issue_id) || (found.record && found.record.issue_id) || '');
+  var orig = recordToRow_(found.original || {}), want = recordToRow_(rec || found.record);
+  var d = storeDiff_(orig, want), final = null;
+  if (!d) return { ok: true, row: want };
+  for (var attempt = 0; attempt < 4 && !final; attempt++) {
+    var res = storeCall_({ op: 'patch', tbl: 'issues', key: id, set: JSON.stringify(d.set), base: JSON.stringify(d.base) });
+    if (res.ok) { final = res.row; break; }
+    if (res.http === 404 || res.error === 'gone') return { ok: false, error: 'That issue was merged or deleted a moment ago, so nothing was saved. Refresh and try again.' };
+    if (!res.conflict) return { ok: false, error: 'Could not save: ' + (res.error || 'store error') };
+    // Someone else saved this issue meanwhile: the r200 merge, then again.
+    var fresh = recordToRow_(storeRowToObj_(res.row, ''));
+    var merged = mergeIssueRow_(fresh, orig, want);
+    d = storeDiff_(fresh, merged);
+    if (!d) { final = res.row; break; }
+  }
+  if (!final) return { ok: false, error: 'Could not save: somebody else kept saving this issue at the same moment. Try again.' };
+  var now = storeRowToObj_(final, '');
+  found.original = now; found.sheetName = final.tab || found.sheetName; found.version = final.version;
+  storeSheetCopy_(id, found.sheetName, now);
+  touchIssue_(id);
+  return { ok: true, row: recordToRow_(now) };
+}
+// The Sheet copy: this issue's row, by id, made to match. Never fails a save;
+// a miss is noted and the nightly comparison puts the Sheet right.
+function storeSheetFind_(id) {
+  for (var s = 0; s < ISSUE_SHEETS.length; s++) {
+    var sheet = sheetByName_(ISSUE_SHEETS[s]);
+    if (!sheet) continue;
+    var hit = null;
+    try { hit = sheet.createTextFinder(String(id)).matchEntireCell(true).findNext(); } catch (e) {}
+    if (hit && hit.getColumn() === 1) return { sheet: sheet, sheetName: ISSUE_SHEETS[s], rowNum: hit.getRow() };
+  }
+  return null;
+}
+function storeSheetCopy_(id, tab, obj) {
+  try {
+    var at = storeSheetFind_(id), row = recordToRow_(obj);
+    if (at && at.sheetName === tab) { at.sheet.getRange(at.rowNum, 1, 1, HEADERS.length).setValues([row]); return; }
+    if (at) at.sheet.deleteRow(at.rowNum);
+    var target = sheetByName_(tab);
+    if (target) target.appendRow(row);
+  } catch (e) { storeShadowNote_('sheet copy', id + ': ' + e); }
+}
+function storeSheetCopyGone_(id) {
+  try { var at = storeSheetFind_(id); if (at) at.sheet.deleteRow(at.rowNum); }
+  catch (e) { storeShadowNote_('sheet copy', id + ' (remove): ' + e); }
+}
+// A new issue row, from addIssue_ or a split.
+function appendIssueRow_(sheet, tab, issue) {
+  if (storeLive_()) {
+    var obj = {};
+    HEADERS.forEach(function (h) { obj[h] = issue[h] == null ? '' : issue[h]; });
+    var res = storeCall_({ op: 'insert', tbl: 'issues', key: String(issue.issue_id), tab: tab, data: JSON.stringify(storeEnc_(obj)) });
+    if (!res.ok) throw new Error('Could not save the new issue: ' + (res.error || 'store error'));
+    try { sheet.appendRow(recordToRow_(issue)); } catch (e) { storeShadowNote_('sheet copy', issue.issue_id + ' (add): ' + e); }
+    touchIssue_(issue.issue_id);
+    return;
+  }
+  sheet.appendRow(recordToRow_(issue));
+  storeShadowAppended_(sheet, tab, issue.issue_id);
+}
+// Category change: the issue moves tab.
+function storeMoveIssue_(found, record, targetName) {
+  var w = storeWriteRow_(found, record);
+  if (!w.ok) return w;
+  var res = storeCall_({ op: 'move', tbl: 'issues', key: String(record.issue_id || found.original.issue_id), tab: targetName });
+  if (!res.ok) return { ok: false, error: 'Could not move the issue: ' + (res.error || 'store error') };
+  found.sheetName = targetName;
+  storeSheetCopy_(String(record.issue_id || found.original.issue_id), targetName, storeRowToObj_(res.row, ''));
+  return { ok: true };
+}
+// r208.4: a few fields on one issue, by id, through the helpers (the
+// scheduled jobs that used to set cells on the Sheet directly).
+function setIssueFields_(id, fields) {
+  var f = findRow_(String(id));
+  if (!f) return false;
+  for (var k in fields) f.record[k] = fields[k];
+  return writeIssueRow_(f, f.record).ok;
+}
+// In Supabase mode the comparison runs the other way for issues: the store is
+// the record, so the Sheet copy is the one put right.
+function storeSheetCatchUp_() {
+  var fixed = 0, rows = storeListIssues_(), want = {};
+  rows.forEach(function (r) { want[r.key] = r; });
+  var have = {};
+  ISSUE_SHEETS.forEach(function (name) {
+    var sheet = sheetByName_(name);
+    if (!sheet) return;
+    var values = sheet.getDataRange().getValues();
+    for (var r = values.length - 1; r >= 1; r--) {
+      var id = String(values[r][0] || '');
+      if (!id) continue;
+      var row = want[id];
+      if (!row) { sheet.deleteRow(r + 1); fixed++; continue; }
+      have[id] = 1;
+      var target = recordToRow_(storeRowToObj_(row, ''));
+      var same = row.tab === name;
+      if (same) for (var c = 0; c < HEADERS.length; c++) if (issueCellKey_(values[r][c]) !== issueCellKey_(target[c])) { same = false; break; }
+      if (!same) { storeSheetCopy_(id, row.tab, storeRowToObj_(row, '')); fixed++; }
+    }
+  });
+  rows.forEach(function (r) { if (!have[r.key]) { storeSheetCopy_(r.key, r.tab, storeRowToObj_(r, '')); fixed++; } });
+  return fixed;
+}
+function storeGoLive_() {
+  if (storeMode_() !== 'shadow') return { ok: false, error: 'go_live only from shadow mode (now ' + storeMode_() + ')' };
+  storeShadowCompare();                 // puts anything out of step right
+  var check = storeShadowCompare();     // and this one must be level
+  var iss = (check.tables || []).filter(function (t) { return t.table === 'issues'; })[0] || {};
+  if (!iss.level) return { ok: false, error: 'issues not level after the comparison, so not switching', check: check };
+  PropertiesService.getScriptProperties().setProperty('STORE_MODE', 'supabase');
+  CacheService.getScriptCache().remove('ait_store_mode');
+  try { invalidateIssueCache_(); } catch (e) {}
+  return { ok: true, mode: 'supabase', issues: iss.rows };
+}
+function storeGoBack_() {
+  if (storeMode_() !== 'supabase') return { ok: false, error: 'not in supabase mode (now ' + storeMode_() + ')' };
+  var fixed = storeSheetCatchUp_();     // the Sheet takes every last save first
+  PropertiesService.getScriptProperties().setProperty('STORE_MODE', 'shadow');
+  CacheService.getScriptCache().remove('ait_store_mode');
+  try { invalidateIssueCache_(); } catch (e) {}
+  return { ok: true, mode: 'shadow', sheet_rows_put_right: fixed };
+}
+
 function storeAdmin_(data) {
   var what = String((data && data.what) || '');
   if (what === 'selftest') return storeSelfTest();
@@ -2491,8 +2676,13 @@ function storeAdmin_(data) {
     return { ok: true, store_mode: m.mode, script_mode: storeMode_(), shadow_log: log };
   }
   if (what === 'shadow_on') return storeShadowOn_();
-  if (what === 'shadow_off') { storeSetMode_('sheet'); return { ok: true, mode: 'sheet' }; }
+  if (what === 'shadow_off') {
+    if (storeLive_()) return { ok: false, error: 'in Supabase mode: go_back first' };
+    storeSetMode_('sheet'); return { ok: true, mode: 'sheet' };
+  }
   if (what === 'compare') return storeShadowCompare();
+  if (what === 'go_live') return storeGoLive_();
+  if (what === 'go_back') return storeGoBack_();
   return { ok: false, error: 'storeAdmin: what = selftest | import | mode | shadow_on | shadow_off | compare' };
 }
 
@@ -2734,6 +2924,10 @@ function maybeDropBootExtras_(action) {
 // r202: every issue off the sheets, one object per row, in sheet order. Shared
 // by the board list and the Supabase mirror so both build rows identically.
 function readIssueObjs_(each) {
+  if (storeLive_()) {   // r208.4: blanks left out, as below
+    storeListIssues_().forEach(function (r) { each(storeTidyObj_(storeDec_(r.data || {}))); });
+    return;
+  }
   ISSUE_SHEETS.forEach(function (name) {
     var sheet = sheetByName_(name);
     if (!sheet) return;
@@ -2786,6 +2980,13 @@ function getIssuesList_() {
 function getIssueFull_(data) {
   var id = String((data && (data.issue_id || data.id)) || '');
   if (!id) return { ok: false, error: 'need an issue_id' };
+  if (storeLive_()) {   // r208.4
+    var got = storeCall_({ op: 'get', tbl: 'issues', key: id });
+    if (!got.ok || !got.row) return { ok: false, error: 'not found' };
+    var full = storeRowToObj_(got.row, null), only = {};
+    HEADERS.forEach(function (h) { only[h] = full[h]; });
+    return { ok: true, issue: storeTidyObj_(only) };
+  }
   // Every call to the Sheets service costs, and this runs the moment a pane
   // opens, so it is kept to two: find the row, read the row. The column names
   // come from HEADERS rather than a third read of row 1 - the sheet order IS
@@ -3319,8 +3520,7 @@ function addIssue_(data) {
   }
   var noteError = '';   // FB-0357: a Chatwoot note that did not arrive is said out loud
   var sheet = sheetByName_(targetSheetName_(category));
-  sheet.appendRow(recordToRow_(issue));
-  storeShadowAppended_(sheet, targetSheetName_(category), issue.issue_id);   // r208.3
+  appendIssueRow_(sheet, targetSheetName_(category), issue);   // r208.4 (store first in Supabase mode)
   touchIssue_(issue.issue_id);   // r185: a new row, patched into the cached list
   if (fastTrackRequested) { try { sendFastTrackRequestSlack_(issue, data.app_url || getAppUrl_()); } catch (e) {} }
 
@@ -3971,6 +4171,7 @@ function aiMatchIssue_(data, category) {
 
 // Find a row by issue_id across both issue sheets.
 function findRow_(id) {
+  if (storeLive_()) return storeFindIssue_(id);   // r208.4
   for (var s = 0; s < ISSUE_SHEETS.length; s++) {
     var sheet = sheetByName_(ISSUE_SHEETS[s]);
     if (!sheet) continue;
@@ -4021,7 +4222,7 @@ function relocateIssue_(found) {
   } catch (e) {}
   var names = [found.sheetName].concat(ISSUE_SHEETS.filter(function (n) { return n !== found.sheetName; }));
   for (var s = 0; s < names.length; s++) {
-    var sh = names[s] === found.sheetName ? found.sheet : sheetByName_(names[s]);
+    var sh = (names[s] === found.sheetName && found.sheet) ? found.sheet : sheetByName_(names[s]);
     if (!sh) continue;
     var last = sh.getLastRow();
     if (last < 2) continue;
@@ -4081,6 +4282,7 @@ function mergeIssueRow_(freshRow, origRow, wantRow) {
 // Write this request's changes to the issue. Returns { ok } or { ok:false,
 // error } when the issue has gone (merged or deleted while we were working).
 function writeIssueRow_(found, rec) {
+  if (found && found.store) return storeWriteRow_(found, rec);   // r208.4
   var want = recordToRow_(rec || found.record);
   var loc = relocateIssue_(found);
   if (!loc) return { ok: false, error: 'That issue was merged or deleted a moment ago, so nothing was saved. Refresh and try again.' };
@@ -4100,6 +4302,13 @@ function writeIssueRow_(found, rec) {
 function writeIssueCell_(found, key, value) {
   var col = HEADERS.indexOf(key);
   if (col < 0) return { ok: false, error: 'no column ' + key };
+  if (found && found.store) {   // r208.4: just this one field
+    var one = {};
+    for (var k0 in found.original) one[k0] = found.original[k0];
+    one[key] = value;
+    var w0 = storeWriteRow_(found, one);
+    return w0.ok ? { ok: true } : w0;
+  }
   var loc = relocateIssue_(found);
   if (!loc) return { ok: false, error: 'issue gone' };
   var shadowBefore = storeShadowing_() ? loc.sheet.getRange(loc.rowNum, 1, 1, HEADERS.length).getValues()[0] : null;
@@ -4111,6 +4320,14 @@ function writeIssueCell_(found, key, value) {
 }
 // Delete the row that holds THIS issue, wherever it has moved to.
 function deleteIssueRow_(found) {
+  if (found && found.store) {   // r208.4
+    var gid = String(found.original.issue_id || found.record.issue_id);
+    var del = storeCall_({ op: 'delete', tbl: 'issues', key: gid });
+    if (!del.ok) return false;
+    storeSheetCopyGone_(gid);
+    touchIssue_(gid);
+    return true;
+  }
   var loc = relocateIssue_(found);
   if (!loc) return false;
   var goneId = storeShadowing_() ? String(loc.sheet.getRange(loc.rowNum, 1).getValue()) : '';
@@ -4224,6 +4441,9 @@ function updateIssue_(data) {
     // Same tab: rewrite the row in place (r200: by id, only our fields).
     var wU = writeIssueRow_(found, record);
     if (!wU.ok) return wU;
+  } else if (found.store) {
+    var mvU = storeMoveIssue_(found, record, targetName);   // r208.4
+    if (!mvU.ok) return mvU;
   } else {
     // Category changed: move the row to the other tab. r200: find it by id
     // first - deleting by a remembered row number deleted whichever issue had
@@ -4891,8 +5111,14 @@ function markDevFixed_(data) {
   if (!wr200.ok) return wr200;
   // And read it back. "Marked fixed" on screen is now a fact about the sheet,
   // not a hope about it.
-  var locF = relocateIssue_(found);
-  var stF = locF ? String(locF.sheet.getRange(locF.rowNum, HEADERS.indexOf('status') + 1).getValue()).toLowerCase() : '';
+  var stF;
+  if (found.store) {   // r208.4: read back from the record itself
+    var backF = storeCall_({ op: 'get', tbl: 'issues', key: String(found.original.issue_id) });
+    stF = backF.ok && backF.row ? String((backF.row.data || {}).status || '').toLowerCase() : '';
+  } else {
+    var locF = relocateIssue_(found);
+    stF = locF ? String(locF.sheet.getRange(locF.rowNum, HEADERS.indexOf('status') + 1).getValue()).toLowerCase() : '';
+  }
   if (stF !== 'resolved') {
     return { ok: false, error: 'The fix did not stick - the issue reads "' + (stF || 'missing') + '" straight after saving. Try again, and tell Edd if it happens twice.' };
   }
@@ -5744,10 +5970,11 @@ function chaseShipping() {
     var when = dayStr_(values[r][idx.chase_at]);
     if (!when || when > today) continue;
     var st = String(values[r][idx.status] || '').toLowerCase();
-    if (st === 'resolved' || st === 'past' || st === 'parked') { sheet.getRange(r + 1, idx.chase_at + 1).setValue(''); continue; }
+    // r208.4: by id through the helpers, so the store sees it too.
+    if (st === 'resolved' || st === 'past' || st === 'parked') { setIssueFields_(values[r][idx.issue_id], { chase_at: '' }); continue; }
     var rec = {}; HEADERS.forEach(function (h) { rec[h] = idx[h] != null ? values[r][idx[h]] : ''; });
     due.push(rec);
-    sheet.getRange(r + 1, idx.chase_at + 1).setValue('');
+    setIssueFields_(values[r][idx.issue_id], { chase_at: '' });
   }
   if (!due.length) return;
   // The chase dates above have been cleared either way: this job's bookkeeping
@@ -7784,7 +8011,7 @@ function backfillConversationIds() {
       var conv = byIssue[id] || '';
       if (!conv) { var m = String(values[r][idx.raw_text] || '').match(/\[#(\d{4,8})\]/); if (m) conv = m[1]; }
       if (!conv) continue;
-      sheet.getRange(r + 1, idx.chatwoot_conversation_id + 1).setValue(conv);
+      setIssueFields_(id, { chatwoot_conversation_id: conv });   // r208.4
       n++;
     }
   });
@@ -7942,8 +8169,7 @@ function splitIssue_(data) {
       report_count: 1,
       reports_json: capReports_([rep])
     };
-    sheet.appendRow(recordToRow_(issue));
-    storeShadowAppended_(sheet, found.sheetName, issue.issue_id);   // r208.3
+    appendIssueRow_(sheetByName_(found.sheetName) || sheet, found.sheetName, issue);   // r208.4
   }
 
   return { ok: true, split_into: reports.length, history_kept: history.length };
@@ -9293,7 +9519,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r208.3 · 2026-10-01';
+var CODE_STAMP = 'r208.4 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -11426,10 +11652,8 @@ function autoResolveTbc() {
       var updated = new Date(row[idx['updated_at']] || row[idx['submitted_at']]);
       if (isNaN(updated.getTime()) || updated.getTime() > cutoff) continue;
       var now = new Date().toISOString();
-      sheet.getRange(r + 1, idx['status'] + 1).setValue('resolved');
-      sheet.getRange(r + 1, idx['resolved_at'] + 1).setValue(now);
-      sheet.getRange(r + 1, idx['updated_at'] + 1).setValue(now);
-      resolved++;
+      // r208.4: by id through the helpers, so the store sees it too.
+      if (setIssueFields_(row[idx['issue_id']], { status: 'resolved', resolved_at: now, updated_at: now })) resolved++;
     }
   });
   Logger.log('autoResolveTbc: resolved ' + resolved + ' TBC issue(s).');
