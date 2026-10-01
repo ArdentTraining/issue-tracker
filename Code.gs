@@ -703,7 +703,8 @@ function doPost(e) {
     if (action === 'trackerTicket') return jsonOut(mintPortalTicket_(user, null, 12 * 60));
     if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
     if (action === 'instructorGuide') return jsonOut(instructorGuide_(body));
-    if (action === 'storeAdmin') return jsonOut(storeAdmin_(body));                // r208: phase 2 step 2, practice import and self-test
+    if (action === 'storeAdmin') return jsonOut(storeAdmin_(body));
+    if (action === 'slackHistory') return jsonOut(slackHistory_(body));             // r208.7: read-only, what Slack holds                // r208: phase 2 step 2, practice import and self-test
     if (action === 'slackProbe') return jsonOut(body.test_kind ? slackTestPost_(body.test_kind) : slackProbe_());                          // r207.1: is each Slack route alive, without posting          // r205: the For Instructors doc, live
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
@@ -1122,6 +1123,7 @@ function reqPerm_(action) {
     case 'instructorGuide': return 'manage';
     case 'slackProbe': return 'users';
     case 'storeAdmin': return 'users';
+    case 'slackHistory': return 'users';
     // The IRPCS section. Both of these hand a credential to another system, so
     // both are gated here AND checked again where they are minted - the UI
     // hiding the rail item is cosmetic, this is the rule.
@@ -2698,6 +2700,26 @@ function storeGoBack_() {
   CacheService.getScriptCache().remove('ait_store_mode');
   try { invalidateIssueCache_(); } catch (e) {}
   return { ok: true, mode: 'shadow', sheet_rows_put_right: fixed };
+}
+
+// r208.7: read-only. What Slack itself holds in a channel since a time: every
+// bot or app post (ts, subtype, who, the first line). For finding "Fixed -
+// tell" posts that Slack said ok to but nobody can see. Posts nothing.
+function slackHistory_(data) {
+  var tok = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
+  if (!tok) return { ok: false, error: 'no SLACK_BOT_TOKEN' };
+  var channel = String((data && data.channel) || 'C03G3FA6PU7');
+  var oldest = String((data && data.oldest) || Math.floor(Date.now() / 1000 - 12 * 3600));
+  var res = UrlFetchApp.fetch('https://slack.com/api/conversations.history?channel=' + encodeURIComponent(channel) +
+    '&oldest=' + encodeURIComponent(oldest) + '&limit=200&inclusive=true', { headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true });
+  var out = {};
+  try { out = JSON.parse(res.getContentText()); } catch (e) { return { ok: false, error: 'HTTP ' + res.getResponseCode() }; }
+  if (!out.ok) return { ok: false, error: out.error, needed: out.needed || '' };
+  var msgs = (out.messages || []).filter(function (m) { return m.bot_id || m.subtype; }).map(function (m) {
+    return { ts: m.ts, at: new Date(Number(m.ts) * 1000).toISOString(), subtype: m.subtype || '', bot: m.bot_id || '', app: m.app_id || '',
+      edited: m.edited ? m.edited.ts : '', text: String(m.text || '').split('\n')[0].slice(0, 90) };
+  });
+  return { ok: true, channel: channel, total: (out.messages || []).length, bot_or_system: msgs };
 }
 
 function storeAdmin_(data) {
@@ -9561,7 +9583,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r208.6 · 2026-10-01';
+var CODE_STAMP = 'r208.7 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
