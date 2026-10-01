@@ -2320,12 +2320,180 @@ function storeSelfTest() {
   Logger.log('storeSelfTest: ' + JSON.stringify(out));
   return out;
 }
+/* ---- r208.3: shadow mode ---------------------------------------------------
+ * The Sheet stays the record. Every issue write the helpers make is also sent
+ * to the store as the change it made (the fields that moved, and what they
+ * held just before), batched once per request. A nightly comparison then
+ * fingerprints every record on both sides: anything that differs is a write
+ * path that is not going through the helpers yet, or a fault in the store's
+ * own rules, and it is listed and put right. That list is the to-do for the
+ * switch. Feedback, users and instructors have no journal yet; the nightly
+ * comparison keeps them level.
+ *
+ * Nothing here can stop a save: every failure is caught and counted.
+ * STORE_MODE (script property) and the store's own store_mode move together,
+ * through storeAdmin shadow_on / shadow_off.
+ * ------------------------------------------------------------------------- */
+var STORE_JOURNAL_ = [];
+function storeMode_() {
+  var c = CacheService.getScriptCache(), m = c.get('ait_store_mode');
+  if (!m) { m = PropertiesService.getScriptProperties().getProperty('STORE_MODE') || 'sheet'; c.put('ait_store_mode', m, 60); }
+  return m;
+}
+function storeShadowing_() { try { return storeMode_() === 'shadow'; } catch (e) { return false; } }
+function storeShadow_(op) {
+  if (!storeShadowing_()) return;
+  STORE_JOURNAL_.push(op);
+  // Scheduled jobs have no end-of-request hook, so they send as they go.
+  if (!TOUCHED_IDS_ || STORE_JOURNAL_.length >= 40) storeShadowFlush_();
+}
+// The issue row as the Sheet now holds it, against the row just before the
+// write. Read back rather than taken from what we sent, because the Sheet turns
+// some text into dates and numbers on the way in, and the copy must match it.
+function storeShadowRow_(loc, before) {
+  if (!storeShadowing_()) return;
+  try {
+    var after = loc.sheet.getRange(loc.rowNum, 1, 1, HEADERS.length).getValues()[0];
+    var set = {}, base = {}, n = 0;
+    for (var c = 0; c < HEADERS.length; c++) {
+      if (issueCellKey_(after[c]) === issueCellKey_(before[c])) continue;
+      set[HEADERS[c]] = storeEncVal_(after[c]); base[HEADERS[c]] = storeEncVal_(before[c]); n++;
+    }
+    if (n) storeShadow_({ op: 'patch', tbl: 'issues', key: String(after[0]), set: JSON.stringify(set), base: JSON.stringify(base) });
+  } catch (e) { storeShadowNote_('row', String(e)); }
+}
+// Where a just-appended issue row is: the last row, or near it if someone else
+// appended at the same moment.
+function storeShadowFindNear_(sheet, id) {
+  var last = sheet.getLastRow(), from = Math.max(2, last - 25);
+  var ids = sheet.getRange(from, 1, last - from + 1, 1).getValues();
+  for (var i = ids.length - 1; i >= 0; i--) if (String(ids[i][0]) === String(id)) return from + i;
+  return 0;
+}
+function storeShadowAppended_(sheet, tab, id) {
+  if (!storeShadowing_() || !id) return;
+  try {
+    var r = storeShadowFindNear_(sheet, id);
+    if (!r) { storeShadowNote_('append', 'row for ' + id + ' not found after append'); return; }
+    var width = sheet.getLastColumn();
+    var head = sheet.getRange(1, 1, 1, width).getValues()[0], vals = sheet.getRange(r, 1, 1, width).getValues()[0];
+    var obj = {};
+    for (var c = 0; c < width; c++) if (String(head[c] || '').trim()) obj[String(head[c]).trim()] = vals[c];
+    storeShadow_({ op: 'insert', tbl: 'issues', key: String(id), tab: tab, data: JSON.stringify(storeEnc_(obj)) });
+  } catch (e) { storeShadowNote_('append', String(e)); }
+}
+function storeShadowMoved_(tab, id, before) {
+  if (!storeShadowing_() || !id) return;
+  try {
+    var sheet = sheetByName_(tab), r = storeShadowFindNear_(sheet, id);
+    if (!r) { storeShadowNote_('move', 'row for ' + id + ' not found after move'); return; }
+    storeShadow_({ op: 'move', tbl: 'issues', key: String(id), tab: tab });
+    storeShadowRow_({ sheet: sheet, rowNum: r }, before);
+  } catch (e) { storeShadowNote_('move', String(e)); }
+}
+function storeShadowFlush_() {
+  if (!STORE_JOURNAL_.length) return;
+  var ops = STORE_JOURNAL_;
+  STORE_JOURNAL_ = [];
+  try {
+    var out = storeCall_({ op: 'batch', ops: ops, by: 'shadow' });
+    var bad = (out.results || []).filter(function (x) { return !x.ok || x.forced; });
+    if (bad.length) storeShadowNote_('batch', bad.slice(0, 4).map(function (x) {
+      return x.op + ' ' + x.key + (x.forced ? ' forced over ' + (x.conflicts || []).join('/') : ' failed: ' + (x.error || ''));
+    }).join('; '));
+  } catch (e) { storeShadowNote_('flush', String(e)); }
+}
+// Problems are kept, not thrown: a running count and the last ten.
+function storeShadowNote_(where, what) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var log = {};
+    try { log = JSON.parse(p.getProperty('STORE_SHADOW_LOG') || '{}'); } catch (e) { log = {}; }
+    log.count = (log.count || 0) + 1;
+    log.last = [{ at: new Date().toISOString(), where: where, what: String(what).slice(0, 300) }].concat(log.last || []).slice(0, 10);
+    p.setProperty('STORE_SHADOW_LOG', JSON.stringify(log));
+    console.warn('store shadow ' + where + ': ' + what);
+  } catch (e) {}
+}
+
+// Nightly while shadowing (and on demand): fingerprint every record on both
+// sides, list what differs, and put the store right from the Sheet.
+function storeShadowCompare() {
+  var out = { ok: true, at: new Date().toISOString(), mode: storeMode_(), tables: [] };
+  var src = storeSources_();
+  ['issues', 'feedback', 'users', 'instructors'].forEach(function (tbl) {
+    var t0 = Date.now(), res = { table: tbl };
+    try {
+      var got = src[tbl](), mine = {}, recOf = {};
+      got.recs.forEach(function (r) {
+        var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, (r.tab || '') + '\t' + storeCanon_(r.data), Utilities.Charset.UTF_8);
+        mine[r.key] = bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('').slice(0, 16);
+        recOf[r.key] = r;
+      });
+      var theirs = storeCall_({ op: 'hashes', tbl: tbl }).hashes || {};
+      var missing = [], changed = [], extra = [];
+      Object.keys(mine).forEach(function (k) { if (!(k in theirs)) missing.push(k); else if (theirs[k] !== mine[k]) changed.push(k); });
+      Object.keys(theirs).forEach(function (k) { if (!(k in mine)) extra.push(k); });
+      res.rows = got.recs.length; res.missing = missing.length; res.changed = changed.length; res.extra = extra.length;
+      // For a few of the changed ones, which fields - that names the code path.
+      res.fields = changed.slice(0, 8).map(function (k) {
+        try {
+          var row = storeCall_({ op: 'get', tbl: tbl, key: k }).row || {}, a = recOf[k].data, b = row.data || {};
+          var f = {};
+          Object.keys(a).concat(Object.keys(b)).forEach(function (n) { if (storeCanon_(a[n]) !== storeCanon_(b[n])) f[n] = 1; });
+          if ((row.tab || '') !== (recOf[k].tab || '')) f._tab = 1;
+          return k + ': ' + Object.keys(f).join(', ');
+        } catch (e) { return k + ': ?'; }
+      });
+      if (storeMode_() === 'shadow' && (missing.length || changed.length || extra.length)) {
+        var fix = missing.concat(changed).map(function (k) { var r = recOf[k]; return { op: 'put', tbl: tbl, key: k, tab: r.tab, data: JSON.stringify(r.data) }; })
+          .concat(extra.map(function (k) { return { op: 'delete', tbl: tbl, key: k }; }));
+        var fixed = 0;
+        for (var i = 0; i < fix.length; i += 60) {
+          var r2 = storeCall_({ op: 'batch', ops: fix.slice(i, i + 60), by: 'shadow-compare' });
+          (r2.results || []).forEach(function (x) { if (x.ok) fixed++; });
+        }
+        res.put_right = fixed;
+      }
+      res.level = !missing.length && !changed.length && !extra.length;
+    } catch (e) { res.error = String(e).slice(0, 300); out.ok = false; }
+    res.ms = Date.now() - t0;
+    if (res.level === false) out.ok = false;
+    out.tables.push(res);
+  });
+  try { storeCall_({ op: 'note', tbl: 'issues', what: 'shadow_compare', ok: out.ok, detail: out }); } catch (e) {}
+  Logger.log('storeShadowCompare: ' + JSON.stringify(out));
+  return out;
+}
+// Only does anything while shadowing, so the trigger can sit there harmlessly.
+function storeShadowCompareNightly() { if (storeMode_() === 'shadow') storeShadowCompare(); }
+function storeSetMode_(mode) {
+  storeCall_({ op: 'set_mode', mode: mode });
+  PropertiesService.getScriptProperties().setProperty('STORE_MODE', mode);
+  CacheService.getScriptCache().remove('ait_store_mode');
+}
+// Copy everything across fresh, and only if every table matches, start shadowing.
+function storeShadowOn_() {
+  if (storeMode_() === 'shadow') return { ok: true, already: true };
+  var imp = storePracticeImport();
+  if (!imp.ok) return { ok: false, error: 'the fresh copy did not match, so shadowing was not started', import: imp };
+  storeSetMode_('shadow');
+  return { ok: true, mode: 'shadow', import: imp.tables.map(function (t) { return t.table + ' ' + t.rows + (t.match ? ' match' : ' MISMATCH'); }) };
+}
+
 function storeAdmin_(data) {
   var what = String((data && data.what) || '');
   if (what === 'selftest') return storeSelfTest();
   if (what === 'import') return storePracticeImport();
-  if (what === 'mode') return storeCall_({ op: 'mode' });
-  return { ok: false, error: 'storeAdmin: what = selftest | import | mode' };
+  if (what === 'mode') {
+    var m = storeCall_({ op: 'mode' }), log = {};
+    try { log = JSON.parse(PropertiesService.getScriptProperties().getProperty('STORE_SHADOW_LOG') || '{}'); } catch (e) {}
+    return { ok: true, store_mode: m.mode, script_mode: storeMode_(), shadow_log: log };
+  }
+  if (what === 'shadow_on') return storeShadowOn_();
+  if (what === 'shadow_off') { storeSetMode_('sheet'); return { ok: true, mode: 'sheet' }; }
+  if (what === 'compare') return storeShadowCompare();
+  return { ok: false, error: 'storeAdmin: what = selftest | import | mode | shadow_on | shadow_off | compare' };
 }
 
 /* r205 (FB-0435, Stuart): the For Instructors Google Doc, inside the tracker
@@ -2456,6 +2624,7 @@ function maybeInvalidate_() {
   if (!CURRENT_ACTION_) return;
   var action = CURRENT_ACTION_;
   maybeDropBootExtras_(action);
+  try { storeShadowFlush_(); } catch (e) { console.warn('store shadow: ' + e); }   // r208.3
   if (READ_ONLY_ACTIONS[action]) return;
   try { mirrorPushTouched_(); } catch (e) { console.warn('mirror push: ' + e); }   // r202
   if (PATCHABLE_ACTIONS[action] && TOUCHED_IDS_) {
@@ -3151,6 +3320,7 @@ function addIssue_(data) {
   var noteError = '';   // FB-0357: a Chatwoot note that did not arrive is said out loud
   var sheet = sheetByName_(targetSheetName_(category));
   sheet.appendRow(recordToRow_(issue));
+  storeShadowAppended_(sheet, targetSheetName_(category), issue.issue_id);   // r208.3
   touchIssue_(issue.issue_id);   // r185: a new row, patched into the cached list
   if (fastTrackRequested) { try { sendFastTrackRequestSlack_(issue, data.app_url || getAppUrl_()); } catch (e) {} }
 
@@ -3917,6 +4087,7 @@ function writeIssueRow_(found, rec) {
   var fresh = loc.sheet.getRange(loc.rowNum, 1, 1, HEADERS.length).getValues()[0];
   var row = found.original ? mergeIssueRow_(fresh, recordToRow_(found.original), want) : want;
   loc.sheet.getRange(loc.rowNum, 1, 1, HEADERS.length).setValues([row]);
+  storeShadowRow_(loc, fresh);   // r208.3: shadow mode only
   found.sheet = loc.sheet; found.sheetName = loc.sheetName; found.rowNum = loc.rowNum;
   // What is on the row now is the new baseline for any second write this
   // request makes, so it does not re-apply the first as a "change".
@@ -3931,7 +4102,9 @@ function writeIssueCell_(found, key, value) {
   if (col < 0) return { ok: false, error: 'no column ' + key };
   var loc = relocateIssue_(found);
   if (!loc) return { ok: false, error: 'issue gone' };
+  var shadowBefore = storeShadowing_() ? loc.sheet.getRange(loc.rowNum, 1, 1, HEADERS.length).getValues()[0] : null;
   loc.sheet.getRange(loc.rowNum, col + 1).setValue(value);
+  if (shadowBefore) storeShadowRow_(loc, shadowBefore);   // r208.3
   found.sheet = loc.sheet; found.sheetName = loc.sheetName; found.rowNum = loc.rowNum;
   if (found.original) found.original[key] = value;
   return { ok: true };
@@ -3940,7 +4113,9 @@ function writeIssueCell_(found, key, value) {
 function deleteIssueRow_(found) {
   var loc = relocateIssue_(found);
   if (!loc) return false;
+  var goneId = storeShadowing_() ? String(loc.sheet.getRange(loc.rowNum, 1).getValue()) : '';
   loc.sheet.deleteRow(loc.rowNum);
+  if (goneId) storeShadow_({ op: 'delete', tbl: 'issues', key: goneId });   // r208.3
   return true;
 }
 
@@ -4059,6 +4234,7 @@ function updateIssue_(data) {
     var mergedU = mergeIssueRow_(freshU, recordToRow_(found.original), row);
     locU.sheet.deleteRow(locU.rowNum);
     sheetByName_(targetName).appendRow(mergedU);
+    storeShadowMoved_(targetName, id, freshU);   // r208.3
   }
 
   // When a tech issue first reaches resolved with a note, let the AI consider
@@ -7020,6 +7196,7 @@ function ensureTriggers_() {
   var haveInbox = false;      // r186
   var haveMirror = false;     // r202
   var haveTell = false;       // r207
+  var haveStoreCompare = false; // r208.3
   var haveShipTag = false, haveShipMonthly = false;   // r188
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
@@ -7037,6 +7214,7 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'claudeInbox') haveInbox = true;
     if (t.getHandlerFunction() === 'mirrorFullSync') haveMirror = true;
     if (t.getHandlerFunction() === 'tellStudentsSweep') haveTell = true;
+    if (t.getHandlerFunction() === 'storeShadowCompareNightly') haveStoreCompare = true;
     if (t.getHandlerFunction() === 'shipTagNightly') haveShipTag = true;
     if (t.getHandlerFunction() === 'shipMonthlyPost') haveShipMonthly = true;
   });
@@ -7053,6 +7231,8 @@ function ensureTriggers_() {
   // been closed? Ten minutes, so the ask reaches #instructing-daily while the
   // fix is still news.
   if (!haveTell) ScriptApp.newTrigger('tellStudentsSweep').timeBased().everyMinutes(10).create();
+  // r208.3: 03:40, after the 03:00 jobs and before anyone starts work.
+  if (!haveStoreCompare) ScriptApp.newTrigger('storeShadowCompareNightly').timeBased().atHour(3).nearMinute(40).everyDays(1).create();
   // r188: sort the night's shipping chats before the 05:00 scan, and post last
   // month's shipping report at 09:00 on the 1st.
   if (!haveShipTag) ScriptApp.newTrigger('shipTagNightly').timeBased().everyDays(1).atHour(4).create();
@@ -7288,7 +7468,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1 };
+var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1, storeShadowCompare: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -7763,6 +7943,7 @@ function splitIssue_(data) {
       reports_json: capReports_([rep])
     };
     sheet.appendRow(recordToRow_(issue));
+    storeShadowAppended_(sheet, found.sheetName, issue.issue_id);   // r208.3
   }
 
   return { ok: true, split_into: reports.length, history_kept: history.length };
@@ -9112,7 +9293,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r208.1 · 2026-10-01';
+var CODE_STAMP = 'r208.3 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
