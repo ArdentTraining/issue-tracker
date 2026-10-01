@@ -703,6 +703,7 @@ function doPost(e) {
     if (action === 'trackerTicket') return jsonOut(mintPortalTicket_(user, null, 12 * 60));
     if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
     if (action === 'instructorGuide') return jsonOut(instructorGuide_(body));
+    if (action === 'storeAdmin') return jsonOut(storeAdmin_(body));                // r208: phase 2 step 2, practice import and self-test
     if (action === 'slackProbe') return jsonOut(body.test_kind ? slackTestPost_(body.test_kind) : slackProbe_());                          // r207.1: is each Slack route alive, without posting          // r205: the For Instructors doc, live
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
@@ -1120,6 +1121,7 @@ function reqPerm_(action) {
     // ('manage') and never for the outside developers ('dev' only).
     case 'instructorGuide': return 'manage';
     case 'slackProbe': return 'users';
+    case 'storeAdmin': return 'users';
     // The IRPCS section. Both of these hand a credential to another system, so
     // both are gated here AND checked again where they are minted - the UI
     // hiding the rail item is cosmetic, this is the rule.
@@ -2110,6 +2112,217 @@ function mirrorFullSync() {
   var out = { ok: true, issues: items.length, upserted: want.length, removed: m.gone || 0, ms: Date.now() - t0 };
   Logger.log('mirrorFullSync: ' + JSON.stringify(out));
   return out;
+}
+
+/* ============================================================================
+ * r208 (1 Oct 2026): phase 2, step 2 - the tracker's records in Supabase.
+ *
+ * Edd: "lets build step 2. No need to switch until we are ready, but let's get
+ * ready now." So this is the plumbing and the proof, with the Sheet still the
+ * record. tracker-store (Supabase Edge Function) holds issues, feedback, users
+ * and instructors as one header -> value map per record, the same shape the
+ * code here already works in. Nothing reads from it yet.
+ *
+ *   storePracticeImport  copies all four tables across and checks a SHA-256 of
+ *                        every record on both sides; the result is kept in
+ *                        tracker.rec_imports. Refused by the store once it is
+ *                        live, so a practice run can never overwrite real data.
+ *   storeSelfTest        insert, read, patch, a deliberate clash, move and
+ *                        delete on a throwaway "selftest-" record, timed.
+ *
+ * Dates the Sheet holds as Date cells travel as {"$d": iso} and come back as
+ * Dates, so code that calls getTime() on a cell keeps working after the switch.
+ * ============================================================================ */
+var STORE_URL = 'https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-store';
+var STORE_TICKET_ = null;
+function storeTicket_() {
+  if (STORE_TICKET_ && STORE_TICKET_.until > Date.now()) return STORE_TICKET_.t;
+  var t = mintPortalTicket_({ email: 'store@ardent-training.com', name: 'Tracker store',
+    perms_json: JSON.stringify({ store_rw: true }) }, 'store_rw', 10);
+  if (!t.ok) throw new Error('no store ticket: ' + t.error);
+  STORE_TICKET_ = { t: t.ticket, until: Date.now() + 8 * 60 * 1000 };
+  return t.ticket;
+}
+// One call. Returns the parsed answer; throws on anything but a clean reply.
+// A clash on a patch is a clean reply ({ok:false, conflict:true, row}).
+function storeCall_(body) {
+  var res = UrlFetchApp.fetch(STORE_URL, {
+    method: 'post', contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + storeTicket_() },
+    payload: JSON.stringify(body), muteHttpExceptions: true
+  });
+  var out = {};
+  try { out = JSON.parse(res.getContentText()); } catch (e) { out = { error: res.getContentText().slice(0, 200) }; }
+  var code = res.getResponseCode();
+  if (code !== 200 && !(code === 404 && body.op !== 'list')) {
+    throw new Error('store ' + (body.op || '') + ' ' + (body.tbl || '') + ': HTTP ' + code + ' ' + (out.error || ''));
+  }
+  out.http = code;
+  return out;
+}
+
+// A Sheet value as the store keeps it. Blank cells are left out altogether.
+function storeEncVal_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? '' : { $d: v.toISOString() };
+  if (typeof v === 'string') return v.indexOf('\u0000') >= 0 ? v.replace(/\u0000/g, '') : v;
+  return v;
+}
+function storeEnc_(obj) {
+  var o = {};
+  for (var k in obj) {
+    if (!k || !Object.prototype.hasOwnProperty.call(obj, k)) continue;
+    var v = storeEncVal_(obj[k]);
+    if (v === '' || v === null || v === undefined) continue;
+    o[k] = v;
+  }
+  return o;
+}
+function storeDec_(data) {
+  var o = {};
+  for (var k in data) {
+    var v = data[k];
+    o[k] = (v && typeof v === 'object' && typeof v.$d === 'string') ? new Date(v.$d) : v;
+  }
+  return o;
+}
+// Must match canon() in tracker-store exactly: keys sorted at every level.
+function storeCanon_(v) {
+  if (v === null || v === undefined) return 'null';
+  if (Array.isArray(v)) return '[' + v.map(storeCanon_).join(',') + ']';
+  if (typeof v === 'object') {
+    return '{' + Object.keys(v).sort().filter(function (k) { return v[k] !== undefined; })
+      .map(function (k) { return JSON.stringify(k) + ':' + storeCanon_(v[k]); }).join(',') + '}';
+  }
+  return JSON.stringify(v);
+}
+function storeSum_(recs) {
+  var lines = recs.map(function (r) { return r.key + '\t' + (r.tab || '') + '\t' + storeCanon_(r.data); });
+  lines.sort(function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); });
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, lines.join('\n'), Utilities.Charset.UTF_8);
+  return bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+}
+
+// Every record on a tab, keyed, in the tab's own order. Rows with no key are
+// counted, not copied; a second row with a key already seen is reported, since
+// the store (rightly) will not hold two records under one key.
+function storeReadTab_(sheetName, keyOf, tab, ordBase) {
+  var out = { recs: [], blank: 0, dupes: [] };
+  var sheet = sheetByName_(sheetName);
+  if (!sheet) return out;
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return out;
+  var head = values[0].map(function (h) { return String(h || '').trim(); });
+  var seen = {};
+  for (var r = 1; r < values.length; r++) {
+    var obj = {};
+    for (var c = 0; c < head.length; c++) if (head[c]) obj[head[c]] = values[r][c];
+    var key = keyOf(obj);
+    if (!key) { out.blank++; continue; }
+    if (seen[key]) { out.dupes.push(key + ' (row ' + (r + 1) + ')'); continue; }
+    seen[key] = 1;
+    out.recs.push({ key: key, tab: tab || null, data: storeEnc_(obj), ord: ordBase + r });
+  }
+  return out;
+}
+function storeSources_() {
+  return {
+    issues: function () {
+      var all = { recs: [], blank: 0, dupes: [] }, seen = {};
+      ISSUE_SHEETS.forEach(function (name, i) {
+        var got = storeReadTab_(name, function (o) { return String(o.issue_id || '').trim(); }, name, (i + 1) * 1000000);
+        all.blank += got.blank;
+        all.dupes = all.dupes.concat(got.dupes.map(function (d) { return name + ': ' + d; }));
+        got.recs.forEach(function (r) {
+          if (seen[r.key]) { all.dupes.push(name + ': ' + r.key + ' (also on ' + seen[r.key] + ')'); return; }
+          seen[r.key] = name; all.recs.push(r);
+        });
+      });
+      return all;
+    },
+    feedback: function () { return storeReadTab_(FEEDBACK_SHEET, function (o) { return String(o.id || '').trim(); }, null, 0); },
+    users: function () { return storeReadTab_(USERS_SHEET, function (o) { return String(o.email || '').trim().toLowerCase(); }, null, 0); },
+    instructors: function () { return storeReadTab_(INSTRUCTORS_SHEET, function (o) { return String(o.name || '').trim(); }, null, 0); }
+  };
+}
+// Copy one table across and compare. Batches by size, not count: a few issues
+// carry very long transcripts.
+function storeImportTable_(tbl, got) {
+  var t0 = Date.now();
+  storeCall_({ op: 'import_begin', tbl: tbl });
+  var batch = [], size = 0, sent = 0;
+  var flush = function () {
+    if (!batch.length) return;
+    storeCall_({ op: 'import_rows', tbl: tbl, rows: batch });
+    sent += batch.length; batch = []; size = 0;
+  };
+  got.recs.forEach(function (r) {
+    var text = JSON.stringify(r.data);
+    batch.push({ key: r.key, tab: r.tab, ord: r.ord, data: text });
+    size += text.length;
+    if (size > 1500000 || batch.length >= 300) flush();
+  });
+  flush();
+  var sum = storeSum_(got.recs);
+  var end = storeCall_({ op: 'import_end', tbl: tbl, rows_sheet: got.recs.length, sum_sheet: sum,
+    detail: { blank_rows: got.blank, duplicates: got.dupes.slice(0, 50), ms: Date.now() - t0 } });
+  return { table: tbl, rows: got.recs.length, sent: sent, match: !!end.match, sum_sheet: sum.slice(0, 12),
+    sum_store: String(end.sum_store || '').slice(0, 12), blank_rows: got.blank, duplicates: got.dupes, ms: Date.now() - t0 };
+}
+function storePracticeImport() {
+  var src = storeSources_(), out = { ok: true, tables: [] };
+  ['instructors', 'users', 'feedback', 'issues'].forEach(function (tbl) {
+    try {
+      var r = storeImportTable_(tbl, src[tbl]());
+      if (!r.match) out.ok = false;
+      out.tables.push(r);
+    } catch (e) { out.ok = false; out.tables.push({ table: tbl, error: String(e).slice(0, 300) }); }
+  });
+  Logger.log('storePracticeImport: ' + JSON.stringify(out));
+  return out;
+}
+// The write path, end to end, on a record nobody will ever see.
+function storeSelfTest() {
+  var key = 'selftest-' + Utilities.getUuid().slice(0, 8), steps = [], ok = true;
+  var step = function (name, fn, want) {
+    var t0 = Date.now(), res, pass;
+    try { res = fn(); pass = want(res); } catch (e) { res = { error: String(e).slice(0, 200) }; pass = false; }
+    if (!pass) ok = false;
+    steps.push({ step: name, pass: pass, ms: Date.now() - t0, got: pass ? undefined : JSON.stringify(res).slice(0, 300) });
+    return res;
+  };
+  var when = new Date('2026-10-01T12:00:00Z');
+  var rec = storeEnc_({ issue_id: key, status: 'open', summary: 'self test', submitted_at: when, count: 3 });
+  step('insert', function () { return storeCall_({ op: 'insert', tbl: 'issues', key: key, tab: 'Tech Issues', data: JSON.stringify(rec), by: 'selftest' }); },
+    function (r) { return r.ok && r.row && r.row.version === 1; });
+  step('get, dates come back as Dates', function () { return storeCall_({ op: 'get', tbl: 'issues', key: key }); },
+    function (r) { var d = r.row && storeDec_(r.row.data); return d && d.submitted_at instanceof Date && d.submitted_at.getTime() === when.getTime() && d.count === 3; });
+  step('patch', function () { return storeCall_({ op: 'patch', tbl: 'issues', key: key, set: JSON.stringify({ status: 'resolved' }), base: JSON.stringify({ status: 'open' }) }); },
+    function (r) { return r.ok && r.row.version === 2 && r.row.data.status === 'resolved'; });
+  step('stale patch is refused with the current row', function () { return storeCall_({ op: 'patch', tbl: 'issues', key: key, set: JSON.stringify({ status: 'in_progress' }), base: JSON.stringify({ status: 'open' }) }); },
+    function (r) { return r.ok === false && r.conflict && r.conflicts[0] === 'status' && r.row.data.status === 'resolved'; });
+  step('patch to another field still lands', function () { return storeCall_({ op: 'patch', tbl: 'issues', key: key, set: JSON.stringify({ summary: 'changed', count: '' }), base: JSON.stringify({ summary: 'self test' }) }); },
+    function (r) { return r.ok && r.row.data.summary === 'changed' && r.row.data.status === 'resolved' && !('count' in r.row.data); });
+  step('move tab', function () { return storeCall_({ op: 'move', tbl: 'issues', key: key, tab: 'Course Errors' }); },
+    function (r) { return r.ok && r.row.tab === 'Course Errors'; });
+  step('find by field', function () { return storeCall_({ op: 'find', tbl: 'issues', field: 'summary', value: 'changed' }); },
+    function (r) { return r.ok && r.rows.some(function (x) { return x.key === key; }); });
+  step('delete', function () { return storeCall_({ op: 'delete', tbl: 'issues', key: key }); }, function (r) { return r.ok; });
+  step('gone', function () { return storeCall_({ op: 'get', tbl: 'issues', key: key }); }, function (r) { return r.ok && r.row === null; });
+  step('real records refused while the Sheet is the record', function () { return storeCall_({ op: 'insert', tbl: 'issues', key: 'not-a-selftest', tab: 'Tech Issues', data: '{}' }); },
+    function (r) { return false; });
+  // The last step SHOULD throw (HTTP 409); flip it.
+  var last = steps[steps.length - 1];
+  if (!last.pass && /HTTP 409/.test(last.got || '')) { last.pass = true; last.got = undefined; ok = steps.every(function (s) { return s.pass; }); }
+  var out = { ok: ok, key: key, steps: steps };
+  Logger.log('storeSelfTest: ' + JSON.stringify(out));
+  return out;
+}
+function storeAdmin_(data) {
+  var what = String((data && data.what) || '');
+  if (what === 'selftest') return storeSelfTest();
+  if (what === 'import') return storePracticeImport();
+  if (what === 'mode') return storeCall_({ op: 'mode' });
+  return { ok: false, error: 'storeAdmin: what = selftest | import | mode' };
 }
 
 /* r205 (FB-0435, Stuart): the For Instructors Google Doc, inside the tracker
@@ -7072,7 +7285,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1 };
+var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -8896,7 +9109,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r207.2 · 2026-10-01';
+var CODE_STAMP = 'r208 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
