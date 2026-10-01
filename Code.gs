@@ -222,6 +222,17 @@ function slackUrlFor_(kind) {
 // route's webhook whether it is alive WITHOUT posting anything: a body with no
 // text is refused by a live webhook as "no_text" (HTTP 400) and by a dead or
 // revoked one with something else. Never returns the URLs themselves.
+// One labelled test message down one route, so a person can say which channel
+// it actually lands in (Edd asked for this one, 1 Oct). Fixed wording, so the
+// action cannot be used to post anything else.
+function slackTestPost_(kind) {
+  if (!SLACK_NOTICES[kind]) return { ok: false, error: 'no such route' };
+  var url = slackUrlFor_(kind);
+  if (!url) return { ok: false, error: 'no webhook set' };
+  var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    payload: JSON.stringify({ text: ':test_tube: Test from the bug tracker (' + kind + ' route): checking where the "Fixed - tell" messages go. Please ignore.' }) });
+  return { ok: true, code: res.getResponseCode(), body: String(res.getContentText()).slice(0, 80) };
+}
 function slackProbe_() {
   var out = {};
   var props = PropertiesService.getScriptProperties();
@@ -692,7 +703,7 @@ function doPost(e) {
     if (action === 'trackerTicket') return jsonOut(mintPortalTicket_(user, null, 12 * 60));
     if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
     if (action === 'instructorGuide') return jsonOut(instructorGuide_(body));
-    if (action === 'slackProbe') return jsonOut(slackProbe_());                          // r207.1: is each Slack route alive, without posting          // r205: the For Instructors doc, live
+    if (action === 'slackProbe') return jsonOut(body.test_kind ? slackTestPost_(body.test_kind) : slackProbe_());                          // r207.1: is each Slack route alive, without posting          // r205: the For Instructors doc, live
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
@@ -8885,7 +8896,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r207.1 · 2026-10-01';
+var CODE_STAMP = 'r207.2 · 2026-10-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
