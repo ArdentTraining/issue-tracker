@@ -1021,7 +1021,11 @@ function hasPerm_(user, req) {
 }
 function reqPerm_(action) {
   switch (action) {
-    case 'addIssue': case 'addUpdate': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'nextAction': case 'sameIssue': case 'chatwootContactUrl': return 'log';
+    // r212 (Edd, 4 Oct): one 'Post an update' for everyone who works issues,
+    // developers included. What a non-logger may do with it is narrowed inside
+    // addUpdate_ (a note only: no status, no priority).
+    case 'addUpdate': return 'work';
+    case 'addIssue': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'nextAction': case 'sameIssue': case 'chatwootContactUrl': return 'log';
     // updateIssue is 'work' so the dev/course team can retune priority from
     // their drawer; anything beyond priority still needs manage (checked
     // inside updateIssue_ itself).
@@ -2731,7 +2735,18 @@ function storeNudge_(body) {
     touchIssue_(id);   // so the end of this request patches the cached board and re-pushes the mirror row
     copied++;
   });
-  return { ok: true, copied: copied };
+  // r212: an update posted the fast way still gets its troubleshooting
+  // tick-off, here, after the person has already been told it saved.
+  var ticked = 0;
+  ((body && body.tickoff) || []).slice(0, 5).forEach(function (t) {
+    try {
+      var f = findRow_(String(t.id || ''));
+      if (!f) return;
+      var ck = updateTickoff_(f.record, String(t.note || ''));
+      if (ck && setIssueFields_(String(t.id), { checklist_json: ck })) ticked++;
+    } catch (e) { storeShadowNote_('tickoff', String(t.id) + ': ' + e); }
+  });
+  return { ok: true, copied: copied, ticked: ticked };
 }
 // What tracker-save needs to know from here. Every ten minutes with the mirror
 // sync, and straight away on go_live / go_back.
@@ -4840,6 +4855,14 @@ function addUpdate_(data) {
   var found = findRow_(id);
   if (!found) return { ok: false, error: 'No issue found with id ' + id };
   var rec = found.record;
+  // r212: a developer or the course team can post an update now. For them it
+  // is a note on the history and nothing more - it never reopens, resolves,
+  // parks or re-prioritises an issue. Those stay with whoever logs issues.
+  if (data._user && !hasPerm_(data._user, 'log') && !hasPerm_(data._user, 'users')) {
+    data.keep_status = true;
+    delete data.resolved; delete data.tbc; delete data.park;
+    delete data.priority; delete data.priority_reason;
+  }
   // Slack fires on the CHANGE to high, not on every update to something already
   // there (Edd, 19 Aug 2026). Read it before this update touches the record.
   var priorityBefore = String(rec.priority || '').toLowerCase();
@@ -4885,19 +4908,9 @@ function addUpdate_(data) {
   // this?" The checklist was only ever read off the FIRST report. An update
   // on a tech issue is read for what has been tried since, and only ever
   // ticks boxes - never unticks one somebody set by hand.
-  if (!isNudge && !data._system && String(rec.category || '').toLowerCase() === 'tech_issue' && String(note).length > 30) {
-    try {
-      var ts146 = troubleshoot_({ raw_text: String(note) });
-      if (ts146 && ts146.ok && ts146.checklist) {
-        var ck146 = {};
-        try { ck146 = rec.checklist_json ? JSON.parse(rec.checklist_json) : {}; } catch (e) { ck146 = {}; }
-        for (var k146 in ts146.checklist) {
-          var v146 = ts146.checklist[k146];
-          if ((v146 === 'done' || v146 === 'na') && (!ck146[k146] || ck146[k146] === 'todo')) ck146[k146] = v146;
-        }
-        rec.checklist_json = JSON.stringify(ck146);
-      }
-    } catch (e) {}
+  if (!isNudge && !data._system) {
+    var ticked = updateTickoff_(rec, note);
+    if (ticked) rec.checklist_json = ticked;
   }
   if (data.device_info) rec.device_info = data.device_info;
 
@@ -4953,6 +4966,26 @@ function addUpdate_(data) {
     try { checkSharedWorkaround_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
   return { ok: true, issue_id: id, updated: true };
+}
+
+// FB-0346: what an update says has been tried since, ticked on the checklist.
+// Only ever ticks - never unticks a box somebody set by hand. Returns the new
+// checklist_json, or null when there is nothing to do. r212: shared by
+// addUpdate_ and the fast path (storeNudge_ runs it after the save landed).
+function updateTickoff_(rec, note) {
+  if (String(rec.category || '').toLowerCase() !== 'tech_issue' || String(note || '').length <= 30) return null;
+  try {
+    var ts = troubleshoot_({ raw_text: String(note) });
+    if (!ts || !ts.ok || !ts.checklist) return null;
+    var ck = {};
+    try { ck = rec.checklist_json ? JSON.parse(rec.checklist_json) : {}; } catch (e) { ck = {}; }
+    var changed = false;
+    for (var k in ts.checklist) {
+      var v = ts.checklist[k];
+      if ((v === 'done' || v === 'na') && (!ck[k] || ck[k] === 'todo')) { ck[k] = v; changed = true; }
+    }
+    return changed ? JSON.stringify(ck) : null;
+  } catch (e) { return null; }
 }
 
 // Delete an issue (e.g. logged by accident). Full admins ('users' permission)
@@ -9889,7 +9922,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r211.1 · 2026-10-04';
+var CODE_STAMP = 'r212 · 2026-10-04';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

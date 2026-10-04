@@ -3482,11 +3482,13 @@
      box further up the pane most fixes went out without one. -->
 <div class="modal-bg" id="fixNoteModal">
   <div class="modal" style="max-width:560px;">
-    <h3>What was it, and what did you change?</h3>
-    <p class="small muted" style="margin-top:0;">Both are needed. This is what the next person reads when it happens again, and what an admin checks before telling the student.</p>
+    <h3 id="fixNoteTitle">What was it, and what did you change?</h3>
+    <p class="small muted" id="fixNoteIntro" style="margin-top:0;">Both are needed. This is what the next person reads when it happens again, and what an admin checks before telling the student.</p>
+    <div id="fixNoteCauseWrap">
     <label class="small" for="fixNoteCause" style="display:block;margin-bottom:4px;">What was causing it?</label>
     <textarea id="fixNoteCause" rows="3" style="width:100%;font-size:13px;" placeholder="e.g. the lesson player cached the old slide list, so anyone who had opened the lesson before the re-upload kept getting the old images"></textarea>
-    <label class="small" for="fixNoteFix" style="display:block;margin:10px 0 4px;">What did you change to fix it?</label>
+    </div>
+    <label class="small" id="fixNoteFixLabel" for="fixNoteFix" style="display:block;margin:10px 0 4px;">What did you change to fix it?</label>
     <textarea id="fixNoteFix" rows="3" style="width:100%;font-size:13px;" placeholder="e.g. added a version stamp to the slide manifest so the player refetches when it changes"></textarea>
     <div class="small" id="fixNoteMsg" style="color:var(--high);margin-top:6px;min-height:16px;"></div>
     <div class="btns" style="margin-top:10px;">
@@ -3759,7 +3761,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r211.2 · 2026-10-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r212 · 2026-10-04";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5663,9 +5665,18 @@ function fastSaveOp_(payload) {
   if (a === "addTeamNote" && k === "note") return { op: "team_note", value: payload.note };
   return null;
 }
+// r212: "Post an update" on the Dev and Course panels - a plain note on the
+// history, nothing reopened or re-prioritised - goes the fast way too.
+function fastUpdateOp_(payload) {
+  if (!state._fastSaves || state.viewAs || !payload || payload.action !== "addUpdate" || !payload.issue_id) return null;
+  if (payload.keep_status !== true || !payload.raw_text) return null;
+  var keys = Object.keys(payload).filter(function (k) { return k !== "action" && k !== "issue_id" && k !== "app_url"; });
+  if (keys.some(function (k) { return k !== "raw_text" && k !== "keep_status"; })) return null;
+  return { op: "update", value: payload.raw_text };
+}
 // Use this rather than apiPost for a save that might go the fast way.
 function savePost_(payload) {
-  var f = fastSaveOp_(payload);
+  var f = fastSaveOp_(payload) || fastUpdateOp_(payload);
   if (!f) return apiPost(payload);
   var t0 = Date.now();
   return mirrorTicket_().then(function (t) {
@@ -5684,7 +5695,7 @@ function savePost_(payload) {
     diagApi("fast." + f.op, t0, "failed: " + e);
     // A note may have landed before the answer was lost; sending it again
     // could write it twice. A field save is safe to repeat.
-    if (f.op === "team_note") return { ok: false, error: "No answer from the server. Refresh and check before adding it again." };
+    if (f.op === "team_note" || f.op === "update") return { ok: false, error: "No answer from the server. Refresh and check before adding it again." };
     return apiPost(payload);
   });
 }
@@ -12592,6 +12603,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 54, date: "2026-10-04", who: ["dev", "course", "users"], text: "One box for notes and updates on the Dev and Course panels: Post an update, open to everyone, saves straight away. The cause and fix is now written only in the Mark fixed popup (course fixes get a one-line version: what did you change?)." },
   { n: 53, date: "2026-10-04", who: ["log"], text: "A high-priority report only goes straight to the developers once the student has logged out and back in, or one of us has logged in as them to look. There is a new tick for that second one in the checklist." },
   { n: 52, date: "2026-10-04", who: ["users"], text: "A developer's question can be cleared with Acknowledge when it needs no reply, and a request to change a priority comes with Accept and Decline buttons on the row." },
   { n: 51, date: "2026-10-04", who: ["dev", "course"], text: "Team notes on every fix, for where it has got to (\"now just the voiceover, 19 not 15\") without touching the cause-and-fix notes. And a Recent activity sort on the Dev and Course pages." },
@@ -18542,41 +18554,41 @@ function devAskFallback(issue) {
   if (tried.length) bits.push("Already ruled out: " + tried.slice(0, 5).join(", ") + ".");
   return bits.join(" ");
 }
-// FB-0459/0460 (Stuart): somewhere to write where a fix has got to ("now just
-// the voiceover: 19 not 15") without putting it in the cause-and-fix box, which
-// goes out to the instructors when it is marked fixed. Each note is dated and
-// named on the trail; the newest five show here.
-function teamNotesBlock(issue) {
-  var notes = parseReports(issue).filter(function (r) { return r && r.team_note; }).slice(-5).reverse();
+// r212 (Edd, 4 Oct): "just one box that works for everyone to make notes,
+// add updates, etc." Team notes (FB-0459/0460) and the admin-only update box
+// (FB-0300) were the same thing twice. This is the one box on the Dev and
+// Course panels: anyone who works issues, developers included, posts an
+// update, and it lands on the history with their name and the date. Earlier
+// team notes are updates on the history too, so they show here as well.
+function drawerUpdatesBlock(issue) {
+  var ups = parseReports(issue).filter(function (r) { return r && String(r.kind || "") === "update"; }).slice(-5).reverse();
   var id = esc(issue.issue_id);
-  return '<h3>Team notes</h3>' +
-    '<div id="teamNotesList">' + (notes.length ? notes.map(teamNoteCard).join("") :
-      '<div class="small muted" id="teamNotesEmpty" style="margin-bottom:6px;">Nothing yet. Note where this has got to, or narrow down what actually needs changing.</div>') + '</div>' +
+  return '<h3>Post an update</h3>' +
+    '<div id="drawerUpdatesList">' + ups.map(updateCard).join("") + '</div>' +
     '<div class="field" style="margin-bottom:12px;">' +
-      '<textarea id="d_team_note" rows="2" placeholder="e.g. Now only the voiceover needs changing: 19, not 15"></textarea>' +
-      '<button class="ghost small" style="margin-top:6px;padding:5px 12px;" onclick="addTeamNote(\'' + id + '\')">Add note</button>' +
-      '<span class="small muted" id="teamNoteMsg" style="margin-left:10px;"></span>' +
+      '<textarea id="d_drawer_update" rows="2" placeholder="Where this has got to, what was decided, what is left - e.g. now only the voiceover: 19, not 15"></textarea>' +
+      '<button class="ghost small" style="margin-top:6px;padding:5px 12px;" onclick="postDrawerUpdate(\'' + id + '\')">Post update</button>' +
+      '<span class="small muted" id="drawerUpdateMsg" style="margin-left:10px;"></span>' +
     '</div>';
 }
-function teamNoteCard(n) {
+function updateCard(n) {
   return '<div class="card" style="background:var(--bg);margin-bottom:6px;font-size:13.5px;">' +
     '<div class="small muted">' + esc(n.instructor_name || "") + ' &middot; ' + esc(fmtDate(n.date)) + '</div>' +
-    '<div style="white-space:pre-wrap;">' + esc(n.raw_text || "") + '</div></div>';
+    '<div style="white-space:pre-wrap;">' + esc(n.raw_text || n.summary || "") + '</div></div>';
 }
-function addTeamNote(id) {
-  var t = $("d_team_note"), msg = $("teamNoteMsg");
+function postDrawerUpdate(id) {
+  var t = $("d_drawer_update"), msg = $("drawerUpdateMsg");
   var v = t ? t.value.trim() : "";
-  if (!v) { toast("Write the note first."); return; }
+  if (!v) { toast("Write the update first."); return; }
   if (msg) msg.textContent = "Saving…";
-  savePost_({ action: "addTeamNote", issue_id: id, note: v }).then(function (res) {
-    if (!res || !res.ok) { if (msg) msg.textContent = ""; toast("That note didn't save (" + ((res && res.error) || "unknown") + ")"); return; }
+  savePost_({ action: "addUpdate", issue_id: id, raw_text: v, keep_status: true }).then(function (res) {
+    if (!res || !res.ok) { if (msg) msg.textContent = ""; toast("That update didn't save (" + ((res && res.error) || "unknown") + ")"); return; }
     if (t) t.value = "";
     if (msg) msg.textContent = "Saved";
-    var empty = $("teamNotesEmpty"); if (empty) empty.remove();
-    var list = $("teamNotesList");
-    if (list) list.insertAdjacentHTML("afterbegin", teamNoteCard({ instructor_name: res.by, date: res.date, raw_text: v }));
+    var list = $("drawerUpdatesList");
+    if (list) list.insertAdjacentHTML("afterbegin", updateCard({ instructor_name: res.by || (state.user && state.user.name) || "", date: res.date || new Date().toISOString(), raw_text: v }));
     scheduleRefresh();
-  }).catch(function (e) { if (msg) msg.textContent = ""; toastErr("That note", e); });
+  }).catch(function (e) { if (msg) msg.textContent = ""; toastErr("That update", e); });
 }
 function devAskBlock(issue) {
   var written = String(issue.dev_ask || "").trim();
@@ -18711,7 +18723,7 @@ function openDevDetail(id) {
     (issue.summary ? esc(issue.summary) : 'No summary was written for this one. The report itself is below.') + '</div>' +
     '<div style="margin-bottom:12px;"><button class="ghost small" style="padding:4px 10px;" onclick="devCheckUpdates(\'' + esc(issue.issue_id) + '\')" title="Looks in Chatwoot for newer messages from the affected students and pulls anything relevant onto the issue.">Check for updates</button></div>';
   html += devAskBlock(issue);
-  html += teamNotesBlock(issue);   // FB-0459/0460
+  html += drawerUpdatesBlock(issue);   // r212: one "Post an update", for everyone
   html += rcaButtonHtml(issue);
 
   // Who's on it. Assign to a person with this queue's access.
@@ -18812,8 +18824,14 @@ function openDevDetail(id) {
   // What the team already ruled out before it reached the developers.
   html += detailChecklistHtml(issue);
 
-  html += '<h3>Developer notes</h3><div class="field">' +
-    '<textarea id="dev_notes" rows="3" placeholder="Cause and fix...">' + esc(issue.dev_notes || "") + '</textarea></div>';
+  // r212 (Edd): the cause and fix is not a running note. It is written once,
+  // in the Mark fixed popup, and shown here read-only for the record.
+  if (String(issue.dev_notes || "").trim()) {
+    html += '<h3>Cause and fix</h3>' +
+      '<div class="card" style="background:var(--bg);margin-bottom:6px;font-size:13.5px;white-space:pre-wrap;">' + esc(issue.dev_notes) + '</div>' +
+      ((state.perms && (state.perms.dev || state.perms.course || state.perms.users))
+        ? '<div style="margin-bottom:12px;"><button class="ghost small" style="padding:4px 10px;" onclick="devEditCauseFix(\'' + esc(issue.issue_id) + '\')">Edit</button></div>' : '');
+  }
 
   // A question about this fix: more detail, a decision, access to something,
   // whatever's blocking progress. Sent either up to the bosses or back to the
@@ -18868,10 +18886,8 @@ function openDevDetail(id) {
     '<div class="field"><textarea id="devQueryText" rows="2" placeholder="Ask something about this issue..."></textarea></div>' +
     '<div class="row" style="margin-bottom:10px;"><button class="ghost" onclick="sendDevQuery(\'' + esc(issue.issue_id) + '\')">' +
     (issue.dev_query_at ? 'Send another question' : 'Send question') + '</button></div>';
-  // FB-0300's admin "Post an update" box lived here. Retired 4 Oct 2026
-  // (Edd: "team notes and post an update are the same thing"): Team notes,
-  // higher up, is the one place for a note on a fix, saves in under a second,
-  // and the next-action reader sees it on the trail like any other update.
+  // FB-0300's admin "Post an update" box lived here; r212 made it the one
+  // "Post an update" near the top of the panel, for everyone.
 
   var detStatus = (issue.status || "").toLowerCase();
   var detDone = detStatus === "dev_fixed" || detStatus === "resolved";
@@ -18880,8 +18896,7 @@ function openDevDetail(id) {
       (detStatus === "resolved"
         ? 'Resolved ' + fmtDate(issue.resolved_at || issue.dev_fixed_at) + '.'
         : 'Marked fixed ' + fmtDate(issue.dev_fixed_at) + '.') +
-      '</div>' +
-      '<div class="row"><button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
+      '</div>';
   } else {
     // r207 (FB-0455): no "Notify student?" tick any more. When it closes, the
     // tracker works out whether the student needs telling and, if so, asks the
@@ -18893,7 +18908,7 @@ function openDevDetail(id) {
       // leaving the page. Developers never see it - deciding what is worth
       // developer time is an admin call, not a developer one.
       ((state.perms && state.perms.users) ? ' <button class="ghost" style="color:var(--medium);" title="Admin only: probably not worth developer time. Filed away; it wakes up if anyone reports it again." onclick="devParkIssue(\'' + esc(issue.issue_id) + '\')">Park it</button>' : '') +
-      '<button class="ghost" onclick="devSaveNotes(\'' + esc(issue.issue_id) + '\')">Save notes</button></div>';
+      '</div>';
   }
 
   html += transcriptHtml;
@@ -18957,17 +18972,6 @@ function devSendAnswer(id) {
     loadIssues().then(function () { openDevDetail(id); });
   }).catch(function (e) { busyHide(); toastErr("That", e); });
 }
-function devPostAdminUpdate(id) {
-  var raw = $("devAdminUpdate") ? $("devAdminUpdate").value.trim() : "";
-  if (!raw) { toast("Write the update first."); return; }
-  busyShow("Adding the update…");
-  apiPost({ action: "addUpdate", issue_id: id, raw_text: raw, keep_status: true, summary: "Admin note from the developer queue", app_url: APP_URL }).then(function (res) {
-    busyHide();
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Update added.");
-    loadIssues().then(function () { openDevDetail(id); });
-  }).catch(function (e) { busyHide(); toastErr("That", e); });
-}
 // FB-0297/0298: the Actions "Answer" button lands ON the question, not at the
 // top of a long report.
 function openDevDetailQa(id) {
@@ -18989,40 +18993,58 @@ function devParkIssue(id) {
     { failMsg: "That park didn't save" });
 }
 function devMarkFixed(id) {
-  // FB-0289 (Edd): the what-caused-it dialog earns its keep on TECH fixes.
-  // A course fix is a slide edit - the summary already says what changed, so
-  // it marks straight off with the queue's notes as the record.
-  var rec = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
-  // r200: the notes box belongs to whichever drawer was last open. Pressing
-  // Mark fixed on a list row must not pick up ANOTHER issue's notes.
-  var ownBox = $("markFixedBtn") && $("markFixedBtn").getAttribute("data-issue") === id;
-  if (rec && String(rec.category) === "course_error") {
-    var note = (ownBox && $("dev_notes") ? $("dev_notes").value : "") || "Course content corrected.";
-    devMarkFixedSend(id, note);
-    return;
-  }
-  var pre = ownBox && $("dev_notes") ? $("dev_notes").value : "";
-  $("fixNoteCause").value = "";
-  $("fixNoteFix").value = pre || "";
-  $("fixNoteMsg").textContent = "";
-  $("fixNoteGo").onclick = function () { devMarkFixedConfirmed(id); };
-  $("fixNoteModal").classList.add("show");
-  setTimeout(function () { $("fixNoteCause").focus(); }, 30);
+  // r212 (Edd, 4 Oct): the popup is the ONE place the cause and fix is
+  // written. A tech fix asks for both. A course fix asks the lighter
+  // question, "What did you change?" - FB-0289 let course fixes mark straight
+  // off, but with the notes box gone that would leave no record at all.
+  var rec = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
+  fixNoteOpen_(id, String(rec.category) === "course_error", String(rec.dev_notes || ""), false);
 }
-function devMarkFixedConfirmed(id) {
+// "Cause: ...\n\nFix: ..." back into its two halves, for editing.
+function splitCauseFix_(notes) {
+  var m = /^Cause:\s*([\s\S]*?)\n\nFix:\s*([\s\S]*)$/.exec(String(notes || ""));
+  if (m) return { cause: m[1], fix: m[2] };
+  var f = /^Fix:\s*([\s\S]*)$/.exec(String(notes || ""));
+  return { cause: "", fix: f ? f[1] : String(notes || "") };
+}
+function fixNoteOpen_(id, light, existing, editOnly) {
+  var parts = splitCauseFix_(existing);
+  $("fixNoteCauseWrap").style.display = light ? "none" : "";
+  $("fixNoteTitle").textContent = light ? "What did you change?" : "What was it, and what did you change?";
+  $("fixNoteIntro").textContent = light
+    ? "A line on what was changed, so the next person can see it when this comes up again."
+    : "Both are needed. This is what the next person reads when it happens again, and what an admin checks before telling the student.";
+  $("fixNoteFixLabel").textContent = light ? "What did you change?" : "What did you change to fix it?";
+  $("fixNoteCause").value = light ? "" : parts.cause;
+  $("fixNoteFix").value = parts.fix;
+  $("fixNoteMsg").textContent = "";
+  $("fixNoteGo").textContent = editOnly ? "Save" : "Mark it fixed";
+  $("fixNoteGo").onclick = function () { devMarkFixedConfirmed(id, light, editOnly); };
+  $("fixNoteModal").classList.add("show");
+  setTimeout(function () { (light ? $("fixNoteFix") : $("fixNoteCause")).focus(); }, 30);
+}
+function devEditCauseFix(id) {
+  var rec = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
+  fixNoteOpen_(id, String(rec.category) === "course_error" && !/^Cause:/.test(String(rec.dev_notes || "")), String(rec.dev_notes || ""), true);
+}
+function devMarkFixedConfirmed(id, light, editOnly) {
   var cause = String($("fixNoteCause").value || "").trim();
   var fix = String($("fixNoteFix").value || "").trim();
-  // Both, and not one word each. A note reading "bug" helps nobody.
-  if (cause.length < 10 || fix.length < 10) {
-    $("fixNoteMsg").textContent = cause.length < 10
+  // Not one word each. A note reading "bug" helps nobody.
+  if ((!light && cause.length < 10) || fix.length < 10) {
+    $("fixNoteMsg").textContent = (!light && cause.length < 10)
       ? "Say what was actually causing it - a few words is not enough to be useful later."
-      : "Say what you changed to fix it.";
-    (cause.length < 10 ? $("fixNoteCause") : $("fixNoteFix")).focus();
+      : (light ? "Say what you changed - a few words is not enough to be useful later." : "Say what you changed to fix it.");
+    ((!light && cause.length < 10) ? $("fixNoteCause") : $("fixNoteFix")).focus();
     return;
   }
-  var notes = "Cause: " + cause + "\n\nFix: " + fix;
-  if ($("dev_notes") && $("markFixedBtn") && $("markFixedBtn").getAttribute("data-issue") === id) $("dev_notes").value = notes;
+  var notes = light ? "Fix: " + fix : "Cause: " + cause + "\n\nFix: " + fix;
   $("fixNoteModal").classList.remove("show");
+  if (editOnly) {
+    optimistic(id, { dev_notes: notes }, { action: "saveDevNotes", issue_id: id, dev_notes: notes },
+      { failMsg: "That didn't save", noRefresh: true, done: function () { if (state.drawerIssueId === id || $("markFixedBtn")) { try { openDevDetail(id); } catch (e) {} } } });
+    return;
+  }
   devMarkFixedSend(id, notes);
 }
 function devMarkFixedSend(id, notes) {
@@ -19075,13 +19097,6 @@ function devSetPriority(id) {
   // r201: shows at once, saves behind.
   optimistic(id, { priority: v }, { action: "updateIssue", issue_id: id, priority: v },
     { failMsg: "That priority didn't save" });
-}
-
-function devSaveNotes(id) {
-  var notes = $("dev_notes") ? $("dev_notes").value : "";
-  // r201: no reload of the whole board for a notes box; the indicator says Saved.
-  optimistic(id, { dev_notes: notes }, { action: "saveDevNotes", issue_id: id, dev_notes: notes },
-    { failMsg: "Those notes didn't save", noRefresh: true });
 }
 
 // Admin (from Track) asks the instructor who logged an issue for more info.
