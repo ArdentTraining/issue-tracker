@@ -1488,16 +1488,9 @@
           <div class="field"><label>Slide / question</label><input id="f_lesson" autocomplete="off" placeholder="e.g. DS.07.06.11-16, or the question" /></div>
         </div>
         <div class="field" id="field_media">
-          <label>What will the fix need? (auto-detected, change if wrong)</label>
-          <select id="f_media_kind">
-            <option value="">—</option>
-            <option value="text">Text only (on-screen text, a diagram, an image or quiz wording)</option>
-            <option value="voiceover">Slide and voiceover</option>
-            <option value="video">Video or animation</option>
-            <option value="new_slide">A new slide (or speech bubble slide)</option>
-            <option value="rework">Rework a lesson or module</option>
-            <option value="other">Other, or not sure</option>
-          </select>
+          <label>What will the fix need? Tick all that apply (auto-detected, change if wrong)</label>
+          <input type="hidden" id="f_media_kind" />
+          <div id="f_needs_ticks" style="display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;"></div>
         </div>
       </details>
 
@@ -2277,6 +2270,7 @@
       <option value="newest">Sort: newest</option>
       <option value="activity">Sort: recent activity</option>
       <option value="reports">Sort: most reported</option>
+      <option value="needs">Sort: what it needs (quickest first)</option>
     </select>
     <button type="button" class="ghost" onclick="ctlOpen('Assign a batch to one person','courseBulk')">Assign all…</button>
   </div>
@@ -3114,8 +3108,9 @@
   <p data-noperm="users">Priority is a badge rather than a dropdown, the same as for the developers. Pick what it ought to be from <span class="ui">Change to…</span>, press <span class="ui">Ask for it</span>, and it writes the opening line of a question to the admins for us to finish. Marking it fixed asks what was causing it and what changed, both required.</p>
   <p data-perm="users">Priority is a dropdown here, because you hold Manage users. Marking it fixed asks what was causing it and what changed, both required.</p>
   <h4>What each fix needs</h4>
-  <p>Every course fix says what it will take: <span class="ui">Text only</span>, <span class="ui">Slide and voiceover</span>, <span class="ui">Video</span>, <span class="ui">New slide</span>, <span class="ui">Rework</span> or <span class="ui">Other</span>. It shows on the card, and <span class="ui">Filter</span> has it as <span class="ui">Needs</span>, so the quick text fixes can be picked off in one sitting while the voiceover and filming jobs wait for a session of their own.</p>
-  <p data-perm="manage">Inside a card, <span class="ui">Needs</span> and <span class="ui">Filed against</span> can be changed on the spot. Type the corrected code into <span class="ui">Filed against</span> and press <span class="ui">Save</span>, and the course and module follow it. Priority stays an ask from here, unless you hold Manage users.</p>
+  <p>Every course fix says what it will take, ticking as many as apply: <span class="ui">Text edit</span>, <span class="ui">Video edit</span>, <span class="ui">Refilm</span>, <span class="ui">Audio recording</span> and <span class="ui">New slide</span>. They show on the card, <span class="ui">Filter</span> has each one under <span class="ui">Needs</span>, and <span class="ui">Sort: what it needs</span> puts the quick text edits first and the refilms last, so a recording or filming session can be planned around everything that needs it.</p>
+  <p data-perm="course">Inside a card, anyone on the Course tab can change the <span class="ui">Needs</span> ticks on the spot.</p>
+  <p data-perm="manage">With Manage, <span class="ui">Filed against</span> can be changed there too. Type the corrected code into <span class="ui">Filed against</span> and press <span class="ui">Save</span>, and the course and module follow it. Priority stays an ask from here, unless you hold Manage users.</p>
   <h4>Check the priorities</h4>
   <p>This one reads the whole open queue and comes back with a list of suggested changes, each with a reason and a before-and-after, and applies none of them until we press <span class="ui">Apply</span> on that row. It takes about a minute.</p>
   <p>If the run fails it says so in a panel that stays on screen rather than a toast that slides away, because a message nobody managed to read leaves "the button does not work" as the only thing left.</p>
@@ -3761,7 +3756,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r212 · 2026-10-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r213 · 2026-10-04";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4783,6 +4778,7 @@ function shortId(i) {
 // ============================ INIT ============================
 function init() {
   initPressFeedback();
+  syncNeedTicks();
   mountHelpDots();
   // Round 104: the contents list in the sub-rail follows the manual as the
   // page scrolls. manualSpy returns immediately on any other view, so this is
@@ -4878,57 +4874,95 @@ function assignFromDetail(id) {
     { failMsg: "That assignment didn't save", noRefresh: true });
 }
 // r197 (Stuart, FB-0416): what a course fix needs doing, so the quick text
-// fixes can be found and cleared apart from the ones that need a voiceover, a
-// film crew or a new slide. The old form's "image" reads as text: it was a
-// diagram change, which is the same kind of job.
-var COURSE_PARTS = [
-  ["text", "Text only", "Text only (on-screen text, a diagram, an image or quiz wording)"],
-  ["voiceover", "Slide and voiceover", "Slide and voiceover (the slide and what is said over it)"],
-  ["video", "Video", "Video or animation (re-film, re-cut or re-animate)"],
-  ["new_slide", "New slide", "A new slide (or speech bubble slide)"],
-  ["rework", "Rework", "Rework a lesson or module"],
-  ["other", "Other", "Other, or not sure"]
+// fixes can be found and cleared apart from the bigger jobs. r213 (Edd, 4 Oct
+// 2026): any mix of these, not one choice, so a fix that needs a text edit
+// AND an audio recording says both, and a recording session can be batched.
+// Stored in media_kind as a comma list. Older single values read across:
+// voiceover = text + audio, video = video edit + refilm (Edd: "assume refilm
+// and edit required if it can't be distinguished"), image = text; rework and
+// other carry no ticks, so somebody ticks what they actually need.
+var COURSE_NEEDS = [
+  ["text", "Text edit"],
+  ["video_edit", "Video edit"],
+  ["refilm", "Refilm"],
+  ["audio", "Audio recording"],
+  ["new_slide", "New slide"]
 ];
-function partOf(i) {
-  var m = String((i && i.media_kind) || "").toLowerCase();
-  if (m === "image") return "text";
-  for (var k = 0; k < COURSE_PARTS.length; k++) if (COURSE_PARTS[k][0] === m) return m;
-  return "other";
+var NEEDS_LEGACY = { image: ["text"], voiceover: ["text", "audio"], video: ["video_edit", "refilm"],
+  both: ["text", "video_edit", "refilm"], rework: [], other: [] };
+// Quickest job first, for the "What it needs" sort.
+var NEEDS_RANK = { text: 0, new_slide: 1, audio: 2, video_edit: 3, refilm: 4 };
+function needsOf(x) {
+  var v = (x && typeof x === "object") ? x.media_kind : x, have = {};
+  String(v == null ? "" : v).toLowerCase().split(/[\s,+]+/).forEach(function (k) {
+    if (!k) return;
+    (NEEDS_LEGACY[k] || (NEEDS_RANK.hasOwnProperty(k) ? [k] : [])).forEach(function (n) { have[n] = 1; });
+  });
+  return COURSE_NEEDS.map(function (p) { return p[0]; }).filter(function (k) { return have[k]; });
 }
-function mediaLabel(m) {
-  m = String(m || "").toLowerCase();
-  if (!m) return "";
-  if (m === "image") m = "text";
-  for (var k = 0; k < COURSE_PARTS.length; k++) if (COURSE_PARTS[k][0] === m) return COURSE_PARTS[k][1];
-  return "Other";
+function mediaLabel(x) {
+  var lab = {}; COURSE_NEEDS.forEach(function (p) { lab[p[0]] = p[1]; });
+  return needsOf(x).map(function (k) { return lab[k]; }).join(" + ");
+}
+function needsSortKey(i) {
+  var n = needsOf(i);
+  if (!n.length) return 99;
+  return Math.max.apply(null, n.map(function (k) { return NEEDS_RANK[k]; })) * 10 + n.length;
+}
+function needsTicksHtml(cur, onchange) {
+  return COURSE_NEEDS.map(function (p) {
+    return '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:normal;cursor:pointer;">' +
+      '<input type="checkbox" style="width:auto;margin:0;flex:none;" data-need="' + p[0] + '"' + (cur.indexOf(p[0]) >= 0 ? " checked" : "") +
+      ' onchange="' + onchange + '"> ' + esc(p[1]) + '</label>';
+  }).join("");
+}
+function needsFromTicks(box) {
+  var out = [];
+  Array.prototype.forEach.call(box ? box.querySelectorAll("input[data-need]") : [], function (c) { if (c.checked) out.push(c.getAttribute("data-need")); });
+  return out.join(",");
+}
+// The log form keeps the value in a hidden f_media_kind (so the split tabs and
+// every getField/setField carry on as before) and draws the ticks from it.
+function syncNeedTicks() {
+  var box = $("f_needs_ticks");
+  if (box) box.innerHTML = needsTicksHtml(needsOf(($("f_media_kind") || {}).value), "formNeedsChanged()");
+}
+function formNeedsChanged() {
+  $("f_media_kind").value = needsFromTicks($("f_needs_ticks"));
+  try { updateGroupSummaries(); } catch (e) {}
+}
+
+// r197 (Stuart, FB-0415 and FB-0416): fix the lesson a course issue is filed
+// against, and say what the fix needs, without leaving the Course tab. The
+// lesson stays with the manage permission (the rule updateIssue_ holds on the
+// server). r213 (Edd): what it needs can be ticked by anyone with the Course
+// tab. Severity and priority stay out of here on purpose (Edd, 22 Sep 2026).
+function canEditCourseFix() { return !!(state.perms && (state.perms.manage || state.perms.course || state.perms.users)); }
+function canEditCourseLesson() { return !!(state.perms && state.perms.manage); }
+function courseFixEditHtml(issue) {
+  var id = esc(issue.issue_id);
+  var ref = String(issue.lesson || issue.lesson_code || "");
+  var was = String(issue.media_kind || "").toLowerCase();
+  var hint = (!needsOf(issue).length && (was === "rework" || was === "other"))
+    ? '<div class="small muted" style="grid-column:2;">Was marked ' + (was === "rework" ? "Rework" : "Other") + '. Tick what it actually needs.</div>' : "";
+  return '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;margin:8px 0 14px;font-size:13px;">' +
+    '<span class="muted">Needs</span>' +
+    '<div id="cfxNeeds" style="display:flex;flex-wrap:wrap;gap:4px 14px;">' + needsTicksHtml(needsOf(issue), "courseSetNeeds('" + id + "')") + '</div>' +
+    hint +
+    (canEditCourseLesson()
+      ? '<label for="cfxLesson" class="muted">Filed against</label>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="cfxLesson" value="' + esc(ref) + '" placeholder="e.g. DS.12.12.22" style="width:14em;" onkeydown="if(event.key===\'Enter\')courseSetLesson(\'' + id + '\')">' +
+        '<button class="ghost small" style="padding:4px 10px;" onclick="courseSetLesson(\'' + id + '\')">Save</button></div>'
+      : '') +
+  '</div>';
+}
+function courseSetNeeds(id) {
+  var v = needsFromTicks($("cfxNeeds"));
+  optimistic(id, { media_kind: v }, { action: "updateIssue", issue_id: id, media_kind: v },
+    { failMsg: "That didn't save", noRefresh: true, done: function () { toast(v ? "Saved: " + mediaLabel(v) + "." : "Saved: nothing ticked."); } });
 }
 function isTrue(v) { return v === true || v === "true" || v === "TRUE"; }
 
-// r197 (Stuart, FB-0415 and FB-0416): fix the lesson a course issue is filed
-// against, and say what the fix needs, without leaving the Course tab. Only
-// for people who can edit an issue anyway (the manage permission, the same
-// rule updateIssue_ holds on the server). Severity and priority stay out of
-// here on purpose (Edd, 22 Sep 2026): from this queue those are asked for.
-function canEditCourseFix() { return !!(state.perms && state.perms.manage); }
-function courseFixEditHtml(issue) {
-  var id = esc(issue.issue_id), cur = issue.media_kind ? partOf(issue) : "";
-  var ref = String(issue.lesson || issue.lesson_code || "");
-  return '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;margin:8px 0 14px;font-size:13px;">' +
-    '<label for="cfxPart" class="muted">Needs</label>' +
-    '<select id="cfxPart" style="width:auto;max-width:100%;" onchange="courseSetPart(\'' + id + '\', this.value)">' +
-      (cur ? "" : '<option value="" selected>Not set</option>') +
-      COURSE_PARTS.map(function (p) { return '<option value="' + p[0] + '"' + (p[0] === cur ? " selected" : "") + '>' + esc(p[2]) + '</option>'; }).join("") +
-    '</select>' +
-    '<label for="cfxLesson" class="muted">Filed against</label>' +
-    '<div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="cfxLesson" value="' + esc(ref) + '" placeholder="e.g. DS.12.12.22" style="width:14em;" onkeydown="if(event.key===\'Enter\')courseSetLesson(\'' + id + '\')">' +
-    '<button class="ghost small" style="padding:4px 10px;" onclick="courseSetLesson(\'' + id + '\')">Save</button></div>' +
-  '</div>';
-}
-function courseSetPart(id, v) {
-  if (!v) return;
-  optimistic(id, { media_kind: v }, { action: "updateIssue", issue_id: id, media_kind: v },
-    { failMsg: "That didn't save", noRefresh: true, done: function () { toast("Saved: " + mediaLabel(v) + "."); } });
-}
 function courseSetLesson(id) {
   var raw = String(($("cfxLesson") || {}).value || "").trim();
   var m = raw.match(/\b(EN|DS|YM|FT)[\s.]*?(\d{1,2})(?:[\s.]+(\d{1,3}))?/i);
@@ -5662,6 +5696,7 @@ function fastSaveOp_(payload) {
   var k = keys[0], a = payload.action;
   if (a === "saveDevNotes" && (k === "dev_notes" || k === "dev_ask")) return { op: k, value: payload[k] };
   if (a === "updateIssue" && k === "fix_size") return { op: "fix_size", value: payload.fix_size };
+  if (a === "updateIssue" && k === "media_kind") return { op: "media_kind", value: payload.media_kind };
   if (a === "addTeamNote" && k === "note") return { op: "team_note", value: payload.note };
   return null;
 }
@@ -12603,6 +12638,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 55, date: "2026-10-04", who: ["course", "manage", "users"], text: "Course fixes say what they need with tick boxes, as many as apply: Text edit, Video edit, Refilm, Audio recording, New slide. Anyone on the Course tab can tick them, Filter has each one, and a new sort puts the quickest jobs first so a recording or filming session can be batched." },
   { n: 54, date: "2026-10-04", who: ["dev", "course", "users"], text: "One box for notes and updates on the Dev and Course panels: Post an update, open to everyone, saves straight away. The cause and fix is now written only in the Mark fixed popup (course fixes get a one-line version: what did you change?)." },
   { n: 53, date: "2026-10-04", who: ["log"], text: "A high-priority report only goes straight to the developers once the student has logged out and back in, or one of us has logged in as them to look. There is a new tick for that second one in the checklist." },
   { n: 52, date: "2026-10-04", who: ["users"], text: "A developer's question can be cleared with Acknowledge when it needs no reply, and a request to change a priority comes with Accept and Decline buttons on the row." },
@@ -13334,7 +13370,10 @@ function renderThumbs() {
 }
 function removeImage(i) { state.attachedImages.splice(i, 1); renderThumbs(); }
 
-function setField(id, val) { $(id).value = (val == null ? "" : val); }
+function setField(id, val) {
+  if (id === "f_media_kind") { $(id).value = needsOf(val).join(","); syncNeedTicks(); return; }
+  $(id).value = (val == null ? "" : val);
+}
 function getField(id) { return $(id).value.trim(); }
 // Did the last extraction error? Decides whether a missing summary gets the
 // "press Retry" hint or the plain "write a line yourself" one.
@@ -15610,6 +15649,7 @@ function resetForm() {
   if ($("f_plat_browser")) $("f_plat_browser").checked = false;
   if ($("f_plat_app")) $("f_plat_app").checked = false;
   if ($("f_student_sorted")) $("f_student_sorted").checked = false;
+  setField("f_media_kind", "");
   $("f_course").value = "";
   $("f_section").value = "";
   $("f_issue_type").value = "bug";
@@ -18037,7 +18077,7 @@ function courseCardHtml(i) {
   var reps = reportCount(i);
   var st = (i.status || "").toLowerCase();
   var done = st === "dev_fixed" || st === "resolved";
-  var part = i.media_kind ? partOf(i) : "";
+  var part = mediaLabel(i);
   // Fix-first card: the code and what needs doing, fluff behind the drawer.
   var lessonLine = dispLesson(i);
   // Round 65 badge pass. This queue is already filtered to course errors, so
@@ -18046,7 +18086,7 @@ function courseCardHtml(i) {
   // status on this queue that changes what you do next - the r65 rule read the
   // way it applies to a single-category queue.
   var extra = [];
-  if (part) extra.push(mediaLabel(part));
+  if (part) extra.push(part);
   return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
     '<div class="top">' +
       priBadge(i.priority) +
@@ -18110,7 +18150,8 @@ function renderCourse() {
     if (state.courseModule !== "all" && (dispModule(i) || "") !== state.courseModule) return false;
     if (state.courseLesson !== "all" && String(i.lesson_code || "") !== state.courseLesson) return false;
     if (state.courseType !== "all" && refType(i) !== state.courseType) return false;
-    if (state.coursePart !== "all" && partOf(i) !== state.coursePart) return false;
+    if (state.coursePart === "none") { if (needsOf(i).length) return false; }
+    else if (state.coursePart !== "all" && needsOf(i).indexOf(state.coursePart) === -1) return false;
     if (state.courseAssignee !== "all") {
       var a = String(i.assignee || "").trim();
       if (state.courseAssignee === "unassigned") { if (a) return false; }
@@ -18132,6 +18173,14 @@ function renderCourse() {
     list.sort(function (a, b) { return courseStart(b) - courseStart(a); });
   } else if (cs === "activity") {   // FB-0461
     list.sort(function (a, b) { return lastActivityAt(b) - lastActivityAt(a); });
+  } else if (cs === "needs") {   // r213 (Edd): batch the text edits, the recordings, the refilms
+    list.sort(function (a, b) {
+      var na = needsSortKey(a), nb = needsSortKey(b);
+      if (na !== nb) return na - nb;
+      var pa = PRIORITY_RANK[(a.priority || "low").toLowerCase()], pb = PRIORITY_RANK[(b.priority || "low").toLowerCase()];
+      if (pa !== pb) return pa - pb;
+      return courseStart(a) - courseStart(b);
+    });
   } else if (cs === "reports") {
     list.sort(function (a, b) {
       var ra = reportCount(a), rb = reportCount(b);
@@ -18174,11 +18223,11 @@ var COURSE_BULK_FIELDS = {
   type: {
     label: "item type",
     opts: [["kc", "a knowledge check"], ["ma", "a module assessment"], ["lesson", "a lesson slide"],
-           ["text", "a text-only fix"], ["voiceover", "a slide and voiceover fix"], ["video", "a video fix"],
-           ["new_slide", "a new slide"], ["rework", "a lesson rework"], ["other", "anything else"]],
+           ["text", "a fix needing a text edit"], ["video_edit", "a fix needing a video edit"], ["refilm", "a fix needing a refilm"],
+           ["audio", "a fix needing an audio recording"], ["new_slide", "a fix needing a new slide"]],
     match: function (i, v) {
       if (v === "kc" || v === "ma" || v === "lesson") return refType(i) === v;
-      return partOf(i) === v;
+      return needsOf(i).indexOf(v) >= 0;
     }
   },
   course: {
@@ -18469,7 +18518,7 @@ function renderCourseFilters(statusPool) {
     drop("courseModule", "setCourseSel('courseModule', this.value)", listOpts("Module", modules)) +
     drop("courseLesson", "setCourseSel('courseLesson', this.value)", listOpts("Lesson", lessons)) +
     drop("courseType", "setCourseSel('courseType', this.value)", [["all", "Type: all"], ["lesson", "Lessons"], ["kc", "Knowledge checks"], ["ma", "Module assessments"]]) +
-    drop("coursePart", "setCourseSel('coursePart', this.value)", [["all", "Needs: all"]].concat(COURSE_PARTS.map(function (p) { return [p[0], p[1]]; }))) +
+    drop("coursePart", "setCourseSel('coursePart', this.value)", [["all", "Needs: all"]].concat(COURSE_NEEDS.map(function (p) { return [p[0], p[1]]; }), [["none", "Needs: not ticked"]])) +
     drop("courseAssignee", "setCourseSel('courseAssignee', this.value)", listOpts("Assignee", assignees, [["unassigned", "Unassigned"]]));
   var sortSel = $("courseSortSel");
   if (sortSel) sortSel.value = state.courseSort || "priority";

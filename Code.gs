@@ -441,7 +441,7 @@ var HEADERS = [
   'checklist_json',    // AB pre-dev troubleshooting checklist state (tech issues), JSON map of item -> done | na | todo
   'request_kind',      // AC fix | improvement  (improvement = a feature/enhancement request, handled as a calmer backlog)
   'assignee',          // AD name of the person this is assigned to fix (course dev or developer), blank if unassigned
-  'media_kind',        // AE course issues: what the fix needs. text | voiceover | video | new_slide | rework | other (r197; legacy image = text)
+  'media_kind',        // AE course issues: what the fix needs, a comma list of text | video_edit | refilm | audio | new_slide (r213; older single values read through normNeeds_)
   'double_checked',    // AF course issues: true if the submitter verified it themselves, not just the student's word
   'impact',            // AG improvements: low | medium | high  (rough impact, for backlog prioritisation)
   'section',           // AH which part of the platform: website | instructor_portal | partner_portal | course_player | app | other (mainly for tech and internal issues)
@@ -1018,6 +1018,24 @@ function hasPerm_(user, req) {
   // wherever it shows (Track or the Developers / Course queues).
   if (req === 'work') return !!(p.log || p.manage || p.dev || p.course || p.users);
   return !!p[req];
+}
+
+// r213 (Edd, 4 Oct 2026): what a course fix needs is a set of ticks, any mix of
+// text edit, video edit, refilm, audio recording and new slide, stored in
+// media_kind as a comma list in this order. The old single choices read
+// across: voiceover = text + audio; video = video edit + refilm (Edd: "assume
+// refilm and edit required if it can't be distinguished"); rework and other
+// carry no ticks, so somebody ticks what they actually need.
+var NEEDS_KEYS_ = ['text', 'video_edit', 'refilm', 'audio', 'new_slide'];
+var NEEDS_LEGACY_ = { image: ['text'], voiceover: ['text', 'audio'], video: ['video_edit', 'refilm'],
+  both: ['text', 'video_edit', 'refilm'], rework: [], other: [] };
+function normNeeds_(v) {
+  var have = {};
+  String(v == null ? '' : v).toLowerCase().split(/[\s,+]+/).forEach(function (k) {
+    if (!k) return;
+    (NEEDS_LEGACY_[k] || (NEEDS_KEYS_.indexOf(k) >= 0 ? [k] : [])).forEach(function (x) { have[x] = 1; });
+  });
+  return NEEDS_KEYS_.filter(function (k) { return have[k]; }).join(',');
 }
 function reqPerm_(action) {
   switch (action) {
@@ -3565,7 +3583,7 @@ function addIssue_(data) {
     checklist_json: data.checklist_json || '',
     request_kind: data.request_kind === 'improvement' ? 'improvement' : 'fix',
     assignee: data.assignee || '',
-    media_kind: data.media_kind || '',
+    media_kind: normNeeds_(data.media_kind),
     double_checked: data.double_checked === true || data.double_checked === 'true' ? true : '',
     impact: data.impact || '',
     section: data.section || '',
@@ -4596,11 +4614,14 @@ function updateIssue_(data) {
   // for the same reason - since FB-0261 it IS the priority, one step removed.
   if (data._user && !hasPerm_(data._user, 'manage')) {
     var allowedKeys = { fix_size: 1 };
+    // r213: what a course fix needs - anyone with the Course tab (Edd).
+    if (hasPerm_(data._user, 'course')) allowedKeys.media_kind = 1;
     var blocked = HEADERS.filter(function (k) {
       return data.hasOwnProperty(k) && !allowedKeys[k] && k !== 'issue_id';
     });
     if (blocked.length) return { ok: false, error: 'Only the fix size can be edited from this queue. Ask an admin for a priority change.' };
   }
+  if (data.hasOwnProperty('media_kind')) data.media_kind = normNeeds_(data.media_kind);
 
   // Moving something INTO the dev queue by hand (including a kanban drag) is
   // the same admin call as passToDev, so hold it to the same permission.
@@ -4774,7 +4795,7 @@ function courseReview_(data) {
         priority: String(i.priority || '').toLowerCase(),
         reports: Number(i.report_count) || 1,
         days_open: Math.max(0, Math.round((Date.now() - new Date(i.submitted_at || Date.now())) / 864e5)),
-        part: i.media_kind || '',
+        part: normNeeds_(i.media_kind).replace(/,/g, ' + '),
         kind: i.request_kind || 'fix'
       };
     });
@@ -9699,7 +9720,7 @@ function extractionStaticPrompt_() {
       '- severity: how badly this hits ONE person, ignoring how many people have hit it. "severe" = it stops them continuing the course or buying one: they cannot log in, cannot open a lesson, cannot sit an exam, cannot pay, or an error would make them fail an assessment. "moderate" = it gets in the way but they can carry on, with a workaround or by skipping past it. "low" = an annoyance, a cosmetic fault, or a typo that misleads nobody. Judge the FAULT, not how upset the message sounds, and judge it as the thread ENDS: if the student is already through (a workaround worked, or they were sorted by hand), nobody is stopped any more, so a tech fault is "moderate" at most.',
       '- category: use "friction" when NOTHING is broken but the design cost the student money or time - they paid without spotting a discount code box, missed a deadline because a date was buried, bought the wrong thing because two options read the same. A friction report has a working system and an avoidable loss. If something actually failed, it is not friction.',
       '- request_kind: "improvement" if the report is asking for a NEW feature, an enhancement, or an "it would be nice if" change rather than reporting something broken or wrong (this applies to both course content and the platform, for example "could we add a glossary" or "the player should remember playback speed"); otherwise "fix" for a bug, an error, or something not working or incorrect as it stands. When in doubt, choose "fix". Most reports are "fix".',
-    '- media_kind: for a course_error only, what the fix will need doing: "text" if it is only on-screen text, a diagram, an image or quiz wording; "voiceover" if an existing slide and what is said over it both change; "video" if a video or animation has to be re-filmed, re-cut or re-animated; "new_slide" if a slide (or speech bubble slide) has to be added; "rework" if a whole lesson or module needs remaking or restructuring; otherwise "other". Return null for tech_issue.',
+    '- media_kind: for a course_error only, what the fix will need doing, as a comma-separated list of every one that applies, in this order: "text" if on-screen text, a diagram, an image or quiz wording changes; "video_edit" if an existing video or animation needs cutting, trimming or re-editing; "refilm" if footage has to be filmed again; "audio" if a voiceover has to be recorded or re-recorded; "new_slide" if a slide (or speech bubble slide) has to be added. A slide whose wording and voiceover both change is "text,audio". If it is a video problem and you cannot tell whether an edit or a refilm will do, give "video_edit,refilm". Return null for tech_issue, or when none can be told.',
     '- impact: for an improvement only, a rough impact rating of "low", "medium", or "high" based on how much it would benefit students. Return null for a fix.',
     '- summary: one or two plain-English sentences summarising the issue. Keep the specific detail someone would need to reproduce it: which page or view, and HOW it is reached when that matters (e.g. "opened via the three-dots menu on the Students page" rather than just "the student profile page"). If the report describes two different symptoms, name both rather than blending them into one vague sentence.',
     '- priority: one of ["high", "medium", "low"]',
@@ -9922,7 +9943,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r212 · 2026-10-04';
+var CODE_STAMP = 'r213 · 2026-10-04';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -11692,7 +11713,7 @@ function caseCheckpoint_(data) {
     image_urls: (bj.images_note ? '' : (imp.images || []).join(',')),  // coursework screenshots stay off the report (Edd, FB-0179)
     section: f.section || '',
     platform: f.platform || '',
-    media_kind: f.media_kind || '',
+    media_kind: normNeeds_(f.media_kind),
     request_kind: f.request_kind === 'improvement' ? 'improvement' : 'fix',
     chatwoot_conversation_id: id,
     app_url: data.app_url || getAppUrl_()
