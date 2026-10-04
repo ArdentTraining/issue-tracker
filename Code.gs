@@ -2838,6 +2838,12 @@ function storeAdmin_(data) {
   if (what === 'go_live') return storeGoLive_();
   if (what === 'go_back') return storeGoBack_();
   if (what === 'dryrun') return storeDryRun_();
+  if (what === 'save_parity') {   // r211.1: does tracker-save build every board row exactly as we do?
+    var pr = UrlFetchApp.fetch(SAVE_URL, { method: 'post', contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + storeTicket_(), 'x-region': 'eu-west-2' },
+      payload: JSON.stringify({ action: 'parity' }), muteHttpExceptions: true });
+    try { return JSON.parse(pr.getContentText()); } catch (e) { return { ok: false, error: 'HTTP ' + pr.getResponseCode() }; }
+  }
   return { ok: false, error: 'storeAdmin: what = selftest | import | mode | shadow_on | shadow_off | compare' };
 }
 
@@ -9883,7 +9889,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r211 · 2026-10-04';
+var CODE_STAMP = 'r211.1 · 2026-10-04';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
