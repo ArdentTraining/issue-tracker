@@ -3759,7 +3759,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r211 · 2026-10-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r211.2 · 2026-10-04";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -18868,14 +18868,10 @@ function openDevDetail(id) {
     '<div class="field"><textarea id="devQueryText" rows="2" placeholder="Ask something about this issue..."></textarea></div>' +
     '<div class="row" style="margin-bottom:10px;"><button class="ghost" onclick="sendDevQuery(\'' + esc(issue.issue_id) + '\')">' +
     (issue.dev_query_at ? 'Send another question' : 'Send question') + '</button></div>';
-  // FB-0300 (Edd): an admin working the dev queue can put an update on the
-  // issue without hopping to the admin view. Admins only - developers keep
-  // their own notes and the question box.
-  if (state.perms && state.perms.users) {
-    html += '<h3>Post an update</h3>' +
-      '<div class="field"><textarea id="devAdminUpdate" rows="2" placeholder="A note for the trail - what changed, what was decided&hellip;"></textarea></div>' +
-      '<div class="row" style="margin-bottom:10px;"><button class="ghost" onclick="devPostAdminUpdate(\'' + esc(issue.issue_id) + '\')">Add update</button></div>';
-  }
+  // FB-0300's admin "Post an update" box lived here. Retired 4 Oct 2026
+  // (Edd: "team notes and post an update are the same thing"): Team notes,
+  // higher up, is the one place for a note on a fix, saves in under a second,
+  // and the next-action reader sees it on the trail like any other update.
 
   var detStatus = (issue.status || "").toLowerCase();
   var detDone = detStatus === "dev_fixed" || detStatus === "resolved";
