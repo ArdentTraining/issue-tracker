@@ -676,6 +676,9 @@ function doPost(e) {
     // can be PROVEN rather than simulated. Only the harmless read-and-post
     // jobs are listed; nothing here changes an issue.
     if (action === 'runJob') return jsonOut(runJob_(body));
+    // r211: tracker-save has written a record straight to the store; copy it to
+    // the Sheet and patch the cached board. Gated by a ticket the function signs.
+    if (action === 'storeNudge') return jsonOut(storeNudge_(body));
     if (action === 'runMigrateAudience') {
       var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
       if (!mk || String(body.key || '') !== mk) return jsonOut({ ok: false, error: 'bad deploy key' });
@@ -2140,6 +2143,7 @@ function mirrorFullSync() {
     if (chunk.length) mirrorCall_({ action: 'sync', op: 'upsert', full: true, rows: chunk }, ticket);
   }
   var out = { ok: true, issues: items.length, upserted: want.length, removed: m.gone || 0, ms: Date.now() - t0 };
+  try { storeConfigPush_(); } catch (e) { out.save_config = String(e).slice(0, 160); }   // r211
   Logger.log('mirrorFullSync: ' + JSON.stringify(out));
   return out;
 }
@@ -2691,6 +2695,57 @@ function storeSheetCatchUp_() {
   rows.forEach(function (r) { if (!have[r.key]) { storeSheetCopy_(r.key, r.tab, storeRowToObj_(r, '')); fixed++; } });
   return fixed;
 }
+/* ---- r211: phase 2, step 3, first slice - fast saves -----------------------
+ * tracker-save (Supabase) writes four plain saves straight to the store: the
+ * developer notes, the ask, the fix size and team notes. It only does so while
+ * tracker.sync_state says records_live (pushed from here) AND fast_saves (a
+ * switch turned on by hand). After each one it nudges us to copy the record to
+ * the Sheet and patch the cached board.
+ */
+var SAVE_URL = 'https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-save';
+var NUDGE_ID_ = 'store-edge@ardent-training.com';
+function verifyTicket_(raw) {
+  try {
+    var secret = PropertiesService.getScriptProperties().getProperty('REPORTS_TICKET_SECRET');
+    raw = String(raw || '');
+    var dot = raw.indexOf('.');
+    if (!secret || dot < 1) return null;
+    var p = raw.slice(0, dot), sig = raw.slice(dot + 1);
+    if (b64UrlEncode_(Utilities.computeHmacSha256Signature(p, secret)) !== sig) return null;
+    var padded = p + '===='.slice((p.length % 4) || 4);
+    var t = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(padded)).getDataAsString());
+    var now = Math.floor(Date.now() / 1000);
+    if (typeof t.exp !== 'number' || now > t.exp + 60 || typeof t.iat !== 'number' || t.iat > now + 60) return null;
+    return t;
+  } catch (e) { return null; }
+}
+function storeNudge_(body) {
+  var t = verifyTicket_(body && body.ticket);
+  if (!t || String(t.email || '').toLowerCase() !== NUDGE_ID_ || !(t.perms && t.perms.store_nudge === true)) return { ok: false, error: 'unauthorized' };
+  if (!storeLive_()) return { ok: true, skipped: 'the Sheet is the record' };
+  var ids = ((body && body.ids) || []).slice(0, 10).map(String), copied = 0;
+  ids.forEach(function (id) {
+    var got = storeCall_({ op: 'get', tbl: 'issues', key: id });
+    if (!got.ok || !got.row) return;
+    storeSheetCopy_(id, got.row.tab, storeRowToObj_(got.row, ''));
+    touchIssue_(id);   // so the end of this request patches the cached board and re-pushes the mirror row
+    copied++;
+  });
+  return { ok: true, copied: copied };
+}
+// What tracker-save needs to know from here. Every ten minutes with the mirror
+// sync, and straight away on go_live / go_back.
+function storeConfigPush_(live) {
+  var body = { action: 'config', records_live: live === undefined ? storeLive_() : !!live, headers: HEADERS };
+  try { body.url = ScriptApp.getService().getUrl(); } catch (e) {}
+  var res = UrlFetchApp.fetch(SAVE_URL, { method: 'post', contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + storeTicket_(), 'x-region': 'eu-west-2' },
+    payload: JSON.stringify(body), muteHttpExceptions: true });
+  var out = {};
+  try { out = JSON.parse(res.getContentText()); } catch (e) {}
+  if (res.getResponseCode() !== 200 || !out.ok) throw new Error('save config: HTTP ' + res.getResponseCode() + ' ' + String(res.getContentText()).slice(0, 120));
+  return out;
+}
 function storeGoLive_() {
   if (storeMode_() !== 'shadow') return { ok: false, error: 'go_live only from shadow mode (now ' + storeMode_() + ')' };
   storeShadowCompare();                 // puts anything out of step right
@@ -2700,15 +2755,22 @@ function storeGoLive_() {
   PropertiesService.getScriptProperties().setProperty('STORE_MODE', 'supabase');
   CacheService.getScriptCache().remove('ait_store_mode');
   try { invalidateIssueCache_(); } catch (e) {}
-  return { ok: true, mode: 'supabase', issues: iss.rows };
+  var cfg = null;
+  try { cfg = storeConfigPush_(true); } catch (e) { cfg = { error: String(e).slice(0, 160) }; }   // r211; fast saves stay off until turned on by hand
+  return { ok: true, mode: 'supabase', issues: iss.rows, save_config: cfg };
 }
 function storeGoBack_() {
   if (storeMode_() !== 'supabase') return { ok: false, error: 'not in supabase mode (now ' + storeMode_() + ')' };
+  // r211: fast saves stop FIRST, so nothing can land in the store behind the
+  // catch-up. A save already on its way gets two seconds to finish.
+  var cfgBack = null;
+  try { cfgBack = storeConfigPush_(false); } catch (e) { cfgBack = { error: String(e).slice(0, 160) }; }
+  Utilities.sleep(2000);
   var fixed = storeSheetCatchUp_();     // the Sheet takes every last save first
   PropertiesService.getScriptProperties().setProperty('STORE_MODE', 'shadow');
   CacheService.getScriptCache().remove('ait_store_mode');
   try { invalidateIssueCache_(); } catch (e) {}
-  return { ok: true, mode: 'shadow', sheet_rows_put_right: fixed };
+  return { ok: true, mode: 'shadow', sheet_rows_put_right: fixed, save_config: cfgBack };
 }
 
 // r208.7: read-only. What Slack itself holds in a channel since a time: every
@@ -2893,7 +2955,7 @@ var CURRENT_ACTION_ = '';
  * these five ever gains a write that does not go through findRow_, take it
  * off the list.
  */
-var PATCHABLE_ACTIONS = { updateIssue: 1, addUpdate: 1, addIssue: 1, assignIssue: 1, saveChecklist: 1,
+var PATCHABLE_ACTIONS = { storeNudge: 1, updateIssue: 1, addUpdate: 1, addIssue: 1, assignIssue: 1, saveChecklist: 1,
   // r201: Mark fixed, pass to dev, dev notes and the two query actions were
   // dropping the whole list (next open 11s). Walked 29 Sep: every issue-row
   // write in each goes through findRow_ (the Slack stamps and alert tidy-up
@@ -3026,7 +3088,16 @@ function maybeDropBootExtras_(action) {
 // by the board list and the Supabase mirror so both build rows identically.
 function readIssueObjs_(each) {
   if (storeLive_()) {   // r208.4: blanks left out, as below
-    storeListIssues_().forEach(function (r) { each(storeTidyObj_(storeDec_(r.data || {}))); });
+    // r210.1: built exactly as getIssueFull_ builds one - HEADERS order, the
+    // HEADERS only. The store keeps each record as jsonb, which hands its keys
+    // back in its own order, so the ten-minute mirror sync was writing every
+    // row with its fields in a different order from the per-save push: a new
+    // fingerprint for the same record, re-sent to every page each time.
+    storeListIssues_().forEach(function (r) {
+      var full = storeRowToObj_(r, null), only = {};
+      HEADERS.forEach(function (h) { var v = full[h]; if (v !== null && v !== '' && v !== undefined) only[h] = v; });   // blanks left out, as below
+      each(storeTidyObj_(only));
+    });
     return;
   }
   ISSUE_SHEETS.forEach(function (name) {
@@ -9812,7 +9883,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r210 · 2026-10-04';
+var CODE_STAMP = 'r211 · 2026-10-04';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

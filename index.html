@@ -3759,7 +3759,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r210 · 2026-10-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r211 · 2026-10-04";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5633,6 +5633,61 @@ function runBootstrap_(isRetry, forceFull) {
 // and a failure here is logged and forgotten.
 var MIRROR_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-mirror";
 var MIRROR_CHECK_EVERY_MS = 2 * 60 * 1000;
+// r211: phase 2, step 3, first slice. Four plain saves go straight to the
+// store through tracker-save instead of Apps Script's 9 to 15 seconds: the
+// developer notes, the ask, the fix size and team notes. Only while the switch
+// in Supabase says so; otherwise, or if anything is off, the save goes to Apps
+// Script exactly as before.
+var SAVE_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-save";
+var FAST_CHECK_EVERY_MS = 10 * 60 * 1000;
+var FAST_HOLD_MS = 20000;   // how long a fast save's value is held on screen against an older board
+function fastSavesCheck_() {
+  if (state.viewAs || Date.now() - (state._fastCheckedAt || 0) < FAST_CHECK_EVERY_MS) return;
+  state._fastCheckedAt = Date.now();
+  var t0 = Date.now();
+  mirrorTicket_().then(function (t) {
+    return fetch(SAVE_URL, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + t },
+      body: JSON.stringify({ action: "status" }) }).then(function (r) { return r.json(); });
+  }).then(function (res) {
+    state._fastSaves = !!(res && res.ok && res.on);
+    diagApi("fast.status", t0, state._fastSaves ? "on" : "off");
+  }).catch(function (e) { state._fastSaves = false; diagApi("fast.status", t0, "failed: " + e); });
+}
+function fastSaveOp_(payload) {
+  if (!state._fastSaves || state.viewAs || !payload || !payload.issue_id) return null;
+  var keys = Object.keys(payload).filter(function (k) { return k !== "action" && k !== "issue_id" && k !== "app_url"; });
+  if (keys.length !== 1) return null;
+  var k = keys[0], a = payload.action;
+  if (a === "saveDevNotes" && (k === "dev_notes" || k === "dev_ask")) return { op: k, value: payload[k] };
+  if (a === "updateIssue" && k === "fix_size") return { op: "fix_size", value: payload.fix_size };
+  if (a === "addTeamNote" && k === "note") return { op: "team_note", value: payload.note };
+  return null;
+}
+// Use this rather than apiPost for a save that might go the fast way.
+function savePost_(payload) {
+  var f = fastSaveOp_(payload);
+  if (!f) return apiPost(payload);
+  var t0 = Date.now();
+  return mirrorTicket_().then(function (t) {
+    return fetch(SAVE_URL, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + t },
+      body: JSON.stringify({ action: "save", issue_id: payload.issue_id, op: f.op, value: f.value }) }).then(function (r) { return r.json(); });
+  }).then(function (res) {
+    if (res && res.ok) { diagApi("fast." + f.op, t0, "ok"); return res; }
+    if (res && res.fallback) {
+      diagApi("fast." + f.op, t0, "to Apps Script: " + (res.why || "?"));
+      if (/switched off|not live|no headers/.test(res.why || "")) state._fastSaves = false;
+      return apiPost(payload);
+    }
+    diagApi("fast." + f.op, t0, "refused: " + ((res && res.error) || "?"));
+    return res;
+  }, function (e) {
+    diagApi("fast." + f.op, t0, "failed: " + e);
+    // A note may have landed before the answer was lost; sending it again
+    // could write it twice. A field save is safe to repeat.
+    if (f.op === "team_note") return { ok: false, error: "No answer from the server. Refresh and check before adding it again." };
+    return apiPost(payload);
+  });
+}
 // r203: the ticket is kept with the saved board (same per-person key family,
 // cleared on sign-out), so opening the tracker does not first wait ~2.5s on
 // Apps Script just to be allowed to read the mirror.
@@ -5700,6 +5755,7 @@ function mirrorCall_(body) {
   });
 }
 function mirrorCheckSoon_() {
+  fastSavesCheck_();   // r211
   if (state.viewAs || !state._rowHash) return;
   if (Date.now() - (state._mirrorCheckedAt || 0) < MIRROR_CHECK_EVERY_MS) return;
   state._mirrorCheckedAt = Date.now();
@@ -5848,7 +5904,7 @@ function optimistic(id, fields, payload, opts) {
   var pn = pendingSet_(id, fields);   // r201: survives any refresh already in the air
   updateActionsTabCount();
   renderCurrentView();
-  return apiPost(payload).then(function (res) {
+  return savePost_(payload).then(function (res) {
     if (!res || !res.ok) {
       pendingDone_(id, false, pn);
       revertIssue(id, before);
@@ -5857,6 +5913,9 @@ function optimistic(id, fields, payload, opts) {
       return res;
     }
     pendingDone_(id, true, pn);
+    // r211: a fast save is in the store before Apps Script's cached board knows
+    // about it, so hold the new value on screen a little longer.
+    if (res.fast && state._pend && state._pend[id] && state._pend[id].n === pn) state._pend[id].doneAt = Date.now() + FAST_HOLD_MS;
     if (opts.done) opts.done(res);
     // Quietly bring the row back in line with the server, without the wait.
     // One refresh for a burst of clicks, not one each (r201).
@@ -18509,7 +18568,7 @@ function addTeamNote(id) {
   var v = t ? t.value.trim() : "";
   if (!v) { toast("Write the note first."); return; }
   if (msg) msg.textContent = "Saving…";
-  apiPost({ action: "addTeamNote", issue_id: id, note: v }).then(function (res) {
+  savePost_({ action: "addTeamNote", issue_id: id, note: v }).then(function (res) {
     if (!res || !res.ok) { if (msg) msg.textContent = ""; toast("That note didn't save (" + ((res && res.error) || "unknown") + ")"); return; }
     if (t) t.value = "";
     if (msg) msg.textContent = "Saved";
@@ -18583,7 +18642,7 @@ function saveDevAsk(id) {
   if (!box) return;
   var note = $("devAskNote");
   if (note) note.textContent = "Saving…";
-  apiPost({ action: "saveDevNotes", issue_id: id, dev_ask: box.value }).then(function (res) {
+  savePost_({ action: "saveDevNotes", issue_id: id, dev_ask: box.value }).then(function (res) {
     if (!res || !res.ok) { if (note) note.textContent = "Failed: " + ((res && res.error) || "unknown"); return; }
     var iss = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
     if (iss) iss.dev_ask = box.value;
