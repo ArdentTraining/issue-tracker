@@ -2242,6 +2242,7 @@
       <option value="score">Sort: score (severity x reports)</option>
       <option value="longest">Sort: longest open</option>
       <option value="newest">Sort: newest</option>
+      <option value="activity">Sort: recent activity</option>
       <option value="reports">Sort: most reported</option>
     </select>
   </div>
@@ -2274,6 +2275,7 @@
       <option value="score">Sort: score (severity x reports)</option>
       <option value="longest">Sort: longest open</option>
       <option value="newest">Sort: newest</option>
+      <option value="activity">Sort: recent activity</option>
       <option value="reports">Sort: most reported</option>
     </select>
     <button type="button" class="ghost" onclick="ctlOpen('Assign a batch to one person','courseBulk')">Assign all…</button>
@@ -3757,7 +3759,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r207 · 2026-10-01";  // bump this with each round, it lands on every feedback report
+var BUILD = "r210 · 2026-10-04";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4024,6 +4026,7 @@ var CHECKLIST = [
   { id: "confirm_error",          group: "Identify and record", label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)", staff: true, staffLabel: "Confirmed exactly what's failing and what you're seeing (screenshot if useful)", verb: "Confirmed" },
   { id: "noted_device",           group: "Identify and record", label: "Noted device make, model, OS version, and browser or app", staff: true, staffLabel: "Noted which browser, device and OS version you were on", verb: "Noted" },
   { id: "replicated",             group: "Identify and record", label: "Tried the same course, lesson and portal yourself, on your own account and device", staff: true, staffLabel: "Asked someone else on the team to try the same thing, to see if it's just you", verb: "Tried", staffVerb: "Asked" },
+  { id: "checked_as_student",     group: "Identify and record", label: "Logged in as the student (or viewed their account) and saw what they see", verb: "Checked" },   // FB-0462
   { id: "right_place",            group: "Account and login",   label: "Logging in via the right place (correct partner portal vs ardent-training.com)", verb: "Checked" },
   { id: "email_correct",          group: "Account and login",   label: "Email spelled correctly, and it's the one they registered with", verb: "Checked" },
   { id: "password_reset",         group: "Account and login",   label: 'Tried "forgot password", then typed email and password manually (no copy-paste)', verb: "Tried" },
@@ -5888,6 +5891,7 @@ var SCAN_WAITING_GRACE_DAYS = 3;
 function scanWaitingInfo(i) {
   var lastReply = 0, lastStudent = 0;
   parseReports(i).forEach(function (rp) {
+    if (rp.team_note) return;   // FB-0459: a note between ourselves is not a reply to the student
     var t = new Date(rp.date || 0).getTime() || 0;
     var name = rp.instructor_name || "";
     if (rp.waiting || (name && ["Overnight scan", "Queue sweep", "Fetch update", "Claude"].indexOf(name) < 0)) {
@@ -6506,8 +6510,15 @@ function renderActions() {
     else if (r.kind === "track") btn = (i.tracking_number && trackingUrl(i) ? '<a class="ghost small" style="padding:5px 12px;text-decoration:none;" target="_blank" rel="noopener" href="' + esc(trackingUrl(i)) + '" onclick="event.stopPropagation()">Open tracking</a> ' : '') +
       '<button class="primary small" style="padding:5px 12px;" title="Looked, still on its way. Asks again next working day." onclick="' + stop + 'parcelChecked(\'' + id + '\')">Checked - still moving</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="It arrived. Closes it as resolved." onclick="' + stop + 'parcelDelivered(\'' + id + '\')">Delivered</button>';
-    else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>';
-    else if (r.kind === "adminq") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetailQa(\'' + id + '\')">Answer</button>';
+    else if (r.kind === "question") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionOpen(\'' + id + '\')">Reply</button>' +
+      ' <button class="ghost small" style="padding:5px 12px;" title="Clears it without a reply. The trail notes it was seen." onclick="' + stop + 'quickAnswer(\'' + id + '\', \'ack\')">Acknowledge</button>';
+    else if (r.kind === "adminq") btn = priorityAskOf(i.dev_query)
+      // FB-0456: a priority request gets the decision itself as buttons.
+      ? '<button class="primary small" style="padding:5px 12px;" title="Changes the priority to ' + esc(priorityAskOf(i.dev_query).toUpperCase()) + ' and tells them." onclick="' + stop + 'quickAnswer(\'' + id + '\', \'accept\')">Accept ' + esc(priorityAskOf(i.dev_query).toUpperCase()) + '</button>' +
+        ' <button class="ghost small" style="padding:5px 12px;" title="Leaves the priority as it is and tells them." onclick="' + stop + 'quickAnswer(\'' + id + '\', \'decline\')">Decline</button>' +
+        ' <button class="ghost small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetailQa(\'' + id + '\')">Answer</button>'
+      : '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'openDevDetailQa(\'' + id + '\')">Answer</button>' +
+        ' <button class="ghost small" style="padding:5px 12px;" title="Clears it without a reply. The trail notes it was seen; nobody is pinged." onclick="' + stop + 'quickAnswer(\'' + id + '\', \'ack\')">Acknowledge</button>';
     else if (r.kind === "verify") btn = '<button class="primary small" style="padding:5px 12px;" title="You have checked it yourself and it works: closes it as resolved." onclick="' + stop + 'actionsResolveTbc(\'' + id + '\', true)">Checked - resolve</button>' +
       ' <button class="ghost small" style="padding:5px 12px;" title="Probably a one-off, not worth developer time. Filed away, and it wakes itself up if anyone reports the same thing again." onclick="' + stop + 'actionsPark(\'' + id + '\')">Park it</button>';
     else if (r.kind === "notify") btn = '<button class="primary small" style="padding:5px 12px;" onclick="' + stop + 'actionsMarkNotified(\'' + esc((r.group || [i]).map(function (x) { return x.issue_id; }).join(",")) + '\')">Student told</button>' +
@@ -12402,7 +12413,17 @@ function toggleBell(e) {
 function closeBell() { $("bellPanel").classList.add("hidden"); }
 document.addEventListener("click", function (e) {
   var p = $("bellPanel");
-  if (p && !p.classList.contains("hidden") && !p.contains(e.target) && !(e.target.closest && e.target.closest("#railBell"))) closeBell();
+  if (!p || p.classList.contains("hidden")) return;
+  // FB-0457 (Stuart, 47 alerts): "Got it" redraws the list, so by the time the
+  // click reaches here the button it came from has been taken out of the panel
+  // and p.contains() says no - the bell read every Got it as a click outside
+  // and shut. The path the click took was fixed when it was dispatched, so it
+  // still knows the panel was on it.
+  var path = e.composedPath ? e.composedPath() : [];
+  if (path.indexOf(p) > -1 || p.contains(e.target)) return;
+  if (e.target && e.target.isConnected === false) return;
+  if (e.target.closest && e.target.closest("#railBell")) return;
+  closeBell();
 });
 function renderBell() {
   var items = bellItems();
@@ -12414,14 +12435,14 @@ function renderBell() {
     '</div>' + items.map(function (x) {
     var open = x.issue_id ? '<button class="primary small" style="padding:4px 10px;" onclick="closeBell();openIssueFromBell(\'' + esc(x.issue_id) + '\')">Open</button> ' : '';
     var got = x.kind === "reply"
-      ? 'replySeen(\'' + esc(x.issue_id) + '\', \'' + esc(x.date_seen) + '\')'
-      : 'feedbackSeen(\'' + esc(x.fb_id) + '\', \'' + esc(x.fb_status) + '\')';
+      ? 'bellGot(\'reply\', \'' + esc(x.issue_id) + '\', \'' + esc(x.date_seen) + '\')'
+      : 'bellGot(\'feedback\', \'' + esc(x.fb_id) + '\', \'' + esc(x.fb_status) + '\')';
     return '<div class="bell-item">' +
       '<div class="bell-kind">' + (x.kind === "reply" ? "Reply" : "Your feedback") + ' · ' + esc(fmtDate(x.date)) + '</div>' +
       '<div style="margin:2px 0;">' + esc(x.title) + '</div>' +
       (x.sub ? '<div class="small muted">' + esc(x.sub) + '</div>' : '') +
       (x.body ? '<div style="margin:4px 0;white-space:pre-wrap;">' + esc(x.body) + '</div>' : '') +
-      '<div style="margin-top:6px;">' + open + '<button class="ghost small" style="padding:4px 10px;" onclick="' + got + ';renderBell()">Got it</button></div>' +
+      '<div style="margin-top:6px;">' + open + '<button class="ghost small" style="padding:4px 10px;" onclick="event.stopPropagation();' + got + '">Got it</button></div>' +
     '</div>';
   }).join("");
 }
@@ -12455,6 +12476,32 @@ function openIssueFromBell(id) {
   else if (p.dev || p.course) { setView(p.dev ? "dev" : "course"); openDevDetail(id); }
   else { setView("live"); openIssueById(id, false); }
 }
+// FB-0457: clearing the bell one at a time. The panel stays open, the item goes
+// at once, and the save waits until the clicking stops: one setPrefs carrying
+// both maps rather than one per click, because a run of overlapping saves on
+// the same prefs cell is how a cleared item comes back (the r121 shape).
+var BELL_SAVE_T_ = null;
+function bellGot(kind, id, val) {
+  var key = kind === "reply" ? "replies_seen" : "feedback_seen";
+  var seen = Object.assign({}, (state.prefs && state.prefs[key]) || {});
+  seen[id] = val;
+  var add = {}; add[key] = seen;
+  state.prefs = Object.assign({}, state.prefs || {}, add);
+  updateRailBadges();
+  renderBell();
+  if (kind === "reply") { try { renderCurrentView(); } catch (e) {} }
+  clearTimeout(BELL_SAVE_T_);
+  BELL_SAVE_T_ = setTimeout(bellSaveNow, 1200);
+}
+function bellSaveNow() {
+  if (BELL_SAVE_T_) { clearTimeout(BELL_SAVE_T_); BELL_SAVE_T_ = null; }
+  var p = state.prefs || {};
+  apiPost({ action: "setPrefs", prefs: { replies_seen: p.replies_seen || {}, feedback_seen: p.feedback_seen || {} } }).then(function (res) {
+    // A newer click since this save left keeps its own state; its save follows.
+    if (res && res.ok && res.prefs && !BELL_SAVE_T_) state.prefs = res.prefs;
+  }).catch(function () {});
+}
+document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden" && BELL_SAVE_T_) bellSaveNow(); });
 function feedbackSeen(id, status) {
   var seen = Object.assign({}, (state.prefs && state.prefs.feedback_seen) || {});
   seen[id] = status;
@@ -12486,6 +12533,10 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 53, date: "2026-10-04", who: ["log"], text: "A high-priority report only goes straight to the developers once the student has logged out and back in, or one of us has logged in as them to look. There is a new tick for that second one in the checklist." },
+  { n: 52, date: "2026-10-04", who: ["users"], text: "A developer's question can be cleared with Acknowledge when it needs no reply, and a request to change a priority comes with Accept and Decline buttons on the row." },
+  { n: 51, date: "2026-10-04", who: ["dev", "course"], text: "Team notes on every fix, for where it has got to (\"now just the voiceover, 19 not 15\") without touching the cause-and-fix notes. And a Recent activity sort on the Dev and Course pages." },
+  { n: 50, date: "2026-10-04", text: "The bell stays open while you clear alerts one at a time." },
   { n: 49, date: "2026-10-01", text: "Telling students about fixes looks after itself: when something closes, the tracker checks whether the student needs telling or already knows, and if they need telling it asks in #instructing-daily. One job per student, however many of their reports were fixed." },
   { n: 48, date: "2026-09-30", text: "Fewer surprise sign-outs: a new sign-in now drops the device you have not used for longest, rather than one you use every day, and devices unused for a fortnight are tidied away." },
   { n: 47, date: "2026-09-30", who: ["manage"], text: "The instructor notes are now inside the tracker: Help, then For instructors. Always the latest copy of the doc, with a search box." },
@@ -17648,6 +17699,7 @@ function myNewReplies() {
       var k = String(r.kind || "").toLowerCase();
       if (k === "question") { lastQ = r; return; }
       if (k !== "answer") return;
+      if (r.mode === "ack") return;   // FB-0456: an acknowledgement is not news for the asker
       var to = r.to || (lastQ && lastQ.instructor_name) || "";
       if (String(to).trim() !== me) return;
       if (seen[i.issue_id] && String(seen[i.issue_id]) >= String(r.date || "")) return;
@@ -17755,6 +17807,8 @@ function renderDev() {
   list.sort(function (a, b) {
     if (state.devSort === "longest") return startOf(a) - startOf(b);   // oldest first
     if (state.devSort === "newest") return startOf(b) - startOf(a);
+    // FB-0461 (Edd): the same "most recently touched" order the main list has.
+    if (state.devSort === "activity") return lastActivityAt(b) - lastActivityAt(a);
     // FB-0261: one number covering both halves, so a fault twenty people have
     // hit sorts above a one-off of the same severity.
     if (state.devSort === "score") {
@@ -18005,6 +18059,8 @@ function renderCourse() {
     list.sort(function (a, b) { return courseStart(a) - courseStart(b); });
   } else if (cs === "newest") {
     list.sort(function (a, b) { return courseStart(b) - courseStart(a); });
+  } else if (cs === "activity") {   // FB-0461
+    list.sort(function (a, b) { return lastActivityAt(b) - lastActivityAt(a); });
   } else if (cs === "reports") {
     list.sort(function (a, b) {
       var ra = reportCount(a), rb = reportCount(b);
@@ -18427,6 +18483,42 @@ function devAskFallback(issue) {
   if (tried.length) bits.push("Already ruled out: " + tried.slice(0, 5).join(", ") + ".");
   return bits.join(" ");
 }
+// FB-0459/0460 (Stuart): somewhere to write where a fix has got to ("now just
+// the voiceover: 19 not 15") without putting it in the cause-and-fix box, which
+// goes out to the instructors when it is marked fixed. Each note is dated and
+// named on the trail; the newest five show here.
+function teamNotesBlock(issue) {
+  var notes = parseReports(issue).filter(function (r) { return r && r.team_note; }).slice(-5).reverse();
+  var id = esc(issue.issue_id);
+  return '<h3>Team notes</h3>' +
+    '<div id="teamNotesList">' + (notes.length ? notes.map(teamNoteCard).join("") :
+      '<div class="small muted" id="teamNotesEmpty" style="margin-bottom:6px;">Nothing yet. Note where this has got to, or narrow down what actually needs changing.</div>') + '</div>' +
+    '<div class="field" style="margin-bottom:12px;">' +
+      '<textarea id="d_team_note" rows="2" placeholder="e.g. Now only the voiceover needs changing: 19, not 15"></textarea>' +
+      '<button class="ghost small" style="margin-top:6px;padding:5px 12px;" onclick="addTeamNote(\'' + id + '\')">Add note</button>' +
+      '<span class="small muted" id="teamNoteMsg" style="margin-left:10px;"></span>' +
+    '</div>';
+}
+function teamNoteCard(n) {
+  return '<div class="card" style="background:var(--bg);margin-bottom:6px;font-size:13.5px;">' +
+    '<div class="small muted">' + esc(n.instructor_name || "") + ' &middot; ' + esc(fmtDate(n.date)) + '</div>' +
+    '<div style="white-space:pre-wrap;">' + esc(n.raw_text || "") + '</div></div>';
+}
+function addTeamNote(id) {
+  var t = $("d_team_note"), msg = $("teamNoteMsg");
+  var v = t ? t.value.trim() : "";
+  if (!v) { toast("Write the note first."); return; }
+  if (msg) msg.textContent = "Saving…";
+  apiPost({ action: "addTeamNote", issue_id: id, note: v }).then(function (res) {
+    if (!res || !res.ok) { if (msg) msg.textContent = ""; toast("That note didn't save (" + ((res && res.error) || "unknown") + ")"); return; }
+    if (t) t.value = "";
+    if (msg) msg.textContent = "Saved";
+    var empty = $("teamNotesEmpty"); if (empty) empty.remove();
+    var list = $("teamNotesList");
+    if (list) list.insertAdjacentHTML("afterbegin", teamNoteCard({ instructor_name: res.by, date: res.date, raw_text: v }));
+    scheduleRefresh();
+  }).catch(function (e) { if (msg) msg.textContent = ""; toastErr("That note", e); });
+}
 function devAskBlock(issue) {
   var written = String(issue.dev_ask || "").trim();
   // FB-0306/0307 (Edd): the fallback assembly read as a woolly summary in the
@@ -18560,6 +18652,7 @@ function openDevDetail(id) {
     (issue.summary ? esc(issue.summary) : 'No summary was written for this one. The report itself is below.') + '</div>' +
     '<div style="margin-bottom:12px;"><button class="ghost small" style="padding:4px 10px;" onclick="devCheckUpdates(\'' + esc(issue.issue_id) + '\')" title="Looks in Chatwoot for newer messages from the affected students and pulls anything relevant onto the issue.">Check for updates</button></div>';
   html += devAskBlock(issue);
+  html += teamNotesBlock(issue);   // FB-0459/0460
   html += rcaButtonHtml(issue);
 
   // Who's on it. Assign to a person with this queue's access.
@@ -18783,6 +18876,20 @@ function devCheckUpdates(id) {
     toast("Pulled an update onto the issue.", 7000);
     loadIssues().then(function () { openDevDetail(id); });
   }).catch(function (e) { busyHide(); toastErr("That", e); });
+}
+// FB-0456: acknowledge an ask, or accept / decline a priority request, from the
+// row itself. Shows at once, saves behind (the r201 pattern).
+function priorityAskOf(q) {
+  var m = /requesting a priority change to (high|medium|low)\b/i.exec(String(q || ""));
+  return m ? m[1].toLowerCase() : "";
+}
+function quickAnswer(id, mode) {
+  var i = (state.issues || []).find(function (x) { return x.issue_id === id; });
+  var patch = { dev_query: "", dev_query_at: "", dev_query_by: "", dev_query_target: "" };
+  if (mode === "accept" && i) patch.priority = priorityAskOf(i.dev_query) || i.priority;
+  var said = { ack: "Acknowledged - cleared.", accept: "Accepted - priority changed.", decline: "Declined - priority left as it was." }[mode] || "Done.";
+  optimistic(id, patch, { action: "answerQuery", issue_id: id, mode: mode, app_url: APP_URL },
+    { failMsg: "That didn't go through", done: function () { toast(said); } });
 }
 function devSendAnswer(id) {
   var reply = $("devAnswerText") ? $("devAnswerText").value.trim() : "";

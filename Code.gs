@@ -566,6 +566,10 @@ var CHECKLIST_ITEMS = [
   { id: 'confirm_error',          group: 'Identify and record', scope: 'both',    label: "Confirmed exactly what's failing / what the student sees (screenshot if useful)", staff: true, staffLabel: "Confirmed exactly what's failing and what you're seeing (screenshot if useful)" , todoLabel: "Confirm exactly what's failing and what the student sees (a screenshot helps)", staffTodoLabel: "Confirm exactly what's failing and what you're seeing (a screenshot helps)" },
   { id: 'noted_device',           group: 'Identify and record', scope: 'both',    label: 'Noted device make, model, OS version, and browser or app', staff: true, staffLabel: 'Noted which browser, device and OS version you were on' , todoLabel: "Get the device make, model, OS version, and browser or app", staffTodoLabel: "Note which browser, device and OS version you are on" },
   { id: 'replicated',             group: 'Identify and record', scope: 'both',    label: 'Tried the same course, lesson and portal yourself, on your own account and device', staff: true, staffLabel: "Asked someone else on the team to try the same thing, to see if it's just you" , todoLabel: "Try the same course, lesson and portal yourself, on your own account and device", staffTodoLabel: "Ask someone else on the team to try the same thing, to see if it is just you" },
+  // FB-0462 (Edd): logging in AS the student is the check that settles whether
+  // it is their account or the platform, and it is one of the two things that
+  // must have happened before a report can go to the developers on its own.
+  { id: 'checked_as_student',     group: 'Identify and record', scope: 'both',    label: 'Logged in as the student (or viewed their account) and saw what they see' , todoLabel: "Log in as the student, or view their account, and see what they see" },
   { id: 'right_place',            group: 'Account and login',   scope: 'both',    label: 'Logging in via the right place (correct partner portal vs ardent-training.com)' , todoLabel: "Check they are logging in via the right place (the correct partner portal, or ardent-training.com)" },
   { id: 'email_correct',          group: 'Account and login',   scope: 'both',    label: "Email spelled correctly, and it's the one they registered with" , todoLabel: "Check the email is spelled correctly, and that it is the one they registered with" },
   { id: 'password_reset',         group: 'Account and login',   scope: 'both',    label: 'Tried "forgot password", then typed email and password manually (no copy-paste)' , todoLabel: "Get them to use \"forgot password\", then type the email and password by hand (no copy-paste)" },
@@ -734,6 +738,7 @@ function doPost(e) {
     if (action === 'passToDev') return jsonOut(passToDev_(body));
     if (action === 'markDevFixed') return jsonOut(markDevFixed_(body));
     if (action === 'saveDevNotes') return jsonOut(saveDevNotes_(body));
+    if (action === 'addTeamNote') return jsonOut(addTeamNote_(body));                 // FB-0459/0460
     if (action === 'flagQuery') return jsonOut(flagQuery_(body));
     if (action === 'answerQuery') return jsonOut(answerQuery_(body));
     if (action === 'requestRecheck') return jsonOut(requestRecheck_(body));
@@ -1022,7 +1027,7 @@ function reqPerm_(action) {
     // Handing work to the developers is an admin call (or automatic on
     // submission); instructors log and manage, they don't route.
     case 'passToDev': return 'users';
-    case 'markDevFixed': case 'saveDevNotes': case 'estimateFixSize': return 'devcourse';
+    case 'markDevFixed': case 'saveDevNotes': case 'estimateFixSize': case 'addTeamNote': return 'devcourse';
     // Anyone who works issues can raise a question (dev/course asking up, or an
     // admin asking the logging instructor for more info). Answering is gated
     // inside answerQuery_ itself: admin-targeted questions need the users perm,
@@ -3517,11 +3522,19 @@ function addIssue_(data) {
   // three or more items marked tried or not-applicable - or has deliberately
   // fast-tracked it. Repeat reports still escalate on their own (volume is
   // its own evidence, addReportToIssue_).
-  var checklistTried = 0;
+  // FB-0462 (Edd, 3 Oct, on #5F5686): "This should not have been passed to
+  // developers yet as we haven't had confirmation he has tried things like
+  // logging out and in again... Or the instructor logging in as the student to
+  // check." That one went with four steps ticked done and nine marked not
+  // relevant, and 'not relevant' was being counted as tried. Now only steps
+  // actually done count, and one of the two that tell a stuck account from a
+  // real fault has to be among them.
+  var checklistTried = 0, cm127 = {};
   try {
-    var cm127 = data.checklist_json ? JSON.parse(data.checklist_json) : {};
-    for (var ck127 in cm127) { if (cm127[ck127] === 'done' || cm127[ck127] === 'na') checklistTried++; }
-  } catch (e) {}
+    cm127 = data.checklist_json ? JSON.parse(data.checklist_json) : {};
+    for (var ck127 in cm127) { if (cm127[ck127] === 'done') checklistTried++; }
+  } catch (e) { cm127 = {}; }
+  var basicsDone = cm127.logout_login === 'done' || cm127.checked_as_student === 'done';
   // FB-0326 (Edd): "something that gets fixed by a refresh is not always
   // 'resolved'. It is resolved for now but the cause has not been identified.
   // So parked makes more sense as if more people report the same we need to
@@ -3580,8 +3593,14 @@ function addIssue_(data) {
           issue.status = 'with_dev';
         }
       }
+    } else if (category === 'tech_issue' && !scanLogged && !fastTrack &&
+               String(issue.priority).toLowerCase() === 'high' && checklistTried >= 3 && !basicsDone) {
+      // FB-0462: high, but the basics are not confirmed. It stays with us, and
+      // the reason says what is missing so nobody has to guess why.
+      issue.priority_reason = (String(issue.priority_reason || '') +
+        ' [Not passed to the developers yet: nobody has confirmed the student has logged out and back in, or that one of us has logged in as them to look. Once either is done an admin can pass it on, or fast-track it if it cannot wait.]').trim();
     } else if (category === 'tech_issue' && !scanLogged &&
-               (fastTrack || (String(issue.priority).toLowerCase() === 'high' && checklistTried >= 3))) {
+               (fastTrack || (String(issue.priority).toLowerCase() === 'high' && checklistTried >= 3 && basicsDone))) {
       // r127 (Edd's 21 Jul rule, tightened by FB-0312): HIGH still matters,
       // but only once the troubleshooting has actually been tried - or the
       // instructor fast-tracks it, which routes at any priority because it is
@@ -5450,6 +5469,30 @@ function answerQuery_(data) {
   }
 
   var reply = String(data.reply || '').trim();
+  // FB-0456 (Edd): "sometimes there is a dev asks message which doesn't need a
+  // reply. Can I have an acknowledge option to clear it without replying. Or if
+  // it is a request to change priority level, an accept or decline option."
+  //   ack     - clears the ask; the trail says it was seen. Nobody is pinged.
+  //   accept  - a priority request: the priority changes to what was asked for.
+  //   decline - a priority request: it stays where it is.
+  // Accept and decline still tell the asker, because they are waiting on it.
+  var mode = String(data.mode || 'reply').toLowerCase();
+  if (mode !== 'reply' && !rec.dev_query) return { ok: false, error: 'There is no open question on this issue any more.' };
+  if (mode === 'ack') {
+    reply = 'Seen - no reply needed.' + (reply ? ' ' + reply : '');
+  } else if (mode === 'accept' || mode === 'decline') {
+    var want = priorityAskedFor_(rec.dev_query);
+    if (!want) return { ok: false, error: 'That question is not a priority request, so answer it instead.' };
+    if (!perms.users) return { ok: false, error: 'Only an admin can change a priority.' };
+    if (mode === 'accept') {
+      rec.priority = want;
+      reply = 'Accepted - priority changed to ' + want.toUpperCase() + '.' + (reply ? ' ' + reply : '');
+    } else {
+      reply = 'Declined - priority stays ' + String(rec.priority || '').toUpperCase() + '.' + (reply ? ' ' + reply : '');
+    }
+  } else if (mode !== 'reply') {
+    return { ok: false, error: 'Unknown answer mode: ' + mode };
+  }
   if (!reply) return { ok: false, error: 'Add a reply before sending it back.' };
 
   var who = (data._user && data._user.name) || 'An admin';
@@ -5462,7 +5505,9 @@ function answerQuery_(data) {
   reps = tA.reps;
   // r145: `to` names the asker, so the dev/course page can show each person
   // their own new replies without pairing entries up by hand.
-  reps.push({ kind: 'answer', instructor_name: who, summary: 'Reply to question', raw_text: reply, date: now, to: rec.dev_query_by || '' });
+  var ansEntry = { kind: 'answer', instructor_name: who, summary: mode === 'ack' ? 'Question acknowledged' : 'Reply to question', raw_text: reply, date: now, to: rec.dev_query_by || '' };
+  if (mode !== 'reply') ansEntry.mode = mode;   // FB-0456: the page skips an ack in New replies
+  reps.push(ansEntry);
   rec.reports_json = capReports_(reps);
   rec.report_count = realReportCount_(reps);
 
@@ -5487,8 +5532,43 @@ function answerQuery_(data) {
   if (!wr200.ok) return wr200;
   // r123: an answer typed IN the Slack thread needs no threaded echo - the
   // room already watched it happen. Answers from the tracker still post.
-  if (!data._from_slack) { try { sendQueryAnsweredSlack_(rec, question, reply, asker, data.app_url || getAppUrl_()); } catch (e) {} }
-  return { ok: true };
+  if (!data._from_slack && mode !== 'ack') { try { sendQueryAnsweredSlack_(rec, question, reply, asker, data.app_url || getAppUrl_()); } catch (e) {} }
+  return { ok: true, mode: mode, priority: rec.priority };
+}
+// FB-0456: the developer's "Ask for it" button writes the request in a fixed
+// form ("Requesting a priority change to HIGH because ..."), so the level asked
+// for is read straight off the start of the question. Anything else is an
+// ordinary question.
+// FB-0459/0460 (Stuart): "It would be nice to have a dedicated bit to write
+// notes here? Should I just use the developer notes box? e.g. this is now
+// purely just a voiceover fix for Edd to say 19 rather than 15."
+// The developer notes box is the cause-and-fix note: it goes out on the
+// "Fixed - tell" ask and onto Mark fixed, so working notes do not belong in it.
+// A team note is a dated, named line on the trail instead. It rides as an
+// 'update' entry, which every report counter already skips, so writing one can
+// never move the report count or the priority.
+function addTeamNote_(data) {
+  var note = String(data.note || '').trim();
+  if (!note) return { ok: false, error: 'Write the note first.' };
+  if (note.length > 2000) note = note.slice(0, 2000);
+  var found = findRow_(data.issue_id);
+  if (!found) return { ok: false, error: 'No issue found with id ' + data.issue_id };
+  var rec = found.record;
+  var tN = readTrail_(rec);
+  if (tN.broken) return trailRefusal_(rec.issue_id || 'this issue', tN);
+  var reps = tN.reps;
+  var now = new Date().toISOString();
+  var who = (data._user && data._user.name) || 'Someone';
+  reps.push({ kind: 'update', team_note: true, instructor_name: who, summary: 'Team note', raw_text: note, date: now });
+  rec.reports_json = capReports_(reps);
+  rec.updated_at = now;
+  var w = writeIssueRow_(found, rec);
+  if (!w.ok) return w;
+  return { ok: true, date: now, by: who };
+}
+function priorityAskedFor_(q) {
+  var m = /requesting a priority change to (high|medium|low)\b/i.exec(String(q || ''));
+  return m ? m[1].toLowerCase() : '';
 }
 
 // r145 (Edd, 5 Sep 2026): "This one could have been DM'd straight to Stuart
@@ -9732,7 +9812,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r209 · 2026-10-04';
+var CODE_STAMP = 'r210 · 2026-10-04';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
