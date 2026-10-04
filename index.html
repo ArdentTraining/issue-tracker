@@ -3756,7 +3756,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r213 · 2026-10-04";  // bump this with each round, it lands on every feedback report
+var BUILD = "r214 · 2026-10-05";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -10940,9 +10940,17 @@ function irpcsSetQFigure(value) {
   irpcsMarkDirty();
   irpcsRenderEditor();
 }
+// FB-0422 (Stuart): a vessel can be seen from on board our own motorboat or
+// yacht, looking forward over the bow, rather than from alongside it.
+var IRPCS_POVS = [["", "Alongside it"], ["power", "From our motorboat"], ["sail", "From our yacht"]];
+function irpcsPovSelect(cur, onchange) {
+  return '<div class="fld" style="flex:0 0 auto;"><label>Looking from</label><select onchange="' + onchange + '">' +
+    IRPCS_POVS.map(function (p) { return '<option value="' + p[0] + '"' + ((cur || "") === p[0] ? " selected" : "") + '>' + esc(p[1]) + '</option>'; }).join("") +
+    '</select></div>';
+}
 function irpcsSetQFigureModel(k, v) {
   var e = irpcs.edited; if (!e || !e.figure || e.figure.kind !== "model") return;
-  e.figure[k] = v;
+  if (v === "" || v == null) delete e.figure[k]; else e.figure[k] = v;
   irpcsMarkDirty();
 }
 function irpcsQFigureForm(e) {
@@ -10961,6 +10969,7 @@ function irpcsQFigureForm(e) {
       '<div class="fld" style="flex:1;min-width:220px;"><label>Vessel</label><select onchange="irpcsSetQFigureModel(\'preset\', this.value)">' +
         IRPCS_MODELS.map(function (m) { return '<option value="' + esc(m.preset) + '"' + (m.preset === fig.preset ? " selected" : "") + '>' + esc(m.label) + '</option>'; }).join("") + '</select></div>' +
       '<div class="fld" style="flex:0 0 120px;"><label>Seen from</label><input type="number" min="-180" max="180" step="5" value="' + esc(fig.bearing == null ? -35 : fig.bearing) + '" oninput="irpcsSetQFigureModel(\'bearing\', Number(this.value))"></div>' +
+      irpcsPovSelect(fig.pov, "irpcsSetQFigureModel('pov', this.value)") +
       '<label class="rad" style="align-self:end;margin-bottom:12px;"><input type="checkbox" ' + (fig.night ? "checked" : "") + ' onchange="irpcsSetQFigureModel(\'night\', this.checked)"> Night</label>' +
       '</div>' +
       (fig.shapes || fig.lights || fig.hull ? '<p class="small muted" style="margin:0 0 6px;">This one also carries its own ' + [fig.hull ? "hull" : "", fig.shapes ? "shapes" : "", fig.lights ? "lights" : ""].filter(String).join(", ") + ', set in JSON.</p>' : "");
@@ -11089,7 +11098,7 @@ function irpcsSetQType(k) {
 function irpcsSetScene(k, v) {
   var e = irpcs.edited; if (!e) return;
   if (!e.scene) e.scene = {};
-  e.scene[k] = v;
+  if (v === "" || v == null) delete e.scene[k]; else e.scene[k] = v;
   irpcsMarkDirty();
 }
 function irpcsSetField(n, k, v) {
@@ -11115,6 +11124,7 @@ function irpcsIdentifyForm(e) {
         '<select id="irf_sc_motion" onchange="irpcsSetScene(\'motion\', this.value)">' +
           motions.map(function (m) { return '<option value="' + m[0] + '"' + ((sc.motion || "still") === m[0] ? " selected" : "") + '>' + esc(m[1]) + '</option>'; }).join("") +
         '</select></div>' +
+      irpcsPovSelect(sc.pov, "irpcsSetScene('pov', this.value)") +
     '</div>' +
     '<p class="small muted" style="margin:-4px 0 6px;">Bearing in degrees off the vessel\'s bow: 0 is dead ahead, 90 its starboard beam, -90 its port beam, 180 dead astern. Use the moving sea only where the answer is "making way"; where the lights leave way unknown, keep it afloat, so the movement stays a clue and never the answer.</p>' +
     '<label class="rad" style="margin-right:14px;"><input type="checkbox" ' + (sc.night === false ? "" : "checked") + ' onchange="irpcsSetScene(\'night\', this.checked)"> Night (lights, not shapes)</label>' +
@@ -11751,6 +11761,16 @@ var IRPCS_MODELS = [
   { preset: "air_cushion",     label: "Air-cushion vessel, non-displacement mode",    rule: 23 },
   { preset: "sailing_tricolour", label: "Sailing vessel under 20m, tricolour lantern", rule: 25 },
   { preset: "sailing_optional", label: "Sailing vessel with the optional red over green", rule: 25 },
+  { preset: "sail_close_hauled_port", label: "Sailing vessel close-hauled, port tack", rule: 12 },
+  { preset: "sail_close_hauled_starboard", label: "Sailing vessel close-hauled, starboard tack", rule: 12 },
+  { preset: "sail_beam_reach_port", label: "Sailing vessel on a beam reach, port tack", rule: 12 },
+  { preset: "sail_beam_reach_starboard", label: "Sailing vessel on a beam reach, starboard tack", rule: 12 },
+  { preset: "sail_broad_reach_port", label: "Sailing vessel on a broad reach, port tack", rule: 12 },
+  { preset: "sail_broad_reach_starboard", label: "Sailing vessel on a broad reach, starboard tack", rule: 12 },
+  { preset: "sail_run_spinnaker_port", label: "Sailing vessel running under spinnaker, port tack", rule: 12 },
+  { preset: "sail_run_spinnaker_starboard", label: "Sailing vessel running under spinnaker, starboard tack", rule: 12 },
+  { preset: "sail_dead_run_port", label: "Sailing vessel on a dead run, goose-winged, port tack", rule: 12 },
+  { preset: "sail_dead_run_starboard", label: "Sailing vessel on a dead run, goose-winged, starboard tack", rule: 12 },
   { preset: "trawling_over50", label: "Vessel trawling, probably ≥50m",                 rule: 26 },
   { preset: "ram_over50",      label: "Restricted in ability to manoeuvre, probably ≥50m", rule: 27 },
   { preset: "ram_anchored_under50", label: "Restricted in ability to manoeuvre, at anchor, under 50m", rule: 27 },
@@ -12638,6 +12658,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 56, date: "2026-10-05", who: ["irpcs"], text: "IRPCS models: sailing vessels on each point of sail and on both tacks, close-hauled to a dead run, with a spinnaker and goose-winged, for the Rule 12 questions. And any vessel can now be seen from on board our own motorboat or yacht, looking forward over the bow (Looking from, on the picture). The student site needs pushing before students see them." },
   { n: 55, date: "2026-10-04", who: ["course", "manage", "users"], text: "Course fixes say what they need with tick boxes, as many as apply: Text edit, Video edit, Refilm, Audio recording, New slide. Anyone on the Course tab can tick them, Filter has each one, and a new sort puts the quickest jobs first so a recording or filming session can be batched." },
   { n: 54, date: "2026-10-04", who: ["dev", "course", "users"], text: "One box for notes and updates on the Dev and Course panels: Post an update, open to everyone, saves straight away. The cause and fix is now written only in the Mark fixed popup (course fixes get a one-line version: what did you change?)." },
   { n: 53, date: "2026-10-04", who: ["log"], text: "A high-priority report only goes straight to the developers once the student has logged out and back in, or one of us has logged in as them to look. There is a new tick for that second one in the checklist." },
