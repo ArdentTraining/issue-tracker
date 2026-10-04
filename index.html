@@ -3756,7 +3756,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r214 · 2026-10-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r215 · 2026-10-05";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5700,6 +5700,29 @@ function fastSaveOp_(payload) {
   if (a === "addTeamNote" && k === "note") return { op: "team_note", value: payload.note };
   return null;
 }
+// r215: Mark fixed, and a status change (with the few fields that ride along
+// with one), go the fast way too. Their Slack and queue after-effects run in
+// Apps Script once the record has landed.
+var FAST_STATUS_EXTRA = { resolution_note: 1, chase_at: 1, student_sorted: 1 };
+function fastBigOp_(payload) {
+  if (!state._fastSaves || state.viewAs || !payload || !payload.issue_id) return null;
+  var keys = Object.keys(payload).filter(function (k) { return k !== "action" && k !== "issue_id" && k !== "app_url"; });
+  if (payload.action === "markDevFixed") {
+    if (keys.some(function (k) { return k !== "dev_notes" && k !== "notify_student"; })) return null;
+    return { op: "fixed", value: payload.dev_notes || "" };
+  }
+  if (payload.action === "updateIssue" && payload.status) {
+    var extra = {};
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      if (k === "status") continue;
+      if (!FAST_STATUS_EXTRA[k]) return null;
+      extra[k] = payload[k];
+    }
+    return { op: "status", value: payload.status, extra: extra };
+  }
+  return null;
+}
 // r212: "Post an update" on the Dev and Course panels - a plain note on the
 // history, nothing reopened or re-prioritised - goes the fast way too.
 function fastUpdateOp_(payload) {
@@ -5711,12 +5734,12 @@ function fastUpdateOp_(payload) {
 }
 // Use this rather than apiPost for a save that might go the fast way.
 function savePost_(payload) {
-  var f = fastSaveOp_(payload) || fastUpdateOp_(payload);
+  var f = fastSaveOp_(payload) || fastUpdateOp_(payload) || fastBigOp_(payload);
   if (!f) return apiPost(payload);
   var t0 = Date.now();
   return mirrorTicket_().then(function (t) {
     return fetch(SAVE_URL, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + t },
-      body: JSON.stringify({ action: "save", issue_id: payload.issue_id, op: f.op, value: f.value }) }).then(function (r) { return r.json(); });
+      body: JSON.stringify({ action: "save", issue_id: payload.issue_id, op: f.op, value: f.value, extra: f.extra }) }).then(function (r) { return r.json(); });
   }).then(function (res) {
     if (res && res.ok) { diagApi("fast." + f.op, t0, "ok"); return res; }
     if (res && res.fallback) {
@@ -5730,7 +5753,7 @@ function savePost_(payload) {
     diagApi("fast." + f.op, t0, "failed: " + e);
     // A note may have landed before the answer was lost; sending it again
     // could write it twice. A field save is safe to repeat.
-    if (f.op === "team_note" || f.op === "update") return { ok: false, error: "No answer from the server. Refresh and check before adding it again." };
+    if (f.op === "team_note" || f.op === "update" || f.op === "fixed") return { ok: false, error: "No answer from the server. Refresh and check before trying again." };
     return apiPost(payload);
   });
 }
@@ -12658,6 +12681,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 57, date: "2026-10-05", who: ["dev", "course", "manage", "users"], text: "Mark fixed and changing a status now save in under a second, like the notes and updates. Anything they set off (tidying Slack, the queue alert) follows straight after, without you waiting for it." },
   { n: 56, date: "2026-10-05", who: ["irpcs"], text: "IRPCS models: sailing vessels on each point of sail and on both tacks, close-hauled to a dead run, with a spinnaker and goose-winged, for the Rule 12 questions. And any vessel can now be seen from on board our own motorboat or yacht, looking forward over the bow (Looking from, on the picture). The student site needs pushing before students see them." },
   { n: 55, date: "2026-10-04", who: ["course", "manage", "users"], text: "Course fixes say what they need with tick boxes, as many as apply: Text edit, Video edit, Refilm, Audio recording, New slide. Anyone on the Course tab can tick them, Filter has each one, and a new sort puts the quickest jobs first so a recording or filming session can be batched." },
   { n: 54, date: "2026-10-04", who: ["dev", "course", "users"], text: "One box for notes and updates on the Dev and Course panels: Post an update, open to everyone, saves straight away. The cause and fix is now written only in the Mark fixed popup (course fixes get a one-line version: what did you change?)." },

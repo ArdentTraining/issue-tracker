@@ -2520,7 +2520,10 @@ function storeShadowCompare() {
           return k + ': ' + Object.keys(f).join(', ');
         } catch (e) { return k + ': ?'; }
       });
-      if (tbl === 'issues' && storeLive_()) {
+      if (tbl !== 'issues' && storeTableLive_(tbl)) {
+        // r215: the store is the record for this one now, so the Sheet copy is put right.
+        if (missing.length || changed.length || extra.length) res.sheet_put_right = storeTableSheetCatchUp_(tbl);
+      } else if (tbl === 'issues' && storeLive_()) {
         // r208.4: the store is the record now, so it is the Sheet copy that is put right.
         if (missing.length || changed.length || extra.length) res.sheet_put_right = storeSheetCatchUp_();
       } else if ((storeMode_() === 'shadow' || storeLive_()) && (missing.length || changed.length || extra.length)) {
@@ -2572,6 +2575,129 @@ function storeShadowOn_() {
  * first makes the Sheet match the store, then returns to shadow.
  * ------------------------------------------------------------------------- */
 function storeLive_() { try { return storeMode_() === 'supabase'; } catch (e) { return false; } }
+
+/* ---- r215: the store as the record for the other tables, one at a time -----
+ * Script property STORE_LIVE_TABLES lists them ("feedback"). Only while the
+ * issues are live too. Same shape as the issues: save to the store, then copy
+ * to the Sheet by key, so the Sheet stays a current copy and going back is a
+ * switch (storeAdmin table_back first makes the Sheet match the store).
+ * Users stay on the Sheet: every request signs in against that tab.
+ * ------------------------------------------------------------------------- */
+var STORE_TABLE_DEF_ = {
+  feedback: { sheet: function () { return sheetByName_(FEEDBACK_SHEET); }, key: 'id', headers: function () { return FEEDBACK_HEADERS; } }
+};
+function storeTableLive_(tbl) {
+  if (!STORE_TABLE_DEF_[tbl] || !storeLive_()) return false;
+  try {
+    var c = CacheService.getScriptCache(), v = c.get('ait_store_tables');
+    if (v == null) { v = PropertiesService.getScriptProperties().getProperty('STORE_LIVE_TABLES') || ''; c.put('ait_store_tables', v, 60); }
+    return (',' + v + ',').indexOf(',' + tbl + ',') >= 0;
+  } catch (e) { return false; }
+}
+// Every record, decoded, every header present (blank as ''), in store order.
+function storeTableList_(tbl) {
+  var out = storeCall_({ op: 'list', tbl: tbl });
+  if (!out.ok) throw new Error('store list ' + tbl + ': ' + (out.error || 'failed'));
+  var heads = STORE_TABLE_DEF_[tbl].headers();
+  return (out.rows || []).map(function (r) {
+    var d = storeDec_(r.data || {}), o = {};
+    heads.forEach(function (h) { o[h] = (h in d) ? d[h] : ''; });
+    return o;
+  });
+}
+// The Sheet copy of one record: its row by key, made to match (or appended,
+// or removed when obj is null). Never fails a save; a miss is noted and the
+// nightly catch-up puts it right.
+function storeTableSheetCopy_(tbl, key, obj) {
+  try {
+    var def = STORE_TABLE_DEF_[tbl], sheet = def.sheet();
+    if (!sheet) return;
+    var width = sheet.getLastColumn();
+    var head = sheet.getRange(1, 1, 1, width).getValues()[0].map(function (h) { return String(h || '').trim(); });
+    var kc = head.indexOf(def.key);
+    if (kc < 0) return;
+    var hit = null;
+    try { hit = sheet.createTextFinder(String(key)).matchEntireCell(true).findNext(); } catch (e) {}
+    var rowNum = (hit && hit.getColumn() === kc + 1) ? hit.getRow() : 0;
+    if (!obj) { if (rowNum) sheet.deleteRow(rowNum); return; }
+    var row = head.map(function (h) { return (h && obj[h] != null) ? obj[h] : ''; });
+    if (rowNum) sheet.getRange(rowNum, 1, 1, width).setValues([row]);
+    else sheet.appendRow(row);
+  } catch (e) { storeShadowNote_('sheet copy', tbl + ' ' + key + ': ' + e); }
+}
+function storeTableInsert_(tbl, key, obj) {
+  var res = storeCall_({ op: 'insert', tbl: tbl, key: String(key), data: JSON.stringify(storeEnc_(obj)) });
+  if (!res.ok) throw new Error('Could not save: ' + (res.error || 'store error'));
+  var now = storeDec_((res.row && res.row.data) || {});
+  storeTableSheetCopy_(tbl, key, now);
+  return now;
+}
+// Only the fields given, against what they held when read (the r200 rule).
+function storeTablePatch_(tbl, key, fields) {
+  for (var attempt = 0; attempt < 3; attempt++) {
+    var got = storeCall_({ op: 'get', tbl: tbl, key: String(key) });
+    if (!got.ok || !got.row) return null;
+    var cur = got.row.data || {}, set = {}, base = {};
+    for (var k in fields) { set[k] = storeEncVal_(fields[k]); base[k] = (k in cur) ? cur[k] : ''; }
+    var res = storeCall_({ op: 'patch', tbl: tbl, key: String(key), set: JSON.stringify(set), base: JSON.stringify(base) });
+    if (res.ok) { var now = storeDec_(res.row.data || {}); storeTableSheetCopy_(tbl, key, now); return now; }
+    if (!res.conflict) throw new Error('Could not save: ' + (res.error || 'store error'));
+  }
+  throw new Error('Could not save: somebody else kept changing it at the same moment. Try again.');
+}
+function storeTableDelete_(tbl, key) {
+  var res = storeCall_({ op: 'delete', tbl: tbl, key: String(key) });
+  if (!res.ok) return false;
+  storeTableSheetCopy_(tbl, key, null);
+  return true;
+}
+// Nightly and on table_back: the Sheet made to match the store.
+function storeTableSheetCatchUp_(tbl) {
+  var def = STORE_TABLE_DEF_[tbl], sheet = def.sheet();
+  if (!sheet) return 0;
+  var want = {}, order = [];
+  storeTableList_(tbl).forEach(function (o) { var k = String(o[def.key] || ''); if (k) { want[k] = o; order.push(k); } });
+  var values = sheet.getDataRange().getValues(), head = values[0].map(function (h) { return String(h || '').trim(); });
+  var kc = head.indexOf(def.key), fixed = 0, have = {};
+  for (var r = values.length - 1; r >= 1; r--) {
+    var k = String(values[r][kc] || '');
+    if (!k) continue;
+    if (!want[k] || have[k]) { sheet.deleteRow(r + 1); fixed++; continue; }
+    have[k] = 1;
+    var obj = {};
+    head.forEach(function (h, c) { if (h) obj[h] = values[r][c]; });
+    if (storeCanon_(storeEnc_(obj)) !== storeCanon_(storeEnc_(want[k]))) { storeTableSheetCopy_(tbl, k, want[k]); fixed++; }
+  }
+  order.forEach(function (k) { if (!have[k]) { storeTableSheetCopy_(tbl, k, want[k]); fixed++; } });
+  return fixed;
+}
+function storeTableLiveList_() {
+  return String(PropertiesService.getScriptProperties().getProperty('STORE_LIVE_TABLES') || '').split(',').filter(String);
+}
+function storeTableSetLive_(list) {
+  PropertiesService.getScriptProperties().setProperty('STORE_LIVE_TABLES', list.join(','));
+  CacheService.getScriptCache().remove('ait_store_tables');
+}
+// Switch one table over. Only with the issues live, and only once the
+// comparison (which puts the store right from the Sheet) is level for it.
+function storeTableGoLive_(tbl) {
+  if (!STORE_TABLE_DEF_[tbl]) return { ok: false, error: 'not a table that can go live: ' + tbl };
+  if (!storeLive_()) return { ok: false, error: 'the issues are not live, so no other table goes first' };
+  if (storeTableLiveList_().indexOf(tbl) >= 0) return { ok: true, already: true };
+  storeShadowCompare();
+  var check = storeShadowCompare();
+  var t = (check.tables || []).filter(function (x) { return x.table === tbl; })[0] || {};
+  if (!t.level) return { ok: false, error: tbl + ' not level after the comparison, so not switching', check: t };
+  storeTableSetLive_(storeTableLiveList_().concat([tbl]));
+  return { ok: true, table: tbl, rows: t.rows, live: storeTableLiveList_() };
+}
+function storeTableGoBack_(tbl) {
+  var list = storeTableLiveList_();
+  if (list.indexOf(tbl) < 0) return { ok: true, already: true };
+  var fixed = storeTableSheetCatchUp_(tbl);
+  storeTableSetLive_(list.filter(function (x) { return x !== tbl; }));
+  return { ok: true, table: tbl, sheet_put_right: fixed, live: storeTableLiveList_() };
+}
 // A store record shaped like a Sheet row: every column present, blanks as `blank`.
 function storeRowToObj_(row, blank) {
   var d = storeDec_((row && row.data) || {}), o = {};
@@ -2764,7 +2890,29 @@ function storeNudge_(body) {
       if (ck && setIssueFields_(String(t.id), { checklist_json: ck })) ticked++;
     } catch (e) { storeShadowNote_('tickoff', String(t.id) + ': ' + e); }
   });
-  return { ok: true, copied: copied, ticked: ticked };
+  // r215: what a fast Mark fixed or status change sets off, run here once the
+  // record has landed: the same after-effects markDevFixed_ and updateIssue_
+  // run, in the same order.
+  var after = 0, queue = false;
+  ((body && body.after) || []).slice(0, 5).forEach(function (a) {
+    try {
+      var f2 = findRow_(String(a.id || ''));
+      if (!f2) return;
+      var rec = f2.record, st = String(rec.status || '').toLowerCase();
+      if (a.what === 'fixed') {
+        slackTidyIfClosed_(rec);
+      } else if (a.what === 'status') {
+        var wasResolved = String(a.was || '').toLowerCase() === 'resolved';
+        if (!wasResolved && st === 'resolved' && rec.resolution_note && String(rec.category).toLowerCase() === 'tech_issue') {
+          try { proposePlaybookUpdate_(rec); } catch (e) {}
+        }
+        if (SLACK_ALERT_CLOSED_[st]) slackDeleteAlerts_(String(a.id));
+      } else return;
+      queue = true; after++;
+    } catch (e) { storeShadowNote_('after', String(a.id) + ': ' + e); }
+  });
+  if (queue) maybeDevQueueAlert_();
+  return { ok: true, copied: copied, ticked: ticked, after: after };
 }
 // What tracker-save needs to know from here. Every ten minutes with the mirror
 // sync, and straight away on go_live / go_back.
@@ -2855,7 +3003,9 @@ function storeDryRun_() {
 
 function storeAdmin_(data) {
   var what = String((data && data.what) || '');
-  if (what === 'selftest') return storeSelfTest();
+  // Its last step checks real records are refused while the Sheet is the record,
+  // so in Supabase mode it would leave a blank record behind (4 Oct 2026).
+  if (what === 'selftest') return storeLive_() ? { ok: false, error: 'not while the store is the record' } : storeSelfTest();
   if (what === 'import') return storePracticeImport();
   if (what === 'mode') {
     var m = storeCall_({ op: 'mode' }), log = {};
@@ -2869,6 +3019,9 @@ function storeAdmin_(data) {
   }
   if (what === 'compare') return storeShadowCompare();
   if (what === 'go_live') return storeGoLive_();
+  if (what === 'table_live') return storeTableGoLive_(String(data.tbl || ''));   // r215
+  if (what === 'table_back') return storeTableGoBack_(String(data.tbl || ''));
+  if (what === 'tables') return { ok: true, live: storeTableLiveList_(), issues_live: storeLive_() };
   if (what === 'go_back') return storeGoBack_();
   if (what === 'dryrun') return storeDryRun_();
   if (what === 'save_parity') {   // r211.1: does tracker-save build every board row exactly as we do?
@@ -9522,6 +9675,7 @@ function addFeedback_(data) {
   var kind = String(data.kind || (judged && judged.kind) || 'bug').toLowerCase();
   if (FEEDBACK_KINDS.indexOf(kind) < 0) kind = 'bug';
   var urgency = String(data.urgency || (judged && judged.urgency) || 'normal');
+  var live = storeTableLive_('feedback');   // r215
   var row = {
     id: Utilities.getUuid(),
     created_at: new Date().toISOString(),
@@ -9531,11 +9685,12 @@ function addFeedback_(data) {
     image_urls: normaliseImageUrls_(data.image_urls),
     status: 'new',
     context: typeof data.context === 'string' ? data.context : (data.context ? JSON.stringify(data.context) : ''),
-    ref: nextFeedbackRef_(sheet),
+    ref: live ? '' : nextFeedbackRef_(sheet),   // live: the store numbers it, so two at once can never share one
     kind: kind,
     urgency: urgency === 'blocking' ? 'blocking' : 'normal'
   };
-  sheet.appendRow(FEEDBACK_HEADERS.map(function (k) { return row[k]; }));
+  if (live) row.ref = storeTableInsert_('feedback', row.id, row).ref || '';
+  else sheet.appendRow(FEEDBACK_HEADERS.map(function (k) { return row[k]; }));
   // Issues ping Slack, so feedback about the tracker should too - otherwise a
   // blocked instructor waits for somebody to happen to open the Admin tab.
   try { sendFeedbackSlack_(row, getAppUrl_()); } catch (e) {}
@@ -9594,6 +9749,11 @@ function sendFeedbackSlack_(fb, appUrl) {
 }
 
 function getFeedback_() {
+  if (storeTableLive_('feedback')) {   // r215
+    var all = storeTableList_('feedback').filter(function (o) { return o.id; });
+    all.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    return { ok: true, feedback: all };
+  }
   var sheet = sheetByName_(FEEDBACK_SHEET);
   if (!sheet) return { ok: true, feedback: [] };
   var values = sheet.getDataRange().getValues();
@@ -9617,6 +9777,13 @@ function getFeedback_() {
 function myFeedback_(data) {
   var email = String((data._user && data._user.email) || '').toLowerCase();
   if (!email) return { ok: true, feedback: [] };
+  if (storeTableLive_('feedback')) {   // r215
+    var mine = storeTableList_('feedback').filter(function (o) { return o.id && String(o.user_email || '').toLowerCase() === email; })
+      .map(function (o) { return { id: o.id, ref: o.ref, created_at: o.created_at, status: o.status, kind: o.kind,
+        message: String(o.message || '').slice(0, 300), reply: String(o.reply || '') }; });
+    mine.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    return { ok: true, feedback: mine.slice(0, 100) };
+  }
   var sheet = sheetByName_(FEEDBACK_SHEET);
   if (!sheet) return { ok: true, feedback: [] };
   var values = sheet.getDataRange().getValues();
@@ -9639,6 +9806,7 @@ function myFeedback_(data) {
 }
 
 function deleteFeedback_(data) {
+  if (storeTableLive_('feedback')) return storeTableDelete_('feedback', data.id) ? { ok: true } : { ok: false, error: 'Feedback not found.' };   // r215
   var sheet = sheetByName_(FEEDBACK_SHEET);
   if (!sheet) return { ok: false, error: 'Feedback sheet missing.' };
   var values = sheet.getDataRange().getValues();
@@ -9654,6 +9822,13 @@ function deleteFeedback_(data) {
 }
 
 function updateFeedback_(data) {
+  if (storeTableLive_('feedback')) {   // r215
+    var f = {};
+    if (data.status) f.status = data.status;
+    if (data.reply != null) f.reply = String(data.reply).slice(0, 600);
+    if (!Object.keys(f).length) return { ok: true };
+    return storeTablePatch_('feedback', data.id, f) ? { ok: true } : { ok: false, error: 'Feedback not found.' };
+  }
   var sheet = sheetByName_(FEEDBACK_SHEET);
   if (!sheet) return { ok: false, error: 'Feedback sheet missing.' };
   // r206: read the header and the id column, not the whole sheet. Every row
@@ -9943,7 +10118,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r214 · 2026-10-05';
+var CODE_STAMP = 'r215 · 2026-10-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
