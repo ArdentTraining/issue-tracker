@@ -166,6 +166,9 @@ function slackDeleteAlerts_(issueId) {
     if (!threads.length) return;
     var kept = [];
     threads.forEach(function (t) {
+      // r209: a "Fixed - tell" ask is never ours to delete. The instructors
+      // clear it, and clearing it is what starts the told check (tellPostWatch_).
+      if (t.kind === 'tell') { kept.push(t); return; }
       var res = UrlFetchApp.fetch('https://slack.com/api/chat.delete', {
         method: 'post', contentType: 'application/json',
         headers: { Authorization: 'Bearer ' + tok },
@@ -189,7 +192,8 @@ var SLACK_ALERT_CLOSED_ = { resolved: 1, resolved_tbc: 1, parked: 1, past: 1 };
 // a repeat report landing as TBC all left their alert standing).
 function slackTidyIfClosed_(rec) {
   try {
-    if (rec && SLACK_ALERT_CLOSED_[String(rec.status || '').toLowerCase()] && slackThreadsOf_(rec).length) slackDeleteAlerts_(rec.issue_id);
+    if (rec && SLACK_ALERT_CLOSED_[String(rec.status || '').toLowerCase()] &&
+        slackThreadsOf_(rec).some(function (t) { return t.kind !== 'tell'; })) slackDeleteAlerts_(rec.issue_id);
   } catch (e) {}
 }
 
@@ -7787,7 +7791,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1, storeShadowCompare: 1 };
+var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, tellPostWatch: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1, storeShadowCompare: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -7989,13 +7993,16 @@ function tellStudentsSweep() {
       var list = ask[key];
       if (!sendTellStudentSlack_(list, appUrl)) return;   // not posted: left blank, tried again next run
       list.forEach(function (i) {
+        if (TELL_POSTED_) stampSlackThread_(i.issue_id, TELL_POSTED_.channel, TELL_POSTED_.ts, 'tell');   // r209
         tellMark_(i.issue_id, 'asked', 'Asked the instructors in #instructing-daily to tell ' + (String(i.student_name || '').trim() || 'the student') + (list.length > 1 ? ' (one message covering ' + list.length + ' fixes)' : '') + '. Slack said: ' + (TELL_SLACK_SAID_ || 'nothing'));
         decided.asked++;
       });
     });
   } finally { lock.releaseLock(); }
-  Logger.log('tellStudentsSweep: ' + JSON.stringify(decided));
-  return { ok: true, decided: decided };
+  var watch = null;
+  try { watch = tellPostWatch_(false); } catch (e) { watch = { ok: false, error: String(e).slice(0, 120) }; }   // r209
+  Logger.log('tellStudentsSweep: ' + JSON.stringify(decided) + ' watch: ' + JSON.stringify(watch));
+  return { ok: true, decided: decided, watch: watch };
 }
 
 function tellMark_(issueId, value, note) {
@@ -8076,13 +8083,123 @@ function sendTellStudentSlack_(list, appUrl) {
   });
   if (list.length > 8) lines.push('...and ' + (list.length - 8) + ' more on the tracker.');
   lines.push('Mark it told on the Actions tab once they know.');
+  // r209: post as the bot so the message id comes back and is stamped on each
+  // issue; that is what lets a cleared post start the told check. The webhook
+  // stays as the fallback, so a bot failure still gets the ask out (it just
+  // cannot be watched).
+  TELL_POSTED_ = null;
+  var bot = slackBotPost_(tellChannel_(), lines.join('\n'));
+  if (bot.ok && bot.ts) {
+    TELL_POSTED_ = { channel: bot.channel || tellChannel_(), ts: bot.ts };
+    TELL_SLACK_SAID_ = 'posted by the bot';
+    return true;
+  }
   try {
     var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
       payload: JSON.stringify({ text: lines.join('\n') }) });
-    TELL_SLACK_SAID_ = res.getResponseCode() + ' ' + String(res.getContentText()).slice(0, 40);
+    TELL_SLACK_SAID_ = 'bot refused (' + (bot.why || '?') + '), webhook ' + res.getResponseCode() + ' ' + String(res.getContentText()).slice(0, 40);
     return res.getResponseCode() >= 200 && res.getResponseCode() < 300;
   } catch (e) { return false; }
 }
+
+// ---- r209: a cleared "Fixed - tell" post starts the told check -------------
+//
+// Edd, 1 Oct: "Deleting a post could mean done. But it would need to be double
+// checked first." The team clear these asks from #instructing-daily once they
+// have acted on them, so a cleared post is a strong hint the student has been
+// told, but it is never proof on its own: a post can go by mistake, or be
+// tidied away by somebody who did not do the telling.
+//
+// So every half hour (riding on tellStudentsSweep), each ask the bot posted is
+// looked up in Slack. One that has gone runs the same chat read tellDecision_
+// does for every closed issue:
+//   - the chat shows the student knows: marked told, with the words quoted;
+//   - no sign: left exactly where it is on the Actions tab, with a line on the
+//     trail saying the post was cleared but nothing shows the student has heard.
+// A cleared post never closes anything by itself.
+var TELL_CHANNEL_DEFAULT = 'C03G3FA6PU7';   // #instructing-daily
+var TELL_POSTED_ = null;
+var TELL_WATCH_EVERY_MIN = 30, TELL_WATCH_DAYS = 30, TELL_WATCH_MAX_LOOKUPS = 40, TELL_WATCH_MAX_AI = 6;
+function tellChannel_() {
+  return PropertiesService.getScriptProperties().getProperty('TELL_CHANNEL_ID') || TELL_CHANNEL_DEFAULT;
+}
+/** Has this post gone from the channel? true gone, false still there, null could not tell. */
+function tellPostGone_(tok, channel, ts) {
+  try {
+    var res = UrlFetchApp.fetch('https://slack.com/api/conversations.history?channel=' + encodeURIComponent(channel) +
+      '&latest=' + encodeURIComponent(ts) + '&oldest=' + encodeURIComponent(ts) + '&inclusive=true&limit=1',
+      { headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true });
+    var out = JSON.parse(res.getContentText());
+    if (!out.ok) return null;
+    var m = (out.messages || []).filter(function (x) { return String(x.ts) === String(ts); })[0];
+    if (!m) return true;
+    // A post with thread replies leaves a "This message was deleted" stub.
+    return m.subtype === 'tombstone' || m.hidden === true;
+  } catch (e) { return null; }
+}
+function tellMarkCleared_(issueId, channel, ts, told) {
+  var fr = findRow_(issueId);
+  if (!fr) return;
+  var now = new Date().toISOString();
+  var cur = slackThreadsOf_(fr.record).map(function (t) {
+    if (t.kind === 'tell' && String(t.ts) === String(ts) && String(t.channel) === String(channel)) {
+      return { channel: t.channel, ts: t.ts, kind: 'tell', cleared: now, told: !!told };
+    }
+    return t;
+  });
+  writeIssueCell_(fr, 'slack_thread', JSON.stringify(cur));
+}
+function tellPostWatch_(force) {
+  var props = PropertiesService.getScriptProperties();
+  var last = Number(props.getProperty('TELL_WATCH_AT') || 0);
+  if (!force && Date.now() - last < TELL_WATCH_EVERY_MIN * 60000) return { ok: true, skipped: 'ran ' + Math.round((Date.now() - last) / 60000) + ' min ago' };
+  props.setProperty('TELL_WATCH_AT', String(Date.now()));
+  var tok = props.getProperty('SLACK_BOT_TOKEN');
+  if (!tok) return { ok: false, error: 'no SLACK_BOT_TOKEN' };
+  var posts = {}, order = [];
+  var oldest = Date.now() - TELL_WATCH_DAYS * 86400000;
+  getIssues_().issues.forEach(function (i) {
+    if (String(i.notified_students || '').toLowerCase() !== 'asked') return;
+    slackThreadsOf_(i).forEach(function (t) {
+      if (t.kind !== 'tell' || t.cleared || !t.ts || !t.channel) return;
+      if (Number(t.ts) * 1000 < oldest) return;   // a month on, nobody is going to clear it now
+      var k = t.channel + '|' + t.ts;
+      if (!posts[k]) { posts[k] = { channel: String(t.channel), ts: String(t.ts), ids: [] }; order.push(k); }
+      posts[k].ids.push(String(i.issue_id));
+    });
+  });
+  var out = { ok: true, watching: order.length, gone: 0, told: 0, no_sign: 0, unsure: 0, deferred: 0 };
+  var ai = 0;
+  order.slice(0, TELL_WATCH_MAX_LOOKUPS).forEach(function (k) {
+    var p = posts[k];
+    var gone = tellPostGone_(tok, p.channel, p.ts);
+    if (gone !== true) { if (gone === null) out.unsure++; return; }
+    out.gone++;
+    p.ids.forEach(function (id) {
+      var fr = findRow_(id);
+      if (!fr || String(fr.record.notified_students || '').toLowerCase() !== 'asked') return;
+      if (ai >= TELL_WATCH_MAX_AI) { out.deferred++; return; }   // the rest next run
+      ai++;
+      var v = null;
+      try { v = tellDecision_(fr.record); } catch (e) { v = null; }
+      if (!v) { out.unsure++; return; }                         // could not read the chat: next run
+      if (v.told) {
+        tellMark_(id, 'true', 'The ask in #instructing-daily was cleared, and the chat shows the student knows' +
+          (v.quote ? ': "' + String(v.quote).slice(0, 200) + '"' : '') + ' (checked automatically)');
+        out.told++;
+      } else {
+        addUpdate_({ issue_id: id, keep_status: true, _system: true,
+          text: 'The ask in #instructing-daily was cleared, but nothing in the chat shows the student has heard yet, so it stays on the Actions tab until somebody marks them told' +
+            (v.reason ? ' (' + String(v.reason).slice(0, 200) + ')' : '') + '. (checked automatically)' });
+        out.no_sign++;
+      }
+      tellMarkCleared_(id, p.channel, p.ts, v.told);
+    });
+  });
+  props.setProperty('TELL_WATCH_LAST', JSON.stringify({ at: new Date().toISOString(), result: out }));
+  return out;
+}
+function tellPostWatch() { return tellPostWatch_(true); }   // runJob: run it now, whatever the clock says
 
 // r146, one-off but re-runnable: issues logged before the conversation id was
 // stored. Two sources: the scan queue (conversation -> issue it logged) and
@@ -8116,8 +8233,12 @@ function runJob_(data) {
   if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
   var name = String(data.job || '');
   if (!RUNNABLE_JOBS_[name]) return { ok: false, error: 'not a runnable job: ' + name };
-  try { this[name] ? this[name]() : eval(name + '()'); } catch (e) { return { ok: false, error: String(e) }; }
-  return { ok: true, ran: name };
+  var said;
+  try { said = this[name] ? this[name]() : eval(name + '()'); } catch (e) { return { ok: false, error: String(e) }; }
+  // r209: what the job said, clipped, so a hand-run can be read back.
+  var brief = null;
+  try { brief = said === undefined ? null : JSON.parse(JSON.stringify(said)); if (brief && JSON.stringify(brief).length > 3000) brief = { clipped: JSON.stringify(brief).slice(0, 3000) }; } catch (e) {}
+  return { ok: true, ran: name, said: brief };
 }
 
 function runSetup_(data) {
@@ -9611,7 +9732,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r208.8 · 2026-10-01';
+var CODE_STAMP = 'r209 · 2026-10-04';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
