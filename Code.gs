@@ -883,24 +883,93 @@ function newInviteToken_() {
 
 function usersSheet_() { return sheetByName_(USERS_SHEET); }
 
+/* ---- r216: Users, ready to move to the store (Edd, 5 Oct 2026) ------------
+ * Every read of the Users tab goes through usersTable_ and every write through
+ * setCell_ / usersAppend_ / usersDeleteRow_, so the switch is one place.
+ *   Sheet is the record (now): each write is copied to the store straight
+ *     after (the shadow), so the nightly comparison can prove the two agree.
+ *   Store is the record (storeAdmin table_live users): reads come from a
+ *     sixty-second cache of the store's 20-odd rows, which is quicker than the
+ *     Sheet read every request used to make; a sign-in token missing from the
+ *     cache is looked for again fresh before anyone is refused, so a brand new
+ *     sign-in is never turned away by a cache a few seconds old. Every write
+ *     goes to the store, drops the cache and is copied to the Sheet.
+ * ------------------------------------------------------------------------- */
+var USERS_CACHE_KEY_ = 'ait_users_rows';
+function usersLive_() { return storeTableLive_('users'); }
+function usersCacheDrop_() { try { CacheService.getScriptCache().remove(USERS_CACHE_KEY_); } catch (e) {} }
+function usersTable_(fresh) {
+  if (!usersLive_()) {
+    var sheet = usersSheet_();
+    if (!sheet) return { values: [], idx: {}, sheet: null, store: false };
+    var values = sheet.getDataRange().getValues();
+    var idx = {}; (values[0] || []).forEach(function (h, i) { idx[h] = i; });
+    return { values: values, idx: idx, sheet: sheet, store: false };
+  }
+  var rows = null, c = CacheService.getScriptCache();
+  if (!fresh) { try { var hit = c.get(USERS_CACHE_KEY_); if (hit) rows = JSON.parse(hit); } catch (e) { rows = null; } }
+  if (!rows) {
+    rows = JSON.parse(JSON.stringify(storeTableList_('users')));
+    try { var txt = JSON.stringify(rows); if (txt.length < 90000) c.put(USERS_CACHE_KEY_, txt, 60); } catch (e) {}
+  }
+  var head = USER_HEADERS.slice(), ix = {};
+  head.forEach(function (h, i) { ix[h] = i; });
+  return { values: [head].concat(rows.map(function (o) { return head.map(function (h) { return o[h] == null ? '' : o[h]; }); })), idx: ix, sheet: null, store: true };
+}
+function userF_(t, r) {
+  var u = rowToUser_(t.values[r], t.idx);
+  return { row: r + 1, idx: t.idx, sheet: t.sheet, user: u, store: t.store, key: String(u.email || '').trim().toLowerCase() };
+}
+// The Sheet is the record: copy one change to the store as it now reads on the
+// Sheet (read back, since the Sheet turns some text into dates). Never fails
+// the write it follows; a miss is noted and the nightly comparison puts it right.
+// Queued, and sent with the end-of-request batch (jsonOut), so a sign-in does
+// not wait on a round trip per cell; a scheduled job with no request around it
+// sends straight away.
+function usersShadowQueue_(op) {
+  STORE_JOURNAL_.push(op);
+  if (!TOUCHED_IDS_ || STORE_JOURNAL_.length >= 40) storeShadowFlush_();
+}
+function usersShadow_(email, fields) {
+  if (!storeLive_() || usersLive_()) return;
+  try {
+    var key = String(email || '').trim().toLowerCase();
+    if (!key) return;
+    var set = {};
+    for (var k in fields) set[k] = storeEncVal_(fields[k]);
+    usersShadowQueue_({ op: 'patch', tbl: 'users', key: key, set: JSON.stringify(set), base: '{}' });
+  } catch (e) { storeShadowNote_('users', String(email) + ': ' + e); }
+}
+function usersAppend_(u) {
+  var key = String(u.email || '').trim().toLowerCase();
+  if (usersLive_()) { storeTableInsert_('users', key, u); usersCacheDrop_(); return; }
+  usersSheet_().appendRow(USER_HEADERS.map(function (k) { return u[k]; }));
+  if (storeLive_()) { try { usersShadowQueue_({ op: 'insert', tbl: 'users', key: key, data: JSON.stringify(storeEnc_(u)) }); } catch (e) { storeShadowNote_('users', key + ' (add): ' + e); } }
+}
+function usersDeleteRow_(f) {
+  if (f.store) { storeTableDelete_('users', f.key); usersCacheDrop_(); return; }
+  f.sheet.deleteRow(f.row);
+  if (storeLive_()) { try { usersShadowQueue_({ op: 'delete', tbl: 'users', key: f.key }); } catch (e) { storeShadowNote_('users', f.key + ' (delete): ' + e); } }
+}
+
 function rowToUser_(row, idx) {
   var u = {};
   USER_HEADERS.forEach(function (k) { u[k] = idx[k] != null ? row[idx[k]] : ''; });
   return u;
 }
-function findUserByField_(field, value) {
-  var sheet = usersSheet_();
-  if (!sheet) return null;
-  var values = sheet.getDataRange().getValues();
+function findUserByField_(field, value, fresh) {
+  var t = usersTable_(fresh);
+  var values = t.values, idx = t.idx;
   if (values.length < 2) return null;
-  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
   var target = String(value || '');
   for (var r = 1; r < values.length; r++) {
     var cell = String(values[r][idx[field]] || '');
     if (field === 'email') { if (cell.trim().toLowerCase() !== target.trim().toLowerCase()) continue; }
     else if (cell !== target || !target) continue;
-    return { row: r + 1, idx: idx, sheet: sheet, user: rowToUser_(values[r], idx) };
+    return userF_(t, r);
   }
+  // r216: from the store's cache, look again fresh before saying nobody.
+  if (t.store && !fresh) return findUserByField_(field, value, true);
   return null;
 }
 function findUserByEmail_(email) { return findUserByField_('email', email); }
@@ -1229,7 +1298,18 @@ function setPrefs_(body) {
   setCell_(f, 'prefs_json', JSON.stringify(cur));
   return { ok: true, prefs: cur };
 }
-function setCell_(f, key, value) { f.sheet.getRange(f.row, f.idx[key] + 1).setValue(value); }
+function setCell_(f, key, value) {
+  var one = {}; one[key] = value;
+  if (f.store) {   // r216: the store is the record
+    if (!storeTablePatch_('users', f.key, one)) throw new Error('That account was removed a moment ago.');
+    usersCacheDrop_();
+    if (f.user) f.user[key] = value;
+    return;
+  }
+  var cell = f.sheet.getRange(f.row, f.idx[key] + 1);
+  cell.setValue(value);
+  if (storeLive_()) { try { one[key] = cell.getValue(); } catch (e) {} usersShadow_(f.user && f.user.email, one); }
+}
 
 function bytesToHex_(bytes) {
   var s = '';
@@ -1293,10 +1373,14 @@ function withSessionLock_(fn) {
   try { return fn(); } finally { if (lock) { try { lock.releaseLock(); } catch (e) {} } }
 }
 function readSessionCell_(f) {
+  if (f.store) {   // r216: always the record itself, never the cache, inside the lock
+    var got = storeCall_({ op: 'get', tbl: 'users', key: f.key });
+    return (got.ok && got.row && got.row.data) ? (got.row.data.session_token || '') : '';
+  }
   return f.sheet.getRange(f.row, f.idx['session_token'] + 1).getValue();
 }
 function writeSessionCell_(f, entries) {
-  f.sheet.getRange(f.row, f.idx['session_token'] + 1).setValue(entries.length ? JSON.stringify(entries) : '');
+  setCell_(f, 'session_token', entries.length ? JSON.stringify(entries) : '');
 }
 
 function sessionEntries_(cell) {
@@ -1305,25 +1389,27 @@ function sessionEntries_(cell) {
   if (raw.charAt(0) !== '[') return 'legacy';
   try { var a = JSON.parse(raw); return (a && a.length !== undefined) ? a : null; } catch (e) { return null; }
 }
-function findUserBySession_(token) {
-  var sheet = usersSheet_();
-  if (!sheet || !token) return null;
-  var values = sheet.getDataRange().getValues();
+function findUserBySession_(token, fresh) {
+  if (!token) return null;
+  var t = usersTable_(fresh);
+  var values = t.values, idx = t.idx;
   if (values.length < 2) return null;
-  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
   for (var r = 1; r < values.length; r++) {
     var cell = values[r][idx['session_token']];
     var entries = sessionEntries_(cell);
     if (entries === 'legacy') {
-      if (String(cell) === String(token)) return { row: r + 1, sheet: sheet, idx: idx, user: rowToUser_(values[r], idx), legacy: true };
+      if (String(cell) === String(token)) { var fl = userF_(t, r); fl.legacy = true; return fl; }
     } else if (entries) {
       for (var i = 0; i < entries.length; i++) {
         if (String(entries[i].t) === String(token)) {
-          return { row: r + 1, sheet: sheet, idx: idx, user: rowToUser_(values[r], idx), entry: entries[i], entries: entries };
+          var fe = userF_(t, r); fe.entry = entries[i]; fe.entries = entries; return fe;
         }
       }
     }
   }
+  // r216: a sign-in seconds old may not be in the cache yet. Look again fresh
+  // before refusing anyone.
+  if (t.store && !fresh) return findUserBySession_(token, true);
   return null;
 }
 function startSession_(f) {
@@ -1453,8 +1539,8 @@ function logout_(token) {
   var f = findUserBySession_(token);
   if (!f) return { ok: true };
   if (f.legacy) {
-    f.sheet.getRange(f.row, f.idx['session_token'] + 1).setValue('');
-    f.sheet.getRange(f.row, f.idx['session_expires'] + 1).setValue('');
+    setCell_(f, 'session_token', '');
+    setCell_(f, 'session_expires', '');
     return { ok: true };
   }
   withSessionLock_(function () {
@@ -1571,17 +1657,15 @@ function inviteUser_(body) {
       invite_token: token, session_token: '', session_expires: '',
       created_at: new Date().toISOString()
     };
-    usersSheet_().appendRow(USER_HEADERS.map(function (k) { return u[k]; }));
+    usersAppend_(u);
   }
   return { ok: true, invite_url: sendInviteEmail_(email, body.name || '', token) };
 }
 
 function listUsers_() {
-  var sheet = usersSheet_();
-  if (!sheet) return { ok: true, users: [] };
-  var values = sheet.getDataRange().getValues();
+  var t = usersTable_(true);   // the admin screen always sees the record itself
+  var values = t.values, idx = t.idx;
   if (values.length < 2) return { ok: true, users: [] };
-  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
   var out = [];
   for (var r = 1; r < values.length; r++) {
     if (!values[r][idx['email']]) continue;
@@ -1633,9 +1717,8 @@ function deleteUser_(body) {
   if (!f) return { ok: false, error: 'No such user.' };
   var name = String(f.user.name || '').trim();
 
-  var sheet = usersSheet_();
-  var values = sheet.getDataRange().getValues();
-  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  var tU = usersTable_(true);
+  var values = tU.values, idx = tU.idx;
   var admins = 0;
   for (var r = 1; r < values.length; r++) {
     var u = rowToUser_(values[r], idx);
@@ -1666,7 +1749,7 @@ function deleteUser_(body) {
     return { ok: false, error: name + ' has their name on logged work, so deleting the account would leave those entries pointing at nobody. Disable them instead - it does the same job and keeps the record honest.' };
   }
 
-  f.sheet.deleteRow(f.row);
+  usersDeleteRow_(f);
   return { ok: true, deleted: true };
 }
 
@@ -2584,7 +2667,9 @@ function storeLive_() { try { return storeMode_() === 'supabase'; } catch (e) { 
  * Users stay on the Sheet: every request signs in against that tab.
  * ------------------------------------------------------------------------- */
 var STORE_TABLE_DEF_ = {
-  feedback: { sheet: function () { return sheetByName_(FEEDBACK_SHEET); }, key: 'id', headers: function () { return FEEDBACK_HEADERS; } }
+  feedback: { sheet: function () { return sheetByName_(FEEDBACK_SHEET); }, key: 'id', headers: function () { return FEEDBACK_HEADERS; } },
+  // r216: keyed by the email, lower-cased, as storeSources_ imports them.
+  users: { sheet: function () { return usersSheet_(); }, key: 'email', headers: function () { return USER_HEADERS; } }
 };
 function storeTableLive_(tbl) {
   if (!STORE_TABLE_DEF_[tbl] || !storeLive_()) return false;
@@ -2625,30 +2710,30 @@ function storeTableSheetCopy_(tbl, key, obj) {
     else sheet.appendRow(row);
   } catch (e) { storeShadowNote_('sheet copy', tbl + ' ' + key + ': ' + e); }
 }
-function storeTableInsert_(tbl, key, obj) {
+function storeTableInsert_(tbl, key, obj, noSheet) {
   var res = storeCall_({ op: 'insert', tbl: tbl, key: String(key), data: JSON.stringify(storeEnc_(obj)) });
   if (!res.ok) throw new Error('Could not save: ' + (res.error || 'store error'));
   var now = storeDec_((res.row && res.row.data) || {});
-  storeTableSheetCopy_(tbl, key, now);
+  if (!noSheet) storeTableSheetCopy_(tbl, key, now);
   return now;
 }
 // Only the fields given, against what they held when read (the r200 rule).
-function storeTablePatch_(tbl, key, fields) {
+function storeTablePatch_(tbl, key, fields, noSheet) {
   for (var attempt = 0; attempt < 3; attempt++) {
     var got = storeCall_({ op: 'get', tbl: tbl, key: String(key) });
     if (!got.ok || !got.row) return null;
     var cur = got.row.data || {}, set = {}, base = {};
     for (var k in fields) { set[k] = storeEncVal_(fields[k]); base[k] = (k in cur) ? cur[k] : ''; }
     var res = storeCall_({ op: 'patch', tbl: tbl, key: String(key), set: JSON.stringify(set), base: JSON.stringify(base) });
-    if (res.ok) { var now = storeDec_(res.row.data || {}); storeTableSheetCopy_(tbl, key, now); return now; }
+    if (res.ok) { var now = storeDec_(res.row.data || {}); if (!noSheet) storeTableSheetCopy_(tbl, key, now); return now; }
     if (!res.conflict) throw new Error('Could not save: ' + (res.error || 'store error'));
   }
   throw new Error('Could not save: somebody else kept changing it at the same moment. Try again.');
 }
-function storeTableDelete_(tbl, key) {
+function storeTableDelete_(tbl, key, noSheet) {
   var res = storeCall_({ op: 'delete', tbl: tbl, key: String(key) });
   if (!res.ok) return false;
-  storeTableSheetCopy_(tbl, key, null);
+  if (!noSheet) storeTableSheetCopy_(tbl, key, null);
   return true;
 }
 // Nightly and on table_back: the Sheet made to match the store.
@@ -2656,11 +2741,12 @@ function storeTableSheetCatchUp_(tbl) {
   var def = STORE_TABLE_DEF_[tbl], sheet = def.sheet();
   if (!sheet) return 0;
   var want = {}, order = [];
-  storeTableList_(tbl).forEach(function (o) { var k = String(o[def.key] || ''); if (k) { want[k] = o; order.push(k); } });
+  var norm = function (k) { k = String(k || '').trim(); return tbl === 'users' ? k.toLowerCase() : k; };
+  storeTableList_(tbl).forEach(function (o) { var k = norm(o[def.key]); if (k) { want[k] = o; order.push(k); } });
   var values = sheet.getDataRange().getValues(), head = values[0].map(function (h) { return String(h || '').trim(); });
   var kc = head.indexOf(def.key), fixed = 0, have = {};
   for (var r = values.length - 1; r >= 1; r--) {
-    var k = String(values[r][kc] || '');
+    var k = norm(values[r][kc]);
     if (!k) continue;
     if (!want[k] || have[k]) { sheet.deleteRow(r + 1); fixed++; continue; }
     have[k] = 1;
@@ -3465,14 +3551,23 @@ function bootstrap_(user, body) {
   return out;
 }
 
+// r216 (Edd, 5 Oct 2026): the instructor list comes from Users - everyone
+// active who can log issues, on an ardent-training.com address, apart from the
+// service accounts. The Instructors tab was a second copy of the same ten
+// people, kept by hand; it is left where it is but nothing reads it now.
 function getInstructors_() {
-  var sheet = getInstructorsSheet_();
-  var values = sheet.getDataRange().getValues();
+  var tI = usersTable_();
+  var values = tI.values, idx = tI.idx;
   var list = [];
   for (var r = 1; r < values.length; r++) {
-    if (!values[r][0]) continue;
-    list.push({ name: values[r][0], email: values[r][1] || null });
+    var u = rowToUser_(values[r], idx);
+    var email = String(u.email || '').trim().toLowerCase();
+    if (!email || !u.name || String(u.status || '').toLowerCase() !== 'active') continue;
+    if (!/@ardent-training\.com$/.test(email) || /^claude/.test(email)) continue;
+    if (!permsOf_(u).log) continue;
+    list.push({ name: String(u.name), email: email });
   }
+  list.sort(function (a, b) { return a.name.localeCompare(b.name); });
   return { ok: true, instructors: list };
 }
 
@@ -5003,11 +5098,9 @@ function courseReview_(data) {
 // Each entry carries which queues they can take (course fixes and/or developer),
 // so the front-end can offer the right people for the right queue.
 function listAssignees_() {
-  var sheet = usersSheet_();
-  if (!sheet) return { ok: true, assignees: [] };
-  var values = sheet.getDataRange().getValues();
+  var tA = usersTable_();
+  var values = tA.values, idx = tA.idx;
   if (values.length < 2) return { ok: true, assignees: [] };
-  var head = values[0]; var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
   var out = [];
   for (var r = 1; r < values.length; r++) {
     var u = rowToUser_(values[r], idx);
@@ -10118,7 +10211,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r215 · 2026-10-05';
+var CODE_STAMP = 'r216 · 2026-10-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -13169,7 +13262,7 @@ function createClaudeServiceUser() {
     invite_token: '', session_token: token,
     session_expires: expires, created_at: new Date().toISOString()
   };
-  usersSheet_().appendRow(USER_HEADERS.map(function (k) { return u[k]; }));
+  usersAppend_(u);
   Logger.log('Claude service user created; token written to the Users sheet.');
   return 'created';
 }
