@@ -2946,9 +2946,9 @@
   <h4>The buttons</h4>
   <div class="man-scroll"><table class="man-tbl">
     <tr><th>Button</th><th>What it does</th></tr>
+    <tr><td><span class="ui">Log issue</span></td><td>Files the conversation into the tracker. Until it is filed this is the main button. Afterwards it reads <span class="ui">Update the issue</span> and <span class="ui">Draft a reply</span> takes over as the main one.</td></tr>
     <tr><td><span class="ui">Draft a reply</span></td><td>Writes the next message in your own voice and opens it for editing. It goes nowhere on its own. Copy it into Chatwoot and send it from there.</td></tr>
     <tr><td><span class="ui">Check for new reply</span></td><td>Asks Chatwoot whether the student has come back. If they have, it pulls the reply in and re-reads the brief.</td></tr>
-    <tr><td><span class="ui">Log issue</span></td><td>Files the conversation into the tracker.</td></tr>
   </table></div>
   <p>A blue dot on a case means something has happened since you personally last opened it. <span class="ui">Refresh</span> at the top of the list is free and re-reads everything, while <span class="ui">refresh the brief</span> inside a case rewrites the summary and costs a call, which is why they are two separate buttons rather than one.</p>
   <h4>Filing it</h4>
@@ -3756,7 +3756,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r216 · 2026-10-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r217 · 2026-10-05";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7397,22 +7397,23 @@ function renderLiveDetail() {
     '</div>';
   }
 
+  // FB-0464 (Charly): logging the issue is the job here, so until it is
+  // filed Log issue is the main button and comes first; drafting a reply is
+  // the next thing, not the first. Once it is filed, the reply is the main
+  // job again and Update the issue drops back.
+  var filed = !!c.issue_id;
+  var logBtn = '<button class="' + (filed ? 'ghost' : 'primary') + '" onclick="liveLogIssue()" title="' +
+      (filed ? 'Adds where this has got to onto the issue already filed from this conversation.'
+             : 'Files this conversation into the tracker. You choose whether it is resolved or still open.') +
+      '">' + (filed ? 'Update the issue' : 'Log issue') + '</button>';
+  var draftBtn = '<button class="' + (filed ? 'primary' : 'ghost') + '" onclick="liveDraftReply()" title="Writes the next message to the student in your own voice and opens it for editing. Nothing is sent until you press send.">Draft a reply</button>';
   html += '<div class="row" style="margin-top:14px;flex-wrap:wrap;">' +
-    '<button class="primary" onclick="liveDraftReply()" title="Writes the next message to the student in your own voice and opens it for editing. Nothing is sent until you press send.">Draft a reply</button>' +
+    (filed ? draftBtn + logBtn : logBtn + draftBtn) +
     '<button class="ghost" onclick="liveCheckReply()" title="Asks Chatwoot whether the student has come back. If they have, it pulls the reply in and re-reads the brief.">Check for new reply</button>' +
     // Edd, 19 Aug 2026: the three filing buttons all did the same job and
     // differed only in the outcome recorded, so they are one button and the
-    // outcome is a choice inside it. "Checkpoint" has gone with them: it was
-    // the only word on the row that was not plain English.
-    '<button class="ghost" onclick="liveLogIssue()" title="' +
-      (c.issue_id ? 'Adds where this has got to onto the issue already filed from this conversation.'
-                  : 'Files this conversation into the tracker. You choose whether it is resolved or still open.') +
-      '">' + (c.issue_id ? 'Update the issue' : 'Log issue') + '</button>' +
-    // FB-0232. The log form has had "Submit and resolve" and "Submit and park"
-    // for rounds; a conversation sorted in the chat had no equivalent here, so
-    // it went in as a fresh open high and joined a fix queue for work that was
-    // already done. Same two outcomes, same words.
-
+    // outcome is a choice inside it. FB-0232: the log form's Submit and
+    // resolve / Submit and park have the same two outcomes, same words.
   '</div>';
 
   if (b.images && b.images.length) {
@@ -12681,6 +12682,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 58, date: "2026-10-05", who: ["log"], text: "In an open chat, Log issue is now the main button and comes first, until the issue is filed. After that, Draft a reply takes over again." },
   { n: 57, date: "2026-10-05", who: ["dev", "course", "manage", "users"], text: "Mark fixed and changing a status now save in under a second, like the notes and updates. Anything they set off (tidying Slack, the queue alert) follows straight after, without you waiting for it." },
   { n: 56, date: "2026-10-05", who: ["irpcs"], text: "IRPCS models: sailing vessels on each point of sail and on both tacks, close-hauled to a dead run, with a spinnaker and goose-winged, for the Rule 12 questions. And any vessel can now be seen from on board our own motorboat or yacht, looking forward over the bow (Looking from, on the picture). The student site needs pushing before students see them." },
   { n: 55, date: "2026-10-04", who: ["course", "manage", "users"], text: "Course fixes say what they need with tick boxes, as many as apply: Text edit, Video edit, Refilm, Audio recording, New slide. Anyone on the Course tab can tick them, Filter has each one, and a new sort puts the quickest jobs first so a recording or filming session can be batched." },
