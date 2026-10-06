@@ -3756,7 +3756,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r217 · 2026-10-05";  // bump this with each round, it lands on every feedback report
+var BUILD = "r218 · 2026-10-06";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -17677,7 +17677,7 @@ function renderDevScoreboard() {
 
   // --- how long things take, against what we said we expect
   h += '<div class="bar-wrap" style="margin-bottom:10px;"><table class="mini" style="width:100%;border-collapse:collapse;font-size:12.5px;">' +
-    '<tr style="color:var(--muted);text-align:left;"><th style="padding:3px 0;">Priority</th><th>Agreed</th><th>Typical</th><th>Slowest 1 in 10</th><th>Fixed</th><th>Missed</th><th>Open now</th></tr>' +
+    '<tr style="color:var(--muted);text-align:left;"><th style="padding:3px 0;">Priority</th><th>Target</th><th>Typical</th><th>Slowest 1 in 10</th><th>Fixed</th><th>Missed</th><th>Open now</th></tr>' +
     m.by_priority.map(function (p) {
       var bad = p.past_target > 0;
       return '<tr><td style="padding:3px 0;text-transform:capitalize;">' + esc(p.priority) + '</td>' +
@@ -17705,7 +17705,7 @@ function renderDevScoreboard() {
       row("Open with the developers", String(q.open)) +
       row("Typical age", devDays(q.age_days.median)) +
       row("Oldest", devDays(q.age_days.worst)) +
-      row("Over the agreed time", String(q.past_target), q.past_target ? "worth a nudge" : "") +
+      row("Over the target time", String(q.past_target), q.past_target ? "worth a nudge" : "") +
     '</div>' +
     '<div style="flex:1;min-width:200px;">' +
       '<div class="small muted" style="margin-bottom:2px;">How long they have been waiting</div>' +
