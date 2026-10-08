@@ -780,6 +780,8 @@ function doPost(e) {
     if (action === 'faultIssueMap') return jsonOut(faultIssueMap_());
     if (action === 'logFault') return jsonOut(logFault_(body));
     if (action === 'estimateFixSize') return jsonOut(estimateFixSize_(body));
+    if (action === 'confirmFixSize') return jsonOut(confirmFixSize_(body));           // r219
+    if (action === 'autoSizeQueue') return jsonOut(autoSizeQueue(body));             // r219
     if (action === 'runChatBackSweep') return jsonOut(runChatBackSweep_(body));
     if (action === 'chatBackSweepState') return jsonOut(chatBackSweepState_());
     if (action === 'saveChecklist') return jsonOut(saveChecklist_(body));
@@ -1121,6 +1123,8 @@ function reqPerm_(action) {
     // Handing work to the developers is an admin call (or automatic on
     // submission); instructors log and manage, they don't route.
     case 'passToDev': return 'users';
+    case 'autoSizeQueue': return 'users';     // r219: sizes the whole queue, an admin call
+    case 'confirmFixSize': return 'work';     // r219: same rule as setting the size itself
     case 'markDevFixed': case 'saveDevNotes': case 'estimateFixSize': case 'addTeamNote': return 'devcourse';
     // Anyone who works issues can raise a question (dev/course asking up, or an
     // admin asking the logging instructor for more info). Answering is gated
@@ -5456,10 +5460,11 @@ function devMetrics_(data) {
   }
 
   var blockedIssues = passed.filter(function (i) { return (Number(i.dev_blocked_ms) || 0) > 0; });
-  var sized = { small: 0, medium: 0, large: 0, asked: 0, unsized: 0 };
+  // r219: estimated = sized by us and not yet confirmed or changed by them.
+  var sized = { small: 0, medium: 0, large: 0, asked: 0, unsized: 0, estimated: 0 };
   openNow.concat(fixedIn).forEach(function (i) {
     var z = String(i.fix_size || '').toLowerCase();
-    if (z === 'small' || z === 'medium' || z === 'large') sized[z]++;
+    if (z === 'small' || z === 'medium' || z === 'large') { sized[z]++; if (sizeSourceOf_(i) === 'estimate') sized.estimated++; }
     else if (z === 'ask') sized.asked++;
     else sized.unsized++;
   });
@@ -5486,6 +5491,7 @@ function devMetrics_(data) {
                         priority: pri(i), target_days: T[pri(i)], age_days: days1(ageOf(i)),
                         over_by_days: days1(ageOf(i) - T[pri(i)] * DAY_MS_),
                         fix_size: String(i.fix_size || ''),
+                        size_estimated: sizeSourceOf_(i) === 'estimate',
                         summary: String(i.summary || '').slice(0, 120) };
              }) },
     blocked_on_us: { issues: blockedIssues.length,
@@ -5513,7 +5519,8 @@ function devTargetSweep() {
   q.oldest.forEach(function (o) {
     lines.push('• *' + o.over_by_days + 'd over* (' + o.priority + ', target ' + o.target_days + 'd) — ' +
       o.summary + '  `' + o.short + '`' +
-      (String(o.fix_size) === 'ask' ? '  _(we asked you to size this one)_' : ''));
+      (String(o.fix_size) === 'ask' ? '  _(we asked you to size this one)_' :
+        o.size_estimated ? '  _(' + o.fix_size + ' is our estimate - change it if it is wrong)_' : ''));
   });
   if (q.past_target > q.oldest.length) lines.push('…and ' + (q.past_target - q.oldest.length) + ' more.');
   if (m.blocked_on_us.open_now) {
@@ -5538,13 +5545,21 @@ function passToDev_(data) {
   // it themselves - which is the stronger answer anyway, being theirs.
   var sz = String((data && data.fix_size) || '').toLowerCase();
   if (sz === 'small' || sz === 'medium' || sz === 'large' || sz === 'ask') rec.fix_size = sz;
+  // r219: no size picked means "estimate it for me". Only when the record has
+  // none (or an old ask) - a size already on it is somebody's and stays. If
+  // the estimate cannot be read it falls back to asking them, which shows.
+  var estimated = null;
+  if (!sz && (!rec.fix_size || String(rec.fix_size).toLowerCase() === 'ask')) {
+    try { estimated = applySizeEstimate_(rec) || null; } catch (e) { estimated = null; }
+    if (!estimated && String(rec.category || '').toLowerCase() === 'tech_issue') rec.fix_size = 'ask';
+  }
   if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
   rec.dev_fixed_at = '';            // if it was previously fixed and is going back
   rec.status = 'with_dev';
   rec.updated_at = new Date().toISOString();
   var wr200 = writeIssueRow_(found, rec);
   if (!wr200.ok) return wr200;
-  return { ok: true };
+  return { ok: true, fix_size: rec.fix_size || '', estimated: estimated ? estimated.size : '' };
 }
 
 // A developer or course-team member marks an issue fixed. No automatic "please
@@ -7751,7 +7766,14 @@ function lessonIssueCounts_() {
 function estimateFixSize_(data) {
   var found = findRow_(data && data.issue_id);
   if (!found) return { ok: false, error: 'No issue found with id ' + (data && data.issue_id) };
-  var i = found.record;
+  var est = sizeEstimateFor_(found.record);
+  if (!est) return { ok: false, error: 'could not read a size back' };
+  return { ok: true, size: est.size, why: est.why };
+}
+
+// r219: the estimate itself, shared by the Suggest button, the handover and
+// the daily sweep, so all three read a report the same way.
+function sizeEstimateFor_(i) {
   var prompt = 'You are sizing a bug fix for an online sailing course platform (a web app, a mobile app, and course content). ' +
     'Answer with how big the FIX is likely to be for a developer, not how urgent it is and not how annoying it is.\n\n' +
     '- "small": a wording change, a wrong link, a single value, a css or layout tweak, one obviously wrong line.\n' +
@@ -7765,10 +7787,119 @@ function estimateFixSize_(data) {
     }) + '\n\n' +
     'Return ONLY JSON: {"size":"small|medium|large","why":"<one short sentence>"}. No prose, no fences.';
   var out = anthropicJson_(FINDER_MODEL, prompt, 200);
-  if (!out || !out.size) return { ok: false, error: 'could not read a size back' };
+  if (!out || !out.size) return null;
   var size = String(out.size).toLowerCase();
   if (['small', 'medium', 'large'].indexOf(size) < 0) size = 'medium';
-  return { ok: true, size: size, why: String(out.why || '').slice(0, 160) };
+  return { size: size, why: String(out.why || '').slice(0, 160) };
+}
+
+// ===================== r219: SIZES WE ESTIMATE, THE DEVELOPERS OWN =====================
+// Edd, 8 Oct 2026: "Can we estimate sizes ourselves? When passed to a dev can a
+// size be applied automatically and the dev has the ability to change the
+// size?" r170 asked at handover and FB-0266 put a Suggest button on the dev
+// pane, and on 8 Oct not one of the 30 open tech issues had a size: 16 sat at
+// "asked to size" since 26 Sep. A size nobody has to remember to set is the
+// only kind that exists.
+//
+// THE HONESTY RULE (r170's, carried on). A size feeds "was that one slow
+// because it was hard?", which is said about any number a supplier dislikes.
+// If we set the size and then hold a slow fix against it, "you sized that, not
+// us" is a fair answer. So the estimate is written on the trail as ours
+// ({size_estimate:true, size}), and it stays OUR estimate until a developer
+// either presses Looks right ({size_confirmed:true}) or picks another size.
+// No new column: provenance lives on the trail, which every store path already
+// carries, so nothing in the Supabase move has to learn a new field.
+var FIX_SIZES_ = { small: 1, medium: 1, large: 1 };
+
+// 'estimate' | 'team' | '' (not sized). Read from the trail: the newest size
+// event wins, and an estimate only counts while the size still matches it.
+function sizeSourceOf_(rec) {
+  var z = String((rec && rec.fix_size) || '').toLowerCase();
+  if (!FIX_SIZES_[z]) return '';
+  var reps = readTrail_(rec).reps;
+  for (var k = reps.length - 1; k >= 0; k--) {
+    var e = reps[k] || {};
+    if (e.size_confirmed) return 'team';
+    if (e.size_estimate) return String(e.size || '').toLowerCase() === z ? 'estimate' : 'team';
+  }
+  return 'team';   // set by hand at handover or on the dev pane before r219
+}
+
+// Put our estimate on a record IN MEMORY (the caller writes it). Tech issues
+// only: course fixes are never developer work (r179). False if there is
+// nothing to do or the estimate could not be read, and the record is untouched.
+function applySizeEstimate_(rec) {
+  if (String(rec.category || '').toLowerCase() !== 'tech_issue') return false;
+  var tr = readTrail_(rec);
+  if (tr.broken) return false;   // no trail entry means no provenance: leave it
+  var est = sizeEstimateFor_(rec);
+  if (!est) return false;
+  var reps = tr.reps;
+  reps.push({ kind: 'update', size_estimate: true, size: est.size, instructor_name: 'Tracker',
+    summary: 'Size estimated: ' + est.size,
+    raw_text: 'The tracker estimated this as a ' + est.size + ' fix. ' + (est.why ? est.why + ' ' : '') +
+      'Developers: change it if it looks wrong, or press Looks right.',
+    date: new Date().toISOString() });
+  rec.reports_json = capReports_(reps);
+  rec.fix_size = est.size;
+  return est;
+}
+
+// A developer agrees with our estimate. The size does not change; the trail
+// says whose it now is.
+function confirmFixSize_(data) {
+  var found = findRow_(data && data.issue_id);
+  if (!found) return { ok: false, error: 'No issue found with id ' + (data && data.issue_id) };
+  var rec = found.record;
+  var z = String(rec.fix_size || '').toLowerCase();
+  if (!FIX_SIZES_[z]) return { ok: false, error: 'There is no size on this one to confirm yet.' };
+  var tr = readTrail_(rec);
+  if (tr.broken) return trailRefusal_(rec.issue_id || 'this issue', tr);
+  var who = (data._user && data._user.name) || 'Someone';
+  var reps = tr.reps;
+  reps.push({ kind: 'update', size_confirmed: true, size: z, instructor_name: who,
+    summary: 'Size confirmed: ' + z, raw_text: who + ' confirmed this as a ' + z + ' fix.', date: new Date().toISOString() });
+  rec.reports_json = capReports_(reps);
+  var w = writeIssueRow_(found, rec);
+  if (!w.ok) return w;
+  return { ok: true, size: z };
+}
+
+// Daily at 07:00, and by hand (admin): every open tech issue with the
+// developers that has no size, or an unanswered "asked to size", gets our
+// estimate. Capped per run so it always finishes inside Apps Script's six
+// minutes; whatever is left goes tomorrow, or on another press.
+var AUTO_SIZE_CAP_ = 15;
+function autoSizeQueue(data) {
+  var cap = Math.min(Number(data && data.limit) || AUTO_SIZE_CAP_, 25);
+  var todo = getIssues_().issues.filter(function (i) {
+    if (String(i.category || '').toLowerCase() !== 'tech_issue') return false;
+    if (String(i.status || '').toLowerCase() !== 'with_dev' || i.dev_fixed_at) return false;
+    var z = String(i.fix_size || '').toLowerCase();
+    return !z || z === 'ask';
+  });
+  var sized = [], failed = [];
+  todo.slice(0, cap).forEach(function (i) {
+    try {
+      var found = findRow_(i.issue_id);
+      if (!found) return;
+      var rec = found.record;
+      var z = String(rec.fix_size || '').toLowerCase();
+      if (z && z !== 'ask') return;   // somebody sized it since the list was read
+      var est = applySizeEstimate_(rec);
+      if (!est) { failed.push(String(i.issue_id).slice(0, 8)); return; }
+      // updated_at deliberately left alone: our estimate is not news, and it
+      // must not lift the issue in Recent activity or restart any clock.
+      var w = writeIssueRow_(found, rec);
+      if (w.ok) sized.push(String(i.issue_id).slice(0, 8) + ' ' + est.size);
+      else failed.push(String(i.issue_id).slice(0, 8));
+    } catch (e) { failed.push(String(i.issue_id).slice(0, 8)); }
+  });
+  // A scheduled write does not pass through jsonOut, so drop the board cache
+  // here (the claudeInbox rule).
+  if (sized.length) { try { invalidateIssueCache_(); } catch (e) {} }
+  if (failed.length) Logger.log('autoSizeQueue: could not size ' + failed.join(', '));
+  return { ok: true, sized: sized, failed: failed, left: Math.max(0, todo.length - sized.length - failed.length) };
 }
 
 function chatBackSweepState_() {
@@ -7978,6 +8109,7 @@ function ensureTriggers_() {
   var haveTell = false;       // r207
   var haveStoreCompare = false; // r208.3
   var haveShipTag = false, haveShipMonthly = false;   // r188
+  var haveAutoSize = false;   // r219
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -7997,6 +8129,7 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'storeShadowCompareNightly') haveStoreCompare = true;
     if (t.getHandlerFunction() === 'shipTagNightly') haveShipTag = true;
     if (t.getHandlerFunction() === 'shipMonthlyPost') haveShipMonthly = true;
+    if (t.getHandlerFunction() === 'autoSizeQueue') haveAutoSize = true;
   });
   // r175: 08:00, so the chase list is sitting there when the day starts rather
   // than arriving on top of whatever else the morning brings.
@@ -8017,6 +8150,8 @@ function ensureTriggers_() {
   // month's shipping report at 09:00 on the 1st.
   if (!haveShipTag) ScriptApp.newTrigger('shipTagNightly').timeBased().everyDays(1).atHour(4).create();
   if (!haveShipMonthly) ScriptApp.newTrigger('shipMonthlyPost').timeBased().onMonthDay(1).atHour(9).create();
+  // r219: 07:00, so a size is on everything before the developers' day starts.
+  if (!haveAutoSize) ScriptApp.newTrigger('autoSizeQueue').timeBased().everyDays(1).atHour(7).create();
   if (!haveWaiting) ScriptApp.newTrigger('waitingOnStudentSweep').timeBased().everyDays(1).atHour(8).create();
   if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
   if (!haveEnrich) ScriptApp.newTrigger('enrichContacts').timeBased().everyDays(1).atHour(19).create();   // r152: end of the working day
@@ -8248,7 +8383,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, tellPostWatch: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1, storeShadowCompare: 1 };
+var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, tellPostWatch: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1, storeShadowCompare: 1, autoSizeQueue: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -10211,7 +10346,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r218 · 2026-10-06';
+var CODE_STAMP = 'r219 · 2026-10-08';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

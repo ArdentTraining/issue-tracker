@@ -3514,7 +3514,7 @@
     <p class="small muted">How big is this, roughly? It is for sorting the queue and for telling a slow fix from a big one later, not for holding anyone to an estimate.</p>
     <div class="field">
       <select id="passDevSize" style="width:100%;">
-        <option value="">Don't record a size</option>
+        <option value="">Estimate it for me (they can change it)</option>
         <option value="small">Small &middot; under a day</option>
         <option value="medium">Medium &middot; a few days</option>
         <option value="large">Large &middot; a week or more</option>
@@ -3756,7 +3756,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r218 · 2026-10-06";  // bump this with each round, it lands on every feedback report
+var BUILD = "r219 · 2026-10-08";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -12682,6 +12682,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 59, date: "2026-10-08", who: ["dev", "users"], text: "Every tech fix handed to the developers now comes with a size the tracker has estimated. Developers: change it if it looks wrong, or press Looks right." },
   { n: 58, date: "2026-10-05", who: ["log"], text: "In an open chat, Log issue is now the main button and comes first, until the issue is filed. After that, Draft a reply takes over again." },
   { n: 57, date: "2026-10-05", who: ["dev", "course", "manage", "users"], text: "Mark fixed and changing a status now save in under a second, like the notes and updates. Anything they set off (tidying Slack, the queue alert) follows straight after, without you waiting for it." },
   { n: 56, date: "2026-10-05", who: ["irpcs"], text: "IRPCS models: sailing vessels on each point of sail and on both tacks, close-hauled to a dead run, with a spinnaker and goose-winged, for the Rule 12 questions. And any vessel can now be seen from on board our own motorboat or yacht, looking forward over the bow (Looking from, on the picture). The student site needs pushing before students see them." },
@@ -15809,6 +15810,20 @@ function driveOpen(url) {
 }
 
 // Each issue can hold several reports (the same bug hit by several students).
+// r219: whose size is it? Mirrors sizeSourceOf_ in Code.gs: the newest size
+// event on the trail wins, and our estimate only counts while the size still
+// matches it. Returns {source: 'estimate'|'team'|'', why}.
+function sizeSource(issue) {
+  var z = String((issue && issue.fix_size) || "").toLowerCase();
+  if (z !== "small" && z !== "medium" && z !== "large") return { source: "", why: "" };
+  var reps = parseReports(issue);
+  for (var k = reps.length - 1; k >= 0; k--) {
+    var e = reps[k] || {};
+    if (e.size_confirmed) return { source: "team", why: "" };
+    if (e.size_estimate) return String(e.size || "").toLowerCase() === z ? { source: "estimate", why: String(e.raw_text || "") } : { source: "team", why: "" };
+  }
+  return { source: "team", why: "" };
+}
 function parseReports(issue) {
   if (!issue.reports_json) return [];
   try { var arr = JSON.parse(issue.reports_json); return Array.isArray(arr) ? arr : []; }
@@ -17721,6 +17736,7 @@ function renderDevScoreboard() {
       row("Sized at handover", String(m.sizing.small + m.sizing.medium + m.sizing.large) + " of " +
           String(m.sizing.small + m.sizing.medium + m.sizing.large + m.sizing.asked + m.sizing.unsized)) +
       row("Sizing asked of them", String(m.sizing.asked)) +
+      row("Sized by our estimate, not yet confirmed", String(m.sizing.estimated || 0)) +
     '</div>' +
   '</div>';
 
@@ -17749,7 +17765,7 @@ function renderDevScoreboard() {
           '<a href="#" style="color:var(--accent);" onclick="openIssueById(\'' + esc(o.issue_id) + '\', false);return false;">' + esc(o.short) + '</a> &middot; ' +
           '<span style="text-transform:capitalize;">' + esc(o.priority) + '</span> &middot; ' +
           '<strong>' + esc(String(o.over_by_days)) + 'd over</strong> the ' + o.target_days + 'd target' +
-          (o.fix_size ? ' &middot; ' + esc(o.fix_size === "ask" ? "sizing asked of them" : o.fix_size) : ' &middot; not sized') +
+          (o.fix_size ? ' &middot; ' + esc(o.fix_size === "ask" ? "sizing asked of them" : o.fix_size + (o.size_estimated ? " (our estimate)" : "")) : ' &middot; not sized') +
           '<div class="muted" style="margin-top:1px;">' + esc(o.summary) + '</div></div>';
       }).join("") + '</div>';
   }
@@ -17798,7 +17814,7 @@ function devMonthlyPack() {
         L.push("Past target, oldest first");
         p.queue.oldest.forEach(function (o) {
           L.push("  " + o.short + "  " + o.priority + "  " + o.over_by_days + "d over the " + o.target_days + "d target" +
-            (o.fix_size ? "  [" + (o.fix_size === "ask" ? "sizing asked of them" : o.fix_size) + "]" : "  [not sized]") +
+            (o.fix_size ? "  [" + (o.fix_size === "ask" ? "sizing asked of them" : o.fix_size + (o.size_estimated ? ", our estimate" : "")) + "]" : "  [not sized]") +
             "\n      " + o.summary);
         });
       }
@@ -18005,7 +18021,7 @@ function renderDev() {
       var sub = [];
       sub.push(shortId(i));
       if (i.section) sub.push(SECTION_LABEL[i.section] || i.section);
-      if (i.fix_size) sub.push(String(i.fix_size).toLowerCase() === "ask" ? "size requested" : String(i.fix_size).toLowerCase() + " fix");
+      if (i.fix_size) sub.push(String(i.fix_size).toLowerCase() === "ask" ? "size requested" : String(i.fix_size).toLowerCase() + " fix" + (sizeSource(i).source === "estimate" ? " (est.)" : ""));
       if (refOf(i) || i.lesson_code) sub.push(refOf(i) || i.lesson_code);
       var days = Math.floor((Date.now() - new Date(i.dev_passed_at || i.submitted_at)) / 864e5);
       if (days >= 1) sub.push(days + (days === 1 ? " day" : " days") + (fixed ? "" : " open"));
@@ -18861,8 +18877,13 @@ function openDevDetail(id) {
   // own estimate. Said plainly, because an unanswered ask that looks like a
   // blank box is an ask nobody sees.
   var sizeAsked = curSize === "ask";
+  var sizeSrc = sizeSource(issue);
   html += '<h3>Estimated size of fix</h3>' +
     (sizeAsked ? '<div class="small" style="color:var(--medium);margin-bottom:4px;">Ardent has asked you to size this one - they did not want to guess at it.</div>' : '') +
+    // r219: our estimate, said as ours until the developer agrees or changes it.
+    (sizeSrc.source === "estimate" ? '<div class="small" style="margin-bottom:4px;"><span style="color:var(--medium);">This size is the tracker\'s estimate, not yours yet.</span> ' +
+      esc(String(sizeSrc.why).replace(/\s*Developers: change it if it looks wrong, or press Looks right\.\s*$/, "")) +
+      ' <button class="ghost small" style="padding:2px 8px;" onclick="devConfirmSize(\'' + esc(issue.issue_id) + '\')">Looks right</button> or pick another size.</div>' : '') +
     '<div class="field" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><select id="devSizeSel" style="width:auto;" onchange="devSetSize(\'' + esc(issue.issue_id) + '\')">' +
       '<option value=""' + (curSize && !sizeAsked ? "" : " selected") + '>' + (sizeAsked ? "Not sized yet - over to you" : "Not sized yet") + '</option>' +
       ["small", "medium", "large"].map(function (z) {
@@ -19177,6 +19198,18 @@ function devMarkFixedSend(id, notes) {
 }
 
 // Priority tweak from the Developers / Course fixes drawer.
+// r219: the developer agrees with our estimate. The size stays; the trail
+// records that it is now theirs.
+function devConfirmSize(id) {
+  var note = $("devSizeNote");
+  if (note) note.textContent = "saving…";
+  apiPost({ action: "confirmFixSize", issue_id: id }).then(function (res) {
+    if (!res || !res.ok) { if (note) note.textContent = "That didn't save: " + ((res && res.error) || "unknown"); return; }
+    toast("Size confirmed: " + res.size + ".");
+    loadIssues();
+    try { openDevDetail(id); } catch (e) {}
+  }).catch(function (e) { if (note) note.textContent = "Error. See console."; console.error(e); });
+}
 function devSetSize(id) {
   var sel = $("devSizeSel");
   if (!sel) return;
@@ -19230,7 +19263,7 @@ function passDevGo() {
   closeDetail();
   toast(size === "ask"
     ? "Passed to developers, with a request to size it themselves."
-    : size ? "Passed to developers, sized " + size + "." : "Passed to developers.");
+    : size ? "Passed to developers, sized " + size + "." : "Passed to developers. The tracker is estimating the size.");
   optimistic(id, fields, { action: "passToDev", issue_id: id, fix_size: size },
     { failMsg: "Passing it to the developers didn't save" });
 }
