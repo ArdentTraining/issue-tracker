@@ -7786,7 +7786,11 @@ function sizeEstimateFor_(i) {
       report: String(i.raw_text || '').slice(0, 3000)
     }) + '\n\n' +
     'Return ONLY JSON: {"size":"small|medium|large","why":"<one short sentence>"}. No prose, no fences.';
-  var out = anthropicJson_(FINDER_MODEL, prompt, 200);
+  // r219.1: 200 tokens cut the answer off mid-JSON on the longer reports (two
+  // of 29 in the first backfill), and a cut-off answer reads as no answer. A
+  // size and one sentence never need more than this, so it costs nothing extra
+  // when the reply is short.
+  var out = anthropicJson_(FINDER_MODEL, prompt, 600);
   if (!out || !out.size) return null;
   var size = String(out.size).toLowerCase();
   if (['small', 'medium', 'large'].indexOf(size) < 0) size = 'medium';
@@ -10346,7 +10350,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r219 · 2026-10-08';
+var CODE_STAMP = 'r219.1 · 2026-10-08';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
