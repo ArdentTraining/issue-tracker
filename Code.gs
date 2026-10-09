@@ -2584,6 +2584,7 @@ function storeShadowNote_(where, what) {
 // this, they are the same value written two ways, not drift.
 var STORE_COERCED_ = {
   student_sorted: function (v) { return (v === true || /^true$/i.test(String(v))) ? 'true' : 'false'; },
+  notified_students: function (v) { return (v === true || /^true$/i.test(String(v))) ? 'true' : 'false'; },
   chatwoot_contact_id: function (v) { return v == null ? '' : String(v).trim(); },
   chatwoot_conversation_id: function (v) { return v == null ? '' : String(v).trim(); }
 };
@@ -10369,7 +10370,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r220 · 2026-10-09';
+var CODE_STAMP = 'r220.1 · 2026-10-09';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
