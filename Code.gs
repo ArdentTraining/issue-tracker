@@ -2580,10 +2580,17 @@ function storeShadowNote_(where, what) {
 
 // Nightly while shadowing (and on demand): fingerprint every record on both
 // sides, list what differs, and put the store right from the Sheet.
+// r220: fields the Sheet changes the type of when it stores them. Equal after
+// this, they are the same value written two ways, not drift.
+var STORE_COERCED_ = {
+  student_sorted: function (v) { return (v === true || /^true$/i.test(String(v))) ? 'true' : 'false'; },
+  chatwoot_contact_id: function (v) { return v == null ? '' : String(v).trim(); },
+  chatwoot_conversation_id: function (v) { return v == null ? '' : String(v).trim(); }
+};
 function storeShadowCompare() {
   var out = { ok: true, at: new Date().toISOString(), mode: storeMode_(), tables: [] };
   var src = storeSources_();
-  ['issues', 'feedback', 'users', 'instructors'].forEach(function (tbl) {
+  ['issues', 'feedback', 'users'].forEach(function (tbl) {   // r220: Instructors tab retired (r216), no longer compared
     var t0 = Date.now(), res = { table: tbl };
     try {
       var got = src[tbl](), mine = {}, recOf = {};
@@ -2596,17 +2603,29 @@ function storeShadowCompare() {
       var missing = [], changed = [], extra = [];
       Object.keys(mine).forEach(function (k) { if (!(k in theirs)) missing.push(k); else if (theirs[k] !== mine[k]) changed.push(k); });
       Object.keys(theirs).forEach(function (k) { if (!(k in mine)) extra.push(k); });
-      res.rows = got.recs.length; res.missing = missing.length; res.changed = changed.length; res.extra = extra.length;
-      // For a few of the changed ones, which fields - that names the code path.
-      res.fields = changed.slice(0, 8).map(function (k) {
+      // Which fields differ, per changed record. r220: a difference that is only
+      // the Sheet's own type coercion (a tick read back as TRUE, an id read back
+      // as a number) is not drift, so it is counted apart and not as changed.
+      var typeOnly = [], why = {};
+      changed = changed.filter(function (k, i) {
+        if (i >= 60) return true;
         try {
           var row = storeCall_({ op: 'get', tbl: tbl, key: k }).row || {}, a = recOf[k].data, b = row.data || {};
-          var f = {};
-          Object.keys(a).concat(Object.keys(b)).forEach(function (n) { if (storeCanon_(a[n]) !== storeCanon_(b[n])) f[n] = 1; });
-          if ((row.tab || '') !== (recOf[k].tab || '')) f._tab = 1;
-          return k + ': ' + Object.keys(f).join(', ');
-        } catch (e) { return k + ': ?'; }
+          var f = {}, real = false;
+          Object.keys(a).concat(Object.keys(b)).forEach(function (n) {
+            if (storeCanon_(a[n]) === storeCanon_(b[n])) return;
+            f[n] = 1;
+            if (!(STORE_COERCED_[n] && STORE_COERCED_[n](a[n]) === STORE_COERCED_[n](b[n]))) real = true;
+          });
+          if ((row.tab || '') !== (recOf[k].tab || '')) { f._tab = 1; real = true; }
+          why[k] = Object.keys(f).join(', ');
+          if (!real && Object.keys(f).length) { typeOnly.push(k); return false; }
+        } catch (e) { why[k] = '?'; }
+        return true;
       });
+      res.rows = got.recs.length; res.missing = missing.length; res.changed = changed.length; res.extra = extra.length;
+      res.type_only = typeOnly.length;
+      res.fields = changed.slice(0, 8).map(function (k) { return k + ': ' + (why[k] || '?'); });
       if (tbl !== 'issues' && storeTableLive_(tbl)) {
         // r215: the store is the record for this one now, so the Sheet copy is put right.
         if (missing.length || changed.length || extra.length) res.sheet_put_right = storeTableSheetCatchUp_(tbl);
@@ -10350,7 +10369,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r219.1 · 2026-10-08';
+var CODE_STAMP = 'r220 · 2026-10-09';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
