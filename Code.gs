@@ -652,11 +652,28 @@ function doGet(e) {
   }
 }
 
+// r221: where the wait goes when an issue is filed. Marks are ms since the
+// request started; the last 40 filings are kept in a script property and read
+// with storeAdmin {what:'file_timings'}. Timing only, changes nothing.
+var FILE_T_ = null;
+function fileMark_(name) { if (FILE_T_) FILE_T_.m.push([name, Date.now() - FILE_T_.t0]); }
+function fileTag_(k, v) { if (FILE_T_) FILE_T_.tags[k] = v; }
+function fileTimingSave_() {
+  if (!FILE_T_) return;
+  try {
+    var p = PropertiesService.getScriptProperties(), list = [];
+    try { list = JSON.parse(p.getProperty('FILE_TIMINGS') || '[]'); } catch (e) { list = []; }
+    list.unshift({ at: new Date(FILE_T_.t0).toISOString(), m: FILE_T_.m, tags: FILE_T_.tags });
+    p.setProperty('FILE_TIMINGS', JSON.stringify(list.slice(0, 40)));
+  } catch (e) {}
+  FILE_T_ = null;
+}
 function doPost(e) {
   try {
     var body = {};
     if (e && e.postData && e.postData.contents) body = JSON.parse(e.postData.contents);
     var action = body.action || '';
+    FILE_T_ = action === 'addIssue' ? { t0: Date.now(), m: [], tags: {} } : null;   // r221: timing a filing
     CURRENT_ACTION_ = action;
     TOUCHED_IDS_ = {};
     MIRROR_FULL_ = {};
@@ -1815,7 +1832,10 @@ function jsonOut(obj) {
   // reliable place to drop the cached issue list after a write. Doing it here
   // rather than inside each write function means a new action can never
   // forget - see READ_ONLY_ACTIONS.
+  fileMark_('reply_ready');
   maybeInvalidate_();
+  fileMark_('end_jobs');
+  if (FILE_T_) { fileTag_('merged', !!(obj && obj.merged)); fileTag_('ok', !!(obj && obj.ok)); fileTimingSave_(); }
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
@@ -3117,6 +3137,7 @@ function storeAdmin_(data) {
   // so in Supabase mode it would leave a blank record behind (4 Oct 2026).
   if (what === 'selftest') return storeLive_() ? { ok: false, error: 'not while the store is the record' } : storeSelfTest();
   if (what === 'import') return storePracticeImport();
+  if (what === 'file_timings') { var ft = []; try { ft = JSON.parse(PropertiesService.getScriptProperties().getProperty('FILE_TIMINGS') || '[]'); } catch (e) {} return { ok: true, timings: ft }; }
   if (what === 'mode') {
     var m = storeCall_({ op: 'mode' }), log = {};
     try { log = JSON.parse(PropertiesService.getScriptProperties().getProperty('STORE_SHADOW_LOG') || '{}'); } catch (e) {}
@@ -3604,6 +3625,8 @@ function recordToRow_(issue) {
 }
 
 function addIssue_(data) {
+  fileMark_('start');
+  fileTag_('chat', !!data.chatwoot_conversation_id);
   // The instructor is always the logged-in user, so it cannot be spoofed.
   if (data._user && data._user.name) data.instructor_name = data._user.name;
   // The account behind that name, for the same reason (Round 61). The name is
@@ -3753,7 +3776,9 @@ function addIssue_(data) {
   // the fault counts. No match, and it files as its own resolved record
   // exactly as before. aiMatchIssue_ only ever offers open issues, so a sorted
   // filing can never resurrect a resolved one.
+  fileMark_('before_match');
   var matchId = data.no_merge ? null : (data.merge_into || aiMatchIssue_(data, category));
+  fileMark_('match');
   if (matchId) {
     // Never roll a fix into an improvement (or vice versa); they are different
     // things even on the same lesson, so keep them as separate entries.
@@ -3999,6 +4024,7 @@ function addIssue_(data) {
     }
   }
 
+  fileMark_('decided');
   // r152: fill the email at filing when the transcript lacked it but Chatwoot
   // has it. One or two quick calls, only on the path that needs them.
   if (!hasEmail_(issue.student_contact) && issue.student_involved === 'yes' && audience !== 'internal' &&
@@ -4015,10 +4041,12 @@ function addIssue_(data) {
       }
     } catch (e) {}
   }
+  fileMark_('email');
   var noteError = '';   // FB-0357: a Chatwoot note that did not arrive is said out loud
   var sheet = sheetByName_(targetSheetName_(category));
   appendIssueRow_(sheet, targetSheetName_(category), issue);   // r208.4 (store first in Supabase mode)
   touchIssue_(issue.issue_id);   // r185: a new row, patched into the cached list
+  fileMark_('saved');
   if (fastTrackRequested) { try { sendFastTrackRequestSlack_(issue, data.app_url || getAppUrl_()); } catch (e) {} }
 
   // Slack only for a high-priority fix; never let a Slack failure block the save.
@@ -4027,7 +4055,9 @@ function addIssue_(data) {
       !data._suppress_slack &&
       issue.status !== 'resolved' && issue.status !== 'resolved_tbc') {
     try { sendSlack_(issue, data.app_url || getAppUrl_()); } catch (slackErr) {}
+    fileTag_('high', true);
   }
+  fileMark_('slack');
 
   // r175: this row filed on its own because aiMatchIssue_ found nothing OPEN to
   // join. That is the moment to check what we have already CLOSED, because a
@@ -4042,6 +4072,7 @@ function addIssue_(data) {
     try { checkSharedWorkaround_(issue, data.app_url || getAppUrl_()); } catch (e) {}
   }
 
+  fileMark_('checks');
   // Imported from a live chat: leave an internal note on that conversation so
   // the two systems stay joined up.
   if (data.chatwoot_conversation_id) {
@@ -4051,6 +4082,7 @@ function addIssue_(data) {
     } catch (e) { noteError = String(e).slice(0, 200); }
   }
 
+  fileMark_('note');
   return { ok: true, issue: issue, merged: false, note_error: noteError || undefined };
 }
 
@@ -10370,7 +10402,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r220.1 · 2026-10-09';
+var CODE_STAMP = 'r221 · 2026-10-09';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
