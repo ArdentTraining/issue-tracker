@@ -3783,7 +3783,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r229 · 2026-10-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r229.1 · 2026-10-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7171,15 +7171,13 @@ function loadLiveCases() {
   // list, so the backend built it twice and the page waited on the slower of
   // the two (13s measured). Wait for the bootstrap instead, and only ask again
   // if its answer turns out to be missing or old.
+  var freshFromBoot = function () { return state._liveFromBoot && Date.now() - state._liveFromBoot < LIVE_FROM_BOOT_MS; };
+  if (freshFromBoot()) { updateRailBadges(); if (state.view === "live") renderLive(); return; }
   if (state._bootFlight) {
     state._liveLoading = true;
     var done = function () {
       state._liveLoading = false;
-      if (state._liveFromBoot && Date.now() - state._liveFromBoot < LIVE_FROM_BOOT_MS) {
-        updateRailBadges();
-        if (state.view === "live") renderLive();
-        return;
-      }
+      if (freshFromBoot()) { updateRailBadges(); if (state.view === "live") renderLive(); return; }
       loadLiveCases();
     };
     state._bootFlight.then(done, done);
@@ -8153,11 +8151,10 @@ function tellSend(n) {
   var r = state.batchDrafts, d = r && r.drafts && r.drafts[n];
   var btn = $("bds_" + n), note = $("bdn_" + n), ta = $("bd_" + n);
   if (!d || !btn || !ta) return;
+  if (d.sent || btn.dataset.sent === "1") return;
   if (btn.dataset.armed !== "1") {
     btn.dataset.armed = "1"; btn.textContent = "Yes, send to " + (d.name || "the student");
     if (note) note.textContent = "Press again to send. Click anywhere else to keep editing.";
-    var disarm = function (ev) { if (ev.target !== btn) { btn.dataset.armed = ""; btn.textContent = "Send in Chatwoot"; if (note) note.textContent = ""; document.removeEventListener("click", disarm, true); } };
-    setTimeout(function () { document.addEventListener("click", disarm, true); }, 0);
     return;
   }
   var text = String(ta.value || "").trim();
@@ -8170,7 +8167,10 @@ function tellSend(n) {
       return;
     }
     d.sent = true;
-    btn.textContent = "Sent";
+    btn.dataset.sent = "1"; btn.textContent = "Sent";
+    // The press-feedback helper gives a pressed button back when its call ends;
+    // this one is finished for good, so take it away again after that.
+    setTimeout(function () { btn.disabled = true; }, 0);
     if (note) note.textContent = "In the conversation now" + (res.sent_as ? ", shown as " + res.sent_as : "") + ".";
     // Every draft with a chat sent, and nobody left on Copy: the issue is told.
     var all = r.drafts.every(function (x) { return x.failed || x.sent; });
@@ -8183,6 +8183,17 @@ function tellSend(n) {
     if (note) note.textContent = "That did not send: " + ((e && e.message) || e);
   });
 }
+// A click anywhere but the armed button itself puts it back (bound once to
+// the document and filtered at fire time, per r167).
+document.addEventListener("click", function (ev) {
+  var armed = document.querySelectorAll('button[data-armed="1"]');
+  for (var k = 0; k < armed.length; k++) {
+    if (armed[k] === ev.target) continue;
+    armed[k].dataset.armed = ""; armed[k].textContent = "Send in Chatwoot";
+    var nn = document.getElementById("bdn_" + String(armed[k].id || "").replace("bds_", ""));
+    if (nn) nn.textContent = "";
+  }
+}, true);
 function batchDraftsCopyAll() {
   var r = state.batchDrafts;
   if (!r || !r.drafts) return;
