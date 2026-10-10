@@ -748,6 +748,7 @@
   #liveView h3.acc-h.acc-closed::before { content: "\25B8"; }
   #liveView h3.acc-h:hover { color: var(--accent); }
   #liveView .acc-hide { display: none !important; }
+  #liveView h3.acc-h[data-acc-count]::after { content: " (" attr(data-acc-count) ")"; color: var(--muted); font-weight: 400; }
   .rail-item {
     background: transparent; border: none; border-radius: 10px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -1797,6 +1798,20 @@
 <div id="eddView" class="wrap hidden">
   <h2 style="margin-top:0;">With Edd</h2>
   <p class="hint" style="margin-top:-6px;">Lesson packages, course content, and the tools you build yourself. Anything an admin sets to With Edd lands here, and so does a report naming one of the tools below. The website and LMS stay with the developers.</p>
+  <!-- FB-0467 (Edd): "I could do with a sort and filter options here". -->
+  <div id="eddCtl" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;">
+    <input id="eddSearch" name="ait-eddq" autocomplete="one-time-code" placeholder="Search summary, lesson code, student…" oninput="eddCtlChanged()" style="flex:1;min-width:200px;max-width:340px;" />
+    <select id="eddPri" onchange="eddCtlChanged()" title="Priority">
+      <option value="">All priorities</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+    </select>
+    <select id="eddCat" onchange="eddCtlChanged()" title="Area">
+      <option value="">All areas</option><option value="course_error">Course errors</option><option value="tech_issue">Tech issues</option><option value="shipping">Shipping</option>
+    </select>
+    <select id="eddSort" onchange="eddCtlChanged()" title="Sort">
+      <option value="pressing">Most pressing first</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="reports">Most reports first</option><option value="lesson">By lesson code</option>
+    </select>
+    <span class="hint" id="eddCount"></span>
+  </div>
   <div class="split-host" id="eddSplitHost">
     <div class="list-col" id="eddList"></div>
     <div class="col-drag" title="Drag to resize the list"></div>
@@ -3768,7 +3783,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r225 · 2026-10-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r226 · 2026-10-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5112,6 +5127,12 @@ function positionFab() {
   if (row && row.offsetParent) blockers.push(row);
   var sb = $("saveBar");
   if (sb && sb.classList.contains("on")) blockers.push(sb);
+  // FB-0468 (Edd): "why is the feedback button hidden?" The issue pane's own
+  // Save changes row sticks to the foot of the pane and sat over the button.
+  Array.prototype.forEach.call(document.querySelectorAll(".savebar-btn"), function (btn) {
+    var holder = btn.closest(".row") || btn;
+    if (holder.offsetParent) blockers.push(holder);
+  });
   for (var n = 0; n < blockers.length; n++) {
     var r = blockers[n].getBoundingClientRect();
     if (r.bottom > f.top && r.top < f.bottom && r.left < f.right && r.right > f.left) {
@@ -5122,6 +5143,9 @@ function positionFab() {
 }
 window.addEventListener("scroll", scheduleViewAsLift, true);
 window.addEventListener("resize", scheduleViewAsLift);
+// Opening an issue draws the pane (and its save row) without any scroll, so a
+// click re-measures too. One rAF, so it costs nothing.
+document.addEventListener("click", function () { setTimeout(scheduleViewAsLift, 60); }, true);
 
 // ---- the travelling save button (Edd, FB-0222) ----------------------------
 // Edd: "maybe the save changes button should just be a sticky save changes
@@ -6463,18 +6487,65 @@ function isEddUser() {
   var u = state.realUser || state.user;
   return !!(u && String(u.email || "").toLowerCase() === "ehewett@ardent-training.com");
 }
+// FB-0467: the With Edd controls, remembered in this browser.
+function eddCtlLoad() {
+  if (state._eddCtl) return state._eddCtl;
+  var c = {};
+  try { c = JSON.parse(localStorage.getItem("ait_edd_ctl") || "{}") || {}; } catch (e) { c = {}; }
+  state._eddCtl = { q: "", pri: c.pri || "", cat: c.cat || "", sort: c.sort || "pressing" };
+  if ($("eddPri")) $("eddPri").value = state._eddCtl.pri;
+  if ($("eddCat")) $("eddCat").value = state._eddCtl.cat;
+  if ($("eddSort")) $("eddSort").value = state._eddCtl.sort;
+  return state._eddCtl;
+}
+function eddCtlChanged() {
+  var c = eddCtlLoad();
+  c.q = String(($("eddSearch") || {}).value || "").trim().toLowerCase().replace(/^#+/, "");
+  c.pri = ($("eddPri") || {}).value || "";
+  c.cat = ($("eddCat") || {}).value || "";
+  c.sort = ($("eddSort") || {}).value || "pressing";
+  try { localStorage.setItem("ait_edd_ctl", JSON.stringify({ pri: c.pri, cat: c.cat, sort: c.sort })); } catch (e) {}
+  renderEdd();
+}
 function renderEdd() {
   var host = $("eddList");
   if (!host) return;
-  var mine = (state.issues || []).filter(function (i) { return String(i.status || "").toLowerCase() === "with_edd"; });
-  var rank = { high: 0, medium: 1, low: 2 };
-  mine.sort(function (a, b) {
-    var p = (rank[String(a.priority).toLowerCase()] || 3) - (rank[String(b.priority).toLowerCase()] || 3);
-    return p || String(b.submitted_at || "").localeCompare(String(a.submitted_at || ""));
+  var ctl = eddCtlLoad();
+  var all = (state.issues || []).filter(function (i) { return String(i.status || "").toLowerCase() === "with_edd"; });
+  var mine = all.filter(function (i) {
+    if (ctl.pri && String(i.priority || "").toLowerCase() !== ctl.pri) return false;
+    if (ctl.cat && catOf(i) !== ctl.cat) return false;
+    if (ctl.q && searchHay(i).indexOf(ctl.q) < 0) return false;
+    return true;
   });
+  var rank = { high: 0, medium: 1, low: 2 };
+  var when = function (i) { return String(i.submitted_at || ""); };
+  mine.sort(function (a, b) {
+    if (ctl.sort === "newest") return when(b).localeCompare(when(a));
+    if (ctl.sort === "oldest") return when(a).localeCompare(when(b));
+    if (ctl.sort === "reports") return ((parseInt(b.report_count, 10) || 1) - (parseInt(a.report_count, 10) || 1)) || when(b).localeCompare(when(a));
+    if (ctl.sort === "lesson") {
+      var la = String(a.lesson_code || ""), lb = String(b.lesson_code || "");
+      if (!la !== !lb) return la ? -1 : 1;   // the ones without a code go last
+      return la.localeCompare(lb) || when(b).localeCompare(when(a));
+    }
+    var p = (rank[String(a.priority).toLowerCase()] != null ? rank[String(a.priority).toLowerCase()] : 3) -
+            (rank[String(b.priority).toLowerCase()] != null ? rank[String(b.priority).toLowerCase()] : 3);
+    return p || when(b).localeCompare(when(a));
+  });
+  var cnt = $("eddCount");
+  if (cnt) cnt.textContent = all.length ? (mine.length === all.length ? all.length + " on your plate" : mine.length + " of " + all.length + " showing") : "";
+  if (!mine.length && all.length) {
+    host.innerHTML = '<p class="hint">Nothing matches those filters. <a href="#" onclick="$(\'eddSearch\').value=\'\';$(\'eddPri\').value=\'\';$(\'eddCat\').value=\'\';eddCtlChanged();return false;">Clear them</a></p>';
+    renderEddTools();
+    return;
+  }
   host.innerHTML = mine.length ? mine.map(function (i) {
+    var reps = parseInt(i.report_count, 10) || 1;
     return '<div class="card" style="cursor:pointer;margin-bottom:8px;" onclick="openIssueById(\'' + i.issue_id + '\', false)">' +
       '<div style="margin-bottom:4px;">' + priBadge(i.priority) + " " + statusBadge(i.status, i) +
+      (i.lesson_code ? ' <span class="code">' + esc(i.lesson_code) + '</span>' : '') +
+      (reps > 1 ? ' <span class="badge type-badge">\u00d7' + reps + ' reports</span>' : '') +
       ' <span class="hint">' + fmtDate(i.submitted_at) + " · " + esc(i.instructor_name || "") + '</span></div>' +
       '<div>' + esc(i.summary || "(no summary)") + '</div></div>';
   }).join("") : (state._freshMs
@@ -7253,11 +7324,21 @@ var TODAY_ACC_BOXES = ["liveList", "openChats", "todayActionsSlot", "actionsScan
 function todayAccKey(h) {
   return String(h.textContent || "").replace(/\(\s*\d+\s*\)/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 }
+// FB-0466 (Edd): "start with the headings collapsed rather than open. Except
+// waiting on an instructor." So the stored map now records a choice either way
+// (1 folded, 0 open) and anything not chosen yet takes the default below. A new
+// storage key, so r224's open-by-default choices do not stick around.
+var TODAY_ACC_OPEN_BY_DEFAULT = { "waiting on an instructor": 1 };
 function todayAccClosed() {
-  try { return JSON.parse(localStorage.getItem("ait_today_closed") || "{}") || {}; } catch (e) { return {}; }
+  try { return JSON.parse(localStorage.getItem("ait_today_fold") || "{}") || {}; } catch (e) { return {}; }
 }
 function todayAccSave(m) {
-  try { localStorage.setItem("ait_today_closed", JSON.stringify(m)); } catch (e) {}
+  try { localStorage.setItem("ait_today_fold", JSON.stringify(m)); } catch (e) {}
+}
+function todayAccIsShut(m, key) {
+  if (m[key] === 1) return true;
+  if (m[key] === 0) return false;
+  return !TODAY_ACC_OPEN_BY_DEFAULT[key];
 }
 function todayAccordions() {
   var closed = todayAccClosed();
@@ -7268,7 +7349,7 @@ function todayAccordions() {
       if (h.tagName !== "H3") return;
       var key = todayAccKey(h);
       if (!key) return;
-      var shut = !!closed[key];
+      var shut = todayAccIsShut(closed, key);
       h.classList.add("acc-h");
       h.classList.toggle("acc-closed", shut);
       h.setAttribute("role", "button");
@@ -7278,10 +7359,18 @@ function todayAccordions() {
       // Everything after the heading belongs to it, until the next heading or
       // a block that carries headings of its own (the scan box sits after
       // Waiting on an instructor and has its own two).
+      var cards = 0;
       for (var n = h.nextElementSibling; n; n = n.nextElementSibling) {
         if (n.tagName === "H3" || (n.querySelector && n.querySelector("h3"))) break;
         n.classList.toggle("acc-hide", shut);
+        if (n.classList.contains("issue-card")) cards++;
+        else if (n.querySelectorAll) cards += n.querySelectorAll(".issue-card, .act-row").length;
       }
+      // A folded heading still says how much is under it, unless its own text
+      // already carries the count (Open in Chatwoot (6)).
+      var hasCount = /\(\s*\d+\s*\)/.test(h.textContent || "");
+      if (shut && !hasCount) h.setAttribute("data-acc-count", String(cards));
+      else h.removeAttribute("data-acc-count");
     });
   });
 }
@@ -7289,7 +7378,7 @@ function todayAccToggle(h) {
   var key = todayAccKey(h);
   if (!key) return;
   var m = todayAccClosed();
-  if (m[key]) delete m[key]; else m[key] = 1;
+  m[key] = todayAccIsShut(m, key) ? 0 : 1;
   todayAccSave(m);
   todayAccordions();
 }
@@ -12839,6 +12928,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 63, date: "2026-10-10", who: ["log"], text: "Today now opens with its sections folded, apart from Waiting on an instructor. A folded heading shows how many things are under it." },
   { n: 62, date: "2026-10-10", who: ["manage", "users"], text: "When Slack says a new report might be one we have already closed, there is now a Link these reports link that does it in one click, or you can reply same in the Slack thread. The closed issue reopens with both reports on it. Link (on an issue) also offers recently closed issues now." },
   { n: 61, date: "2026-10-10", who: ["log"], text: "Today's sections fold away: click a heading such as Open in Chatwoot or Waiting on an instructor to hide or show it, and it stays how you left it. There is also a Log new issue button at the top of Today." },
   { n: 60, date: "2026-10-10", who: ["log"], text: "Logging an issue is quicker: it says saved as soon as the issue is stored. The Slack alert and the private note in Chatwoot follow a few seconds later, without you waiting for them." },
@@ -17531,14 +17621,17 @@ function openLinkPicker(id) {
     '<input id="linkSearch" name="ait-linkq" autocomplete="one-time-code" placeholder="Search summary, ref, student, lesson code…" ' +
       'oninput="renderLinkOptions()" style="margin-bottom:6px;" />' +
     '<div class="row"><select id="linkTarget" size="6" style="min-height:120px;"></select>' +
-    '<button class="primary small" onclick="doLink(\'' + esc(id) + '\')">Link</button></div>' +
+    // FB-0468: the button stretched to the height of the six-line list.
+    '<button class="primary small" style="flex:0 0 auto;align-self:flex-start;height:auto;padding:6px 18px;" onclick="doLink(\'' + esc(id) + '\')">Link</button></div>' +
     '<div class="small muted" id="linkCount" style="margin-top:4px;"></div>';
   $("linkPicker").classList.remove("hidden");
   renderLinkOptions();
   if ($("linkSearch")) $("linkSearch").focus();
 }
 function renderLinkOptions() {
-  var q = String(($("linkSearch") || {}).value || "").trim().toLowerCase();
+  // FB-0468 (Edd): the ref is shown as #0C6B47, and that is what gets pasted;
+  // the # was never part of the haystack, so nothing matched.
+  var q = String(($("linkSearch") || {}).value || "").trim().toLowerCase().replace(/^#+/, "").trim();
   var pool = (state._linkPool || []).filter(function (o) { return !q || searchHay(o).indexOf(q) > -1; });
   var sel = $("linkTarget");
   if (!sel) return;
