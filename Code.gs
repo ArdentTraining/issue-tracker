@@ -715,7 +715,9 @@ function doPost(e) {
     // token) is Google's front end having dropped it under load, not somebody
     // signed out. The page retries those; this line is how we can tell.
     if (!body.token) sessionLog_('no token in request', '', '', 'POST, ' + ((e && e.postData && e.postData.contents) ? String(e.postData.contents).length : 0) + ' bytes of body', action || '(none)');
+    fileMark_('pre_auth');
     var user = userForToken_(body.token, action);
+    fileMark_('auth');
     if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
     if (action === 'logout') return jsonOut(logout_(body.token));
     if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
@@ -2924,8 +2926,9 @@ function appendIssueRow_(sheet, tab, issue) {
     var obj = {};
     HEADERS.forEach(function (h) { obj[h] = issue[h] == null ? '' : issue[h]; });
     var res = storeCall_({ op: 'insert', tbl: 'issues', key: String(issue.issue_id), tab: tab, data: JSON.stringify(storeEnc_(obj)) });
+    fileMark_('store_insert');
     if (!res.ok) throw new Error('Could not save the new issue: ' + (res.error || 'store error'));
-    try { sheet.appendRow(recordToRow_(issue)); } catch (e) { storeShadowNote_('sheet copy', issue.issue_id + ' (add): ' + e); }
+    try { sheet.appendRow(recordToRow_(issue)); fileMark_('sheet_copy'); } catch (e) { storeShadowNote_('sheet copy', issue.issue_id + ' (add): ' + e); }
     touchIssue_(issue.issue_id);
     return;
   }
@@ -3306,7 +3309,9 @@ function maybeInvalidate_() {
   if (!READ_ONLY_ACTIONS[action]) { try { endJobs = endJobs.concat(mirrorPushJobs_()); } catch (e) { console.warn('mirror push: ' + e); } }   // r202
   if (endJobs.length) {
     try {
+      fileMark_('end_build');
       var endRes = UrlFetchApp.fetchAll(endJobs.map(function (j) { return j.request; }));
+      fileMark_('end_fetch');
       endRes.forEach(function (r, i) { try { endJobs[i].done(r); } catch (e) {} });
     } catch (e) { console.warn('end-of-request sends: ' + e); }
   }
@@ -4121,6 +4126,7 @@ function addIssue_(data) {
   fileMark_('email');
   var noteError = '';   // FB-0357: a Chatwoot note that did not arrive is said out loud
   var sheet = sheetByName_(targetSheetName_(category));
+  fileMark_('sheet_open');
   appendIssueRow_(sheet, targetSheetName_(category), issue);   // r208.4 (store first in Supabase mode)
   touchIssue_(issue.issue_id);   // r185: a new row, patched into the cached list
   fileMark_('saved');
@@ -10475,7 +10481,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r222.1 · 2026-10-10';
+var CODE_STAMP = 'r223 · 2026-10-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
