@@ -3783,7 +3783,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r226 · 2026-10-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r226.1 · 2026-10-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -5120,8 +5120,18 @@ function positionViewAsBar() {
 function positionFab() {
   var fab = $("fbBtn");
   if (!fab || fab.style.display === "none") return;
+  // FB-0468: .fab animates its bottom, so measuring straight after taking the
+  // lift off read the button where it was mid-slide, still clear of the bar,
+  // and left it down behind the save bar. Measure with the slide switched off.
+  fab.style.transition = "none";
   fab.classList.remove("lifted");
+  void fab.offsetHeight;
   var f = fab.getBoundingClientRect();
+  var done = function (lift) {
+    if (lift) fab.classList.add("lifted");
+    void fab.offsetHeight;
+    fab.style.transition = "";
+  };
   var blockers = [];
   var row = document.querySelector("#detailsSection .submit-row");
   if (row && row.offsetParent) blockers.push(row);
@@ -5136,10 +5146,11 @@ function positionFab() {
   for (var n = 0; n < blockers.length; n++) {
     var r = blockers[n].getBoundingClientRect();
     if (r.bottom > f.top && r.top < f.bottom && r.left < f.right && r.right > f.left) {
-      fab.classList.add("lifted");
+      done(true);
       return;
     }
   }
+  done(false);
 }
 window.addEventListener("scroll", scheduleViewAsLift, true);
 window.addEventListener("resize", scheduleViewAsLift);
@@ -7401,7 +7412,9 @@ function todayAccToggle(h) {
     new MutationObserver(function () {
       if (pending) return;
       pending = true;
-      requestAnimationFrame(function () { pending = false; todayAccordions(); });
+      // A timer, not a frame: a tab that is not painting never gets the frame,
+      // and the redraw it missed would then show unfolded when you come back.
+      setTimeout(function () { pending = false; todayAccordions(); }, 30);
     }).observe(root, { childList: true, subtree: true });
     todayAccordions();
   }
