@@ -3421,7 +3421,13 @@ var PURE_READS_ = {
   chatBackSweepState: 1,
   // fileAfter's jobs (Slack, the returning-fault and workaround checks, the
   // Chatwoot note) write issue rows at most; no extra is built from those.
-  fileAfter: 1
+  fileAfter: 1,
+  // r230: more reads that were dropping every extra. Reading a chat, drafting
+  // a reply or the tell-the-students messages, and the shipping and customs
+  // read-outs build nothing any extra is made from.
+  chatwootImport: 1, caseDraftReply: 1, batchStudentDrafts: 1, tellStudentSend: 1,
+  shipReport: 1, shipMonthlyPreview: 1, shipCost: 1, shipCostHistory: 1, shipCostTolerance: 1,
+  customsPrefill: 1, customsMySigner: 1
 };
 function bootExtra_(name, build) {
   var c = null;
@@ -10269,7 +10275,21 @@ function myFeedback_(data) {
   var email = String((data._user && data._user.email) || '').toLowerCase();
   if (!email) return { ok: true, feedback: [] };
   if (storeTableLive_('feedback')) {   // r215
-    var mine = storeTableList_('feedback').filter(function (o) { return o.id && String(o.user_email || '').toLowerCase() === email; })
+    // r230: this listed the whole table (468 records, each with its context
+    // snapshot, several MB through the function) to keep one person's. The
+    // store's find now takes an order and a limit, so it is asked for the
+    // newest hundred of theirs and nothing else. Measured on open: 5.3s.
+    var rows = [];
+    try {
+      var fr = storeCall_({ op: 'find', tbl: 'feedback', field: 'user_email', value: email, order: 'desc', limit: 100 });
+      if (!fr.ok) throw new Error(fr.error || 'find failed');
+      rows = (fr.rows || []).map(function (r) { return storeDec_(r.data || {}); });
+      // Addresses were not always stored lower-cased; a miss falls back to the full read once.
+      if (!rows.length) rows = storeTableList_('feedback').filter(function (o) { return String(o.user_email || '').toLowerCase() === email; });
+    } catch (e) {
+      rows = storeTableList_('feedback').filter(function (o) { return String(o.user_email || '').toLowerCase() === email; });
+    }
+    var mine = rows.filter(function (o) { return o.id; })
       .map(function (o) { return { id: o.id, ref: o.ref, created_at: o.created_at, status: o.status, kind: o.kind,
         message: String(o.message || '').slice(0, 300), reply: String(o.reply || '') }; });
     mine.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
@@ -10609,7 +10629,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r229 · 2026-10-10';
+var CODE_STAMP = 'r230 · 2026-10-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
