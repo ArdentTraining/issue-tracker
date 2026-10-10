@@ -3768,7 +3768,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r224 · 2026-10-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r225 · 2026-10-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8243,7 +8243,49 @@ function copyText(t) {
 }
 
 // ---- ?issue= deep link (from Slack pings): open that issue once loaded ----
+// r225 (Edd, 10 Oct: "way more useful if it gave a link which said 'link these
+// reports' so we could just click that and it would be done"). The "Might be
+// one we have already closed" Slack notice links to ?link=<new>&into=<closed>.
+// Opening it does the link straight away, as asked, then lands on the merged
+// issue. Slack's link preview fetches the page without running it, so a
+// preview never links anything; only a signed-in person opening it does.
+function runDeepLinkMerge() {
+  if (state._linkDeepDone) return;
+  var q;
+  try { q = new URLSearchParams(location.search); } catch (e) { state._linkDeepDone = true; return; }
+  var src = q.get("link"), into = q.get("into");
+  if (!src || !into) { state._linkDeepDone = true; return; }
+  if (!state.user) return;            // not signed in yet; the next load has it
+  state._linkDeepDone = true;
+  // Whatever happens, the address becomes the merged issue, so a refresh or a
+  // second click cannot try it again.
+  try { history.replaceState(null, "", location.pathname + "?issue=" + encodeURIComponent(into)); } catch (e) {}
+  state._deepLinkDone = false;
+  var p = state.perms || {};
+  if (!(p.manage || p.users)) {
+    window.alert("Linking two reports needs admin access, so nothing was changed. Ask Edd to link them.");
+    return;
+  }
+  busyShow("Linking the two reports…");
+  apiPost({ action: "linkIssues", source_id: src, target_id: into }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) {
+      var err = String((res && res.error) || "unknown");
+      // The new report is the one that goes away, so if it has gone already
+      // these two were linked before (by someone else, or a Slack reply).
+      if (/source issue not found/i.test(err)) err = "the newer report is not on the tracker any more, so these have most likely been linked already.";
+      window.alert("Could not link these reports: " + err);
+      return;
+    }
+    toast(res.reopened ? "Linked. The closed one is open again with both reports on it."
+      : res.held_closed ? "Linked. That student hit it before we closed the old one, so it stays closed, with the report counted."
+      : "Linked into one issue.");
+    loadIssues();
+  }).catch(function (e) { busyHide(); window.alert("Could not link these reports: " + e); });
+}
+
 function openDeepLinkedIssue() {
+  runDeepLinkMerge();
   if (state._deepLinkDone) return;
   var id = new URLSearchParams(location.search).get("issue");
   if (!id) { state._deepLinkDone = true; return; }
@@ -12797,6 +12839,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 62, date: "2026-10-10", who: ["manage", "users"], text: "When Slack says a new report might be one we have already closed, there is now a Link these reports link that does it in one click, or you can reply same in the Slack thread. The closed issue reopens with both reports on it. Link (on an issue) also offers recently closed issues now." },
   { n: 61, date: "2026-10-10", who: ["log"], text: "Today's sections fold away: click a heading such as Open in Chatwoot or Waiting on an instructor to hide or show it, and it stays how you left it. There is also a Log new issue button at the top of Today." },
   { n: 60, date: "2026-10-10", who: ["log"], text: "Logging an issue is quicker: it says saved as soon as the issue is stored. The Slack alert and the private note in Chatwoot follow a few seconds later, without you waiting for them." },
   { n: 59, date: "2026-10-08", who: ["dev", "users"], text: "Every tech fix handed to the developers now comes with a size the tracker has estimated. Developers: change it if it looks wrong, or press Looks right." },
@@ -17464,9 +17507,21 @@ function openLinkPicker(id) {
   var issue = state.issues.filter(function (i) { return i.issue_id === id; })[0];
   if (!issue) return;
   var cat = catOf(issue);
-  var others = state.issues.filter(function (i) { return i.issue_id !== id && isOpen(i) && catOf(i) === cat; })
-    .sort(function (a, b) { return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at); });
-  if (!others.length) { toast("No other open issues in this area to link to."); return; }
+  // r225: recently closed issues are offered too (after the open ones), because
+  // a fault that comes back belongs on the issue we closed, and linking into it
+  // reopens it. 90 days, the same window the matcher uses.
+  var since225 = Date.now() - 90 * 24 * 3600 * 1000;
+  var closedRecent = function (i) {
+    return String(i.status || "").toLowerCase() === "resolved" &&
+      new Date(i.resolved_at || i.updated_at || 0).getTime() >= since225;
+  };
+  var others = state.issues.filter(function (i) { return i.issue_id !== id && (isOpen(i) || closedRecent(i)) && catOf(i) === cat; })
+    .sort(function (a, b) {
+      var oa = isOpen(a) ? 0 : 1, ob = isOpen(b) ? 0 : 1;
+      if (oa !== ob) return oa - ob;
+      return new Date(b.updated_at || b.submitted_at) - new Date(a.updated_at || a.submitted_at);
+    });
+  if (!others.length) { toast("No other open or recently closed issues in this area to link to."); return; }
   // FB-0330 (Edd): "we could do with a search option to help find the other
   // report". A dropdown of every open issue in the area is fine at ten and
   // useless at eighty, so the box filters the list as you type - across the
@@ -17488,7 +17543,8 @@ function renderLinkOptions() {
   var sel = $("linkTarget");
   if (!sel) return;
   sel.innerHTML = pool.map(function (o) {
-    return '<option value="' + esc(o.issue_id) + '">' + esc((o.lesson_code ? o.lesson_code + " · " : "") + cardTitle(o)) + '</option>';
+    var shut = String(o.status || "").toLowerCase() === "resolved";
+    return '<option value="' + esc(o.issue_id) + '">' + esc((shut ? "[closed, reopens] " : "") + (o.lesson_code ? o.lesson_code + " · " : "") + cardTitle(o)) + '</option>';
   }).join("");
   if (pool.length) sel.value = pool[0].issue_id;
   var c = $("linkCount");
@@ -17500,7 +17556,7 @@ function doLink(sourceId) {
   if (!window.confirm("Merge this report into the selected one? They become a single entry, and this one goes away.")) return;
   apiPost({ action: "linkIssues", source_id: sourceId, target_id: targetId }).then(function (res) {
     if (!res || !res.ok) { toast("Link failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Reports linked.");
+    toast(res.reopened ? "Linked. The closed one is open again with both reports on it." : "Reports linked.");
     closeDetail(); loadIssues();
   }).catch(function (e) { toast("Link error. See console."); console.error(e); });
 }

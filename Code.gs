@@ -132,13 +132,17 @@ function slackThreadsOf_(rec) {
     return (v.length !== undefined) ? v : [v];
   } catch (e) { return []; }
 }
-function stampSlackThread_(issueId, channel, ts, kind) {
+function stampSlackThread_(issueId, channel, ts, kind, extra) {
   try {
     var fr = findRow_(issueId);
     var col = HEADERS.indexOf('slack_thread') + 1;
     if (!fr || col < 1) return;
     var cur = slackThreadsOf_(fr.record);
-    cur.unshift({ channel: String(channel), ts: String(ts), kind: kind || '' });
+    var entry = { channel: String(channel), ts: String(ts), kind: kind || '' };
+    // r225: a "might be one we have closed" thread remembers WHICH closed issue,
+    // so a "same" reply in it knows what to link into.
+    if (extra) for (var ek in extra) entry[ek] = extra[ek];
+    cur.unshift(entry);
     writeIssueCell_(fr, 'slack_thread', JSON.stringify(cur.slice(0, 5)));
   } catch (e) {}
 }
@@ -5443,11 +5447,49 @@ function linkIssues_(data) {
   t.priority = order[pi];
   t.updated_at = new Date().toISOString();
 
+  // r225 (Edd, 10 Oct 2026: "I still haven't managed to merge these"). The
+  // "Might be one we have already closed" notice told people to link the new
+  // report into the closed one, and two things stopped that working: the link
+  // picker only ever offered OPEN issues, and linking here never reopened
+  // anything. A manual link now follows the same rules as the matcher joining a
+  // report on its own (r177, r200): a closed fault reported again after we
+  // closed it is a fix that did not hold, so it comes back open; a report from
+  // BEFORE the close still counts but leaves it closed. Parked wakes up.
+  var reopened = false, heldClosed = '';
+  var tStatus = String(t.status || '').toLowerCase();
+  if (tStatus === 'parked') {
+    t.status = 'open';
+    t.raw_text = capAppend_(t.raw_text, '\n\n--- unparked: another report was linked in ---');
+  } else if (tStatus === 'resolved') {
+    var closedAt = Date.parse(String(t.resolved_at || t.dev_fixed_at || ''));
+    var hitAt = 0;
+    try {
+      hitAt = s.chatwoot_conversation_id
+        ? reportEventAt_({ chatwoot_conversation_id: s.chatwoot_conversation_id, chatwoot_message_id: s.chatwoot_message_id })
+        : Date.parse(String(s.submitted_at || ''));
+    } catch (e) { hitAt = Date.parse(String(s.submitted_at || '')); }
+    if (!isNaN(closedAt) && hitAt && hitAt < closedAt) {
+      heldClosed = new Date(hitAt).toISOString().slice(0, 10);
+      t.raw_text = capAppend_(t.raw_text, '\n\n--- a report was linked in, but the student hit it on ' + heldClosed +
+        ', before we closed this on ' + new Date(closedAt).toISOString().slice(0, 10) +
+        ', so it stays closed. It still counts as another report. ---');
+    } else {
+      var closedFor = isNaN(closedAt) ? 0 : Math.max(0, Math.round((Date.now() - closedAt) / (24 * 3600 * 1000)));
+      t.status = 'open';
+      t.resolved_at = '';
+      reopened = true;
+      t.raw_text = capAppend_(t.raw_text, '\n\n--- reopened: a new report of this fault was linked in ' + closedFor +
+        ' day(s) after we closed it, so the fix did not hold. The student on the original report was ' +
+        'already sorted and does not need contacting about this. ---');
+    }
+  }
+
   var wT = writeIssueRow_(tgt, t);
   if (!wT.ok) return wT;
   deleteIssueRow_(src);
   maybeDevQueueAlert_();
-  return { ok: true, target_id: targetId };
+  if (reopened) { try { tellFixerReopened_(t, getAppUrl_()); } catch (e) {} }
+  return { ok: true, target_id: targetId, reopened: reopened, held_closed: heldClosed || '' };
 }
 
 // ---- Developer handoff ----------------------------------------------------
@@ -6409,8 +6451,35 @@ function sendReturningFaultSlack_(issue, best, appUrl) {
   ];
   if (noCause) lines.push('_That one was closed with no cause recorded, so there may never have been a fix for it to hold._');
   lines.push('');
-  lines.push('Same fault? Link the new one into the closed one and it reopens itself with both reports on it. Not the same? Leave it, and it will not ask again for a week.');
+  // r225 (Edd, 10 Oct: "way more useful if it gave a link which said 'link
+  // these reports'... or the option to reply 'they are the same' on slack").
+  var base = String(appUrl || getAppUrl_() || '').split('#')[0].split('?')[0];
+  var oneClick = base ? base + '?link=' + issue.issue_id + '&into=' + old.issue_id : '';
+  var chan = PropertiesService.getScriptProperties().getProperty('SLACK_RETURNING_CHANNEL_ID') || RETURNING_CHANNEL_DEFAULT_;
+  var withReply = lines.slice();
+  withReply.push('*Same fault?* ' + (oneClick ? '<' + oneClick + '|Link these reports>, or ' : '') +
+    'reply *same* in this thread. The closed one reopens with both reports on it. Not the same? Leave it, and it will not ask again for a week.');
+  // As the bot first, so the thread can be answered. If the bot cannot post in
+  // that channel (not invited, no token), the webhook still carries the notice
+  // and the one-click link, just without the reply option.
+  var bot = (chan && slackOn_('returning_fault')) ? slackBotPost_(chan, withReply.join('\n')) : { ok: false };
+  if (bot && bot.ok && bot.ts) {
+    stampSlackThread_(issue.issue_id, bot.channel || chan, bot.ts, 'returning', { into: String(old.issue_id) });
+    return;
+  }
+  lines.push('*Same fault?* ' + (oneClick ? '<' + oneClick + '|Link these reports>. ' : 'Link the new one into the closed one. ') +
+    'The closed one reopens with both reports on it. Not the same? Leave it, and it will not ask again for a week.');
   slackPost_('returning_fault', lines.join('\n'));
+}
+var RETURNING_CHANNEL_DEFAULT_ = 'C05Q4PV50S0';   // #instructing-updates, where the webhook already sends it
+
+// r225: is this Slack reply saying "yes, same fault"? Plain words only, and
+// anything with a no in it is a no, because a wrong merge deletes a row.
+function saysSameFault_(text) {
+  var t = String(text || '').toLowerCase().replace(/<[^>]*>/g, ' ').trim();
+  if (!t) return false;
+  if (/\b(not|no|nope|different|isn'?t|aren'?t|don'?t|separate)\b|n't\b/.test(t)) return false;
+  return /\bsame\b/.test(t) || /^(yes|yep|yeah|yup|y|link( (it|them|these|both))?|merge( (it|them|these|both))?)\b/.test(t);
 }
 
 function returningClip_(s) {
@@ -13077,7 +13146,7 @@ function slackThreadReply_(p) {
         var t = JSON.parse(cell);
         var list = (t && t.length !== undefined) ? t : [t];
         for (var li = 0; li < list.length; li++) {
-          if (String(list[li].ts) === ts && String(list[li].channel) === channel) { hit = { issue_id: values[r][idx['issue_id']] }; return; }
+          if (String(list[li].ts) === ts && String(list[li].channel) === channel) { hit = { issue_id: values[r][idx['issue_id']], thread: list[li] }; return; }
         }
       } catch (e) {}
     }
@@ -13091,6 +13160,27 @@ function slackThreadReply_(p) {
   } catch (e) {}
   var acct = email ? findUserByEmail_(email) : null;
   if (!acct) return { ok: false, error: 'Slack user ' + uid + ' has no tracker account mapping' };
+  // r225: under a "might be one we have already closed" notice, "same" links the
+  // new report into the closed one, exactly as the one-click link does. Anything
+  // else said there is just a comment and lands as an update like any thread.
+  if (hit.thread && hit.thread.kind === 'returning' && hit.thread.into && saysSameFault_(text)) {
+    var pp = permsOf_(acct.user);
+    var say;
+    if (!(pp.manage || pp.users)) {
+      say = 'Only an admin can link reports, so I have left these as they are.';
+    } else {
+      var lr = linkIssues_({ source_id: hit.issue_id, target_id: hit.thread.into, _user: acct.user });
+      if (lr && lr.ok) {
+        say = lr.reopened ? ':white_check_mark: Linked. The closed one is open again with both reports on it. ' + issueLink_({ issue_id: hit.thread.into })
+          : lr.held_closed ? ':white_check_mark: Linked. This student hit it before we closed the old one, so it stays closed, with the extra report counted. ' + issueLink_({ issue_id: hit.thread.into })
+          : ':white_check_mark: Linked into one issue. ' + issueLink_({ issue_id: hit.thread.into });
+      } else {
+        say = 'Could not link them: ' + ((lr && lr.error) || 'unknown error') + '.';
+      }
+    }
+    try { slackBotPost_(channel, say, ts); } catch (e) {}
+    return { ok: true, matched: true, linked: !!(lr && lr.ok) };
+  }
   // An OPEN question makes the reply its answer. Anything after that - or a
   // reply under a plain alert thread - lands as an UPDATE on the issue
   // (Edd, 25 Aug: "a reply to the thread should add an update automatically").
