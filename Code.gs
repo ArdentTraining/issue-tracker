@@ -826,6 +826,7 @@ function doPost(e) {
     if (action === 'caseTouch') return jsonOut(caseTouch_(body));
     if (action === 'caseIgnoreLog') return jsonOut(caseIgnoreLog_(body));   // r139 (FB-0337)
     if (action === 'batchStudentDrafts') return jsonOut(batchStudentDrafts_(body));
+    if (action === 'tellStudentSend') return jsonOut(tellStudentSend_(body));   // r229
     if (action === 'listContentSuggestions') return jsonOut(listContentSuggestions_());
     if (action === 'resolveContentSuggestion') return jsonOut(resolveContentSuggestion_(body));
     if (action === 'runConfusionReview') return jsonOut(runConfusionReview_(body));
@@ -1209,7 +1210,7 @@ function reqPerm_(action) {
     // user, and cases are shared - anyone can pick one up and carry on.
     case 'listLiveCases': case 'caseBrief': case 'caseCheckReply': case 'caseDraftReply':
     case 'caseCheckpoint': case 'caseClose': case 'caseTouch': case 'caseIgnoreLog': case 'batchStudentDrafts':
-    case 'caseNote': return 'log';
+    case 'caseNote': case 'tellStudentSend': return 'log';   // r229: sending a tell is the same tier as drafting it
     // r170: the scoreboard reads the same queue the dev page already shows, so
     // it sits at the same tier rather than inventing a new one.
     case 'devMetrics': return 'log';
@@ -10608,7 +10609,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r228 · 2026-10-10';
+var CODE_STAMP = 'r229 · 2026-10-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12572,19 +12573,22 @@ function batchStudentDrafts_(data) {
 
   var seen = {};
   var students = [];
-  function addSt(name, contact) {
-    name = String(name || '').trim(); contact = String(contact || '').trim();
+  // r229: each draft remembers the Chatwoot conversation it came from, so the
+  // page can offer to send it there.
+  function addSt(name, contact, cw) {
+    name = String(name || '').trim(); contact = String(contact || '').trim(); cw = String(cw || '').trim();
     if (!name && !contact) return;
     var key = (name + '|' + contact).toLowerCase();
-    if (seen[key]) return;
-    seen[key] = true;
-    students.push({ name: name || 'there', contact: contact });
+    if (seen[key]) { if (cw && !seen[key].cw) seen[key].cw = cw; return; }
+    var st = { name: name || 'there', contact: contact, cw: cw };
+    seen[key] = st;
+    students.push(st);
   }
-  addSt(i.student_name, i.student_contact);
+  addSt(i.student_name, i.student_contact, i.chatwoot_conversation_id);
   var reps = []; try { reps = i.reports_json ? JSON.parse(i.reports_json) : []; } catch (e) { reps = []; }
   reps.forEach(function (rp) {
     if (rp.kind === 'question' || rp.kind === 'answer') return;
-    addSt(rp.student_name, rp.student_contact);
+    addSt(rp.student_name, rp.student_contact, rp.chatwoot_conversation_id);
   });
   if (!students.length) return { ok: false, error: 'No student names or contacts on this issue.' };
   var capped = students.length > 10;
@@ -12619,9 +12623,57 @@ function batchStudentDrafts_(data) {
         text = text.trim();
       }
     } catch (e) { text = ''; }
-    drafts.push({ name: st.name, contact: st.contact, text: text, failed: !text });
+    drafts.push({ name: st.name, contact: st.contact, cw: st.cw || '', text: text, failed: !text });
   }
-  return { ok: true, voiced: !!guide, capped: capped, total_students: Object.keys(seen).length, drafts: drafts };
+  var sender = '';
+  if (drafts.some(function (d) { return d.cw; })) { try { sender = chatwootAgentName_(); } catch (e) { sender = ''; } }
+  return { ok: true, voiced: !!guide, capped: capped, total_students: Object.keys(seen).length, drafts: drafts, sender: sender };
+}
+
+// ---- r229: send a tell from the app (the Roadmap's "editable draft on resolve") ----
+// The draft the instructor has read and edited goes into the student's own
+// Chatwoot conversation as a reply (public, not a private note), so it reaches
+// them by whatever channel that conversation uses and sits in the record with
+// the rest of the chat. Only a person pressing Send does this; nothing sends
+// itself. A student with no conversation on the issue keeps the Copy button.
+// Shows as the agent the Chatwoot token belongs to, which the page says before
+// anyone presses.
+var CW_AGENT_CACHE_S = 21600;
+function chatwootAgentName_() {
+  var c = null;
+  try { c = CacheService.getScriptCache(); var hit = c.get('cw_agent_name'); if (hit != null) return hit; } catch (e) {}
+  var cfg = chatwootCfg_();
+  if (!cfg.token) return '';
+  var res = UrlFetchApp.fetch(CHATWOOT_BASE + '/api/v1/profile', { method: 'get', headers: { api_access_token: cfg.token }, muteHttpExceptions: true });
+  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return '';
+  var prof = {}; try { prof = JSON.parse(res.getContentText() || '{}'); } catch (e) { prof = {}; }
+  var name = String(prof.name || prof.display_name || prof.available_name || '').trim();
+  try { if (c && name) c.put('cw_agent_name', name, CW_AGENT_CACHE_S); } catch (e) {}
+  return name;
+}
+function tellStudentSend_(data) {
+  var found = findRow_(data.issue_id);
+  if (!found) return { ok: false, error: 'No issue found with that id.' };
+  var conv = chatwootConvId_(data.conversation_id);
+  if (!conv) return { ok: false, error: 'No Chatwoot conversation to send to.' };
+  var text = String(data.text || '').trim();
+  if (!text) return { ok: false, error: 'Nothing to send.' };
+  if (text.length > 4000) return { ok: false, error: 'That is too long for one message (4,000 characters).' };
+  var who = (data._user && data._user.name) || '';
+  var name = String(data.student_name || '').trim();
+  var msg;
+  try {
+    msg = chatwootCall_('/conversations/' + conv + '/messages', 'post', { content: text, message_type: 'outgoing', private: false });
+  } catch (e) {
+    return { ok: false, error: 'Chatwoot would not take it: ' + String(e).replace(/^Error:\s*/, '').slice(0, 200) };
+  }
+  var sentAs = (msg && msg.sender && (msg.sender.name || msg.sender.available_name)) || '';
+  // On the trail, so "did anyone tell them?" has an answer without opening Chatwoot.
+  try {
+    addUpdate_({ issue_id: data.issue_id, keep_status: true, _system: true, _user: data._user,
+      text: 'Told ' + (name || 'the student') + ' in Chatwoot conversation #' + conv + (who ? ' (sent by ' + who : '') + (sentAs ? (who ? ', ' : ' (') + 'shown as ' + sentAs : '') + (who || sentAs ? ')' : '') + ':\n' + text });
+  } catch (e) {}
+  return { ok: true, conversation_id: conv, message_id: msg && msg.id, sent_as: sentAs };
 }
 
 // ---- confusion -> content tweak (Round 45) ---------------------------------

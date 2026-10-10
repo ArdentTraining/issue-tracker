@@ -2916,7 +2916,7 @@
   <ol class="man-steps">
     <li>The badges. The reference like <code>#5C8EC7</code>, the priority, the status, and how many reports have rolled into it. Clicking the reference copies it, which is what we all want it for when pasting into Slack.</li>
     <li>Other issues on this lesson. As soon as one more is open on the same lesson code, a box says how many and gives you a button to see them all. Somebody has that lesson open anyway, so fixing them in one go is nearly always quicker.</li>
-    <li>Affected students. Everyone rolled into this issue, with <span class="ui">Copy all contacts</span>, and once it is fixed a <span class="ui">Draft "it's fixed" messages to all</span> that writes one message per person.</li>
+    <li>Affected students. Everyone rolled into this issue, with <span class="ui">Copy all contacts</span>, and once it is fixed a <span class="ui">Draft "it's fixed" messages to all</span> that writes one message per person. Each draft with a Chatwoot chat behind it has <span class="ui">Send in Chatwoot</span>: read it, tweak it, press twice, and it goes into the student's conversation as a reply and onto the issue's trail. Once everyone is sent, the issue is marked as told.</li>
     <li>Last update. The newest thing anyone added, and who added it.</li>
     <li>Next action. One thing to do next, read off the whole thread.</li>
     <li>The update card, where anything gets changed.</li>
@@ -3783,7 +3783,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r228 · 2026-10-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r229 · 2026-10-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8110,6 +8110,7 @@ function batchDraftsRun(issueId) {
   apiPost({ action: "batchStudentDrafts", issue_id: issueId }).then(function (res) {
     busyHide();
     if (!res || !res.ok) { toast("Drafting failed: " + ((res && res.error) || "unknown")); return; }
+    res.issue_id = issueId;   // r229: the send needs it
     state.batchDrafts = res;
     showBatchDrafts();
   }).catch(function (e) { busyHide(); toastErr("That", e); });
@@ -8119,18 +8120,25 @@ function showBatchDrafts() {
   if (!r || !r.drafts) return;
   var html = '<div class="h">Tell the students - ' + r.drafts.length + ' draft' + (r.drafts.length === 1 ? '' : 's') +
       (r.voiced ? ' <span class="small muted" style="font-weight:normal;">(in your voice)</span>' : '') + '</div>' +
-    '<div class="small muted" style="margin-bottom:10px;">Nothing sends itself: copy each one into Chatwoot or email and tweak as you like.' +
+    // r229: a draft with a Chatwoot conversation behind it can be sent from
+    // here, once read and edited. Still nothing sends itself.
+    '<div class="small muted" style="margin-bottom:10px;">Read each one, tweak it, then Send in Chatwoot puts it in the student\'s conversation as a reply' +
+      (r.sender ? ' (it shows as ' + esc(r.sender) + ')' : '') + '. Anyone without a chat on this issue gets Copy for an email instead.' +
       (r.capped ? ' Capped at 10 students this run - run it again for the rest once these have gone.' : '') + '</div>' +
     r.drafts.map(function (d, n) {
-      return '<div style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--bg);">' +
+      return '<div id="bdw_' + n + '" style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--bg);">' +
         '<div class="small" style="margin-bottom:6px;"><strong>' + esc(d.name) + '</strong>' +
           (d.contact ? ' <span class="muted">' + esc(d.contact) + '</span>' : '') +
-          (d.contact && String(d.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;" onclick="openInChatwoot(\'' + esc(d.contact) + '\', \'' + esc(d.cwId || "") + '\')">Chatwoot</button>' : '') +
+          (d.cw ? ' <span class="muted">chat #' + esc(d.cw) + '</span>' : '') +
+          (d.contact && String(d.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;" onclick="openInChatwoot(\'' + esc(d.contact) + '\', \'' + esc(d.cw || d.cwId || "") + '\')">Chatwoot</button>' : '') +
         '</div>' +
         (d.failed
           ? '<div class="small" style="color:var(--high);">This one failed to draft - use the single Draft button on the issue for ' + esc(d.name) + '.</div>'
           : '<textarea id="bd_' + n + '" rows="6" style="width:100%;font-size:13px;">' + esc(d.text) + '</textarea>' +
-            '<button class="ghost small" style="margin-top:6px;padding:4px 12px;" onclick="copyText($(\'bd_' + n + '\').value)">Copy</button>') +
+            '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+            (d.cw ? '<button class="primary small" id="bds_' + n + '" style="padding:4px 12px;" onclick="tellSend(' + n + ')">Send in Chatwoot</button>' : '') +
+            '<button class="ghost small" style="padding:4px 12px;" onclick="copyText($(\'bd_' + n + '\').value)">Copy</button>' +
+            '<span class="small muted" id="bdn_' + n + '"></span></div>') +
       '</div>';
     }).join("") +
     '<div class="btns">' +
@@ -8139,6 +8147,41 @@ function showBatchDrafts() {
     '</div>';
   $("batchDraftPanel").innerHTML = html;
   $("batchDraftModal").classList.add("show");
+}
+// r229: two presses, no browser dialog. The first asks, the second sends.
+function tellSend(n) {
+  var r = state.batchDrafts, d = r && r.drafts && r.drafts[n];
+  var btn = $("bds_" + n), note = $("bdn_" + n), ta = $("bd_" + n);
+  if (!d || !btn || !ta) return;
+  if (btn.dataset.armed !== "1") {
+    btn.dataset.armed = "1"; btn.textContent = "Yes, send to " + (d.name || "the student");
+    if (note) note.textContent = "Press again to send. Click anywhere else to keep editing.";
+    var disarm = function (ev) { if (ev.target !== btn) { btn.dataset.armed = ""; btn.textContent = "Send in Chatwoot"; if (note) note.textContent = ""; document.removeEventListener("click", disarm, true); } };
+    setTimeout(function () { document.addEventListener("click", disarm, true); }, 0);
+    return;
+  }
+  var text = String(ta.value || "").trim();
+  if (!text) { if (note) note.textContent = "Nothing to send."; return; }
+  btn.disabled = true; btn.textContent = "Sending…"; ta.disabled = true;
+  apiPost({ action: "tellStudentSend", issue_id: r.issue_id, conversation_id: d.cw, text: text, student_name: d.name }).then(function (res) {
+    if (!res || !res.ok) {
+      btn.disabled = false; ta.disabled = false; btn.dataset.armed = ""; btn.textContent = "Send in Chatwoot";
+      if (note) note.textContent = (res && res.error) || "That did not send.";
+      return;
+    }
+    d.sent = true;
+    btn.textContent = "Sent";
+    if (note) note.textContent = "In the conversation now" + (res.sent_as ? ", shown as " + res.sent_as : "") + ".";
+    // Every draft with a chat sent, and nobody left on Copy: the issue is told.
+    var all = r.drafts.every(function (x) { return x.failed || x.sent; });
+    if (all && r.issue_id) {
+      toast("Everyone told - marked as notified.");
+      optimistic(r.issue_id, { notified_students: "true" }, { action: "updateIssue", issue_id: r.issue_id, notified_students: true }, { failMsg: "The told mark didn't save" });
+    }
+  }).catch(function (e) {
+    btn.disabled = false; ta.disabled = false; btn.dataset.armed = ""; btn.textContent = "Send in Chatwoot";
+    if (note) note.textContent = "That did not send: " + ((e && e.message) || e);
+  });
 }
 function batchDraftsCopyAll() {
   var r = state.batchDrafts;
