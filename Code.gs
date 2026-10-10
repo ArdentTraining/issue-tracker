@@ -3181,6 +3181,12 @@ function storeAdmin_(data) {
   if (what === 'table_live') return storeTableGoLive_(String(data.tbl || ''));   // r215
   if (what === 'table_back') return storeTableGoBack_(String(data.tbl || ''));
   if (what === 'tables') return { ok: true, live: storeTableLiveList_(), issues_live: storeLive_() };
+  if (what === 'prebrief') {   // r230
+    var pp = PropertiesService.getScriptProperties();
+    if (data.on === true || data.on === 'true') pp.deleteProperty('PREBRIEF_OFF');
+    else if (data.on === false || data.on === 'false') pp.setProperty('PREBRIEF_OFF', '1');
+    return { ok: true, early_briefs_on: pp.getProperty('PREBRIEF_OFF') !== '1', last7: prebriefSummary_().last7 };
+  }
   if (what === 'go_back') return storeGoBack_();
   if (what === 'dryrun') return storeDryRun_();
   if (what === 'save_parity') {   // r211.1: does tracker-save build every board row exactly as we do?
@@ -10629,7 +10635,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r230 · 2026-10-10';
+var CODE_STAMP = 'r230.1 · 2026-10-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12054,6 +12060,11 @@ function prebriefSummary_() {
 // A one-off trigger a minute after the scan, so the briefs get a fresh six
 // minutes of their own rather than whatever the scan left over.
 function prebriefSchedule_() {
+  // r230: a switch. Measured 10 Oct: 65 briefs built in a week, none ever
+  // taken, because a case is opened minutes after a chat arrives in the day,
+  // not from the 04:40 backlog. storeAdmin {what:'prebrief', on:false} turns
+  // the early run off; on:true turns it back on.
+  if (PropertiesService.getScriptProperties().getProperty('PREBRIEF_OFF') === '1') return;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'prebriefOpenChats') ScriptApp.deleteTrigger(t);
   });
