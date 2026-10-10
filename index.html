@@ -3756,7 +3756,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r219 · 2026-10-08";  // bump this with each round, it lands on every feedback report
+var BUILD = "r222 · 2026-10-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4197,7 +4197,32 @@ function apiGet(action) {
   // a token in the body does not.
   return apiPost({ action: action });
 }
+// r222 (Edd, 10 Oct): filing says "saved" as soon as the issue is stored. The
+// Slack alert, the follow-up checks and the Chatwoot note are asked for straight
+// afterwards with fileAfter, so nobody waits on them. If this tab closes first,
+// the backend's once-a-minute sweep sends them instead.
 function apiPost(payload) {
+  if (payload && (payload.action === "addIssue" || payload.action === "caseCheckpoint")) {
+    payload.defer_after = 1;
+    return apiPostCore_(payload).then(function (res) {
+      if (res && res.ok && res.after_id) fileAfterSend_(res.after_id);
+      return res;
+    });
+  }
+  return apiPostCore_(payload);
+}
+function fileAfterSend_(id) {
+  var pe = state._pressEl; state._pressEl = null;   // not a button press: no busy spinner on anything
+  var p = apiPostCore_({ action: "fileAfter", issue_id: id });
+  state._pressEl = pe;
+  p.then(function (r) {
+    // FB-0357: a note that never reached Chatwoot is said out loud.
+    if (r && r.note_error) setTimeout(function () {
+      toast("Saved, but the private note did not reach Chatwoot (" + r.note_error + "). Worth pasting the link on by hand.", 9000);
+    }, 1600);
+  }).catch(function () {});   // the sweep picks it up
+}
+function apiPostCore_(payload) {
   payload.token = getToken();
   // Time every call and record how it ended, so a feedback report carries the
   // request that actually failed rather than just the person's description of
@@ -12682,6 +12707,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 60, date: "2026-10-10", who: ["log"], text: "Logging an issue is quicker: it says saved as soon as the issue is stored. The Slack alert and the private note in Chatwoot follow a few seconds later, without you waiting for them." },
   { n: 59, date: "2026-10-08", who: ["dev", "users"], text: "Every tech fix handed to the developers now comes with a size the tracker has estimated. Developers: change it if it looks wrong, or press Looks right." },
   { n: 58, date: "2026-10-05", who: ["log"], text: "In an open chat, Log issue is now the main button and comes first, until the issue is filed. After that, Draft a reply takes over again." },
   { n: 57, date: "2026-10-05", who: ["dev", "course", "manage", "users"], text: "Mark fixed and changing a status now save in under a second, like the notes and updates. Anything they set off (tidying Slack, the queue alert) follows straight after, without you waiting for it." },

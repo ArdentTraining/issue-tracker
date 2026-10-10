@@ -674,6 +674,7 @@ function doPost(e) {
     if (e && e.postData && e.postData.contents) body = JSON.parse(e.postData.contents);
     var action = body.action || '';
     FILE_T_ = action === 'addIssue' ? { t0: Date.now(), m: [], tags: {} } : null;   // r221: timing a filing
+    DEFER_AFTER_ = (action === 'addIssue' || action === 'caseCheckpoint') && !!body.defer_after;   // r222
     CURRENT_ACTION_ = action;
     TOUCHED_IDS_ = {};
     MIRROR_FULL_ = {};
@@ -750,6 +751,7 @@ function doPost(e) {
     if (action === 'getAssignees') return jsonOut(listAssignees_());
 
     if (action === 'addIssue') return jsonOut(addIssue_(body));
+    if (action === 'fileAfter') return jsonOut(fileAfter_(body));   // r222
     if (action === 'updateIssue') return jsonOut(updateIssue_(body));
     if (action === 'addUpdate') return jsonOut(addUpdate_(body));
     if (action === 'splitIssue') return jsonOut(splitIssue_(body));
@@ -1131,7 +1133,7 @@ function reqPerm_(action) {
     // developers included. What a non-logger may do with it is narrowed inside
     // addUpdate_ (a note only: no status, no priority).
     case 'addUpdate': return 'work';
-    case 'addIssue': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'nextAction': case 'sameIssue': case 'chatwootContactUrl': return 'log';
+    case 'addIssue': case 'fileAfter': case 'extract': case 'suggestFix': case 'troubleshoot': case 'matchUpdate': case 'attachImages': case 'draftStudentMessage': case 'nextAction': case 'sameIssue': case 'chatwootContactUrl': return 'log';
     // updateIssue is 'work' so the dev/course team can retune priority from
     // their drawer; anything beyond priority still needs manage (checked
     // inside updateIssue_ itself).
@@ -3624,6 +3626,75 @@ function recordToRow_(issue) {
   });
 }
 
+// ---- r222: the after-filing jobs -------------------------------------------
+// A filing's Slack alert, follow-up checks and Chatwoot note, run once the
+// instructor already has "saved". Queued in a script property (small, and held
+// only for the seconds between the reply and the page's fileAfter call); taken
+// under the script lock so the page and the sweep can never both run one.
+var DEFER_AFTER_ = false;
+var FILE_AFTER_KEY_ = 'FILE_AFTER_Q';
+function fileAfterQueue_(job) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var p = PropertiesService.getScriptProperties(), q = {};
+    try { q = JSON.parse(p.getProperty(FILE_AFTER_KEY_) || '{}'); } catch (e) { q = {}; }
+    job.at = Date.now();
+    q[job.id] = job;
+    p.setProperty(FILE_AFTER_KEY_, JSON.stringify(q));
+  } finally { lock.releaseLock(); }
+}
+// Takes the named job (or, with no id, every job older than minAgeMs) off the queue.
+function fileAfterTake_(id, minAgeMs) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return [];
+  try {
+    var p = PropertiesService.getScriptProperties(), q = {};
+    try { q = JSON.parse(p.getProperty(FILE_AFTER_KEY_) || '{}'); } catch (e) { q = {}; }
+    var out = [];
+    Object.keys(q).forEach(function (k) {
+      if (id ? k === String(id) : (Date.now() - Number(q[k].at || 0) >= (minAgeMs || 0))) { out.push(q[k]); delete q[k]; }
+    });
+    if (out.length) p.setProperty(FILE_AFTER_KEY_, JSON.stringify(q));
+    return out;
+  } finally { lock.releaseLock(); }
+}
+// Runs one job. Returns the Chatwoot note error, if any (FB-0357: said out loud).
+function fileAfterRun_(job, issue) {
+  if (!issue) { var f = findRow_(job.id); issue = f && f.record; }
+  if (!issue) return '';
+  if (job.fast_track_ask) { try { sendFastTrackRequestSlack_(issue, job.app_url); } catch (e) {} }
+  if (job.slack) { try { sendSlack_(issue, job.app_url); } catch (slackErr) {} }
+  fileMark_('slack');
+  if (job.returning) { try { checkReturningFault_(issue, job.app_url); } catch (e) {} }
+  if (job.workaround) { try { checkSharedWorkaround_(issue, job.app_url); } catch (e) {} }
+  fileMark_('checks');
+  var noteError = '';
+  if (job.conv) {
+    try {
+      var n = chatwootNote_(job.conv, issue, job.app_url);
+      if (n && !n.ok) noteError = n.why;
+    } catch (e) { noteError = String(e).slice(0, 200); }
+  }
+  return noteError;
+}
+// The page's follow-up call, straight after "saved".
+function fileAfter_(data) {
+  var jobs = fileAfterTake_(data.issue_id);
+  if (!jobs.length) return { ok: true, already: true };   // the sweep got there first
+  return { ok: true, note_error: fileAfterRun_(jobs[0]) || undefined };
+}
+// Once a minute: anything the page never asked for (tab closed, network blip).
+// A note that fails here has nobody watching, so it goes on the issue's trail.
+function fileAfterSweep() {
+  var jobs = fileAfterTake_(null, 45000);
+  jobs.forEach(function (job) {
+    try {
+      var err = fileAfterRun_(job);
+      if (err) { try { addUpdate_({ issue_id: job.id, raw_text: 'The Chatwoot private note did not arrive (' + err + '). Worth pasting the link on by hand.', keep_status: true, _system: true }); } catch (e) {} }
+    } catch (e) { console.warn('fileAfterSweep ' + job.id + ': ' + e); }
+  });
+}
 function addIssue_(data) {
   fileMark_('start');
   fileTag_('chat', !!data.chatwoot_conversation_id);
@@ -4047,41 +4118,33 @@ function addIssue_(data) {
   appendIssueRow_(sheet, targetSheetName_(category), issue);   // r208.4 (store first in Supabase mode)
   touchIssue_(issue.issue_id);   // r185: a new row, patched into the cached list
   fileMark_('saved');
-  if (fastTrackRequested) { try { sendFastTrackRequestSlack_(issue, data.app_url || getAppUrl_()); } catch (e) {} }
-
-  // Slack only for a high-priority fix; never let a Slack failure block the save.
-  // Improvements never fire an alert, they are backlog, not something to jump on.
-  if (String(issue.priority).toLowerCase() === 'high' && issue.request_kind !== 'improvement' &&
-      !data._suppress_slack &&
-      issue.status !== 'resolved' && issue.status !== 'resolved_tbc') {
-    try { sendSlack_(issue, data.app_url || getAppUrl_()); } catch (slackErr) {}
-    fileTag_('high', true);
+  // r222 (Edd, 10 Oct 2026): say "saved" first. The Slack alert, the
+  // returning-fault and shared-workaround checks and the Chatwoot note now run
+  // straight after the reply (the page asks for them with fileAfter), or from
+  // the once-a-minute sweep if the page never asks. Measured on r221: 3-4s of a
+  // 7-14s wait. Which ones run is decided HERE, at filing, so nothing about
+  // when or whether they fire changes; only the instructor stops waiting.
+  var after = {
+    id: String(issue.issue_id),
+    app_url: data.app_url || getAppUrl_(),
+    fast_track_ask: !!fastTrackRequested,
+    // Slack only for a high-priority fix; improvements never fire an alert.
+    slack: String(issue.priority).toLowerCase() === 'high' && issue.request_kind !== 'improvement' &&
+      !data._suppress_slack && issue.status !== 'resolved' && issue.status !== 'resolved_tbc',
+    // r175: filed on its own, so check what we have already CLOSED.
+    returning: !data._suppress_slack,
+    // Closed on a workaround: the third one this week is a fault.
+    workaround: !!WORKAROUND_CLOSED_[String(issue.status).toLowerCase()],
+    // Imported from a live chat: the internal note keeps the two joined up.
+    conv: String(data.chatwoot_conversation_id || '')
+  };
+  if (after.slack) fileTag_('high', true);
+  if (DEFER_AFTER_) {
+    fileAfterQueue_(after);
+    fileMark_('queued');
+    return { ok: true, issue: issue, merged: false, after_id: after.id };
   }
-  fileMark_('slack');
-
-  // r175: this row filed on its own because aiMatchIssue_ found nothing OPEN to
-  // join. That is the moment to check what we have already CLOSED, because a
-  // resolved issue can never pick up a report by itself.
-  if (!data._suppress_slack) {
-    try { checkReturningFault_(issue, data.app_url || getAppUrl_()); } catch (e) {}
-  }
-
-  // Closed on a workaround: see whether this is the third one this week going
-  // the same way, in which case it isn't a workaround any more, it's a fault.
-  if (WORKAROUND_CLOSED_[String(issue.status).toLowerCase()]) {
-    try { checkSharedWorkaround_(issue, data.app_url || getAppUrl_()); } catch (e) {}
-  }
-
-  fileMark_('checks');
-  // Imported from a live chat: leave an internal note on that conversation so
-  // the two systems stay joined up.
-  if (data.chatwoot_conversation_id) {
-    try {
-      var note157 = chatwootNote_(data.chatwoot_conversation_id, issue, data.app_url || getAppUrl_());
-      if (note157 && !note157.ok) noteError = note157.why;
-    } catch (e) { noteError = String(e).slice(0, 200); }
-  }
-
+  var noteError = fileAfterRun_(after, issue);
   fileMark_('note');
   return { ok: true, issue: issue, merged: false, note_error: noteError || undefined };
 }
@@ -8166,6 +8229,7 @@ function ensureTriggers_() {
   var haveStoreCompare = false; // r208.3
   var haveShipTag = false, haveShipMonthly = false;   // r188
   var haveAutoSize = false;   // r219
+  var haveFileAfter = false;  // r222
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -8186,12 +8250,15 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'shipTagNightly') haveShipTag = true;
     if (t.getHandlerFunction() === 'shipMonthlyPost') haveShipMonthly = true;
     if (t.getHandlerFunction() === 'autoSizeQueue') haveAutoSize = true;
+    if (t.getHandlerFunction() === 'fileAfterSweep') haveFileAfter = true;
   });
   // r175: 08:00, so the chase list is sitting there when the day starts rather
   // than arriving on top of whatever else the morning brings.
   // r186: Claude's letterbox. Five minutes, so a report Claude files lands on
   // the board about as fast as somebody typing it in; an empty inbox costs one
   // small fetch.
+  // r222: a filing's Slack alert and Chatwoot note, when the page never asked for them.
+  if (!haveFileAfter) ScriptApp.newTrigger('fileAfterSweep').timeBased().everyMinutes(1).create();
   if (!haveInbox) ScriptApp.newTrigger('claudeInbox').timeBased().everyMinutes(5).create();
   // r202: reconcile the Supabase read mirror. Ten minutes, the same window the
   // board cache has always allowed for writes that skip a request.
@@ -10402,7 +10469,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r221 · 2026-10-09';
+var CODE_STAMP = 'r222 · 2026-10-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -12268,6 +12335,7 @@ function caseCheckpoint_(data) {
     // for a "Submit and park" that merges).
     merged_stays_open: !!r.merged && !!outcome,
     note_error: r.note_error || undefined,   // FB-0357: said out loud, not swallowed
+    after_id: r.after_id || undefined,   // r222: the page asks for the after-filing jobs
     timings: TT };
 }
 
