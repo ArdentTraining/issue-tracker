@@ -4770,18 +4770,38 @@ function aiMatchIssueRun_(data, category, isCourse) {
   // Cheap word overlap picks the plausible ones first, exactly as the known-fix
   // shortlist does, and only those go to the model. A short list is a question
   // it can actually answer.
-  var newWords = {};
-  String((data.summary || '') + ' ' + (data.raw_text || '')).toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
-      if (w.length > 3 && !FIX_STOPWORDS[w]) newWords[w] = true;
+  //
+  // r231 (Edd, 11 Oct: "How does it not think this is the same bug?"). A
+  // HubSpot-form report came 53rd of 325 and never reached the model, because
+  // the pasted email carried the student's own message about downloads, and a
+  // plain count of shared words put every download fault first. Words now
+  // count by how rare they are across the candidates (hubspot 4.5, download
+  // 2.7, lesson 0), and the summary's words count twice, since the summary is
+  // the fault and the raw text is whatever got pasted. Backtested on all 129
+  // real merged reports: the right issue reached the twelve 114 times, was 98,
+  // and none that made it before dropped out. That one now comes 3rd.
+  var tokens = function (t) {
+    var o = {};
+    String(t || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).forEach(function (w) {
+      if (w.length > 3 && !FIX_STOPWORDS[w]) o[w] = true;
     });
-  var wordKeys = Object.keys(newWords);
+    return o;
+  };
+  var sumWords = tokens(data.summary), rawWords = tokens(data.raw_text);
+  var wordKeys = Object.keys(sumWords);
+  Object.keys(rawWords).forEach(function (w) { if (!sumWords[w]) wordKeys.push(w); });
   if (wordKeys.length) {
+    var nCand = candidates.length, idf = {};
+    wordKeys.forEach(function (w) {
+      var df = 0;
+      for (var q = 0; q < nCand; q++) if (candidates[q]._hay.indexOf(w) > -1) df++;
+      idf[w] = Math.log((nCand + 1) / (df + 1)) * (sumWords[w] ? 2 : 1);
+    });
     var scored = candidates.map(function (c) {
-      var n = 0;
-      for (var k = 0; k < wordKeys.length; k++) if (c._hay.indexOf(wordKeys[k]) > -1) n++;
-      return { c: c, score: n };
-    }).filter(function (x) { return x.score >= 2; })
+      var n = 0, s = 0;
+      for (var k = 0; k < wordKeys.length; k++) if (c._hay.indexOf(wordKeys[k]) > -1) { n++; s += idf[wordKeys[k]]; }
+      return { c: c, shared: n, score: s };
+    }).filter(function (x) { return x.shared >= 2; })
       .sort(function (a, b) { return b.score - a.score; })
       .slice(0, 12);
     // Nothing shares even two words with it: there is nothing to merge into,
@@ -10635,7 +10655,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r230.1 · 2026-10-10';
+var CODE_STAMP = 'r231 · 2026-10-11';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
