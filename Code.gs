@@ -2415,6 +2415,7 @@ function storeSources_() {
     },
     feedback: function () { return storeReadTab_(FEEDBACK_SHEET, function (o) { return String(o.id || '').trim(); }, null, 0); },
     users: function () { return storeReadTab_(USERS_SHEET, function (o) { return String(o.email || '').trim().toLowerCase(); }, null, 0); },
+    livecases: function () { return storeReadTab_(LIVECASES_SHEET, function (o) { return String(o.conversation_id || '').trim(); }, null, 0); },   // r228
     instructors: function () { return storeReadTab_(INSTRUCTORS_SHEET, function (o) { return String(o.name || '').trim(); }, null, 0); }
   };
 }
@@ -2619,7 +2620,7 @@ var STORE_COERCED_ = {
 function storeShadowCompare() {
   var out = { ok: true, at: new Date().toISOString(), mode: storeMode_(), tables: [] };
   var src = storeSources_();
-  ['issues', 'feedback', 'users'].forEach(function (tbl) {   // r220: Instructors tab retired (r216), no longer compared
+  ['issues', 'feedback', 'users', 'livecases'].forEach(function (tbl) {   // r220: Instructors tab retired (r216), no longer compared; r228: livecases joins
     var t0 = Date.now(), res = { table: tbl };
     try {
       var got = src[tbl](), mine = {}, recOf = {};
@@ -2721,8 +2722,19 @@ function storeLive_() { try { return storeMode_() === 'supabase'; } catch (e) { 
 var STORE_TABLE_DEF_ = {
   feedback: { sheet: function () { return sheetByName_(FEEDBACK_SHEET); }, key: 'id', headers: function () { return FEEDBACK_HEADERS; } },
   // r216: keyed by the email, lower-cased, as storeSources_ imports them.
-  users: { sheet: function () { return usersSheet_(); }, key: 'email', headers: function () { return USER_HEADERS; } }
+  users: { sheet: function () { return usersSheet_(); }, key: 'email', headers: function () { return USER_HEADERS; } },
+  // r228: the live cases (the Today page's chats), keyed by the Chatwoot
+  // conversation id. Shadowed first; reads move when table_live says so.
+  livecases: { sheet: function () { return liveCasesSheet_(false); }, key: 'conversation_id', headers: function () { return LIVECASE_HEADERS; } }
 };
+// r228: a whole record made exactly this (inserted if missing). For tables
+// whose writes are already whole rows, like the live cases.
+function storeTablePut_(tbl, key, obj, noSheet) {
+  var res = storeCall_({ op: 'put', tbl: tbl, key: String(key), data: JSON.stringify(storeEnc_(obj)) });
+  if (!res.ok) throw new Error('Could not save: ' + (res.error || 'store error'));
+  if (!noSheet) storeTableSheetCopy_(tbl, key, obj);
+  return obj;
+}
 function storeTableLive_(tbl) {
   if (!STORE_TABLE_DEF_[tbl] || !storeLive_()) return false;
   try {
@@ -10596,7 +10608,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r227 · 2026-10-10';
+var CODE_STAMP = 'r228 · 2026-10-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -11517,6 +11529,14 @@ function liveCasesSheet_(create) {
   return sh;
 }
 function liveCaseRows_() {
+  // r228: once the table is live, the store is the record and the Sheet a copy.
+  if (storeTableLive_('livecases')) {
+    return storeTableList_('livecases').map(function (rec) {
+      rec.conversation_id = String(rec.conversation_id);
+      rec._store = true;
+      return rec;
+    });
+  }
   var sh = liveCasesSheet_(false);
   if (!sh) return [];
   var values = sh.getDataRange().getValues();
@@ -11541,10 +11561,20 @@ function liveCaseFind_(convId) {
   return null;
 }
 function liveCaseSave_(rec) {
+  var obj = {};
+  LIVECASE_HEADERS.forEach(function (h) { obj[h] = rec[h] != null ? rec[h] : ''; });
+  var key = String(rec.conversation_id || '');
+  // r228: live on the store - the whole record goes there, and the Sheet copy follows.
+  if (storeTableLive_('livecases')) { storeTablePut_('livecases', key, obj); rec._store = true; return rec; }
   var sh = liveCasesSheet_(true);
-  var row = LIVECASE_HEADERS.map(function (h) { return rec[h] != null ? rec[h] : ''; });
+  var row = LIVECASE_HEADERS.map(function (h) { return obj[h]; });
   if (rec._rowNum) sh.getRange(rec._rowNum, 1, 1, LIVECASE_HEADERS.length).setValues([row]);
   else { sh.appendRow(row); rec._rowNum = sh.getLastRow(); }
+  // r228: shadow - the same record copied to the store with the end-of-request batch.
+  if (storeLive_() && key) {
+    try { usersShadowQueue_({ op: 'put', tbl: 'livecases', key: key, data: JSON.stringify(storeEnc_(obj)) }); }
+    catch (e) { storeShadowNote_('livecases', key + ': ' + e); }
+  }
   return rec;
 }
 function caseBriefJson_(rec) {
