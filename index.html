@@ -3783,7 +3783,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r226.1 · 2026-10-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r227 · 2026-10-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4883,9 +4883,9 @@ function startSession() {
     $("authScreen").classList.remove("show");
     applyPerms(cached.user);
     state._permsApplied = true;
+    state._fromCache = true;   // r227: set before applying, so the saved copy is never taken for a fresh one
     applyBootstrap(cached);
     state._issuesLoaded = true;
-    state._fromCache = true;
     openDeepLinkedIssue();
   }
   loadIssues();
@@ -5543,9 +5543,17 @@ function applyBootstrap(res) {
   state._issuesLoaded = true;
   if (res.assignees) state.assignees = res.assignees;
   if (res.instructors) state.instructors = res.instructors;
-  if (res.live_cases) { state.liveCases = res.live_cases; state.liveLoaded = true; }
+  if (res.live_cases) {
+    state.liveCases = res.live_cases; state.liveLoaded = true;
+    // r227: a fresh bootstrap answer (not the saved copy) stands in for the
+    // open's own listLiveCases call; see loadLiveCases.
+    if (res.closed_cases) state.closedCases = res.closed_cases;
+    state._liveFromBoot = state._fromCache ? 0 : Date.now();
+  }
   if (res.scans) { state._scans = res.scans; updateScanCount(); }
   if (res.playbook_suggestions) state._playbookSuggestions = res.playbook_suggestions;
+  // r227: the back-sweep note's numbers arrive with the bootstrap now.
+  if (res.back_sweep) { state._backSweep = res.back_sweep; state._backSweepAt = Date.now(); }
   updateActionsTabCount();
   renderCurrentView();
 }
@@ -5600,8 +5608,8 @@ function loadIssues(isRetry) {
   if (!state._issuesLoaded) {
     var cached = readBootCache();
     if (cached && cached.issues && cached.issues.length) {
+      state._fromCache = true;   // r227: before, not after (see above)
       applyBootstrap(cached);
-      state._fromCache = true;
       openDeepLinkedIssue();
     }
   }
@@ -7155,9 +7163,28 @@ function rcaPublish() {
 // stands (summary, tried, next step, known fix), draft the reply, and let the
 // bug report fall out of the conversation as a checkpoint. Cases are shared -
 // whoever is free picks one up and carries on.
+var LIVE_FROM_BOOT_MS = 60 * 1000;
 function loadLiveCases() {
   if (!state.perms || !state.perms.log) return;
   if (state._liveLoading) return;
+  // r227: on open this fired alongside the bootstrap, which carries the same
+  // list, so the backend built it twice and the page waited on the slower of
+  // the two (13s measured). Wait for the bootstrap instead, and only ask again
+  // if its answer turns out to be missing or old.
+  if (state._bootFlight) {
+    state._liveLoading = true;
+    var done = function () {
+      state._liveLoading = false;
+      if (state._liveFromBoot && Date.now() - state._liveFromBoot < LIVE_FROM_BOOT_MS) {
+        updateRailBadges();
+        if (state.view === "live") renderLive();
+        return;
+      }
+      loadLiveCases();
+    };
+    state._bootFlight.then(done, done);
+    return;
+  }
   state._liveLoading = true;
   apiPost({ action: "listLiveCases" }).then(function (res) {
     state._liveLoading = false;
@@ -20065,11 +20092,29 @@ function chatScanDismiss(convId) {
 // real money every press. The note says how far back it has walked and roughly
 // what the next press will read, because a button that quietly spends is a
 // button nobody presses twice.
-function refreshBackSweepNote() {
+// r227: this was asked of the backend on every renderLive - three times on an
+// open - for two numbers that only change when the sweep itself runs. They
+// come with the bootstrap now, and are only fetched here when a sweep has just
+// run (force) or nothing has been heard for ten minutes.
+var BACK_SWEEP_FRESH_MS = 10 * 60 * 1000;
+function refreshBackSweepNote(force) {
   var el = $("backSweepNote");
   if (!el) return;
-  apiPost({ action: "chatBackSweepState" }).then(function (res) {
-    if (!res || !res.ok || !$("backSweepNote")) return;
+  if (!force && state._backSweep && Date.now() - (state._backSweepAt || 0) < BACK_SWEEP_FRESH_MS) {
+    drawBackSweepNote_(state._backSweep);
+    return;
+  }
+  if (state._backSweepFlight && !force) return;
+  state._backSweepFlight = apiPost({ action: "chatBackSweepState" }).then(function (res) {
+    state._backSweepFlight = null;
+    if (!res || !res.ok) return;
+    state._backSweep = { next_page: res.next_page, pages: res.pages }; state._backSweepAt = Date.now();
+    drawBackSweepNote_(state._backSweep);
+  }).catch(function () { state._backSweepFlight = null; });
+}
+function drawBackSweepNote_(res) {
+  if (!$("backSweepNote")) return;
+  {
     var next = Number(res.next_page || 1);
     $("backSweepNote").textContent =
       "Scan now reads the last 24 hours. Look further back reads older history, " +
@@ -20077,7 +20122,7 @@ function refreshBackSweepNote() {
         ? "which has never been read at all - the next press takes the most recent " + (res.pages * 25) + " conversations it has not already seen."
         : "and has reached back about " + ((next - 1) * 25) + " conversations so far - the next press picks up from there.") +
       " Both cost API credit, and both skip anything already scanned for free.";
-  }).catch(function () {});
+  }
 }
 function runChatBackSweep() {
   var btn = $("backSweepBtn");
@@ -20089,7 +20134,7 @@ function runChatBackSweep() {
   if (note) note.textContent = "Reading older conversations. This can take a few minutes.";
   apiPost({ action: "runChatBackSweep" }).then(function (res) {
     if (btn) { btn.disabled = false; btn.textContent = "Look further back"; }
-    if (!res || !res.ok) { toast("Sweep failed: " + ((res && res.error) || "unknown")); refreshBackSweepNote(); return; }
+    if (!res || !res.ok) { toast("Sweep failed: " + ((res && res.error) || "unknown")); refreshBackSweepNote(true); return; }
     var found = Number(res.confirmed || 0);
     toast(res.reached_end
       ? "Reached the end of the history. " + (found ? found + " spotted." : "Nothing new spotted.")
@@ -20097,12 +20142,12 @@ function runChatBackSweep() {
     // Whatever it found lands in the same queue as the nightly run, so redraw it.
     refreshScans().then(function () {
       if (state.view === "actions") renderChatScan("actionsScan");
-      refreshBackSweepNote();
+      refreshBackSweepNote(true);
     });
   }).catch(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = "Look further back"; }
     toast("Sweep error. See console."); console.error(e);
-    refreshBackSweepNote();
+    refreshBackSweepNote(true);
   });
 }
 function runChatScanNow() {

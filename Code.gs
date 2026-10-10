@@ -3398,7 +3398,17 @@ var PURE_READS_ = {
   // r201: pure reads that were missing, and each dropped every extra.
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, trackerTicket: 1, mirrorSyncNow: 1,
-  instructorGuide: 1
+  instructorGuide: 1,
+  // r227: this one reads a single script property, and the page asked for it
+  // three times on every open (once per renderLive). Each ask dropped every
+  // extra above, so the live-case list the bootstrap had just built was thrown
+  // away while the bootstrap was still answering, and the next open rebuilt it
+  // with its Chatwoot peeks. Measured 10 Oct: bootstrap 10.8s on Edd's page
+  // against 4.6s warm from a shell.
+  chatBackSweepState: 1,
+  // fileAfter's jobs (Slack, the returning-fault and workaround checks, the
+  // Chatwoot note) write issue rows at most; no extra is built from those.
+  fileAfter: 1
 };
 function bootExtra_(name, build) {
   var c = null;
@@ -3590,7 +3600,13 @@ function bootstrap_(user, body) {
   }
   ms.assignees = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('listLiveCases'))) {
-    try { out.live_cases = bootExtra_('live_cases', function () { return listLiveCases_({ _issues: out.issues }).cases || []; }); } catch (e) { out.live_cases_error = String(e); }
+    // r227: the closed cases ride along too, so the page can take the whole
+    // answer from here on open instead of asking listLiveCases a second time.
+    try {
+      var lv = bootExtra_('live_cases', function () { var l = listLiveCases_({ _issues: out.issues }); return { cases: l.cases || [], closed_cases: l.closed_cases || [] }; });
+      if (lv && lv.cases) { out.live_cases = lv.cases; out.closed_cases = lv.closed_cases || []; }
+      else out.live_cases = lv || [];   // a cached answer from before r227 is a bare list
+    } catch (e) { out.live_cases_error = String(e); }
   }
   ms.live_cases = Date.now() - t0;
   if (hasPerm_(user, reqPerm_('chatScanList'))) {
@@ -3602,6 +3618,11 @@ function bootstrap_(user, body) {
   }
   if (hasPerm_(user, reqPerm_('listKnownFixFlags'))) {
     try { out.knownfix_corrections = bootExtra_('knownfix_corrections', function () { return getKfCorrections_() || []; }); } catch (e) {}
+  }
+  // r227: the back-sweep note's two numbers ride in here, so the Today page
+  // has no separate call to make for them on open.
+  if (hasPerm_(user, reqPerm_('chatBackSweepState'))) {
+    try { var bs = chatBackSweepState_(); out.back_sweep = { next_page: bs.next_page, pages: bs.pages }; } catch (e) {}
   }
   // r201: only now, because the live cases above were built from the FULL list.
   try {
@@ -4644,46 +4665,71 @@ function aiMatchIssue_(data, category) {
   // no lesson code there is nothing safe to narrow on.
   if (isCourse && !data.lesson_code) return null;
 
-  var sheet = sheetByName_(isCourse ? COURSE_SHEET : TECH_SHEET);
-  if (!sheet) return null;
-  var values = sheet.getDataRange().getValues();
-  if (values.length < 2) return null;
-  var head = values[0];
-  var idx = {}; head.forEach(function (h, i) { idx[h] = i; });
+  // r227: the same question is asked twice on most filings - once by the page
+  // (sameIssue, while the form is still open) and again by the submit - and
+  // each ask cost a whole-sheet read plus the model call, 3 to 4 seconds of
+  // the filing's 8 (r221/r223 timings). The answer is kept for fifteen
+  // minutes against the exact text asked about AND the issue-cache generation,
+  // which every save bumps, so a new filing in between asks afresh.
+  var mkey = aiMatchKey_(data, category);
+  var mcache = null;
+  try {
+    mcache = CacheService.getScriptCache();
+    var mhit = mcache.get(mkey);
+    if (mhit != null) return mhit === '-' ? null : mhit;
+  } catch (e) { mcache = null; }
+  var found = aiMatchIssueRun_(data, category, isCourse);
+  try { if (mcache) mcache.put(mkey, found || '-', 900); } catch (e) {}
+  return found;
+}
+function aiMatchKey_(data, category) {
+  var text = [String(category || ''), String(data.lesson_code || '').trim().toLowerCase(),
+    String(data.summary || ''), String(data.raw_text || '').slice(0, 6000), String(data.device_info || ''),
+    issueCacheGen_()].join('\u0001');
+  return 'ait_match_' + rowHash_(text);
+}
+function aiMatchIssueRun_(data, category, isCourse) {
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  // r227: candidates come from the cached list projection (summary, section,
+  // lesson code, the first 900 characters of the report), not a fresh read of
+  // the whole sheet. The projection is what the board is drawn from and is
+  // dropped or patched on every save, so it is as current as the sheet was.
+  var rows = (getIssuesList_().issues || []);
+  if (!rows.length) return null;
 
   var wantLesson = String(data.lesson_code || '').trim().toLowerCase();
   var candidates = [];
-  for (var r = 1; r < values.length; r++) {
-    var row = values[r];
-    if (!row[idx['issue_id']]) continue;
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    if (!row.issue_id) continue;
     // A "past" row is imported history from the old spreadsheets and must never
     // be resurrected. Resolved rows ARE offered now (r177, Edd), but only ones
     // closed inside REOPEN_WINDOW_DAYS: see the note by that constant.
-    var candStatus = String(row[idx['status']]).toLowerCase();
+    var candStatus = String(row.status || '').toLowerCase();
     if (candStatus === 'past') continue;
     var closedAgo = null;
     if (candStatus === 'resolved') {
-      var closedAt = new Date(row[idx['resolved_at']] || row[idx['updated_at']] || 0).getTime();
+      var closedAt = new Date(row.resolved_at || row.updated_at || 0).getTime();
       if (isNaN(closedAt) || closedAt < Date.now() - REOPEN_WINDOW_DAYS * 24 * 3600 * 1000) continue;
       closedAgo = Math.max(0, Math.round((Date.now() - closedAt) / (24 * 3600 * 1000)));
     }
     // Tech issues and internal tasks share a sheet; never match across the two.
-    if (idx['category'] != null && String(row[idx['category']] || '').toLowerCase() !== String(category).toLowerCase()) continue;
+    if (String(row.category || '').toLowerCase() !== String(category).toLowerCase()) continue;
     // Course errors: only consider other errors on the same slide.
     if (isCourse) {
-      var lc = String(row[idx['lesson_code']] || '').trim().toLowerCase();
+      var lc = String(row.lesson_code || '').trim().toLowerCase();
       if (lc !== wantLesson) continue;
     }
     candidates.push({
-      id: row[idx['issue_id']],
-      summary: row[idx['summary']],
-      lesson_code: row[idx['lesson_code']],
+      id: row.issue_id,
+      summary: row.summary || '',
+      lesson_code: row.lesson_code || '',
       // r177: the model has to be able to tell a live issue from one we closed,
       // because "the same fault came back" is a different judgement from "two
       // people have the same fault".
       state: closedAgo === null ? 'open' : ('we closed this ' + closedAgo + ' day(s) ago'),
-      _hay: String((row[idx['summary']] || '') + ' ' + (row[idx['section']] || '') + ' ' +
-                   (row[idx['lesson_code']] || '') + ' ' + (row[idx['raw_text']] || '')).toLowerCase()
+      _hay: String((row.summary || '') + ' ' + (row.section || '') + ' ' +
+                   (row.lesson_code || '') + ' ' + (row.raw_text || '')).toLowerCase()
     });
   }
   if (!candidates.length) return null;
@@ -10550,7 +10596,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r225 · 2026-10-10';
+var CODE_STAMP = 'r227 · 2026-10-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -11528,7 +11574,11 @@ function listLiveCases_(data) {
     // rather than paying for a second whole-spreadsheet read. Only status and
     // student_sorted are used below, and the list projection carries both.
     var pre = data && data._issues;
-    (pre || getIssues_().issues || []).forEach(function (i) { issueById[i.issue_id] = i; });
+    // r227: on its own (the Today page asks for this list directly, not only
+    // through the bootstrap) this read every issue in full from the store,
+    // 3.4 MB for the two fields it uses. The cached list projection carries
+    // both and is already built for the board.
+    (pre || getIssuesList_().issues || []).forEach(function (i) { issueById[i.issue_id] = i; });
   }
   rows.forEach(function (r) {
     r._brief = caseBriefJson_(r);
@@ -11567,15 +11617,25 @@ function listLiveCases_(data) {
   // the issue-state test above never fires). One-directional now: resolved in
   // Chatwoot CLOSES a case; open in Chatwoot never blocks one. Peeks are
   // capped, and only cases still open after the issue-state pass pay one.
-  var peeks = 0;
-  rows.forEach(function (r) {
-    if (String(r.status) !== 'open' || peeks >= 5) return;
-    peeks++;
-    var cwStatus = '';
+  // r227: the peeks go out together (one round trip, not up to five in a row);
+  // any that fails is skipped exactly as before.
+  var peekRows = rows.filter(function (r) { return String(r.status) === 'open'; }).slice(0, 5);
+  var peeked = [];
+  if (peekRows.length) {
     try {
-      var conv = chatwootCall_('/conversations/' + r.conversation_id);
-      cwStatus = String((conv && conv.status) || (conv && conv.payload && conv.payload.status) || '');
-    } catch (e) { return; }
+      peeked = chatwootCallAll_(peekRows.map(function (r) { return '/conversations/' + r.conversation_id; }));
+    } catch (e) {
+      // One bad answer fails the batch; fall back to one at a time so the
+      // others still get their check.
+      peeked = peekRows.map(function (r) {
+        try { return chatwootCall_('/conversations/' + r.conversation_id); } catch (e2) { return null; }
+      });
+    }
+  }
+  peekRows.forEach(function (r, pi) {
+    var conv = peeked[pi];
+    if (!conv) return;
+    var cwStatus = String((conv && conv.status) || (conv && conv.payload && conv.payload.status) || '');
     r._cw_status = cwStatus;   // r128: say what Chatwoot thinks on the card
     if (cwStatus === 'resolved') {
       var b2 = r._brief;
