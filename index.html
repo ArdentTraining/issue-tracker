@@ -740,6 +740,14 @@
   }
   body.shell #shellMain { margin-left: 74px; }
   body.shell .switcher { display: none; }
+  /* FB-0465 (Edd): Today's sections fold like an accordion. The headings are
+     drawn by several renderers, so todayAccordions() marks them after each
+     draw and hides the siblings up to the next heading. */
+  #liveView h3.acc-h { cursor: pointer; user-select: none; }
+  #liveView h3.acc-h::before { content: "\25BE"; display: inline-block; width: 1.1em; color: var(--muted); }
+  #liveView h3.acc-h.acc-closed::before { content: "\25B8"; }
+  #liveView h3.acc-h:hover { color: var(--accent); }
+  #liveView .acc-hide { display: none !important; }
   .rail-item {
     background: transparent; border: none; border-radius: 10px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -1593,7 +1601,11 @@
 
 <!-- ===================== LIVE CASES (Round 45) ===================== -->
 <div id="liveView" class="wrap hidden">
-  <h2 style="margin-top:0;">Today</h2>
+  <!-- FB-0465 (Edd): a second way into the log form, at the top of Today. -->
+  <div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
+    <h2 style="margin:0;">Today</h2>
+    <button type="button" class="primary small" data-perm="log" style="padding:6px 14px;white-space:nowrap;" onclick="railGo('instructor')">Log new issue</button>
+  </div>
   <p class="small muted" style="margin-top:-6px;">Current conversations first - pull a chat in, see where it stands, and the report falls out of it. Everything else waiting on an instructor is underneath. Cases are shared: anyone can pick one up and carry on.</p>
   <div class="row" style="margin-bottom:14px;gap:8px;">
     <input id="liveCwInput" placeholder="Chatwoot link or number" autocomplete="one-time-code" style="flex:1;min-width:0;max-width:340px;" onkeydown="if(event.key==='Enter'){event.preventDefault();openLiveCase();}" />
@@ -3756,7 +3768,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r222 · 2026-10-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r224 · 2026-10-10";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7229,6 +7241,84 @@ function renderOpenChats() {
   }).join("");
   el.innerHTML = html;
 }
+// FB-0465 (Edd): "Can we make the sections work as accordion style? e.g.
+// Open in Chatwoot, Waiting on an instructor." Each Today heading folds the
+// content under it, up to the next heading. The headings come from four
+// separate renderers that rewrite their boxes with innerHTML, so rather than
+// teach each one, this runs after any redraw (MutationObserver) and re-applies
+// the folded state. It only adds classes, never moves nodes, so the ids the
+// renderers and the detail docking rely on are untouched. Folded state is per
+// person, in this browser.
+var TODAY_ACC_BOXES = ["liveList", "openChats", "todayActionsSlot", "actionsScan"];
+function todayAccKey(h) {
+  return String(h.textContent || "").replace(/\(\s*\d+\s*\)/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+function todayAccClosed() {
+  try { return JSON.parse(localStorage.getItem("ait_today_closed") || "{}") || {}; } catch (e) { return {}; }
+}
+function todayAccSave(m) {
+  try { localStorage.setItem("ait_today_closed", JSON.stringify(m)); } catch (e) {}
+}
+function todayAccordions() {
+  var closed = todayAccClosed();
+  TODAY_ACC_BOXES.forEach(function (id) {
+    var box = $(id);
+    if (!box) return;
+    Array.prototype.forEach.call(box.children, function (h) {
+      if (h.tagName !== "H3") return;
+      var key = todayAccKey(h);
+      if (!key) return;
+      var shut = !!closed[key];
+      h.classList.add("acc-h");
+      h.classList.toggle("acc-closed", shut);
+      h.setAttribute("role", "button");
+      h.setAttribute("tabindex", "0");
+      h.setAttribute("aria-expanded", shut ? "false" : "true");
+      h.title = shut ? "Show this section" : "Fold this section away";
+      // Everything after the heading belongs to it, until the next heading or
+      // a block that carries headings of its own (the scan box sits after
+      // Waiting on an instructor and has its own two).
+      for (var n = h.nextElementSibling; n; n = n.nextElementSibling) {
+        if (n.tagName === "H3" || (n.querySelector && n.querySelector("h3"))) break;
+        n.classList.toggle("acc-hide", shut);
+      }
+    });
+  });
+}
+function todayAccToggle(h) {
+  var key = todayAccKey(h);
+  if (!key) return;
+  var m = todayAccClosed();
+  if (m[key]) delete m[key]; else m[key] = 1;
+  todayAccSave(m);
+  todayAccordions();
+}
+(function todayAccWire() {
+  function wire() {
+    var root = $("liveView");
+    if (!root || root._accWired) return;
+    root._accWired = true;
+    root.addEventListener("click", function (e) {
+      var h = e.target && e.target.closest ? e.target.closest("h3.acc-h") : null;
+      if (h && root.contains(h)) todayAccToggle(h);
+    });
+    root.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var h = e.target && e.target.closest ? e.target.closest("h3.acc-h") : null;
+      if (h) { e.preventDefault(); todayAccToggle(h); }
+    });
+    // childList only, so the classes and attributes set above do not re-trigger it.
+    var pending = false;
+    new MutationObserver(function () {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(function () { pending = false; todayAccordions(); });
+    }).observe(root, { childList: true, subtree: true });
+    todayAccordions();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);
+  else wire();
+})();
 function renderLive() {
   var el = $("liveList");
   if (!el) return;
@@ -12707,6 +12797,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 61, date: "2026-10-10", who: ["log"], text: "Today's sections fold away: click a heading such as Open in Chatwoot or Waiting on an instructor to hide or show it, and it stays how you left it. There is also a Log new issue button at the top of Today." },
   { n: 60, date: "2026-10-10", who: ["log"], text: "Logging an issue is quicker: it says saved as soon as the issue is stored. The Slack alert and the private note in Chatwoot follow a few seconds later, without you waiting for them." },
   { n: 59, date: "2026-10-08", who: ["dev", "users"], text: "Every tech fix handed to the developers now comes with a size the tracker has estimated. Developers: change it if it looks wrong, or press Looks right." },
   { n: 58, date: "2026-10-05", who: ["log"], text: "In an open chat, Log issue is now the main button and comes first, until the issue is filed. After that, Draft a reply takes over again." },
