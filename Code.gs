@@ -3139,7 +3139,13 @@ function storeAdmin_(data) {
   // so in Supabase mode it would leave a blank record behind (4 Oct 2026).
   if (what === 'selftest') return storeLive_() ? { ok: false, error: 'not while the store is the record' } : storeSelfTest();
   if (what === 'import') return storePracticeImport();
-  if (what === 'file_timings') { var ft = []; try { ft = JSON.parse(PropertiesService.getScriptProperties().getProperty('FILE_TIMINGS') || '[]'); } catch (e) {} return { ok: true, timings: ft }; }
+  if (what === 'file_timings') {
+    var ft = [], pend = {}, sweep = false;
+    try { ft = JSON.parse(PropertiesService.getScriptProperties().getProperty('FILE_TIMINGS') || '[]'); } catch (e) {}
+    try { pend = JSON.parse(PropertiesService.getScriptProperties().getProperty(FILE_AFTER_KEY_) || '{}'); } catch (e) {}
+    try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'fileAfterSweep') sweep = true; }); } catch (e) {}
+    return { ok: true, timings: ft, after_pending: Object.keys(pend).map(function (k) { return { id: k, age_s: Math.round((Date.now() - pend[k].at) / 1000) }; }), sweep_trigger: sweep };
+  }
   if (what === 'mode') {
     var m = storeCall_({ op: 'mode' }), log = {};
     try { log = JSON.parse(PropertiesService.getScriptProperties().getProperty('STORE_SHADOW_LOG') || '{}'); } catch (e) {}
@@ -10469,7 +10475,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r222 · 2026-10-10';
+var CODE_STAMP = 'r222.1 · 2026-10-10';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
