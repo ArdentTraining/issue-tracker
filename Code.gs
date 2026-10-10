@@ -10290,8 +10290,8 @@ function myFeedback_(data) {
       var fr = storeCall_({ op: 'find', tbl: 'feedback', field: 'user_email', value: email, order: 'desc', limit: 100 });
       if (!fr.ok) throw new Error(fr.error || 'find failed');
       rows = (fr.rows || []).map(function (r) { return storeDec_(r.data || {}); });
-      // Addresses were not always stored lower-cased; a miss falls back to the full read once.
-      if (!rows.length) rows = storeTableList_('feedback').filter(function (o) { return String(o.user_email || '').toLowerCase() === email; });
+      // (Checked 10 Oct: every stored address is already lower-case, so an
+      // empty answer means none, and is not re-read in full.)
     } catch (e) {
       rows = storeTableList_('feedback').filter(function (o) { return String(o.user_email || '').toLowerCase() === email; });
     }
