@@ -2939,6 +2939,7 @@ function storeSheetCopyGone_(id) {
 }
 // A new issue row, from addIssue_ or a split.
 function appendIssueRow_(sheet, tab, issue) {
+  bumpIssueMatchGen_();   // r232: a new issue can be what the next report matches
   if (storeLive_()) {
     var obj = {};
     HEADERS.forEach(function (h) { obj[h] = issue[h] == null ? '' : issue[h]; });
@@ -4701,16 +4702,29 @@ function aiMatchIssue_(data, category) {
   try {
     mcache = CacheService.getScriptCache();
     var mhit = mcache.get(mkey);
+    fileTag_('match_cached', mhit != null);
     if (mhit != null) return mhit === '-' ? null : mhit;
   } catch (e) { mcache = null; }
   var found = aiMatchIssueRun_(data, category, isCourse);
   try { if (mcache) mcache.put(mkey, found || '-', 900); } catch (e) {}
   return found;
 }
+// r232 (Edd, 11 Oct): the saved answer to "does this match an issue we have?"
+// only goes stale when the set of issues changes: one added or one deleted. An
+// update, a status change or a Mark fixed on an existing issue does not change
+// that answer, so it no longer throws it away. (r227 keyed it on the board
+// cache generation, which every save of any kind bumps.)
+var ISSUE_MATCH_GEN_KEY_ = 'ait_match_gen';
+function issueMatchGen_() {
+  try { return CacheService.getScriptCache().get(ISSUE_MATCH_GEN_KEY_) || ''; } catch (e) { return ''; }
+}
+function bumpIssueMatchGen_() {
+  try { CacheService.getScriptCache().put(ISSUE_MATCH_GEN_KEY_, String(Date.now()) + '.' + Math.floor(Math.random() * 1e6), 21600); } catch (e) {}
+}
 function aiMatchKey_(data, category) {
   var text = [String(category || ''), String(data.lesson_code || '').trim().toLowerCase(),
     String(data.summary || ''), String(data.raw_text || '').slice(0, 6000), String(data.device_info || ''),
-    issueCacheGen_()].join('\u0001');
+    issueMatchGen_()].join('\u0001');
   return 'ait_match_' + rowHash_(text);
 }
 function aiMatchIssueRun_(data, category, isCourse) {
@@ -5019,6 +5033,7 @@ function writeIssueCell_(found, key, value) {
 }
 // Delete the row that holds THIS issue, wherever it has moved to.
 function deleteIssueRow_(found) {
+  bumpIssueMatchGen_();   // r232: a match answer may point at the issue going
   if (found && found.store) {   // r208.4
     var gid = String(found.original.issue_id || found.record.issue_id);
     var del = storeCall_({ op: 'delete', tbl: 'issues', key: gid });
@@ -10655,7 +10670,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r231 · 2026-10-11';
+var CODE_STAMP = 'r232 · 2026-10-11';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

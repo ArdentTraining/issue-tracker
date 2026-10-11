@@ -3783,7 +3783,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r229.1 · 2026-10-10";  // bump this with each round, it lands on every feedback report
+var BUILD = "r232 · 2026-10-11";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -14421,16 +14421,30 @@ function askDupMatcher() {
     return isOpen(i) && catOf(i) === state.category && String(i.section || "").toLowerCase() === mySection &&
       (Date.now() - new Date(i.submitted_at || 0).getTime()) < 3 * 24 * 3600 * 1000;
   });
-  if (c.score < DUP_MAYBE && !recentSame) return;
   var raw = String(getField("rawText") || "");
   if (!raw) return;
+  // r232 (Edd, 11 Oct): ask anyway when nothing looks close, but quietly. The
+  // submit asks the same question, and the backend keeps the answer, so asking
+  // now while the instructor checks the form takes ~3s off pressing Log. The
+  // fields are exactly what the submit will send (collectForm), or the saved
+  // answer would not be found. Nothing is shown from a quiet ask: what the
+  // instructor is offered is unchanged.
+  if (c.score < DUP_MAYBE && !recentSame) {
+    try {
+      var f = collectForm();
+      apiPost({ action: "sameIssue", category: f.category, summary: f.summary, raw_text: f.raw_text,
+        lesson_code: f.lesson_code, device_info: f.device_info }).catch(function () {});
+    } catch (e) {}
+    return;
+  }
+  var ff = collectForm();   // r232: the same fields the submit sends, so its answer is reused
   apiPost({
     action: "sameIssue",
-    category: state.category,
-    summary: getField("f_summary"),
-    raw_text: raw.slice(0, 6000),
-    lesson_code: getField("f_lesson_code"),
-    device_info: getField("f_device_info")
+    category: ff.category,
+    summary: ff.summary,
+    raw_text: ff.raw_text,
+    lesson_code: ff.lesson_code,
+    device_info: ff.device_info
   }).then(function (res) {
     if (!res || !res.ok || !res.match_id) return;
     // They may have moved on since we asked.
