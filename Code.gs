@@ -4678,6 +4678,15 @@ function sameIssue_(data) {
   try { id = aiMatchIssue_(data, category); } catch (e) {
     return { ok: false, error: String(e) };
   }
+  // r232.1: remember who asked and for what, so a submit that finds no saved
+  // answer can say whether the form asked at all, or asked about different text.
+  try {
+    var who = (data._user && data._user.email) || '';
+    var c = CacheService.getScriptCache(), list = [];
+    try { list = JSON.parse(c.get('ait_match_asks') || '[]'); } catch (e) { list = []; }
+    list.unshift({ at: Date.now(), who: who, key: aiMatchKey_(data, category), quiet: !!data.quiet });
+    c.put('ait_match_asks', JSON.stringify(list.slice(0, 30)), 21600);
+  } catch (e) {}
   return { ok: true, match_id: id || null };
 }
 
@@ -4703,6 +4712,14 @@ function aiMatchIssue_(data, category) {
     mcache = CacheService.getScriptCache();
     var mhit = mcache.get(mkey);
     fileTag_('match_cached', mhit != null);
+    if (mhit == null && FILE_T_) {
+      try {
+        var who0 = (data._user && data._user.email) || '', asks = JSON.parse(mcache.get('ait_match_asks') || '[]');
+        var mine = asks.filter(function (a) { return a.who === who0 && Date.now() - a.at < 30 * 60000; });
+        fileTag_('form_asked', mine.length ? (mine[0].key === mkey ? 'same_text_but_stale' : 'different_text') : 'no');
+        if (mine.length) fileTag_('asked_s_ago', Math.round((Date.now() - mine[0].at) / 1000));
+      } catch (e) {}
+    }
     if (mhit != null) return mhit === '-' ? null : mhit;
   } catch (e) { mcache = null; }
   var found = aiMatchIssueRun_(data, category, isCourse);
@@ -10670,7 +10687,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r232 · 2026-10-11';
+var CODE_STAMP = 'r232.1 · 2026-10-12';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
