@@ -4684,7 +4684,7 @@ function sameIssue_(data) {
     var who = (data._user && data._user.email) || '';
     var c = CacheService.getScriptCache(), list = [];
     try { list = JSON.parse(c.get('ait_match_asks') || '[]'); } catch (e) { list = []; }
-    list.unshift({ at: Date.now(), who: who, key: aiMatchKey_(data, category), quiet: !!data.quiet });
+    list.unshift({ at: Date.now(), who: who, key: aiMatchKey_(data, category), quiet: !!data.quiet, parts: aiMatchParts_(data, category) });
     c.put('ait_match_asks', JSON.stringify(list.slice(0, 30)), 21600);
   } catch (e) {}
   return { ok: true, match_id: id || null };
@@ -4717,6 +4717,14 @@ function aiMatchIssue_(data, category) {
         var who0 = (data._user && data._user.email) || '', asks = JSON.parse(mcache.get('ait_match_asks') || '[]');
         var mine = asks.filter(function (a) { return a.who === who0 && Date.now() - a.at < 30 * 60000; });
         fileTag_('form_asked', mine.length ? (mine[0].key === mkey ? 'same_text_but_stale' : 'different_text') : 'no');
+        // r232.2: which field changed between the form's ask and the submit.
+        if (mine.length && mine[0].parts) {
+          var now2 = aiMatchParts_(data, category), was2 = mine[0].parts, diff = [];
+          Object.keys(now2).forEach(function (k) { if (k !== 'rn' && k !== 'sn' && now2[k] !== was2[k]) diff.push(k); });
+          fileTag_('changed', diff.join(',') || 'none');
+          if (now2.rn !== was2.rn) fileTag_('raw_len', was2.rn + '->' + now2.rn);
+          if (now2.sn !== was2.sn) fileTag_('summary_len', was2.sn + '->' + now2.sn);
+        }
         if (mine.length) fileTag_('asked_s_ago', Math.round((Date.now() - mine[0].at) / 1000));
       } catch (e) {}
     }
@@ -4737,6 +4745,13 @@ function issueMatchGen_() {
 }
 function bumpIssueMatchGen_() {
   try { CacheService.getScriptCache().put(ISSUE_MATCH_GEN_KEY_, String(Date.now()) + '.' + Math.floor(Math.random() * 1e6), 21600); } catch (e) {}
+}
+// r232.2: the key's parts, each hashed short, so a miss can say what moved.
+function aiMatchParts_(data, category) {
+  var h = function (v) { return rowHash_(String(v == null ? '' : v)).slice(0, 8); };
+  var raw = String(data.raw_text || '').slice(0, 6000), sum = String(data.summary || '');
+  return { category: h(category), lesson: h(String(data.lesson_code || '').trim().toLowerCase()), summary: h(sum),
+    raw: h(raw), device: h(data.device_info), gen: h(issueMatchGen_()), rn: raw.length, sn: sum.length };
 }
 function aiMatchKey_(data, category) {
   var text = [String(category || ''), String(data.lesson_code || '').trim().toLowerCase(),
@@ -10687,7 +10702,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r232.1 · 2026-10-12';
+var CODE_STAMP = 'r232.2 · 2026-10-15';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
