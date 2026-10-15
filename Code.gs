@@ -10702,7 +10702,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r232.2 · 2026-10-15';
+var CODE_STAMP = 'r233 · 2026-10-15';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -15879,6 +15879,46 @@ function inboxPayload_(p) {
   return d;
 }
 
+// r233 (Edd, 15 Oct 2026: close, merge and downgrade from the overdue list,
+// with the browser link down). The inbox could only add notes, so a status
+// change or a merge needed someone at the tracker. An update row can now carry
+// an op, which keeps the table's kind check (issue | update) as it is:
+//   op 'status': issue_id + any of status, priority, severity, request_kind,
+//                resolution_note. Nothing else is accepted.
+//   op 'link':   issue_id is the issue that stays; source_id is merged into it
+//                and goes, exactly as Link on an issue does (r225 rules, so a
+//                closed target reopens).
+// Either can carry raw_text/summary, which lands as a note on the issue so the
+// trail says what was done and why. Run as Claude with admin rights for these
+// two ops only; a plain update keeps the filer's ordinary rights.
+var INBOX_STATUS_KEYS_ = { status: 1, priority: 1, severity: 1, request_kind: 1, resolution_note: 1 };
+function inboxOp_(data) {
+  var admin = { name: INBOX_FILER.name, email: INBOX_FILER.email,
+    perms_json: JSON.stringify({ manage: true, users: true }) };
+  var r, keepId = data.issue_id;
+  if (data.op === 'status') {
+    var upd = { issue_id: data.issue_id, _user: admin };
+    var any = false;
+    Object.keys(INBOX_STATUS_KEYS_).forEach(function (k) {
+      if (data.hasOwnProperty(k) && data[k] !== '' && data[k] != null) { upd[k] = data[k]; any = true; }
+    });
+    if (!any) return { ok: false, error: "op 'status' needs at least one of: " + Object.keys(INBOX_STATUS_KEYS_).join(', ') };
+    r = updateIssue_(upd);
+  } else if (data.op === 'link') {
+    if (!data.source_id) return { ok: false, error: "op 'link' needs source_id (the issue that is merged in and goes)" };
+    r = linkIssues_({ source_id: data.source_id, target_id: data.issue_id, _user: admin });
+  } else {
+    return { ok: false, error: 'unknown op ' + data.op };
+  }
+  if (!r || !r.ok) return r || { ok: false, error: 'no answer' };
+  if (data.raw_text || data.summary) {
+    try {
+      addUpdate_({ issue_id: keepId, keep_status: true, summary: data.summary || '', raw_text: data.raw_text || data.summary, _user: INBOX_FILER, app_url: data.app_url });
+    } catch (e) {}
+  }
+  return { ok: true, issue_id: keepId, reopened: !!r.reopened };
+}
+
 function claudeInbox() {
   var t = mintPortalTicket_({
     email: 'inbox@ardent-training.com',
@@ -15906,7 +15946,10 @@ function claudeInbox() {
     var r, out;
     try {
       var data = inboxPayload_(it.payload);
-      if (it.kind === 'update') {
+      if (it.kind === 'update' && data.op) {
+        if (!data.issue_id) throw new Error('an update needs payload.issue_id');
+        r = inboxOp_(data);
+      } else if (it.kind === 'update') {
         if (!data.issue_id) throw new Error('an update needs payload.issue_id');
         r = addUpdate_(data);
       } else {
