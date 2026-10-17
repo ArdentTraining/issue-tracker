@@ -691,6 +691,7 @@ function doPost(e) {
     if (action === 'getManifest') return jsonOut(getManifest_(body));
     if (action === 'deployBackend') return jsonOut(deployBackend_(body));
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
+    if (action === 'setTicketSecrets') return jsonOut(setTicketSecrets_(body));   // r235: machine + nudge signing keys, DEPLOY_KEY gated
     if (action === 'setChatwootConfig') return jsonOut(setChatwootConfig_(body));
     if (action === 'setSlackChannel') return jsonOut(setSlackChannel_(body));   // r107: per-channel webhook, DEPLOY_KEY-gated
     if (action === 'chatwootProbe') return jsonOut(chatwootProbe_(body));
@@ -1271,7 +1272,7 @@ function reqPerm_(action) {
     // which means nobody decided who should be allowed to call it. The public
     // and key-gated actions (login, acceptInvite, requestPasswordReset, ping,
     // mirror, getInvite, getManifest, deployBackend, runSetup, setSlackWebhook,
-    // setChatwootConfig, runMigrateAudience, backtest) all return from doGet /
+    // setTicketSecrets, setChatwootConfig, runMigrateAudience, backtest) all return from doGet /
     // doPost before this gate, so they are unaffected.
     default: return 'none';
   }
@@ -2201,7 +2202,7 @@ function mirrorGetFull_(id) {
 }
 function mirrorTicket_() {
   var t = mintPortalTicket_({ email: 'mirror@ardent-training.com', name: 'Tracker mirror',
-    perms_json: JSON.stringify({ mirror_sync: true }) }, 'mirror_sync');
+    perms_json: JSON.stringify({ mirror_sync: true }) }, 'mirror_sync', null, { machine: true, aud: 'mirror' });   // r235
   if (!t.ok) throw new Error('no mirror ticket: ' + t.error);
   return t.ticket;
 }
@@ -2311,7 +2312,7 @@ var STORE_TICKET_ = null;
 function storeTicket_() {
   if (STORE_TICKET_ && STORE_TICKET_.until > Date.now()) return STORE_TICKET_.t;
   var t = mintPortalTicket_({ email: 'store@ardent-training.com', name: 'Tracker store',
-    perms_json: JSON.stringify({ store_rw: true }) }, 'store_rw', 10);
+    perms_json: JSON.stringify({ store_rw: true }) }, 'store_rw', 10, { machine: true, aud: 'store' });   // r235
   if (!t.ok) throw new Error('no store ticket: ' + t.error);
   STORE_TICKET_ = { t: t.ticket, until: Date.now() + 8 * 60 * 1000 };
   return t.ticket;
@@ -3006,18 +3007,25 @@ function storeSheetCatchUp_() {
  */
 var SAVE_URL = 'https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/tracker-save';
 var NUDGE_ID_ = 'store-edge@ardent-training.com';
+// r235: the nudge is signed by tracker-save with TRACKER_NUDGE_SECRET, a key
+// that signs nothing else, so a fault in that function cannot mint a staff or
+// store ticket. Until the property is set here, the people key is still
+// accepted, so the switch-over never drops a nudge.
 function verifyTicket_(raw) {
   try {
-    var secret = PropertiesService.getScriptProperties().getProperty('REPORTS_TICKET_SECRET');
+    var props = PropertiesService.getScriptProperties();
+    var secrets = [props.getProperty('TRACKER_NUDGE_SECRET'), props.getProperty('REPORTS_TICKET_SECRET')].filter(function (s) { return !!s; });
     raw = String(raw || '');
     var dot = raw.indexOf('.');
-    if (!secret || dot < 1) return null;
+    if (!secrets.length || dot < 1) return null;
     var p = raw.slice(0, dot), sig = raw.slice(dot + 1);
-    if (b64UrlEncode_(Utilities.computeHmacSha256Signature(p, secret)) !== sig) return null;
+    var signed = secrets.some(function (s) { return b64UrlEncode_(Utilities.computeHmacSha256Signature(p, s)) === sig; });
+    if (!signed) return null;
     var padded = p + '===='.slice((p.length % 4) || 4);
     var t = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(padded)).getDataAsString());
     var now = Math.floor(Date.now() / 1000);
     if (typeof t.exp !== 'number' || now > t.exp + 60 || typeof t.iat !== 'number' || t.iat > now + 60) return null;
+    if (t.aud !== undefined && t.aud !== 'nudge') return null;   // a ticket for another job is not a nudge
     return t;
   } catch (e) { return null; }
 }
@@ -6967,6 +6975,32 @@ function setSlackWebhook_(data) {
   return { ok: true };
 }
 
+// r235: set or rotate the machine and nudge signing keys the same way. Values
+// travel in the POST body and land in Script Properties; the same values go
+// into the Supabase function secrets MACHINE_TICKET_SECRET and
+// TRACKER_NUDGE_SECRET. Either may be left out to leave it as it is. Answers
+// with which are set and how long they are, never the values.
+function setTicketSecrets_(data) {
+  var props = PropertiesService.getScriptProperties();
+  var key = props.getProperty('DEPLOY_KEY');
+  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  var set = [];
+  [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET']].forEach(function (pair) {
+    var v = data[pair[0]];
+    if (v === undefined || v === null || v === '') return;
+    v = String(v).trim();
+    if (v.length < 32) throw new Error(pair[0] + ' secret must be at least 32 characters');
+    props.setProperty(pair[1], v);
+    set.push(pair[1]);
+  });
+  STORE_TICKET_ = null;   // the cached store ticket was signed with the old key
+  return {
+    ok: true, set: set,
+    machine_len: (props.getProperty('MACHINE_TICKET_SECRET') || '').length,
+    nudge_len: (props.getProperty('TRACKER_NUDGE_SECRET') || '').length
+  };
+}
+
 // ---- Chatwoot ------------------------------------------------------------
 // Instructors were copy-pasting live-chat transcripts by hand; this pulls them
 // straight from Chatwoot instead, with the student's name and email attached.
@@ -10806,7 +10840,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r234 · 2026-10-17';
+var CODE_STAMP = 'r235 · 2026-10-17';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -14782,13 +14816,41 @@ function irpcsTicket_(user) {
  * in this file having got its wiring right. Pass null to require nothing
  * beyond the authenticated session the dispatcher has already established.
  */
-function mintPortalTicket_(user, requiredPerm, minutes) {
-  var secret = PropertiesService.getScriptProperties().getProperty('REPORTS_TICKET_SECRET');
+/*
+ * r235 (17 Oct 2026, security sweep finding 3): two signing keys, not one.
+ *
+ * Until r235 every ticket, a person's and the tracker's own, was signed with
+ * REPORTS_TICKET_SECRET, so that one value opened Reports, Tasks, the IRPCS
+ * editor AND the store (tracker-store), which holds the user records with
+ * their session tokens and password hashes. Now:
+ *   people   REPORTS_TICKET_SECRET  (reportsTicket, trackerTicket, irpcsTicket,
+ *            fault-sweep's read-only analytics ticket) - aud 'portal'
+ *   machine  MACHINE_TICKET_SECRET  (store@, mirror@, inbox@) - aud names the
+ *            one function the ticket is for: 'store', 'mirror', 'inbox'
+ *   nudge    TRACKER_NUDGE_SECRET   signed by tracker-save, verified here only
+ * Each function checks the aud, so a ticket minted for one job cannot be
+ * replayed at another. While MACHINE_TICKET_SECRET is not yet set (the
+ * switch-over), machine tickets fall back to the people key and say so in
+ * the log; set both with the setTicketSecrets action (DEPLOY_KEY gated).
+ */
+var TICKET_AUD_PORTAL_ = 'portal';
+function mintPortalTicket_(user, requiredPerm, minutes, opts) {
+  opts = opts || {};
+  var props = PropertiesService.getScriptProperties();
+  var secretName = opts.machine ? 'MACHINE_TICKET_SECRET' : 'REPORTS_TICKET_SECRET';
+  var secret = props.getProperty(secretName);
+  if (!secret && opts.machine) {
+    // Switch-over only: the machine key is not set yet, so sign with the
+    // people key as before. Loud in the log, because this is the state r235
+    // exists to end.
+    secret = props.getProperty('REPORTS_TICKET_SECRET');
+    if (secret) Logger.log('mintPortalTicket_: MACHINE_TICKET_SECRET not set; ' + (opts.aud || 'machine') + ' ticket signed with the people key');
+  }
   if (!secret) {
     // Configuration fault, not a permissions one, and worth saying so plainly:
     // silently returning "denied" here would send someone hunting through the
     // user list for a permission problem that does not exist.
-    return { ok: false, error: 'REPORTS_TICKET_SECRET is not set in Script Properties' };
+    return { ok: false, error: secretName + ' is not set in Script Properties' };
   }
 
   var pub = publicUser_(user);
@@ -14805,6 +14867,9 @@ function mintPortalTicket_(user, requiredPerm, minutes) {
     // costs nothing and it means adding a second view with a different
     // permission later needs no change on this side.
     perms: perms,
+    // r235: what the ticket is for. A person's ticket is for the portal
+    // functions; a machine ticket names the one function that may accept it.
+    aud: opts.aud || TICKET_AUD_PORTAL_,
     iat: now,
     exp: now + (minutes || REPORTS_TICKET_MINUTES) * 60
   };
@@ -16028,7 +16093,7 @@ function claudeInbox() {
     email: 'inbox@ardent-training.com',
     name: 'Claude inbox',
     perms_json: JSON.stringify({ inbox: true })
-  }, 'inbox');
+  }, 'inbox', null, { machine: true, aud: 'inbox' });   // r235
   if (!t.ok) { Logger.log('claudeInbox: no ticket (' + t.error + ')'); return { ok: false, error: t.error }; }
 
   var claimed;
