@@ -748,6 +748,14 @@
   #liveView h3.acc-h.acc-closed::before { content: "\25B8"; }
   #liveView h3.acc-h:hover { color: var(--accent); }
   #liveView .acc-hide { display: none !important; }
+  /* FB-0473 */
+  #liveView .log-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    width: 150px; height: 120px; margin: 4px 0 18px; padding: 10px; border-radius: 12px; font-size: 15px; font-weight: 600; line-height: 1.2; text-align: center; }
+  #liveView .log-tile-plus { font-size: 38px; line-height: 1; font-weight: 400; }
+  #liveView .live-tools { flex-direction: row !important; flex-wrap: wrap; align-items: center; gap: 8px !important; }
+  #liveView .live-tools > button { flex: 0 0 auto; width: auto; }
+  #liveView .live-tools > input { flex: 1 1 220px; max-width: 340px; }
+  @media (max-width: 720px) { #liveView .live-tools > input { flex: 1 1 100% !important; max-width: none !important; } }
   #liveView h3.acc-h[data-acc-count]::after { content: " (" attr(data-acc-count) ")"; color: var(--muted); font-weight: 400; }
   .rail-item {
     background: transparent; border: none; border-radius: 10px;
@@ -1602,13 +1610,14 @@
 
 <!-- ===================== LIVE CASES (Round 45) ===================== -->
 <div id="liveView" class="wrap hidden">
-  <!-- FB-0465 (Edd): a second way into the log form, at the top of Today. -->
-  <div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
-    <h2 style="margin:0;">Today</h2>
-    <button type="button" class="primary small" data-perm="log" style="padding:6px 14px;white-space:nowrap;" onclick="railGo('instructor')">Log new issue</button>
-  </div>
-  <p class="small muted" style="margin-top:-6px;">Current conversations first - pull a chat in, see where it stands, and the report falls out of it. Everything else waiting on an instructor is underneath. Cases are shared: anyone can pick one up and carry on.</p>
-  <div class="row" style="margin-bottom:14px;gap:8px;">
+  <h2 style="margin:0 0 6px;">Today</h2>
+  <p class="small muted" style="margin-top:0;">Current conversations first - pull a chat in, see where it stands, and the report falls out of it. Everything else waiting on an instructor is underneath. Cases are shared: anyone can pick one up and carry on.</p>
+  <!-- FB-0465 put a second way into the log form at the top of Today. FB-0473
+       (Edd, 17 Oct): make it a big square button above Open in Chatwoot. -->
+  <button type="button" class="primary log-tile" data-perm="log" onclick="railGo('instructor')"><span class="log-tile-plus" aria-hidden="true">+</span><span>Log a new issue</span></button>
+  <!-- FB-0473: these belong to the chats, so renderLive puts this row inside
+       the Open in Chatwoot section, under its heading, and it folds with it. -->
+  <div class="row live-tools" id="liveTools" style="margin-bottom:12px;gap:8px;">
     <input id="liveCwInput" placeholder="Chatwoot link or number" autocomplete="one-time-code" style="flex:1;min-width:0;max-width:340px;" onkeydown="if(event.key==='Enter'){event.preventDefault();openLiveCase();}" />
     <button type="button" class="primary" style="white-space:nowrap;" onclick="openLiveCase()">Open a case</button>
     <button type="button" class="ghost" style="white-space:nowrap;" onclick="openChatwootPicker(openLiveCaseFromPicker)">Browse recent</button>
@@ -2961,7 +2970,7 @@
   <p>A student is in touch right now and the question is what to say. The top of <span class="ui">Today</span> is where those live: a Chatwoot conversation is pulled in, read, and given a written brief, so the report falls out of the conversation instead of being typed up separately afterwards.</p>
   <figure class="man-shot" data-img="manual/13-chats.jpg" data-cap="The case list on the left, the brief on the right. Cases are shared, so anyone can pick one up."></figure>
   <h4>Opening a case</h4>
-  <p>Paste a Chatwoot link or number - the # it comes with is fine - and press <span class="ui">Open a case</span>, or press <span class="ui">Browse recent</span> and pick one. The list is headed <span class="ui">Open cases</span> with the count, and a case whose conversation is snoozed or pending in Chatwoot carries a small chip saying so - a snooze means "come back to this", so the case deliberately stays. Underneath there is an <span class="ui">Open in Chatwoot</span> section showing conversations that are open over there with no case on them yet.</p>
+  <p>The big <span class="ui">Log a new issue</span> button at the top of Today goes straight to the log form. Under it is the <span class="ui">Open in Chatwoot</span> section, with the count: every conversation open over there, whether or not somebody has opened a case on it yet (those carry a <span class="ui">not picked up</span> chip). Open the section and the box at its top takes a Chatwoot link or number - the # it comes with is fine - then <span class="ui">Open a case</span>, or press <span class="ui">Browse recent</span> and pick one. A case whose conversation is snoozed or pending in Chatwoot carries a small chip saying so - a snooze means "come back to this", so the case deliberately stays.</p>
   <h4>What the brief tells you</h4>
   <ul>
     <li><span class="ui">Where this stands</span>, in a couple of lines, plus the student's device.</li>
@@ -3088,9 +3097,9 @@
     The investigator reads real conversations, so a record contains real names and real emails. Nothing in it is student-facing and nothing leaves it unless somebody publishes.
   </div>
   <h4>Starting one</h4>
-  <p>Open any issue and press <span class="ui">Promote to RCA</span>. That takes us over to the RCA page with the new record open, so it is worth finishing anything else on the issue first. It only takes a couple of seconds, because all it does at that point is snapshot the issue and find the Chatwoot conversations named in it. No investigating happens until we ask a question.</p>
+  <p>Open any issue and press <span class="ui">Promote to RCA</span>. That takes us over to the RCA page with the new record open, so it is worth finishing anything else on the issue first. Promoting snapshots the issue and finds the Chatwoot conversations named in it, then the investigator starts on its own: it gathers the evidence, rebuilds the incident log, and comes back with what it thinks is going on, how sure it is, and where it thinks we should start. That first answer takes a minute or two, and the opening message says it was started automatically.</p>
   <p>Pressing it on an issue that already has a record just opens that record, so there is no way to end up with two on the same fault.</p>
-  <p>The snapshot is a starting point rather than the evidence. The promoted issue is assumed to undercount, because it only holds what somebody wrote down, so the usual opening move is to ask it to build the incident log from Chatwoot itself. The empty record says as much.</p>
+  <p>The snapshot is a starting point rather than the evidence. The promoted issue is assumed to undercount, because it only holds what somebody wrote down, which is why the automatic first run rebuilds the incident log from Chatwoot itself rather than trusting it.</p>
   <h4>Working it</h4>
   <p>Type into the box at the bottom and press <span class="ui">Send</span>. Every tool the investigator has is read-only, so the worst any of them can do is read something. It can go through Chatwoot, the tracker, and the infrastructure timeline.</p>
   <p>A single message can take a minute or two, because it will often make several rounds of tool calls before it answers, and it says <em>investigating - tool calls can take a minute or two…</em> while it does. There is no cancel, so it is worth asking one clear thing at a time.</p>
@@ -3783,7 +3792,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r236 · 2026-10-17";  // bump this with each round, it lands on every feedback report
+var BUILD = "r237 · 2026-10-17";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6917,10 +6926,27 @@ function rcaOpen(issueId) {
       rcaRender();
       $("rcaHome").style.display = "none";
       $("rcaPanel").classList.add("show");
+      // FB-0472 (Edd, 16 Oct 2026): "as soon as I promote to RCA it should
+      // start gathering evidence and analysing the situation, then tell me
+      // what it thinks we need to do." A record with nothing in it yet starts
+      // itself. Once per record per page, so opening it again while the first
+      // run is still going does not start a second one.
+      if (!state.rca.messages.length) rcaKickoff();
     });
   }).catch(function (e) { busyHide(); toast("RCA error - see console."); console.error(e); });
 }
 function rcaClose() { state.rca = null; renderRcaHome(); }
+state.rcaKicked = {};
+var RCA_KICKOFF_TEXT = "(Started automatically when this was promoted.) Begin the investigation without waiting for me. " +
+  "Gather the evidence you can reach: the issue and any related issues, every Chatwoot conversation on it read in full, and the deploy log. " +
+  "Rebuild the incident log from that. Then tell me, briefly: what you think is going on and how sure you are, " +
+  "the hypotheses still open, where you think we should start, the first thing you would test or ask a student, and anything you need from us.";
+function rcaKickoff() {
+  var r = state.rca; if (!r || !r.rec) return;
+  if (state.rcaKicked[r.rec.id]) return;
+  state.rcaKicked[r.rec.id] = true;
+  rcaSend(RCA_KICKOFF_TEXT);
+}
 function rcaRender() {
   var r = state.rca; if (!r) return;
   $("rcaIssueRef").textContent = "#" + String(r.rec.issue_id).slice(0, 8).toUpperCase();
@@ -6930,7 +6956,7 @@ function rcaRender() {
   $("rcaTestPassed").checked = !!r.rec.verification_passed;
   $("rcaUsage").textContent = Math.round(((r.rec.usage_input_tokens || 0) + (r.rec.usage_output_tokens || 0)) / 1000) + "k tokens used" + (r.rec.published_at ? " · published " + fmtDate(r.rec.published_at) : "");
   var host = $("rcaMsgs");
-  host.innerHTML = r.messages.map(rcaMsgHtml).join("") || '<p class="muted small">A fresh record, seeded from the issue. Say where to start - "build the incident log" is the usual opening move.</p>';
+  host.innerHTML = r.messages.map(rcaMsgHtml).join("") || '<p class="muted small">A fresh record, seeded from the issue. The investigator starts on its own and comes back with where it thinks we should start.</p>';
   host.scrollTop = host.scrollHeight;
 }
 function rcaMsgHtml(m) {
@@ -7446,7 +7472,22 @@ function todayAccToggle(h) {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);
   else wire();
 })();
+// FB-0473 (Edd, 17 Oct 2026): "the open a case, browse recent etc should be
+// inside the open in chatwoot". The row is one node kept for the page's life,
+// so the half-typed link survives a redraw; every redraw of the list puts it
+// back straight under the section heading (or first, when there is no heading),
+// which also means the fold hides it along with the chats.
 function renderLive() {
+  var tools = $("liveTools");
+  renderLiveList_();
+  var el = $("liveList");
+  if (!el || !tools) return;
+  var h = el.querySelector(":scope > h3");
+  if (h) el.insertBefore(tools, h.nextSibling);
+  else el.insertBefore(tools, el.firstChild);
+  if (typeof todayAccordions === "function") todayAccordions();
+}
+function renderLiveList_() {
   var el = $("liveList");
   if (!el) return;
   var cases = state.liveCases || [];
@@ -13085,6 +13126,8 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 65, date: "2026-10-17", who: ["users"], text: "Promote to RCA now gets straight on with it: the investigator gathers the evidence and comes back with what it thinks is going on and where to start." },
+  { n: 64, date: "2026-10-17", who: ["log"], text: "Log a new issue is now a big button at the top of Today, and Open a case, Browse recent and Refresh have moved inside the Open in Chatwoot section." },
   { n: 63, date: "2026-10-10", who: ["log"], text: "Today now opens with its sections folded, apart from Waiting on an instructor. A folded heading shows how many things are under it." },
   { n: 62, date: "2026-10-10", who: ["manage", "users"], text: "When Slack says a new report might be one we have already closed, there is now a Link these reports link that does it in one click, or you can reply same in the Slack thread. The closed issue reopens with both reports on it. Link (on an issue) also offers recently closed issues now." },
   { n: 61, date: "2026-10-10", who: ["log"], text: "Today's sections fold away: click a heading such as Open in Chatwoot or Waiting on an instructor to hide or show it, and it stays how you left it. There is also a Log new issue button at the top of Today." },
