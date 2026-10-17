@@ -3783,7 +3783,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r232.1 · 2026-10-12";  // bump this with each round, it lands on every feedback report
+var BUILD = "r236 · 2026-10-17";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11252,6 +11252,52 @@ var IRPCS_SHAPE_SETS = [
   ["ram_at_anchor", "Restricted, and at anchor"]
 ];
 var IRPCS_FLAGS = [["A", "Flag A (diver down)"], ["H", "Flag H (pilot on board)"]];
+// r236: plan views, radar plots and lights at night (app/figures.js, 10-11 Oct
+// 2026). The names are the contract, and irpcs-editor v22 checks them on save.
+var IRPCS_PLAN_SETS = [
+  ["channel_starboard", "In a narrow channel, keeping to the starboard side"],
+  ["channel_port", "In a narrow channel, over on the port side"],
+  ["channel_tacking", "Tacking up a narrow channel from side to side"],
+  ["channel_anchored", "Anchored in the middle of a narrow channel"],
+  ["channel_blind_bend", "Coming up to a blind bend in a narrow channel, sounding one long blast"],
+  ["channel_crossing", "Crossing a narrow channel"],
+  ["tss_cross_heading_90", "Crossing a traffic separation scheme with our heading at right angles to the traffic, the tide setting us along it"],
+  ["tss_cross_cog_90", "Crossing a traffic separation scheme crabbing into the tide, so our track over the ground is at right angles"],
+  ["tss_cross_tacking", "Crossing a traffic separation scheme by tacking"],
+  ["tss_cross_random", "Crossing a traffic separation scheme at whatever angle"],
+  ["tss_join_shallow", "Joining a lane from the side at as small an angle as we can, going with the traffic"],
+  ["tss_join_right_angle", "Joining a lane from the side at right angles"],
+  ["tss_join_wrong", "Joining a lane from the side, against the traffic"],
+  ["tss_zone_entry", "Turning out of the lane into the separation zone"],
+  ["tss_along", "Following the lane in the direction of traffic"],
+  ["tss_along_angle", "Running at an angle across the lane"],
+  ["tss_wrong_way", "Going the wrong way down the lane"],
+  ["tss_anchored", "Anchored inside the lane"]
+];
+var IRPCS_RADAR_SETS = [
+  ["risk_top_right", "Radar: a target fine on the starboard bow, bearing steady, range closing"],
+  ["risk_top_left", "Radar: a target fine on the port bow, bearing steady, range closing"],
+  ["risk_bottom_right", "Radar: a target on the starboard quarter, bearing steady, range closing"],
+  ["risk_bottom_left", "Radar: a target on the port quarter, bearing steady, range closing"],
+  ["risk_port_beam", "Radar: a target on the port beam, bearing steady, range closing"],
+  ["risk_stbd_beam", "Radar: a target on the starboard beam, bearing steady, range closing"],
+  ["clear_top_right", "Radar: a target on the starboard bow, bearing drawing right, passing clear"],
+  ["clear_top_left", "Radar: a target on the port bow, bearing drawing left, passing clear"],
+  ["clear_bottom_right", "Radar: a target on the starboard quarter, passing clear"],
+  ["clear_bottom_left", "Radar: a target on the port quarter, passing clear"]
+];
+// One list of picture choices, shared by the question, its answers and sort
+// items, so a new kind is added in one place rather than three.
+function irpcsFigureGroups(v) {
+  function grp(label, prefix, list) {
+    return '<optgroup label="' + label + '">' + list.map(function (x) { return '<option value="' + prefix + x[0] + '"' + (v === prefix + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>';
+  }
+  return grp("Day shapes", "shapes:", IRPCS_SHAPE_SETS) + grp("Flags", "flag:", IRPCS_FLAGS) +
+    grp("Plan views", "plan:", IRPCS_PLAN_SETS) + grp("Radar plots", "radar:", IRPCS_RADAR_SETS) +
+    '<option value="light"' + (v === "light" ? " selected" : "") + '>A light at night (chart character)</option>' +
+    (v === "encounter" ? '<option value="encounter" selected>An encounter from above (set by script)</option>' : "") +
+    ((v === "image" || v === "json") ? '<option value="' + v + '" selected>' + (v === "image" ? "A diagram from the library (edit as JSON)" : "Set in JSON") + '</option>' : "");
+}
 // The places a light or a shape can go on the build question, and what can go
 // there. Keys are the contract with app/build.js.
 var IRPCS_BUILD = {
@@ -11266,22 +11312,26 @@ function irpcsFigureValue(fig) {
   if (fig.kind === "flag") return "flag:" + fig.letter;
   if (fig.kind === "model") return "model";
   if (fig.kind === "image") return "image";
+  if (fig.kind === "plan" && fig.name) return "plan:" + fig.name;
+  if (fig.kind === "radar" && fig.name) return "radar:" + fig.name;
+  if (fig.kind === "light") return "light";
+  if (fig.kind === "encounter") return "encounter";
   return "json";
 }
 function irpcsFigureFrom(value, prev) {
   if (!value) return null;
   if (value.indexOf("shapes:") === 0) return { kind: "shapes", name: value.slice(7) };
   if (value.indexOf("flag:") === 0) return { kind: "flag", letter: value.slice(5) };
+  if (value.indexOf("plan:") === 0) return { kind: "plan", name: value.slice(5) };
+  if (value.indexOf("radar:") === 0) return { kind: "radar", name: value.slice(6) };
+  if (value === "light") return (prev && prev.kind === "light") ? prev : { kind: "light", char: "Fl 5s" };
   if (value === "model") return (prev && prev.kind === "model") ? prev : { kind: "model", preset: "power_under50", bearing: -35, night: false };
+  // "encounter", "image" and "json" are only ever the picture already there:
+  // they are kept exactly as they are, never rebuilt from the menu.
   return prev || null;
 }
 function irpcsFigureOptions(current) {
-  var v = irpcsFigureValue(current);
-  var out = '<option value="">No picture</option>' +
-    '<optgroup label="Day shapes">' + IRPCS_SHAPE_SETS.map(function (x) { return '<option value="shapes:' + x[0] + '"' + (v === "shapes:" + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>' +
-    '<optgroup label="Flags">' + IRPCS_FLAGS.map(function (x) { return '<option value="flag:' + x[0] + '"' + (v === "flag:" + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>';
-  if (v === "image" || v === "json") out += '<option value="' + v + '" selected>' + (v === "image" ? "A diagram from the library (edit as JSON)" : "Set in JSON") + '</option>';
-  return out;
+  return '<option value="">No picture</option>' + irpcsFigureGroups(irpcsFigureValue(current));
 }
 function irpcsOptText(o) { return (o && typeof o === "object") ? String(o.text || "") : String(o == null ? "" : o); }
 function irpcsOptFigure(o) { return (o && typeof o === "object" && o.figure) ? o.figure : null; }
@@ -11312,6 +11362,14 @@ function irpcsPovSelect(cur, onchange) {
     IRPCS_POVS.map(function (p) { return '<option value="' + p[0] + '"' + ((cur || "") === p[0] ? " selected" : "") + '>' + esc(p[1]) + '</option>'; }).join("") +
     '</select></div>';
 }
+// r236: the chart character on a light at night, e.g. Fl(2) 5s. irpcs-editor
+// refuses one it can't read, so a typo shows up on save rather than as a dark
+// buoy on the student's screen.
+function irpcsSetQFigureLight(v) {
+  var e = irpcs.edited; if (!e || !e.figure || e.figure.kind !== "light") return;
+  e.figure.char = String(v || "").trim();
+  irpcsMarkDirty();
+}
 function irpcsSetQFigureModel(k, v) {
   var e = irpcs.edited; if (!e || !e.figure || e.figure.kind !== "model") return;
   if (v === "" || v == null) delete e.figure[k]; else e.figure[k] = v;
@@ -11320,14 +11378,19 @@ function irpcsSetQFigureModel(k, v) {
 function irpcsQFigureForm(e) {
   var fig = e.figure || null, v = irpcsFigureValue(fig);
   var h = '<div class="fld"><label for="irf_qfig">Picture on the question</label>' +
-    '<p class="small muted" style="margin:0 0 4px;">Drawn between the question and the answers. A day shape, a flag, or one of the vessels by day.</p>' +
+    '<p class="small muted" style="margin:0 0 4px;">Drawn between the question and the answers. A day shape, a flag, one of the vessels, a channel or TSS from above, a radar plot, or a light at night.</p>' +
     '<select id="irf_qfig" onchange="irpcsSetQFigure(this.value)">' +
       '<option value="">No picture</option>' +
       '<option value="model"' + (v === "model" ? " selected" : "") + '>One of the vessels</option>' +
-      '<optgroup label="Day shapes">' + IRPCS_SHAPE_SETS.map(function (x) { return '<option value="shapes:' + x[0] + '"' + (v === "shapes:" + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>' +
-      '<optgroup label="Flags">' + IRPCS_FLAGS.map(function (x) { return '<option value="flag:' + x[0] + '"' + (v === "flag:" + x[0] ? " selected" : "") + '>' + esc(x[1]) + '</option>'; }).join("") + '</optgroup>' +
-      ((v === "image" || v === "json") ? '<option value="' + v + '" selected>Set in JSON</option>' : "") +
+      irpcsFigureGroups(v) +
     '</select>';
+  if (v === "light") {
+    h += '<div class="fld" style="margin-top:6px;max-width:260px;"><label for="irf_qlight">Chart character, e.g. Fl(2) 5s</label>' +
+      '<input id="irf_qlight" type="text" value="' + esc(fig.char || "") + '" placeholder="Fl(2) 5s" oninput="irpcsSetQFigureLight(this.value)"></div>';
+  }
+  if (v === "encounter") {
+    h += '<p class="small muted" style="margin:6px 0 0;">Built by tools/encounter-figures.mjs from its table, so it\'s kept exactly as it is when you save. Change it there and re-run the script.</p>';
+  }
   if (v === "model") {
     h += '<div class="row" style="gap:12px;flex-wrap:wrap;margin-top:6px;">' +
       '<div class="fld" style="flex:1;min-width:220px;"><label>Vessel</label><select onchange="irpcsSetQFigureModel(\'preset\', this.value)">' +
