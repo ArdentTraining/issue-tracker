@@ -66,7 +66,8 @@ var SLACK_NOTICES = {
   // looks at holds nobody to anything, so the breaches come to the channel the
   // developers are already in, once a week, naming the specific items rather
   // than posting a score. Same channel as the answers to their questions.
-  dev_targets:       { on: true,  to: 'SLACK_AUREUS_TECH' },
+  // r234 (Edd, 17 Oct 2026): "ditch this from them and us." Off everywhere.
+  dev_targets:       { on: false, to: 'SLACK_AUREUS_TECH' },
   // Off for good (Edd, 19 Aug 2026). All five still exist in the tracker.
   feedback:          { on: false, to: '' },
   weekly_digest:     { on: false, to: '' },
@@ -3028,9 +3029,12 @@ function storeNudge_(body) {
   ids.forEach(function (id) {
     var got = storeCall_({ op: 'get', tbl: 'issues', key: id });
     if (!got.ok || !got.row) return;
-    storeSheetCopy_(id, got.row.tab, storeRowToObj_(got.row, ''));
+    var obj234 = storeRowToObj_(got.row, '');
+    storeSheetCopy_(id, got.row.tab, obj234);
     touchIssue_(id);   // so the end of this request patches the cached board and re-pushes the mirror row
     copied++;
+    // r234: an update posted the quick way on a developers' issue.
+    aureusUpdate_(obj234, getAppUrl_(), false);
   });
   // r212: an update posted the fast way still gets its troubleshooting
   // tick-off, here, after the person has already been told it saved.
@@ -3060,6 +3064,7 @@ function storeNudge_(body) {
           try { proposePlaybookUpdate_(rec); } catch (e) {}
         }
         if (SLACK_ALERT_CLOSED_[st]) slackDeleteAlerts_(String(a.id));
+        if (st === 'with_dev' && String(a.was || '').toLowerCase() !== 'with_dev') aureusHanded_(rec, getAppUrl_());   // r234
       } else return;
       queue = true; after++;
     } catch (e) { storeShadowNote_('after', String(a.id) + ': ' + e); }
@@ -3727,6 +3732,7 @@ function fileAfterRun_(job, issue) {
   if (!issue) return '';
   if (job.fast_track_ask) { try { sendFastTrackRequestSlack_(issue, job.app_url); } catch (e) {} }
   if (job.slack) { try { sendSlack_(issue, job.app_url); } catch (slackErr) {} }
+  if (job.handed) aureusHanded_(issue, job.app_url);
   fileMark_('slack');
   if (job.returning) { try { checkReturningFault_(issue, job.app_url); } catch (e) {} }
   if (job.workaround) { try { checkSharedWorkaround_(issue, job.app_url); } catch (e) {} }
@@ -4199,7 +4205,9 @@ function addIssue_(data) {
     // Closed on a workaround: the third one this week is a fault.
     workaround: !!WORKAROUND_CLOSED_[String(issue.status).toLowerCase()],
     // Imported from a live chat: the internal note keeps the two joined up.
-    conv: String(data.chatwoot_conversation_id || '')
+    conv: String(data.chatwoot_conversation_id || ''),
+    // r234: routed straight to the developers at filing.
+    handed: String(issue.status) === 'with_dev' && String(issue.category || '').toLowerCase() === 'tech_issue' && !data._suppress_slack
   };
   if (after.slack) fileTag_('high', true);
   if (DEFER_AFTER_) {
@@ -4285,6 +4293,7 @@ function addReportToIssue_(id, data, report) {
   // BECOMING high (Edd, 18 Aug 2026), so an issue already sitting at high must
   // not ping again every time another report lands on it.
   var priorityBefore = String(rec.priority || '').toLowerCase();
+  var statusBefore234 = String(rec.status || '').toLowerCase();
   // A matching report is exactly the signal that pre-launch history is live
   // again (Edd, 20 Aug 2026): the stamp comes off and the issue is back on
   // everyone's board, with the trail saying why.
@@ -4431,6 +4440,9 @@ function addReportToIssue_(id, data, report) {
       rec.status !== 'resolved' && rec.status !== 'resolved_tbc') {
     try { sendSlack_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
+
+  // r234: more reports just tipped it over to the developers.
+  if (statusBefore234 !== 'with_dev' && !data._suppress_slack) aureusHanded_(rec, data.app_url || getAppUrl_());
 
   // r177: a fault we had closed is back. That is news whatever the priority
   // says, because somebody decided it was finished and it was not.
@@ -5127,6 +5139,7 @@ function updateIssue_(data) {
 
   var record = found.record;
   var wasResolved = String(record.status || '').toLowerCase() === 'resolved';
+  var wasWithDev234 = String(record.status || '').toLowerCase() === 'with_dev';
 
   // Without the manage permission, only the fix size may be tweaked. Priority
   // came OFF this list on 20 Aug 2026: FB-0265 made it admin-only and r87 took
@@ -5215,6 +5228,7 @@ function updateIssue_(data) {
 
   // r137: the alert has done its job once the issue is off the open list.
   if (SLACK_ALERT_CLOSED_[String(record.status || '').toLowerCase()]) slackDeleteAlerts_(id);
+  if (!wasWithDev234) aureusHanded_(record, data.app_url || getAppUrl_());
   maybeDevQueueAlert_();
   return { ok: true, issue_id: id, moved: targetName !== fromSheet, sheet: targetName };
 }
@@ -5505,6 +5519,7 @@ function addUpdate_(data) {
   if (WORKAROUND_CLOSED_[String(rec.status).toLowerCase()]) {
     try { checkSharedWorkaround_(rec, data.app_url || getAppUrl_()); } catch (e) {}
   }
+  if (!isNudge && !data._system) aureusUpdate_(rec, data.app_url || getAppUrl_(), !!data.to_developers);
   return { ok: true, issue_id: id, updated: true };
 }
 
@@ -5862,10 +5877,12 @@ function passToDev_(data) {
   }
   if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
   rec.dev_fixed_at = '';            // if it was previously fixed and is going back
+  var statusBefore234 = String(rec.status || '').toLowerCase();
   rec.status = 'with_dev';
   rec.updated_at = new Date().toISOString();
   var wr200 = writeIssueRow_(found, rec);
   if (!wr200.ok) return wr200;
+  if (statusBefore234 !== 'with_dev') aureusHanded_(rec, data.app_url || getAppUrl_());
   return { ok: true, fix_size: rec.fix_size || '', estimated: estimated ? estimated.size : '' };
 }
 
@@ -10644,6 +10661,93 @@ function slackWho_(issue) {
   return '*Student:* ' + (name && contact ? name + ' (' + contact + ')' : (name || contact));
 }
 
+// ===================== r234: AUREUS CHANNEL =====================
+// Edd, 17 Oct 2026. Three things go to the developers' own Slack channel
+// (Aureus's workspace, an incoming webhook in SLACK_AUREUS_TECH):
+//   1. an issue handed to them, with high priority called out;
+//   2. an update one of us posts on an issue that is with them, which is how
+//      we ask them things;
+//   3. our answer to a question they asked (sendQueryAnsweredSlack_, r146).
+// Nothing falls back to our channels: until the webhook is set, these simply
+// do not go, which is right, because they were never ours to read.
+function aureusPost_(text) {
+  var url = PropertiesService.getScriptProperties().getProperty('SLACK_AUREUS_TECH');
+  if (!url) return { ok: false, why: 'no Aureus webhook set' };
+  try {
+    var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ text: text }) });
+    return { ok: res.getResponseCode() === 200, code: res.getResponseCode() };
+  } catch (e) { return { ok: false, why: String(e).slice(0, 120) }; }
+}
+function aureusClip_(t, n) {
+  t = String(t || '').replace(/\r/g, '').trim();
+  return t.length > n ? t.slice(0, n).replace(/\s+\S*$/, '') + '…' : t;
+}
+// Only their work: a tech issue. Course errors sit on the same status but go
+// to our own course team.
+function isAureusWork_(rec) {
+  return String((rec && rec.category) || '').toLowerCase() === 'tech_issue';
+}
+// 1. Handed over. Called wherever an issue BECOMES with_dev. The cache stops
+// two of those paths announcing the same handover twice inside ten minutes.
+function aureusHanded_(rec, appUrl) {
+  try {
+    if (!rec || !isAureusWork_(rec) || String(rec.status || '').toLowerCase() !== 'with_dev') return;
+    var cache = CacheService.getScriptCache(), key = 'aureus_handed_' + rec.issue_id;
+    if (cache.get(key)) return;
+    var pri = String(rec.priority || '').toLowerCase();
+    var reps = parseInt(rec.report_count, 10) || 1;
+    var text = [
+      pri === 'high' ? ':red_circle: *High priority, new for the developers*' : ':hammer_and_wrench: *New for the developers*' + (pri ? ' (' + pri + ' priority)' : ''),
+      '*Summary:* ' + aureusClip_(slackSummary_(rec), 400),
+      reps > 1 ? '*Reports:* ' + reps + ' students so far' : null,
+      '',
+      'Open it: ' + issueLink_(rec, appUrl || getAppUrl_())
+    ].filter(function (l) { return l !== null; }).join('\n');
+    var r = aureusPost_(text);
+    if (r.ok) cache.put(key, '1', 600);
+  } catch (e) {}
+}
+// 2. An update from one of us on an issue that is with them. Read off the
+// newest entry on the trail, so the quick-save path (tracker-save, which only
+// nudges us afterwards) and addUpdate_ go through the same door. Their own
+// updates, team notes, questions, answers, Mark fixed, and anything the
+// tracker wrote itself stay out. Claude's notes go only when the filing asked
+// for it (to_developers), because most of them are housekeeping.
+var AUREUS_ROBOTS_ = { tracker: 1, 'overnight scan': 1, 'fetch update': 1, someone: 1, claude: 1 };
+function aureusUpdate_(rec, appUrl, force) {
+  try {
+    if (!rec || !isAureusWork_(rec) || String(rec.status || '').toLowerCase() !== 'with_dev') return;
+    var t = readTrail_(rec);
+    if (t.broken || !t.reps.length) return;
+    var e = t.reps[t.reps.length - 1];
+    if (String(e.kind || '') !== 'update' || e.fixed || e.team_note) return;
+    var when = Date.parse(String(e.date || ''));
+    if (isNaN(when) || Date.now() - when > 15 * 60 * 1000) return;   // only the one just posted
+    var note = String(e.raw_text || e.summary || '').trim();
+    if (!note) return;
+    var who = String(e.instructor_name || '').trim();
+    if (!force) {
+      if (!who || AUREUS_ROBOTS_[who.toLowerCase()]) return;
+      var f = findUserByField_('name', who);
+      if (!f || !f.user) return;
+      var pp = permsOf_(f.user);
+      if (!(pp.log || pp.manage || pp.users)) return;   // a developer's own update
+    }
+    var props = PropertiesService.getScriptProperties(), key = 'AUREUS_UPD_' + rec.issue_id;
+    if (props.getProperty(key) === String(e.date)) return;   // already sent
+    var quoted = aureusClip_(note, 1500).split('\n').map(function (l) { return '>' + (l ? ' ' + l : ''); }).join('\n');
+    var r = aureusPost_([
+      ':speech_balloon: *' + (who || 'Ardent') + ' posted an update*',
+      '*Issue:* ' + aureusClip_(slackSummary_(rec), 200),
+      quoted,
+      '',
+      'Open it: ' + issueLink_(rec, appUrl || getAppUrl_())
+    ].join('\n'));
+    if (r.ok) props.setProperty(key, String(e.date));
+  } catch (err) {}
+}
+
 function sendSlack_(issue, appUrl) {
   // r144 (Edd, 5 Sep 2026): "this one should be in the shipping issues channel
   // on slack as it is a shipping issue". Same alert, different room: the bot
@@ -10702,7 +10806,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r233 · 2026-10-15';
+var CODE_STAMP = 'r234 · 2026-10-17';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
