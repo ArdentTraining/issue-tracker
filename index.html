@@ -2162,7 +2162,7 @@
                onkeydown="if(event.key==='Enter'){event.preventDefault();customsFind();}" />
         <button class="primary" id="cu_findgo" onclick="customsFind()">Search</button>
       </div>
-      <div id="cu_findmsg" class="hint" style="margin-top:6px;">Searches the parcels we have posted, then the mailbox if nothing matches.</div>
+      <div id="cu_findmsg" class="hint" style="margin-top:6px;">Searches the parcels we have posted, then the instructor and info mailboxes if nothing matches.</div>
       <div id="cu_findlist" style="margin-top:8px;"></div>
     </div>
   </div>
@@ -2240,6 +2240,23 @@
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <button class="primary" id="cu_go" onclick="customsGenerate()">Make the invoice</button>
       <span id="cu_status" class="hint"></span>
+    </div>
+  </div>
+
+  <!-- r240: the shared mailboxes the parcel search falls back on. Admins only,
+       because it holds a credential; everyone else never sees this card. -->
+  <div class="card hidden" id="cu_mailcard" style="margin-top:14px;">
+    <h2>Shared mailboxes</h2>
+    <p class="hint" style="margin-top:-8px;">When ShipStation has nothing, the search reads these mailboxes for an order or courier email. It uses a Google service account, so it never needs anybody's password.</p>
+    <div id="cu_mailstate" class="small muted">Checking…</div>
+    <div id="cu_mailform" class="hidden" style="margin-top:10px;">
+      <div class="field"><label for="cu_mailboxes">Mailboxes to read</label><input id="cu_mailboxes" autocomplete="off" placeholder="instructor@ardent-training.com, info@ardent-training.com" /></div>
+      <div class="field"><label for="cu_mailkey">Service account key (the whole JSON file)</label>
+        <textarea id="cu_mailkey" rows="4" autocomplete="off" placeholder='{"type":"service_account", …}'></textarea></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="primary small" id="cu_mailsave" onclick="customsMailSave()">Save and check</button>
+        <span id="cu_mailmsg" class="hint"></span>
+      </div>
     </div>
   </div>
 
@@ -3036,7 +3053,7 @@
   <p>Paste the Chatwoot chat link and press <span class="ui">Pull the details</span>. The tracker reads the chat for the address, phone number, waybill and which pack it was, and checks the student's contact card and any invoice we have made them before. Under each box it says where the answer came from. Anything it could not find is highlighted in coral, and that is the list to ask the student for. On a shipping issue, the <span class="ui">Customs invoice</span> button does the same starting from the issue.</p>
   <p>The contents fill in from the pack. If this parcel was different, a missing item or a replacement, change the lines here and it only affects this invoice. Prices, HS codes and weights for good live in the CustomsPacks and CustomsPackItems tabs of the tracker's Google Sheet, so when the RYA change a price it gets changed there once.</p>
   <p>The declaration at the bottom is signed by whoever makes the invoice. Set your own printed name, title and signature once under <span class="ui">Signed by</span>, by drawing it or uploading a photo of it on white paper. Without one, your name prints over a blank line to sign by hand. Nobody else can use or change yours.</p>
-  <p>When the chat has nothing, <span class="ui">Or find the parcel</span> searches the parcels we have actually posted. Type the student's name, their email, their postcode or the waybill. It looks through the labels we bought over the last few months, and if nothing matches it reads the mailbox for an order or courier email about them. Pick the right parcel and it fills the address, phone and waybill, leaving anything you have already typed alone.</p>
+  <p>When the chat has nothing, <span class="ui">Or find the parcel</span> searches the parcels we have actually posted. Type the student's name, their email, their postcode or the waybill. It looks through the labels we bought over the last few months, and if nothing matches it reads the instructor and info mailboxes for an order or courier email about them. Pick the right parcel and it fills the address, phone and waybill, leaving anything you have already typed alone.</p>
   <p><span class="ui">Make the invoice</span> downloads a PDF to send and a Word copy in case something needs tweaking, and saves both in the tracker's Drive folder. The totals are added up by the tracker, not typed, so they always match the lines.</p>
   <p>Everything made shows under <span class="ui">Made recently</span>. If customs ask a second time, <span class="ui">Download</span> gives the identical invoice again, same number and date. <span class="ui">Copy</span> starts a new one from its details, for when the address or contents have changed.</p>
 </section>
@@ -3807,7 +3824,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r239.2 · 2026-10-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r240 · 2026-10-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9532,6 +9549,46 @@ function renderCustoms() {
   }
   customsHistory();
   customsLoadSigner();
+  if ((state.perms || {}).users) { $("cu_mailcard").classList.remove("hidden"); customsMailLoad(); }
+}
+
+// ---- Shared mailboxes (r240), admin only ----
+function customsMailLoad() {
+  apiPost({ action: "customsMailConfig" }).then(customsMailDraw).catch(function () { $("cu_mailstate").textContent = "Could not check the mailboxes."; });
+}
+function customsMailDraw(r) {
+  if (!r || !r.ok) { $("cu_mailstate").textContent = (r && r.error) || "Could not check the mailboxes."; return; }
+  if (!r.configured) {
+    $("cu_mailstate").innerHTML = '<span class="cu-warn">Not connected.</span> Until it is, a search that finds no parcel says so rather than reading any mail.';
+    $("cu_mailform").classList.remove("hidden");
+    if (!$("cu_mailboxes").value) $("cu_mailboxes").value = (r.boxes || []).join(", ");
+    return;
+  }
+  var good = (r.checks || []).filter(function (c) { return c.ok; });
+  var bad = (r.checks || []).filter(function (c) { return !c.ok; });
+  $("cu_mailstate").innerHTML = "Reading " + good.map(function (c) { return "<b>" + esc(c.box) + "</b>"; }).join(" and ") +
+    (good.length ? ". " : "") +
+    bad.map(function (c) { return '<span class="cu-warn">' + esc(c.box) + ": " + esc(c.why) + "</span>"; }).join("<br>") +
+    '<br><span class="muted">Key: ' + esc(r.client_email) + '</span> · <a href="#" onclick="customsMailEdit();return false;">Replace it</a>' +
+    ' · <a href="#" onclick="customsMailClear();return false;">Disconnect</a>';
+  $("cu_mailform").classList.add("hidden");
+  if (!$("cu_mailboxes").value) $("cu_mailboxes").value = (r.boxes || []).join(", ");
+}
+function customsMailEdit() { $("cu_mailform").classList.remove("hidden"); $("cu_mailkey").focus(); }
+function customsMailSave() {
+  var key = $("cu_mailkey").value.trim();
+  if (!key) { $("cu_mailmsg").textContent = "Paste the JSON key file first."; return; }
+  $("cu_mailsave").disabled = true; $("cu_mailmsg").textContent = "Saving and checking both mailboxes…";
+  apiPost({ action: "customsMailConfig", key_json: key, boxes: $("cu_mailboxes").value.trim() }).then(function (r) {
+    $("cu_mailsave").disabled = false;
+    if (!r || !r.ok) { $("cu_mailmsg").textContent = (r && r.error) || "That did not work."; return; }
+    $("cu_mailkey").value = ""; $("cu_mailmsg").textContent = "";
+    customsMailDraw(r);
+    toast((r.checks || []).every(function (c) { return c.ok; }) ? "Mailboxes connected." : "Saved, but one mailbox still says no.");
+  }).catch(function () { $("cu_mailsave").disabled = false; $("cu_mailmsg").textContent = "That did not work."; });
+}
+function customsMailClear() {
+  apiPost({ action: "customsMailConfig", clear: true }).then(function (r) { customsMailDraw(r); toast("Disconnected."); });
 }
 
 // ---- Signed by (r182.4): each instructor's own name, title and signature ----
@@ -9637,7 +9694,7 @@ function customsSaveSigner(remove) {
 function customsReset() {
   CUSTOMS_FIELDS.forEach(function (k) { var el = $("cu_" + k); if (el) el.value = ""; });
   ["cu_conv", "cu_freight", "cu_remarks", "cu_weight", "cu_reason", "cu_find"].forEach(function (id) { if ($(id)) $(id).value = ""; });
-  if ($("cu_findlist")) { $("cu_findlist").innerHTML = ""; $("cu_findmsg").textContent = "Searches the parcels we have posted, then the mailbox if nothing matches."; }
+  if ($("cu_findlist")) { $("cu_findlist").innerHTML = ""; $("cu_findmsg").textContent = "Searches the parcels we have posted, then the instructor and info mailboxes if nothing matches."; }
   customs.found = [];
   $("cu_terms").value = "";
   $("cu_date").value = new Date().toISOString().slice(0, 10);
@@ -10423,7 +10480,7 @@ function customsFind() {
     var notes = (r.notes || []).map(esc).join(" ");
     if (!customs.found.length) {
       $("cu_findmsg").innerHTML = esc("Nothing found for \u201c" + q + "\u201d in the last " + r.days + " days of parcels" +
-        (r.searched_mail ? ", or in the mailbox" : "") + ".") + (notes ? " " + notes : "");
+        (r.searched_mail ? ", or in the shared mailboxes" : "") + ".") + (notes ? " " + notes : "");
       return;
     }
     $("cu_findmsg").innerHTML = esc(customs.found.length === 1 ? "One parcel found." : customs.found.length + " parcels found, newest first.") + (notes ? " " + notes : "");
@@ -13227,6 +13284,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 67, date: "2026-10-20", who: ["log"], text: "The Customs parcel search can also read the instructor and info mailboxes for an order or courier email, when the parcels we posted do not have the student." },
   { n: 66, date: "2026-10-20", who: ["log"], text: "Customs invoice: a parcel search. If the chat does not have the address, type the student's name, email, postcode or waybill and it finds the parcel we posted, then fills the address, phone and waybill from the label." },
   { n: 65, date: "2026-10-17", who: ["users"], text: "Promote to RCA now gets straight on with it: the investigator gathers the evidence and comes back with what it thinks is going on and where to start." },
   { n: 64, date: "2026-10-17", who: ["log"], text: "Log a new issue is now a big button at the top of Today, and Open a case, Browse recent and Refresh have moved inside the Open in Chatwoot section." },

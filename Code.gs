@@ -793,6 +793,7 @@ function doPost(e) {
     if (action === 'customsList') return jsonOut(customsList_());
     if (action === 'customsFetch') return jsonOut(customsFetch_(body));
     if (action === 'customsFind') return jsonOut(customsFind_(body));
+    if (action === 'customsMailConfig') return jsonOut(customsMailConfig_(body));
     if (action === 'customsMySigner') return jsonOut(customsMySigner_(body));
     if (action === 'saveCustomsSigner') return jsonOut(saveCustomsSigner_(body));
     if (action === 'resourcesList') return jsonOut(resourcesList_());
@@ -1165,6 +1166,7 @@ function reqPerm_(action) {
     // r182: customs invoices. Anybody who logs issues can make one; it is the
     // same instructor job as chasing the parcel in the first place.
     case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': case 'customsFind': return 'log';
+    case 'customsMailConfig': return 'users';   // it holds a credential
     case 'customsMySigner': case 'saveCustomsSigner': return 'log';   // always the caller's own row
     // r188: the shipping report sits beside customs. r239 (FB-0474, Edd):
     // the report is the admins' only; instructors keep customs invoices.
@@ -3283,7 +3285,7 @@ var READ_ONLY_ACTIONS = {
   sameIssue: 1,
   // r182: customs invoices live in their own three tabs and never touch an
   // issue row, so the cached issue list is still true after any of them.
-  customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsFind: 1, customsMySigner: 1, saveCustomsSigner: 1,
+  customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsFind: 1, customsMailConfig: 1, customsMySigner: 1, saveCustomsSigner: 1,
   // r188: the shipping report keeps its own two tabs and never writes an issue.
   shipReport: 1, shipVolumesRefresh: 1, shipMonthlyPreview: 1, shipBackfill: 1, setShipConfig: 1,
   shipChangeSave: 1, shipChangeDelete: 1, shipCost: 1, shipCostHistory: 1, shipCostTolerance: 1,
@@ -10848,7 +10850,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r239.3 · 2026-10-20';
+var CODE_STAMP = 'r240 · 2026-10-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -15519,38 +15521,146 @@ function customsFindParcels_(q) {
   return { ok: true, parcels: hits.slice(0, CUSTOMS_FIND_HITS_), searched: 'labels', read: read, why: why };
 }
 
-// The mailbox, when ShipStation has nothing. This reads the account the script
-// runs as (Edd's), so it finds the order and courier mail that never reaches
-// Chatwoot. Gmail needs a permission the script did not used to hold: until
-// somebody opens the editor and runs authorizeGmail once, this says so rather
-// than failing quietly.
+// ---- The shared mailboxes (r240) ------------------------------------------
+// Edd: the parcel search should read instructor@ and info@, not his own
+// mailbox. Gmail only ever lets a script read the account it runs as, and the
+// tracker runs as Edd, so his sent mail to instructor@ was all it could see.
+// The way in is a service account: a robot account in the Workspace that an
+// admin allows to read those two mailboxes, read-only. The tracker holds its
+// key, asks Google for a pass good for an hour, and reads the mail with it.
+//
+// The key is a credential. It goes in Script Properties through the admin box
+// on the Customs page, never in this file (public repo) and never through
+// Claude. MAIL_BOXES is the only list the code will impersonate, so the pass
+// it asks for names one of those two addresses and nothing else.
+var MAIL_BOXES_DEFAULT_ = 'instructor@ardent-training.com,info@ardent-training.com';
+var MAIL_SCOPE_ = 'https://www.googleapis.com/auth/gmail.readonly';
+function mailBoxes_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('MAIL_BOXES') || MAIL_BOXES_DEFAULT_;
+  return raw.split(',').map(function (x) { return x.trim().toLowerCase(); }).filter(function (x) { return x.indexOf('@') > 0; });
+}
+function mailKey_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('MAIL_SA_JSON') || '';
+  if (!raw) return null;
+  try { var k = JSON.parse(raw); return (k.client_email && k.private_key) ? k : null; } catch (e) { return null; }
+}
+function mailB64_(s) { return Utilities.base64EncodeWebSafe(s).replace(/=+$/, ''); }
+// An hour's pass for one mailbox, cached for fifty minutes.
+function mailToken_(box) {
+  var cache = CacheService.getScriptCache(), ck = 'mail_tok_' + box;
+  try { var hit = cache.get(ck); if (hit) return hit; } catch (e) {}
+  var key = mailKey_();
+  if (!key) throw new Error('no service account key saved');
+  if (mailBoxes_().indexOf(String(box).toLowerCase()) < 0) throw new Error('that mailbox is not on the list');
+  var now = Math.floor(Date.now() / 1000);
+  var claim = { iss: key.client_email, sub: box, scope: MAIL_SCOPE_, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 };
+  var unsigned = mailB64_(JSON.stringify({ alg: 'RS256', typ: 'JWT' })) + '.' + mailB64_(JSON.stringify(claim));
+  var sig = Utilities.base64EncodeWebSafe(Utilities.computeRsaSha256Signature(unsigned, key.private_key)).replace(/=+$/, '');
+  var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'post', muteHttpExceptions: true,
+    payload: { grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: unsigned + '.' + sig }
+  });
+  var body = res.getContentText();
+  if (res.getResponseCode() !== 200) {
+    // The two that actually happen, said in words rather than Google's.
+    if (/unauthorized_client/.test(body)) throw new Error('Google has not been told to let this key read ' + box + ' yet (Admin console, API controls, Domain-wide delegation).');
+    if (/invalid_grant/.test(body)) throw new Error('Google refused the key for ' + box + '. Check the address exists and the key has not been deleted.');
+    throw new Error('Google said ' + res.getResponseCode() + ': ' + body.slice(0, 160));
+  }
+  var tok = JSON.parse(body).access_token;
+  try { cache.put(ck, tok, 3000); } catch (e) {}
+  return tok;
+}
+function mailGet_(box, path) {
+  var res = UrlFetchApp.fetch('https://gmail.googleapis.com/gmail/v1/users/' + encodeURIComponent(box) + '/' + path,
+    { headers: { Authorization: 'Bearer ' + mailToken_(box) }, muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw new Error('Gmail ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 160));
+  return JSON.parse(res.getContentText());
+}
+// The plain-text body, wherever Gmail has buried it in the parts tree.
+function mailBody_(payload) {
+  if (!payload) return '';
+  if (payload.body && payload.body.data && /^text\/plain/.test(payload.mimeType || '')) {
+    try { return Utilities.newBlob(Utilities.base64DecodeWebSafe(payload.body.data)).getDataAsString(); } catch (e) { return ''; }
+  }
+  var parts = payload.parts || [], out = '';
+  for (var i = 0; i < parts.length && !out; i++) out = mailBody_(parts[i]);
+  return out;
+}
+function mailHeader_(msg, name) {
+  var h = ((msg.payload || {}).headers || []).filter(function (x) { return String(x.name).toLowerCase() === name; })[0];
+  return h ? String(h.value) : '';
+}
+// Up to `max` messages matching `q` from one mailbox, newest first.
+function mailSearch_(box, q, max) {
+  var list = mailGet_(box, 'messages?maxResults=' + max + '&q=' + encodeURIComponent(q));
+  var ids = (list.messages || []).slice(0, max);
+  return ids.map(function (m) {
+    var full = mailGet_(box, 'messages/' + m.id + '?format=full');
+    return { box: box, from: mailHeader_(full, 'from'), subject: mailHeader_(full, 'subject'),
+             date: mailHeader_(full, 'date'), body: mailBody_(full.payload).slice(0, 4000) };
+  });
+}
+
+// Is the mailbox search set up, and does it work? The admin box on the Customs
+// page shows this, and it tries each mailbox so a half-finished Admin console
+// step shows up here rather than the first time an instructor searches.
+function customsMailConfig_(data) {
+  var p = PropertiesService.getScriptProperties();
+  if (data && data.clear) { p.deleteProperty('MAIL_SA_JSON'); p.deleteProperty('MAIL_BOXES'); mailForgetTokens_(); return customsMailStatus_(); }
+  if (data && data.key_json) {
+    var raw = String(data.key_json).trim();
+    var k;
+    try { k = JSON.parse(raw); } catch (e) { return { ok: false, error: 'That is not the JSON key file. Paste the whole file, curly brackets and all.' }; }
+    if (!k.client_email || !k.private_key) return { ok: false, error: 'That JSON has no client_email and private_key in it, so it is not a service account key.' };
+    if (k.private_key_id) delete k.private_key_id;   // not needed to sign, one less thing stored
+    var boxes = String(data.boxes || MAIL_BOXES_DEFAULT_).split(',').map(function (x) { return x.trim().toLowerCase(); })
+      .filter(function (x) { return /^[^@\s]+@[^@\s]+$/.test(x); });
+    if (!boxes.length) return { ok: false, error: 'Name at least one mailbox.' };
+    p.setProperty('MAIL_SA_JSON', JSON.stringify(k));
+    p.setProperty('MAIL_BOXES', boxes.join(','));
+    mailForgetTokens_();
+  }
+  return customsMailStatus_();
+}
+function mailForgetTokens_() {
+  try { CacheService.getScriptCache().removeAll(mailBoxes_().map(function (b) { return 'mail_tok_' + b; })); } catch (e) {}
+}
+function customsMailStatus_() {
+  var key = mailKey_(), boxes = mailBoxes_();
+  if (!key) return { ok: true, configured: false, boxes: boxes, client_email: '', checks: [] };
+  var checks = boxes.map(function (b) {
+    try { mailSearch_(b, 'newer_than:1d', 1); return { box: b, ok: true }; }
+    catch (e) { return { box: b, ok: false, why: String(e.message || e).slice(0, 200) }; }
+  });
+  return { ok: true, configured: true, boxes: boxes, client_email: key.client_email, checks: checks };
+}
+
+// The shared mailboxes, when ShipStation has nothing. instructor@ and info@
+// carry the order and courier mail that never reaches Chatwoot, and neither is
+// Edd's own mailbox, so this goes through the service account above.
 function customsFindInMail_(q) {
   var term = String(q || '').trim();
   if (term.length < 3) return { ok: true, parcels: [] };
-  var threads;
-  try {
-    var query = '"' + term.replace(/"/g, '') + '" newer_than:2y -in:spam -in:trash';
-    threads = GmailApp.search(query, 0, 6);
-  } catch (e) {
-    var msg = String(e.message || e);
-    return { ok: false, why: /authoriz|permission|scope/i.test(msg)
-      ? 'The tracker cannot read the mailbox yet. Open the Apps Script editor and run authorizeGmail once.'
-      : 'Mail search failed: ' + msg.slice(0, 140) };
-  }
-  if (!threads.length) return { ok: true, parcels: [] };
-  var text = [];
-  threads.forEach(function (t) {
-    t.getMessages().slice(-2).forEach(function (m) {
-      text.push('From: ' + m.getFrom() + '\nSubject: ' + m.getSubject() + '\nDate: ' +
-        Utilities.formatDate(m.getDate(), Session.getScriptTimeZone(), 'yyyy-MM-dd') + '\n' + m.getPlainBody().slice(0, 4000));
-    });
+  if (!mailKey_()) return { ok: false, why: 'The shared mailboxes are not connected yet (an admin sets this up on this page).' };
+  var query = '"' + term.replace(/"/g, '') + '" newer_than:2y -in:spam -in:trash';
+  var msgs = [], trouble = [];
+  mailBoxes_().forEach(function (box) {
+    try { msgs = msgs.concat(mailSearch_(box, query, 4)); }
+    catch (e) { trouble.push(String(e.message || e)); }
   });
+  if (!msgs.length) return { ok: !trouble.length, parcels: [], why: trouble.join(' ') };
+  var text = msgs.map(function (m) {
+    return 'Mailbox: ' + m.box + '\nFrom: ' + m.from + '\nSubject: ' + m.subject + '\nDate: ' + m.date + '\n' + m.body;
+  });
+  var threads = { length: msgs.length };
   var ai = customsExtract_(text.join('\n\n----\n\n').slice(-14000));
   if (!ai.ok) return { ok: false, why: 'Read ' + threads.length + ' email' + (threads.length === 1 ? '' : 's') + ', but could not pull an address out of them (' + ai.why + ').' };
   var f = ai.fields || {};
   if (!f.address1 && !f.waybill) return { ok: true, parcels: [], why: 'Found ' + threads.length + ' email' + (threads.length === 1 ? '' : 's') + ' mentioning that, but no address or waybill in them.' };
   return { ok: true, parcels: [{
     source: 'email', shipped_at: '', courier: '', waybill: String(f.waybill || '').replace(/\D/g, ''),
+    mailbox: msgs[0].box,
     fields: { name: f.name || '', company: f.company || '', address1: f.address1 || '', address2: f.address2 || '',
               district: f.district || '', city: f.city || '', postcode: f.postcode || '', country: f.country || '',
               phone: f.phone || '', email: f.email || '' }
@@ -15577,13 +15687,6 @@ function customsFind_(data) {
            days: CUSTOMS_FIND_DAYS_ };
 }
 
-// Run this once from the Apps Script editor (Run > authorizeGmail) to grant the
-// read-only mailbox permission the parcel search falls back on. It reads one
-// subject line and nothing else.
-function authorizeGmail() {
-  var t = GmailApp.search('newer_than:1d', 0, 1);
-  Logger.log('Gmail access OK. Threads in the last day: ' + t.length);
-}
 
 // The address, phone and waybill as the student actually wrote them. Sonnet,
 // with room for its thinking (the max_tokens trap has bitten this file four
