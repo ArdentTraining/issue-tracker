@@ -1170,7 +1170,7 @@
        occasional tools (Edd, 18 Sep); instructors only, i.e. 'log'. -->
   <!-- r188 (Edd): Customs grew into Shipping, with the monthly report and the
        customs invoice as its two sub-rail pages. Same people ('log'). -->
-  <button type="button" class="rail-item" id="railShipping" onclick="railGo('shipping')" title="Shipping - the monthly report and customs invoices">
+  <button type="button" class="rail-item" id="railShipping" onclick="railGo('shipping')" title="Shipping - customs invoices, and the monthly report for admins">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><polyline points="3 7.5 12 12 21 7.5"/><line x1="12" y1="12" x2="12" y2="21"/><line x1="7.5" y1="5.2" x2="16.5" y2="9.8"/></svg>
     <span class="ri-word">Shipping</span>
   </button>
@@ -2121,7 +2121,7 @@
 <!-- r188: the monthly shipping report. Everything inside #shr_body is drawn
      by renderShipReport from one shipReport call. -->
 <div id="shipReportView" class="wrap hidden">
-  <div class="seg ship-seg" style="margin-bottom:14px;"><button type="button" class="active" onclick="setView('shipreport')">Report</button><button type="button" onclick="setView('customs')">Customs invoice</button></div>
+  <div class="seg ship-seg" style="margin-bottom:14px;"><button type="button" onclick="setView('customs')">Customs invoice</button><button type="button" class="active ship-report-btn" onclick="setView('shipreport')">Report</button></div>
   <div class="shr-head">
     <div>
       <h2 style="margin:0;">Shipping report</h2>
@@ -2137,7 +2137,7 @@
 </div>
 
 <div id="customsView" class="wrap hidden">
-  <div class="seg ship-seg" style="margin-bottom:14px;"><button type="button" onclick="setView('shipreport')">Report</button><button type="button" class="active" onclick="setView('customs')">Customs invoice</button></div>
+  <div class="seg ship-seg" style="margin-bottom:14px;"><button type="button" class="active" onclick="setView('customs')">Customs invoice</button><button type="button" class="ship-report-btn" onclick="setView('shipreport')">Report</button></div>
   <h2 style="margin-top:0;">Customs invoice</h2>
   <p class="hint" style="margin-top:-6px;">For when customs ask again for an invoice showing exactly what is in the pack. Start from the chat and the tracker finds what it can. Anything highlighted is still missing, so ask the student for it.</p>
 
@@ -5469,7 +5469,7 @@ function applyPerms(user) {
   var wantMonth = null;
   try { wantMonth = new URLSearchParams(window.location.search).get("month"); } catch (e) {}
   if (wantView === "reports" && p.analytics) { setView("reports"); }
-  else if (wantView === "shipreport" && p.log) { if (/^\d{4}-\d{2}$/.test(wantMonth || "")) shipr.month = wantMonth; setView("shipreport"); }
+  else if (wantView === "shipreport" && p.users) { if (/^\d{4}-\d{2}$/.test(wantMonth || "")) shipr.month = wantMonth; setView("shipreport"); }
   else if (prefView && prefViewOk) { setView(prefView); }
   else if (SHELL_ON && (p.log || p.users)) { setView("live"); }   // FB-0315 (Edd): the tracker opens on Today, not Issues
   else setView(first);
@@ -8645,6 +8645,9 @@ function setView(v) {
   // path that asked for 'actions' lands there; the actions machinery renders
   // into its relocated nodes.
   if (v === "actions" && SHELL_ON) v = "live";
+  // r239 (FB-0474): the shipping report is the admins'. Instructors only get
+  // customs invoices; a stray link to the report lands them there instead.
+  if (v === "shipreport" && !(state.perms || {}).users) v = "customs";
   if (state.detailId) closeDetail(); // a docked detail belongs to the old tab
   if (state._ctlNode) ctlClose();    // and a control block belongs to its own view
   state.view = v;
@@ -8678,6 +8681,10 @@ function setView(v) {
   if ($("tasksView")) $("tasksView").classList.toggle("hidden", v !== "tasks");
   if ($("irpcsView")) $("irpcsView").classList.toggle("hidden", v !== "irpcs");
   if ($("customsView")) $("customsView").classList.toggle("hidden", v !== "customs");
+  if (v === "customs" || v === "shipreport") {
+    var shipAdmin = !!(state.perms || {}).users;
+    document.querySelectorAll(".ship-seg").forEach(function (el) { el.style.display = shipAdmin ? "" : "none"; });
+  }
   if (v === "customs") { state.shipSub = "customs"; renderCustoms(); }
   if ($("shipReportView")) $("shipReportView").classList.toggle("hidden", v !== "shipreport");
   if (v === "shipreport") { state.shipSub = "shipreport"; renderShipReport(); }
@@ -8794,10 +8801,12 @@ function railGo(v) {
   if (v === "tasks" && !isEddUser()) return;               // Phase 1 is solo; the endpoint scopes by ticket regardless
   if (v === "irpcs" && !(state.perms || {}).irpcs) return; // and the Edge Function checks the same key on every call
   if (v === "customs" && !(state.perms || {}).log) return;  // r182: the backend refuses the same people anyway
-  // r188: Shipping lands on whichever of its two pages you used last, and on
-  // the report the first time.
-  if ((v === "shipping" || v === "shipreport") && !(state.perms || {}).log) return;
-  if (v === "shipping") v = state.shipSub === "customs" ? "customs" : "shipreport";
+  // r188: Shipping lands on whichever of its two pages you used last.
+  // r239 (FB-0474): customs invoice the first time, because the report is
+  // slow to load, and the report only for admins.
+  if (v === "shipping" && !(state.perms || {}).log) return;
+  if (v === "shipreport" && !(state.perms || {}).users) return;
+  if (v === "shipping") v = (state.shipSub === "shipreport" && (state.perms || {}).users) ? "shipreport" : "customs";
   if (v === "resources" && !(state.perms || {}).resources) return;  // r187: and the backend checks the same key
   if (v === "issues") {
     var seg = currentIssuesSeg();
@@ -13460,7 +13469,7 @@ function subRailSpec() {
   // r188: the two Shipping pages.
   if (v === "shipreport" || v === "customs") return {
     head: "Shipping", cur: v, go: function (k) { setView(k); },
-    items: [{ key: "shipreport", label: "Report" }, { key: "customs", label: "Customs invoice" }]
+    items: [{ key: "customs", label: "Customs invoice" }].concat((state.perms || {}).users ? [{ key: "shipreport", label: "Report" }] : [])
   };
   if (v === "irpcs") return {
     head: "IRPCS", cur: irpcs.tab, go: irpcsSetTab,

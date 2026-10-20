@@ -1166,20 +1166,21 @@ function reqPerm_(action) {
     // same instructor job as chasing the parcel in the first place.
     case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': case 'customsFind': return 'log';
     case 'customsMySigner': case 'saveCustomsSigner': return 'log';   // always the caller's own row
-    // r188: the shipping report sits beside customs, for the same people.
+    // r188: the shipping report sits beside customs. r239 (FB-0474, Edd):
+    // the report is the admins' only; instructors keep customs invoices.
     // Starting a back-fill spends AI credit and connecting Stripe or
-    // ShipStation stores a key, so both of those are the admins'.
-    case 'shipReport': case 'shipVolumesRefresh': case 'shipMonthlyPreview': return 'log';
+    // ShipStation stores a key, so both of those are the admins' too.
+    case 'shipReport': case 'shipVolumesRefresh': case 'shipMonthlyPreview': return 'users';
     // r191: the changes we make to how we ship, drawn on the report's chart.
     // Whoever reads the report can note one; only its author or an admin can
     // take one off (checked in shipChangeDelete_).
-    case 'shipChangeSave': case 'shipChangeDelete': return 'log';
+    case 'shipChangeSave': case 'shipChangeDelete': return 'users';   // r239: report readers are admins now
     case 'shipBackfill': case 'setShipConfig': return 'users';
     // r193: postage against label cost. Reading it, and walking back through
     // history to fill it, are for whoever reads the report (read-only calls to
     // Stripe and ShipStation, no AI spend). Changing the team's tolerance is
     // the admins'.
-    case 'shipCost': case 'shipCostHistory': return 'log';
+    case 'shipCost': case 'shipCostHistory': return 'users';   // r239: report readers are admins now
     case 'shipCostTolerance': return 'users';
     // r197: bulk repairs on the Course Errors tab. Admin only.
     case 'courseRepair': return 'users';
