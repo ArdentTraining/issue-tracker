@@ -3350,13 +3350,15 @@ function maybeInvalidate_() {
       var endRes = UrlFetchApp.fetchAll(endJobs.map(function (j) { return j.request; }));
       fileMark_('end_fetch');
       endRes.forEach(function (r, i) { try { endJobs[i].done(r); } catch (e) {} });
+      fileMark_('end_done');   // r238.1: the done handlers, timed apart from the sends
     } catch (e) { console.warn('end-of-request sends: ' + e); }
   }
   if (READ_ONLY_ACTIONS[action]) return;
   if (PATCHABLE_ACTIONS[action] && TOUCHED_IDS_) {
     var ids = Object.keys(TOUCHED_IDS_);
-    if (ids.length && ids.length <= PATCH_MAX_ROWS && patchIssueCache_(ids)) return;
+    if (ids.length && ids.length <= PATCH_MAX_ROWS && patchIssueCache_(ids)) { fileTag_('cache', 'patched'); return; }
   }
+  fileTag_('cache', 'dropped');
   invalidateIssueCache_();
 }
 
@@ -3368,7 +3370,8 @@ function patchIssueCache_(ids) {
   try {
     var gen200 = issueCacheGen_();
     var raw = cacheGetChunked_(ISSUE_CACHE_KEY);
-    if (!raw) return true;                 // nothing cached, nothing stale
+    fileMark_('patch_get');   // r238.1
+    if (!raw) { fileTag_('cache', 'empty'); return true; }   // nothing cached, nothing stale
     var p = JSON.parse(raw);
     var built = new Date(p.built_at || p.generated_at || 0).getTime();
     var left = Math.floor(ISSUE_CACHE_SECONDS - (Date.now() - built) / 1000);
@@ -3387,6 +3390,7 @@ function patchIssueCache_(ids) {
         gone[id] = 1;                      // deleted or merged away
       }
     });
+    fileMark_('patch_rows');   // r238.1: the per-issue re-reads
     p.issues = list.filter(function (r) { return !gone[r.issue_id]; });
     p.built_at = p.built_at || p.generated_at;
     p.generated_at = new Date().toISOString();
@@ -3395,6 +3399,8 @@ function patchIssueCache_(ids) {
     // list may be the older one, so drop it rather than put it back.
     if (issueCacheGen_() !== gen200) return false;
     var put200 = cachePutChunked_(ISSUE_CACHE_KEY, JSON.stringify(p), left);
+    fileMark_('patch_put');   // r238.1
+    fileTag_('cache_rows', list.length);
     // Anything still building from before this save must not overwrite it.
     bumpIssueCacheGen_();
     return put200;
@@ -10840,7 +10846,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r235 · 2026-10-17';
+var CODE_STAMP = 'r238.1 · 2026-10-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
