@@ -10850,7 +10850,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r240 · 2026-10-20';
+var CODE_STAMP = 'r240.1 · 2026-10-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -15473,6 +15473,31 @@ function customsLabelPage_(key, startIso, page) {
   try { cache.put(ck, JSON.stringify(slim), 1800); } catch (e) {}   // over 100KB simply is not cached
   return slim;
 }
+// Pages `from`..`to` in one round trip, skipping any already in the cache.
+function customsLabelPages_(key, startIso, from, to) {
+  var cache = CacheService.getScriptCache(), out = [], want = [];
+  for (var n = from; n <= to; n++) {
+    var ck = 'cu_lab_' + startIso.slice(0, 10) + '_' + n, hit = null;
+    try { hit = cache.get(ck); } catch (e) {}
+    if (hit) { try { out.push(JSON.parse(hit)); continue; } catch (e) {} }
+    want.push({ page: n, ck: ck });
+  }
+  if (!want.length) return out;
+  var reqs = want.map(function (w) {
+    return { url: 'https://api.shipstation.com/v2/labels?label_status=completed&page_size=' + CUSTOMS_FIND_PAGE_ + '&page=' + w.page +
+      '&sort_by=created_at&sort_dir=desc&created_at_start=' + encodeURIComponent(startIso),
+      headers: { 'API-Key': key }, muteHttpExceptions: true };
+  });
+  var res = UrlFetchApp.fetchAll(reqs);
+  res.forEach(function (r, i) {
+    if (r.getResponseCode() < 200 || r.getResponseCode() >= 300) return;   // one bad page is fewer parcels, not a dead search
+    var body = JSON.parse(r.getContentText());
+    var slim = { pages: Number(body.pages) || 1, labels: (body.labels || []).map(customsParcelFromLabel_) };
+    try { cache.put(want[i].ck, JSON.stringify(slim), 1800); } catch (e) {}
+    out.push(slim);
+  });
+  return out;
+}
 function customsNorm_(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9@. ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 
 // The search itself. Returns { ok, parcels, searched, why } - `why` is what
@@ -15514,6 +15539,19 @@ function customsFindParcels_(q) {
         var all = words.every(function (w) { return hay.indexOf(w) > -1; });
         if (all) add(p);
       });
+      // Page one says how many there are; the rest go out together rather than
+      // one after another, which is most of the wait on a cold search.
+      if (page === 1 && pages > 1) {
+        var rest = customsLabelPages_(key, start, 2, Math.min(pages, CUSTOMS_FIND_PAGES_));
+        rest.forEach(function (pgN) {
+          read += pgN.labels.length;
+          pgN.labels.forEach(function (p) {
+            var hay = customsNorm_([p.fields.name, p.fields.email, p.fields.postcode, p.fields.city, p.fields.company, p.waybill].join(' '));
+            if (words.every(function (w) { return hay.indexOf(w) > -1; })) add(p);
+          });
+        });
+        break;
+      }
       if (hits.length >= CUSTOMS_FIND_HITS_) break;
     }
   } catch (e) { why = 'ShipStation said: ' + String(e.message || e).slice(0, 140); }
@@ -15595,11 +15633,21 @@ function mailHeader_(msg, name) {
 function mailSearch_(box, q, max) {
   var list = mailGet_(box, 'messages?maxResults=' + max + '&q=' + encodeURIComponent(q));
   var ids = (list.messages || []).slice(0, max);
-  return ids.map(function (m) {
-    var full = mailGet_(box, 'messages/' + m.id + '?format=full');
-    return { box: box, from: mailHeader_(full, 'from'), subject: mailHeader_(full, 'subject'),
-             date: mailHeader_(full, 'date'), body: mailBody_(full.payload).slice(0, 4000) };
+  if (!ids.length) return [];
+  // One pass is one pass: the bodies are fetched together rather than in turn.
+  var tok = mailToken_(box);
+  var res = UrlFetchApp.fetchAll(ids.map(function (m) {
+    return { url: 'https://gmail.googleapis.com/gmail/v1/users/' + encodeURIComponent(box) + '/messages/' + m.id + '?format=full',
+             headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true };
+  }));
+  var out = [];
+  res.forEach(function (r) {
+    if (r.getResponseCode() !== 200) return;
+    var full = JSON.parse(r.getContentText());
+    out.push({ box: box, from: mailHeader_(full, 'from'), subject: mailHeader_(full, 'subject'),
+               date: mailHeader_(full, 'date'), body: mailBody_(full.payload).slice(0, 4000) });
   });
+  return out;
 }
 
 // Is the mailbox search set up, and does it work? The admin box on the Customs
