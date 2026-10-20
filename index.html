@@ -2151,6 +2151,20 @@
     </div>
     <div id="cu_from" class="hint" style="margin-top:6px;"></div>
     <ul id="cu_notes" class="cu-notes small muted"></ul>
+
+    <!-- r239 (Edd): when the chat has nothing, the parcel usually does. The
+         label we bought carries the address we posted to, the phone number and
+         the waybill, and the mailbox carries the rest. -->
+    <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px;">
+      <label for="cu_find">Or find the parcel</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input id="cu_find" placeholder="Name, email, postcode or waybill" autocomplete="off" style="flex:1;min-width:200px;"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();customsFind();}" />
+        <button class="primary" id="cu_findgo" onclick="customsFind()">Search</button>
+      </div>
+      <div id="cu_findmsg" class="hint" style="margin-top:6px;">Searches the parcels we have posted, then the mailbox if nothing matches.</div>
+      <div id="cu_findlist" style="margin-top:8px;"></div>
+    </div>
   </div>
 
   <div class="card" style="margin-top:14px;">
@@ -3022,6 +3036,7 @@
   <p>Paste the Chatwoot chat link and press <span class="ui">Pull the details</span>. The tracker reads the chat for the address, phone number, waybill and which pack it was, and checks the student's contact card and any invoice we have made them before. Under each box it says where the answer came from. Anything it could not find is highlighted in coral, and that is the list to ask the student for. On a shipping issue, the <span class="ui">Customs invoice</span> button does the same starting from the issue.</p>
   <p>The contents fill in from the pack. If this parcel was different, a missing item or a replacement, change the lines here and it only affects this invoice. Prices, HS codes and weights for good live in the CustomsPacks and CustomsPackItems tabs of the tracker's Google Sheet, so when the RYA change a price it gets changed there once.</p>
   <p>The declaration at the bottom is signed by whoever makes the invoice. Set your own printed name, title and signature once under <span class="ui">Signed by</span>, by drawing it or uploading a photo of it on white paper. Without one, your name prints over a blank line to sign by hand. Nobody else can use or change yours.</p>
+  <p>When the chat has nothing, <span class="ui">Or find the parcel</span> searches the parcels we have actually posted. Type the student's name, their email, their postcode or the waybill. It looks through the labels we bought over the last few months, and if nothing matches it reads the mailbox for an order or courier email about them. Pick the right parcel and it fills the address, phone and waybill, leaving anything you have already typed alone.</p>
   <p><span class="ui">Make the invoice</span> downloads a PDF to send and a Word copy in case something needs tweaking, and saves both in the tracker's Drive folder. The totals are added up by the tracker, not typed, so they always match the lines.</p>
   <p>Everything made shows under <span class="ui">Made recently</span>. If customs ask a second time, <span class="ui">Download</span> gives the identical invoice again, same number and date. <span class="ui">Copy</span> starts a new one from its details, for when the address or contents have changed.</p>
 </section>
@@ -3792,7 +3807,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r238 · 2026-10-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r239 · 2026-10-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9590,7 +9605,9 @@ function customsSaveSigner(remove) {
 
 function customsReset() {
   CUSTOMS_FIELDS.forEach(function (k) { var el = $("cu_" + k); if (el) el.value = ""; });
-  ["cu_conv", "cu_freight", "cu_remarks", "cu_weight", "cu_reason"].forEach(function (id) { $(id).value = ""; });
+  ["cu_conv", "cu_freight", "cu_remarks", "cu_weight", "cu_reason", "cu_find"].forEach(function (id) { if ($(id)) $(id).value = ""; });
+  if ($("cu_findlist")) { $("cu_findlist").innerHTML = ""; $("cu_findmsg").textContent = "Searches the parcels we have posted, then the mailbox if nothing matches."; }
+  customs.found = [];
   $("cu_terms").value = "";
   $("cu_date").value = new Date().toISOString().slice(0, 10);
   customs.items = []; customs.convId = ""; customs.issueId = ""; customs.sources = {}; customs.missing = [];
@@ -10357,6 +10374,59 @@ function openCustomsFromIssue(id) {
   customsReset();
   customs.issueId = id;
   customsPrefill();
+}
+
+// ---- Find the parcel (r239) ----
+// The search never fills the form on its own: it lists what it found, and a
+// pick fills the boxes that are still empty, tagged with where it came from.
+function customsFind() {
+  var q = $("cu_find").value.trim();
+  if (!q) { $("cu_findmsg").textContent = "Type a name, email, postcode or waybill."; return; }
+  $("cu_findgo").disabled = true;
+  $("cu_findlist").innerHTML = "";
+  $("cu_findmsg").innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px;"></span> Looking through the parcels we have posted…';
+  apiPost({ action: "customsFind", q: q }).then(function (r) {
+    $("cu_findgo").disabled = false;
+    if (!r || !r.ok) { $("cu_findmsg").textContent = (r && r.error) || "That did not work."; return; }
+    customs.found = r.parcels || [];
+    var notes = (r.notes || []).map(esc).join(" ");
+    if (!customs.found.length) {
+      $("cu_findmsg").innerHTML = esc("Nothing found for \u201c" + q + "\u201d in the last " + r.days + " days of parcels" +
+        (r.searched_mail ? ", or in the mailbox" : "") + ".") + (notes ? " " + notes : "");
+      return;
+    }
+    $("cu_findmsg").innerHTML = esc(customs.found.length === 1 ? "One parcel found." : customs.found.length + " parcels found, newest first.") + (notes ? " " + notes : "");
+    $("cu_findlist").innerHTML = customs.found.map(function (p, i) {
+      var f = p.fields || {};
+      var where = [f.city, f.postcode, f.country].filter(Boolean).join(", ");
+      var line2 = [p.shipped_at ? "Posted " + fmtDate(p.shipped_at) : "", p.courier, p.waybill].filter(Boolean).join(" · ");
+      return '<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line);">' +
+        '<div><b>' + esc(f.name || "(no name)") + '</b>' + (p.source === "email" ? ' <span class="badge">from an email</span>' : "") +
+        '<br><span class="muted small">' + esc([f.address1, where].filter(Boolean).join(", ")) + "</span>" +
+        (line2 ? '<br><span class="muted small">' + esc(line2) + "</span>" : "") +
+        '</div><button class="ghost small" onclick="customsUseParcel(' + i + ')">Use this one</button></div>';
+    }).join("");
+  }).catch(function (e) { $("cu_findgo").disabled = false; $("cu_findmsg").textContent = "That did not work (" + String(e && e.message || e) + ")."; });
+}
+function customsUseParcel(i) {
+  var p = (customs.found || [])[i];
+  if (!p) return;
+  var from = p.source === "email" ? "an email" : "ShipStation";
+  var filled = 0, kept = [];
+  Object.keys(p.fields || {}).forEach(function (k) {
+    var el = $("cu_" + k); if (!el) return;
+    var v = String(p.fields[k] || "").trim();
+    if (!v) return;
+    if (el.value.trim()) { if (el.value.trim() !== v) kept.push(customsWord(k)); return; }   // never overwrite
+    el.value = v; customs.sources[k] = from; filled++;
+  });
+  if (p.waybill && !$("cu_waybill").value.trim()) { $("cu_waybill").value = p.waybill; customs.sources.waybill = from; filled++; }
+  customsSources(); customsMarkMissing();
+  var gap = customs.missing.map(customsWord);
+  $("cu_findmsg").textContent = "Filled " + filled + " detail" + (filled === 1 ? "" : "s") + " from " + from + "." +
+    (kept.length ? " Left what you already had for " + kept.join(", ") + "." : "") +
+    (gap.length ? " Still need: " + gap.join(", ") + "." : " Everything needed is there, check it over.");
+  $("cu_findlist").innerHTML = "";
 }
 
 function customsPrefill() {
@@ -13126,6 +13196,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 66, date: "2026-10-20", who: ["log"], text: "Customs invoice: a parcel search. If the chat does not have the address, type the student's name, email, postcode or waybill and it finds the parcel we posted, then fills the address, phone and waybill from the label." },
   { n: 65, date: "2026-10-17", who: ["users"], text: "Promote to RCA now gets straight on with it: the investigator gathers the evidence and comes back with what it thinks is going on and where to start." },
   { n: 64, date: "2026-10-17", who: ["log"], text: "Log a new issue is now a big button at the top of Today, and Open a case, Browse recent and Refresh have moved inside the Open in Chatwoot section." },
   { n: 63, date: "2026-10-10", who: ["log"], text: "Today now opens with its sections folded, apart from Waiting on an instructor. A folded heading shows how many things are under it." },

@@ -792,6 +792,7 @@ function doPost(e) {
     if (action === 'customsGenerate') return jsonOut(customsGenerate_(body));
     if (action === 'customsList') return jsonOut(customsList_());
     if (action === 'customsFetch') return jsonOut(customsFetch_(body));
+    if (action === 'customsFind') return jsonOut(customsFind_(body));
     if (action === 'customsMySigner') return jsonOut(customsMySigner_(body));
     if (action === 'saveCustomsSigner') return jsonOut(saveCustomsSigner_(body));
     if (action === 'resourcesList') return jsonOut(resourcesList_());
@@ -1163,7 +1164,7 @@ function reqPerm_(action) {
     case 'chatwootImport': case 'chatwootList': return 'log';
     // r182: customs invoices. Anybody who logs issues can make one; it is the
     // same instructor job as chasing the parcel in the first place.
-    case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': return 'log';
+    case 'customsPacks': case 'customsPrefill': case 'customsGenerate': case 'customsList': case 'customsFetch': case 'customsFind': return 'log';
     case 'customsMySigner': case 'saveCustomsSigner': return 'log';   // always the caller's own row
     // r188: the shipping report sits beside customs, for the same people.
     // Starting a back-fill spends AI credit and connecting Stripe or
@@ -3281,7 +3282,7 @@ var READ_ONLY_ACTIONS = {
   sameIssue: 1,
   // r182: customs invoices live in their own three tabs and never touch an
   // issue row, so the cached issue list is still true after any of them.
-  customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsMySigner: 1, saveCustomsSigner: 1,
+  customsPacks: 1, customsPrefill: 1, customsGenerate: 1, customsList: 1, customsFetch: 1, customsFind: 1, customsMySigner: 1, saveCustomsSigner: 1,
   // r188: the shipping report keeps its own two tabs and never writes an issue.
   shipReport: 1, shipVolumesRefresh: 1, shipMonthlyPreview: 1, shipBackfill: 1, setShipConfig: 1,
   shipChangeSave: 1, shipChangeDelete: 1, shipCost: 1, shipCostHistory: 1, shipCostTolerance: 1,
@@ -10846,7 +10847,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r238.1 · 2026-10-20';
+var CODE_STAMP = 'r239 · 2026-10-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -15393,6 +15394,194 @@ function customsPrefill_(data) {
     conversation_id: convId || '', issue_id: issue ? String(issue.issue_id) : '',
     read_chat: !!transcript, ai_why: ai && !ai.ok ? ai.why : ''
   };
+}
+
+// ---- Find the parcel (r239) -----------------------------------------------
+// Edd (20 Oct 2026): "Is there any way we can get more of this info even if it
+// isn't on chatwoot?" Yes, twice over. Every parcel we send has a ShipStation
+// label, and that label carries the address we actually posted it to, the
+// phone number, and the tracking number - which is exactly the list the form
+// highlights in coral. And when ShipStation has nothing (an order posted
+// outside it, or older than the window), the order and courier emails in the
+// mailbox usually do.
+//
+// Searching is deliberately one box. A waybill goes straight to the label that
+// carries it; anything else is matched against the labels of the last few
+// months by name, email or postcode. Nothing is filled in silently: the page
+// lists what it found, the instructor picks the right parcel, and every field
+// says it came from ShipStation.
+var CUSTOMS_FIND_DAYS_ = 240;        // how far back a name search looks
+var CUSTOMS_FIND_PAGE_ = 500;        // labels per page (V2 caps at 500)
+var CUSTOMS_FIND_PAGES_ = 6;         // at most 3,000 labels read in one search
+var CUSTOMS_FIND_HITS_ = 8;          // candidates handed back
+
+// Country codes to the names a customs form expects. Only the places we have
+// actually shipped to need to be right; anything else comes back as the code
+// itself, which is still true, and the instructor can type it out.
+var CUSTOMS_CC_NAMES_ = (function () {
+  var raw = 'GB:United Kingdom,IE:Ireland,FR:France,DE:Germany,NL:Netherlands,BE:Belgium,LU:Luxembourg,ES:Spain,PT:Portugal,IT:Italy,MT:Malta,GR:Greece,CY:Cyprus,HR:Croatia,SI:Slovenia,AT:Austria,CH:Switzerland,LI:Liechtenstein,DK:Denmark,SE:Sweden,NO:Norway,FI:Finland,IS:Iceland,EE:Estonia,LV:Latvia,LT:Lithuania,PL:Poland,CZ:Czechia,SK:Slovakia,HU:Hungary,RO:Romania,BG:Bulgaria,RS:Serbia,ME:Montenegro,BA:Bosnia and Herzegovina,MK:North Macedonia,AL:Albania,TR:Turkey,UA:Ukraine,MD:Moldova,JE:Jersey,GG:Guernsey,IM:Isle of Man,GI:Gibraltar,FO:Faroe Islands,GL:Greenland,MC:Monaco,AD:Andorra,SM:San Marino,US:United States,CA:Canada,MX:Mexico,BM:Bermuda,BS:Bahamas,BB:Barbados,JM:Jamaica,TT:Trinidad and Tobago,AG:Antigua and Barbuda,LC:Saint Lucia,GD:Grenada,VC:Saint Vincent and the Grenadines,KN:Saint Kitts and Nevis,DM:Dominica,VG:British Virgin Islands,KY:Cayman Islands,TC:Turks and Caicos Islands,AI:Anguilla,AW:Aruba,CW:Curacao,DO:Dominican Republic,PA:Panama,CR:Costa Rica,GT:Guatemala,BZ:Belize,CO:Colombia,VE:Venezuela,EC:Ecuador,PE:Peru,BR:Brazil,CL:Chile,AR:Argentina,UY:Uruguay,PY:Paraguay,BO:Bolivia,AU:Australia,NZ:New Zealand,FJ:Fiji,PG:Papua New Guinea,NC:New Caledonia,PF:French Polynesia,ZA:South Africa,NA:Namibia,BW:Botswana,ZW:Zimbabwe,ZM:Zambia,MZ:Mozambique,TZ:Tanzania,KE:Kenya,UG:Uganda,RW:Rwanda,ET:Ethiopia,GH:Ghana,NG:Nigeria,SN:Senegal,CI:Ivory Coast,CM:Cameroon,MA:Morocco,DZ:Algeria,TN:Tunisia,EG:Egypt,LY:Libya,MU:Mauritius,SC:Seychelles,MV:Maldives,RE:Reunion,AE:United Arab Emirates,SA:Saudi Arabia,QA:Qatar,BH:Bahrain,KW:Kuwait,OM:Oman,JO:Jordan,LB:Lebanon,IL:Israel,IQ:Iraq,IR:Iran,PK:Pakistan,IN:India,BD:Bangladesh,LK:Sri Lanka,NP:Nepal,CN:China,HK:Hong Kong,MO:Macao,TW:Taiwan,JP:Japan,KR:South Korea,SG:Singapore,MY:Malaysia,TH:Thailand,VN:Vietnam,PH:Philippines,ID:Indonesia,BN:Brunei,KH:Cambodia,LA:Laos,MM:Myanmar,MN:Mongolia,KZ:Kazakhstan,UZ:Uzbekistan,GE:Georgia,AM:Armenia,AZ:Azerbaijan,RU:Russia,BY:Belarus';
+  var map = {};
+  raw.split(',').forEach(function (pair) { var i = pair.indexOf(':'); map[pair.slice(0, i)] = pair.slice(i + 1); });
+  return map;
+})();
+function customsCountryName_(cc) {
+  cc = String(cc || '').trim().toUpperCase();
+  if (!cc) return '';
+  return CUSTOMS_CC_NAMES_[cc] || cc;
+}
+
+// One ShipStation label, in the shape the Customs form fills from.
+function customsParcelFromLabel_(lab) {
+  var to = (lab && lab.ship_to) || {};
+  var track = String(lab.tracking_number || '');
+  if (!track && lab.packages && lab.packages.length) track = String(lab.packages[0].tracking_number || '');
+  return {
+    source: 'shipstation',
+    shipped_at: String(lab.ship_date || lab.created_at || '').slice(0, 10),
+    courier: shipCourier_(lab.service_code || lab.carrier_code || '') || String(lab.carrier_code || ''),
+    waybill: normaliseTracking_(track),
+    voided: !!lab.voided,
+    fields: {
+      name: String(to.name || ''),
+      company: String(to.company_name || ''),
+      address1: String(to.address_line1 || ''),
+      address2: [to.address_line2, to.address_line3].filter(function (x) { return x; }).join(', '),
+      district: String(to.state_province || ''),
+      city: String(to.city_locality || ''),
+      postcode: String(to.postal_code || ''),
+      country: customsCountryName_(to.country_code),
+      phone: String(to.phone || ''),
+      email: String(to.email || '')
+    }
+  };
+}
+function customsShipStationKey_() {
+  return PropertiesService.getScriptProperties().getProperty('SHIPSTATION_V2_KEY') || '';
+}
+// Labels are read a page at a time and kept for half an hour, because a
+// search by name reads the same months every time and ShipStation rate-limits.
+function customsLabelPage_(key, startIso, page) {
+  var cache = CacheService.getScriptCache();
+  var ck = 'cu_lab_' + startIso.slice(0, 10) + '_' + page;
+  try { var hit = cache.get(ck); if (hit) return JSON.parse(hit); } catch (e) {}
+  var res = shipShipStationV2Get_(key, 'labels?label_status=completed&page_size=' + CUSTOMS_FIND_PAGE_ + '&page=' + page +
+    '&sort_by=created_at&sort_dir=desc&created_at_start=' + encodeURIComponent(startIso));
+  var slim = { pages: Number(res.pages) || 1, labels: (res.labels || []).map(customsParcelFromLabel_) };
+  try { cache.put(ck, JSON.stringify(slim), 1800); } catch (e) {}   // over 100KB simply is not cached
+  return slim;
+}
+function customsNorm_(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9@. ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+
+// The search itself. Returns { ok, parcels, searched, why } - `why` is what
+// the page says when nothing came back, so a missing key or a refused call is
+// never mistaken for "this student has never had a parcel".
+function customsFindParcels_(q) {
+  var key = customsShipStationKey_();
+  if (!key) return { ok: false, why: 'ShipStation is not connected (Shipping, Report, Connect).' };
+  var digits = String(q).replace(/[^0-9A-Za-z]/g, '');
+  var hits = [], seen = {};
+  function add(p) {
+    var id = p.waybill || (p.fields.name + '|' + p.fields.postcode + '|' + p.shipped_at);
+    if (seen[id] || p.voided) return;
+    seen[id] = 1; hits.push(p);
+  }
+
+  // A waybill goes straight at the label that carries it, whatever its age.
+  if (/^[0-9]{8,}$/.test(digits)) {
+    try {
+      var one = shipShipStationV2Get_(key, 'labels?tracking_number=' + encodeURIComponent(digits) + '&page_size=5');
+      (one.labels || []).forEach(function (l) { add(customsParcelFromLabel_(l)); });
+    } catch (e) { return { ok: false, why: 'ShipStation said: ' + String(e.message || e).slice(0, 140) }; }
+    if (hits.length) return { ok: true, parcels: hits, searched: 'waybill' };
+  }
+
+  var needle = customsNorm_(q);
+  if (needle.length < 3) return { ok: true, parcels: [], searched: 'none', why: 'Type a name, email, postcode or waybill.' };
+  var words = needle.split(' ').filter(function (w) { return w.length > 1; });
+  var start = new Date(Date.now() - CUSTOMS_FIND_DAYS_ * 86400000).toISOString();
+  var read = 0, pages = 1, why = '';
+  try {
+    for (var page = 1; page <= pages && page <= CUSTOMS_FIND_PAGES_; page++) {
+      var pg = customsLabelPage_(key, start, page);
+      pages = pg.pages;
+      read += pg.labels.length;
+      pg.labels.forEach(function (p) {
+        var hay = customsNorm_([p.fields.name, p.fields.email, p.fields.postcode, p.fields.city, p.fields.company, p.waybill].join(' '));
+        // Every word has to appear, so "jane smith" does not match every Jane.
+        var all = words.every(function (w) { return hay.indexOf(w) > -1; });
+        if (all) add(p);
+      });
+      if (hits.length >= CUSTOMS_FIND_HITS_) break;
+    }
+  } catch (e) { why = 'ShipStation said: ' + String(e.message || e).slice(0, 140); }
+  hits.sort(function (a, b) { return a.shipped_at < b.shipped_at ? 1 : -1; });
+  return { ok: true, parcels: hits.slice(0, CUSTOMS_FIND_HITS_), searched: 'labels', read: read, why: why };
+}
+
+// The mailbox, when ShipStation has nothing. This reads the account the script
+// runs as (Edd's), so it finds the order and courier mail that never reaches
+// Chatwoot. Gmail needs a permission the script did not used to hold: until
+// somebody opens the editor and runs authorizeGmail once, this says so rather
+// than failing quietly.
+function customsFindInMail_(q) {
+  var term = String(q || '').trim();
+  if (term.length < 3) return { ok: true, parcels: [] };
+  var threads;
+  try {
+    var query = '"' + term.replace(/"/g, '') + '" newer_than:2y -in:spam -in:trash';
+    threads = GmailApp.search(query, 0, 6);
+  } catch (e) {
+    var msg = String(e.message || e);
+    return { ok: false, why: /authoriz|permission|scope/i.test(msg)
+      ? 'The tracker cannot read the mailbox yet. Open the Apps Script editor and run authorizeGmail once.'
+      : 'Mail search failed: ' + msg.slice(0, 140) };
+  }
+  if (!threads.length) return { ok: true, parcels: [] };
+  var text = [];
+  threads.forEach(function (t) {
+    t.getMessages().slice(-2).forEach(function (m) {
+      text.push('From: ' + m.getFrom() + '\nSubject: ' + m.getSubject() + '\nDate: ' +
+        Utilities.formatDate(m.getDate(), Session.getScriptTimeZone(), 'yyyy-MM-dd') + '\n' + m.getPlainBody().slice(0, 4000));
+    });
+  });
+  var ai = customsExtract_(text.join('\n\n----\n\n').slice(-14000));
+  if (!ai.ok) return { ok: false, why: 'Read ' + threads.length + ' email' + (threads.length === 1 ? '' : 's') + ', but could not pull an address out of them (' + ai.why + ').' };
+  var f = ai.fields || {};
+  if (!f.address1 && !f.waybill) return { ok: true, parcels: [], why: 'Found ' + threads.length + ' email' + (threads.length === 1 ? '' : 's') + ' mentioning that, but no address or waybill in them.' };
+  return { ok: true, parcels: [{
+    source: 'email', shipped_at: '', courier: '', waybill: String(f.waybill || '').replace(/\D/g, ''),
+    fields: { name: f.name || '', company: f.company || '', address1: f.address1 || '', address2: f.address2 || '',
+              district: f.district || '', city: f.city || '', postcode: f.postcode || '', country: f.country || '',
+              phone: f.phone || '', email: f.email || '' }
+  }], threads: threads.length };
+}
+
+// What the page calls. ShipStation first; the mailbox only if that found
+// nothing, since it costs an AI call.
+function customsFind_(data) {
+  var q = String((data && data.q) || '').trim();
+  if (!q) return { ok: false, error: 'Type a name, email, postcode or waybill.' };
+  var notes = [];
+  var ss = customsFindParcels_(q);
+  if (ss.why) notes.push(ss.why);
+  var parcels = (ss.ok && ss.parcels) || [];
+  var mailTried = false;
+  if (!parcels.length && data.search_mail !== false) {
+    mailTried = true;
+    var mail = customsFindInMail_(q);
+    if (mail.why) notes.push(mail.why);
+    if (mail.ok && mail.parcels && mail.parcels.length) parcels = mail.parcels;
+  }
+  return { ok: true, parcels: parcels, notes: notes, searched_mail: mailTried,
+           days: CUSTOMS_FIND_DAYS_ };
+}
+
+// Run this once from the Apps Script editor (Run > authorizeGmail) to grant the
+// read-only mailbox permission the parcel search falls back on. It reads one
+// subject line and nothing else.
+function authorizeGmail() {
+  var t = GmailApp.search('newer_than:1d', 0, 1);
+  Logger.log('Gmail access OK. Threads in the last day: ' + t.length);
 }
 
 // The address, phone and waybill as the student actually wrote them. Sonnet,
