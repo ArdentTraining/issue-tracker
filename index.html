@@ -3807,7 +3807,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r239.1 · 2026-10-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r239.2 · 2026-10-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -7654,6 +7654,9 @@ function renderLiveDetail() {
       (linkedIssue ? statusBadge(linkedIssue.status, linkedIssue) + ' ' + priBadge(linkedIssue.priority) : '') +
       (c.chat_still_open ? ' <span class="badge chat-badge">chat still open in Chatwoot</span>' : '') +
     '</div>';
+    var last = (state.liveLastLog || {})[String(c.conversation_id)];
+    if (last) html += '<div class="small" style="margin:-4px 0 10px;color:var(--low);">Logged at ' +
+      esc(String(last.at.getHours()).padStart(2, "0") + ":" + String(last.at.getMinutes()).padStart(2, "0")) + ': ' + esc(last.text) + '</div>';
   }
 
   // The background re-read (FB-0238) is visible on the thing it is changing,
@@ -7957,6 +7960,16 @@ function setDraftActionNote(note) {
   if (note) { $("draftActionText").textContent = note; box.style.display = ""; }
   else box.style.display = "none";
 }
+// r239.2: "Added to D6FAB1 (with the developers). No new issue was filed..."
+function liveAddedToLine(issueId, merged) {
+  if (!issueId) return "";
+  var iss = (state.issues || []).filter(function (i) { return i.issue_id === issueId; })[0];
+  var ref = iss ? shortId(iss) : String(issueId).slice(0, 6).toUpperCase();
+  var st = iss ? String(iss.status || "open").toLowerCase() : "";
+  var where = !st ? "" : (st === "with_dev" ? (catOf(iss) === "course_error" ? "with the course team" : "with the developers") : statusLabel(st, iss).toLowerCase());
+  return "Added to " + ref + (where ? " (" + where + ")" : "") + " as an update. No new issue was filed, because " +
+    (merged ? "the team was already on this fault." : "this chat already had one.");
+}
 function liveCheckpoint(decision) {
   var c = liveCaseById(state.liveSelected);
   if (!c) return;
@@ -7980,17 +7993,26 @@ function liveCheckpoint(decision) {
     if (res && res.timings) console.log("checkpoint timings (ms)", res.timings);
     if (!res || !res.ok) { toast("Checkpoint failed: " + ((res && res.error) || "unknown")); return; }
     if (res.needs_confirm && res.match) { showLiveMergeConfirm(res.match, decision); return; }
+    // r239.2 (FB-0469, Stuart): "I'm struggling to know if I have reported an
+    // error or not." On a chat that already had an issue, Log it adds to that
+    // issue rather than filing a new one, and a passing toast didn't say so.
+    // Name the issue and where it sits, and leave the same line on the case.
+    var addedTo = liveAddedToLine(res.issue_id || res.merged_into || c.issue_id, res.merged);
+    if (addedTo && (res.merged || (res.updated && !res.resolved && !res.parked))) {
+      state.liveLastLog = state.liveLastLog || {};
+      state.liveLastLog[String(c.conversation_id)] = { text: addedTo, at: new Date() };
+    }
     if (res.merged) {
       // Merging into a live issue deliberately does not resolve or park it:
       // the fault is still live for everyone else on it.
       toast(res.merged_stays_open
-        ? "Added to the case the team is already on. That one stays open - it's still live for the others on it."
+        ? (addedTo || "Added to the case the team is already on.") + " It stays open - it's still live for the others on it."
         : "Rolled into the case the team is already on. This case stays open here.");
     } else if (res.resolved) toast(res.updated ? "Issue resolved, with your note saved." : "Filed as resolved. Nothing routed, nobody pinged.");
     else if (res.auto_parked) toast("Filed and parked, not resolved: it was sorted for this student but the fault was never confirmed fixed" +
       (res.auto_parked_why ? " (" + res.auto_parked_why + ")" : "") + ". It stays available for the next report to be linked to.", 9000);
     else if (res.parked) toast(res.updated ? "Issue parked, with your reason saved." : "Filed and parked. It wakes up if anyone else reports it.");
-    else if (res.updated) toast("Checkpoint added to the issue.");
+    else if (res.updated) toast(addedTo || "Checkpoint added to the issue.", 9000);
     else toast("Issue filed" + (String(res.priority || "").toLowerCase() === "high" ? " - high priority, so the team has been pinged." : "."));
     // FB-0251. Edd: "once we press log issue, this should be removed from the
     // chat page." Both outcomes mean the same thing about the CHAT - resolved
