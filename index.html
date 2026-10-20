@@ -3792,7 +3792,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r237 · 2026-10-17";  // bump this with each round, it lands on every feedback report
+var BUILD = "r238 · 2026-10-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -16139,6 +16139,22 @@ function restoreDraft() {
   };
   document.addEventListener("input", function (e) { if (inForm(e)) { saveDraftSoon(); noteLongPaste(); } }, true);
   document.addEventListener("change", function (e) { if (inForm(e)) saveDraftSoon(); }, true);
+  // r238 (Edd, 20 Oct): the early duplicate answer was going stale because the
+  // summary gets tidied about a minute before Log (both misses since r232.2
+  // changed the summary and nothing else). A textarea fires "change" when it
+  // loses focus with a different value, so ask again quietly then, with the
+  // fields the submit will send, and the fresh answer is waiting by Log.
+  document.addEventListener("change", function (e) {
+    var t = e && e.target;
+    if (!t || t.id !== "f_summary" || !inForm(e)) return;
+    if (state.editingId || state.updateTargetId || state.dupTargetId) return;   // no match on those paths
+    if (!String(getField("rawText") || "").trim()) return;
+    try {
+      var f = collectForm();
+      apiPost({ action: "sameIssue", category: f.category, summary: f.summary, raw_text: f.raw_text,
+        lesson_code: f.lesson_code, device_info: f.device_info, quiet: 1, why: "summary_edit" }).catch(function () {});
+    } catch (err) {}
+  }, true);
   // The debounce is the whole risk: a tab closed inside 900ms of the last
   // keystroke would lose that last bit. This is the flush.
   window.addEventListener("beforeunload", function () { saveDraftNow(); });
