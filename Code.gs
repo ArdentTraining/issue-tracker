@@ -10848,7 +10848,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r239.1 · 2026-10-20';
+var CODE_STAMP = 'r239.3 · 2026-10-20';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -16272,6 +16272,14 @@ function inboxOp_(data) {
   } else if (data.op === 'link') {
     if (!data.source_id) return { ok: false, error: "op 'link' needs source_id (the issue that is merged in and goes)" };
     r = linkIssues_({ source_id: data.source_id, target_id: data.issue_id, _user: admin });
+  } else if (data.op === 'feedback') {
+    // r239.3 (Edd, 20 Oct: "pass through the needs testing and confirm any").
+    // Feedback status and reply, the same two fields the Feedback page sets.
+    // issue_id carries the feedback id so the table's update check still holds.
+    var fs = String(data.status || '');
+    if (fs && ['new', 'needs_testing', 'done', 'wont_do'].indexOf(fs) < 0) return { ok: false, error: 'feedback status must be new, needs_testing, done or wont_do' };
+    r = updateFeedback_({ id: data.issue_id, status: fs || undefined, reply: data.reply != null ? data.reply : undefined });
+    return (r && r.ok) ? { ok: true, issue_id: data.issue_id, feedback: true } : (r || { ok: false, error: 'no answer' });
   } else {
     return { ok: false, error: 'unknown op ' + data.op };
   }
