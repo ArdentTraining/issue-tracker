@@ -3807,7 +3807,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r239 · 2026-10-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r239.1 · 2026-10-20";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -8645,7 +8645,7 @@ function setView(v) {
   // path that asked for 'actions' lands there; the actions machinery renders
   // into its relocated nodes.
   if (v === "actions" && SHELL_ON) v = "live";
-  // r239 (FB-0474): the shipping report is the admins'. Instructors only get
+  // r239.1 (FB-0474): the shipping report is the admins'. Instructors only get
   // customs invoices; a stray link to the report lands them there instead.
   if (v === "shipreport" && !(state.perms || {}).users) v = "customs";
   if (state.detailId) closeDetail(); // a docked detail belongs to the old tab
@@ -8802,7 +8802,7 @@ function railGo(v) {
   if (v === "irpcs" && !(state.perms || {}).irpcs) return; // and the Edge Function checks the same key on every call
   if (v === "customs" && !(state.perms || {}).log) return;  // r182: the backend refuses the same people anyway
   // r188: Shipping lands on whichever of its two pages you used last.
-  // r239 (FB-0474): customs invoice the first time, because the report is
+  // r239.1 (FB-0474): customs invoice the first time, because the report is
   // slow to load, and the report only for admins.
   if (v === "shipping" && !(state.perms || {}).log) return;
   if (v === "shipreport" && !(state.perms || {}).users) return;
