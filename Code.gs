@@ -680,6 +680,7 @@ function doPost(e) {
     var action = body.action || '';
     FILE_T_ = action === 'addIssue' ? { t0: Date.now(), m: [], tags: {} } : null;   // r221: timing a filing
     DEFER_AFTER_ = (action === 'addIssue' || action === 'caseCheckpoint') && !!body.defer_after;   // r222
+    KEEP_CACHE_ = false;   // r241
     CURRENT_ACTION_ = action;
     TOUCHED_IDS_ = {};
     MIRROR_FULL_ = {};
@@ -3335,7 +3336,12 @@ var PATCHABLE_ACTIONS = { storeNudge: 1, updateIssue: 1, addUpdate: 1, addIssue:
   // dropping the whole list (next open 11s). Walked 29 Sep: every issue-row
   // write in each goes through findRow_ (the Slack stamps and alert tidy-up
   // included, same row), so each touches only its own issue.
-  markDevFixed: 1, passToDev: 1, saveDevNotes: 1, flagQuery: 1, answerQuery: 1 };
+  markDevFixed: 1, passToDev: 1, saveDevNotes: 1, flagQuery: 1, answerQuery: 1,
+  // r241: fileAfter was on neither list, so every filing since r222 patched the
+  // cache on the way out and then had the page's fileAfter call DROP it a
+  // second later (the next open rebuilt 1,300 rows). It now carries the
+  // filing's patch instead; its own writes are Slack stamps on the same row.
+  fileAfter: 1 };
 var PATCH_MAX_ROWS = 12;
 var TOUCHED_IDS_ = null;
 function touchIssue_(id) { if (TOUCHED_IDS_ && id) TOUCHED_IDS_[String(id)] = 1; }
@@ -3358,6 +3364,7 @@ function maybeInvalidate_() {
     } catch (e) { console.warn('end-of-request sends: ' + e); }
   }
   if (READ_ONLY_ACTIONS[action]) return;
+  if (KEEP_CACHE_) { fileTag_('cache', 'deferred'); return; }   // r241
   if (PATCHABLE_ACTIONS[action] && TOUCHED_IDS_) {
     var ids = Object.keys(TOUCHED_IDS_);
     if (ids.length && ids.length <= PATCH_MAX_ROWS && patchIssueCache_(ids)) { fileTag_('cache', 'patched'); return; }
@@ -3717,6 +3724,13 @@ function recordToRow_(issue) {
 // only for the seconds between the reply and the page's fileAfter call); taken
 // under the script lock so the page and the sweep can never both run one.
 var DEFER_AFTER_ = false;
+// r241 (Edd, 22 Oct): the board-cache patch (read 1,300 cached rows, write
+// them back: 1.1-2.2s of every filing, measured r238.1) now rides on the
+// after-filing job too, so the instructor has "saved" before it runs. Set when
+// a request has handed its cache work to that job, or has nothing to do to the
+// cache (fileAfter arriving after the sweep already ran the job), so jsonOut
+// leaves the board cache alone instead of dropping it.
+var KEEP_CACHE_ = false;
 var FILE_AFTER_KEY_ = 'FILE_AFTER_Q';
 function fileAfterQueue_(job) {
   var lock = LockService.getScriptLock();
@@ -3762,12 +3776,19 @@ function fileAfterRun_(job, issue) {
       if (n && !n.ok) noteError = n.why;
     } catch (e) { noteError = String(e).slice(0, 200); }
   }
+  // r241: the filing left its board-cache patch to us. From the page, fileAfter
+  // is a PATCHABLE action, so jsonOut patches these rows (plus any Slack stamp,
+  // same row); from the sweep there is no jsonOut, so patch here.
+  (job.cache_ids || []).forEach(touchIssue_);
+  if (!TOUCHED_IDS_ && job.cache_ids && job.cache_ids.length) {
+    if (!patchIssueCache_(job.cache_ids)) invalidateIssueCache_();
+  }
   return noteError;
 }
 // The page's follow-up call, straight after "saved".
 function fileAfter_(data) {
   var jobs = fileAfterTake_(data.issue_id);
-  if (!jobs.length) return { ok: true, already: true };   // the sweep got there first
+  if (!jobs.length) { KEEP_CACHE_ = true; return { ok: true, already: true }; }   // the sweep got there first (and patched)
   return { ok: true, note_error: fileAfterRun_(jobs[0]) || undefined };
 }
 // Once a minute: anything the page never asked for (tab closed, network blip).
@@ -4229,6 +4250,8 @@ function addIssue_(data) {
   };
   if (after.slack) fileTag_('high', true);
   if (DEFER_AFTER_) {
+    after.cache_ids = Object.keys(TOUCHED_IDS_ || {});   // r241: the board-cache patch goes with the job
+    KEEP_CACHE_ = true;
     fileAfterQueue_(after);
     fileMark_('queued');
     return { ok: true, issue: issue, merged: false, after_id: after.id };
@@ -10850,7 +10873,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r240.1 · 2026-10-20';
+var CODE_STAMP = 'r241 · 2026-10-23';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any

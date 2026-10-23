@@ -3824,7 +3824,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r240 · 2026-10-20";  // bump this with each round, it lands on every feedback report
+var BUILD = "r241 · 2026-10-23";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -16306,13 +16306,15 @@ function restoreDraft() {
   // fields the submit will send, and the fresh answer is waiting by Log.
   document.addEventListener("change", function (e) {
     var t = e && e.target;
-    if (!t || t.id !== "f_summary" || !inForm(e)) return;
+    // r241: the "what happened" box travels with the pasted text, so it moves
+    // the key too (both r238 misses on 20 Oct were raw growing by ~80 chars).
+    if (!t || (t.id !== "f_summary" && t.id !== "f_outcome") || !inForm(e)) return;
     if (state.editingId || state.updateTargetId || state.dupTargetId) return;   // no match on those paths
     if (!String(getField("rawText") || "").trim()) return;
     try {
       var f = collectForm();
       apiPost({ action: "sameIssue", category: f.category, summary: f.summary, raw_text: f.raw_text,
-        lesson_code: f.lesson_code, device_info: f.device_info, quiet: 1, why: "summary_edit" }).catch(function () {});
+        lesson_code: f.lesson_code, device_info: f.device_info, quiet: 1, why: t.id === "f_outcome" ? "outcome_edit" : "summary_edit" }).catch(function () {});
     } catch (err) {}
   }, true);
   // The debounce is the whole risk: a tab closed inside 900ms of the last
