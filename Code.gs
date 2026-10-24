@@ -7599,7 +7599,11 @@ var AI_TALLY = { calls: 0, in_tokens: 0, out_tokens: 0 };
 function tallyAi_(parsed) {
   AI_TALLY.calls++;
   if (parsed && parsed.usage) {
-    AI_TALLY.in_tokens += Number(parsed.usage.input_tokens) || 0;
+    // input_tokens excludes cached tokens, so add cache reads and writes back
+    // or the tally undercounts every call that goes through the cache.
+    AI_TALLY.in_tokens += (Number(parsed.usage.input_tokens) || 0) +
+      (Number(parsed.usage.cache_read_input_tokens) || 0) +
+      (Number(parsed.usage.cache_creation_input_tokens) || 0);
     AI_TALLY.out_tokens += Number(parsed.usage.output_tokens) || 0;
   }
 }

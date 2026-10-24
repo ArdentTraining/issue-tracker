@@ -371,7 +371,11 @@ async function postMessage(env, user, body) {
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const resp = await anthropic(env, system, messages);
     if (resp.error) return { ok: false, error: "Anthropic: " + resp.error };
-    usageIn += (resp.usage && resp.usage.input_tokens) || 0;
+    // With caching on, input_tokens only counts the uncached tail; cache reads
+    // and writes are reported separately. Add them back so the per-record
+    // token cap keeps measuring the same thing it always has.
+    const u = resp.usage || {};
+    usageIn += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     usageOut += (resp.usage && resp.usage.output_tokens) || 0;
 
     messages.push({ role: "assistant", content: resp.content });
@@ -495,6 +499,31 @@ async function buildSystem(env, rec) {
     (rec.verification_test ? ". Named verification test: " + rec.verification_test : ". No verification test named yet.");
 }
 
+// Prompt caching for the conversation itself. The system prompt and tools were
+// already cached, but every tool round resent the whole growing transcript
+// (Chatwoot results, screenshots) at full price. Marking the last block of the
+// last message caches everything up to it, so the next round only pays full
+// rate for what is new. Works on a shallow copy: the stored transcript and the
+// in-memory messages array are never mutated, so markers never pile up (the
+// API allows four breakpoints per request; this uses two).
+function withConversationCache(messages) {
+  if (!messages.length) return messages;
+  const out = messages.slice();
+  const last = out[out.length - 1];
+  const content = Array.isArray(last.content)
+    ? last.content.slice()
+    : [{ type: "text", text: String(last.content) }];
+  // Thinking blocks cannot carry cache_control; skip back to one that can.
+  for (let i = content.length - 1; i >= 0; i--) {
+    const t = content[i] && content[i].type;
+    if (t === "thinking" || t === "redacted_thinking") continue;
+    content[i] = Object.assign({}, content[i], { cache_control: { type: "ephemeral" } });
+    break;
+  }
+  out[out.length - 1] = Object.assign({}, last, { content: content });
+  return out;
+}
+
 async function anthropic(env, system, messages) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -502,7 +531,7 @@ async function anthropic(env, system, messages) {
     body: JSON.stringify({
       model: MODEL, max_tokens: MAX_RESPONSE_TOKENS,
       system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      messages: messages, tools: TOOLS
+      messages: withConversationCache(messages), tools: TOOLS
     })
   });
   const data = await res.json().catch(() => null);
