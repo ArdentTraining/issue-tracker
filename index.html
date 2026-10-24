@@ -1230,7 +1230,7 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/><polyline points="12 7 12 12 15 14"/></svg>
     <span class="ri-word">Recovery</span>
   </button>
-  <!-- r245: Marking, moving across from the separate portal a screen at a
+  <!-- r246: Marking, moving across from the separate portal a screen at a
        time. The question bank first. Its own permission, hand-picked. -->
   <button type="button" class="rail-item" id="railMarking" onclick="railGo('marking')" title="Marking - review and approve the question bank">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
@@ -2145,7 +2145,7 @@
   </div>
   <div id="recoveryResults"></div>
 </div>
-<!-- r245: Marking. The back end is ardent-portal on Vercel (/api/tracker),
+<!-- r246: Marking. The back end is ardent-portal on Vercel (/api/tracker),
      reached with a half-hour markingTicket. Nothing real is in this file:
      questions and answers arrive from the API at run time. -->
 <div id="markingView" class="wrap hidden">
@@ -9076,7 +9076,7 @@ function railGo(v) {
   if (v === "shipping") v = (state.shipSub === "shipreport" && (state.perms || {}).users) ? "shipreport" : "customs";
   if (v === "resources" && !(state.perms || {}).resources) return;  // r187: and the backend checks the same key
   if (v === "recovery" && !(state.perms || {}).recovery) return;    // r243: and so does the Edge Function
-  if (v === "marking" && !(state.perms || {}).marking) return;      // r245: and so does ardent-portal
+  if (v === "marking" && !(state.perms || {}).marking) return;      // r246: and so does ardent-portal
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -10930,7 +10930,7 @@ function customsAgain(no, copy) {
   }).catch(function () { $("cu_status").textContent = "That did not work."; });
 }
 
-// ============================ MARKING (r245) ============================
+// ============================ MARKING (r246) ============================
 // Marking moving into the tracker, a screen at a time. First: the Question
 // Bank, where questions are corrected and approved before the engine may mark
 // against them (the review gate, ardent-marking lib/questions/gate.ts).
@@ -21032,7 +21032,7 @@ var PERM_LABELS = [
   { k: "resources", label: "Resources" },
   // r243: in-progress quiz answers. Same two-list rule, and its invite box.
   { k: "recovery", label: "Recovery" },
-  // r245: the question bank, then the rest of Marking. Same two-list rule,
+  // r246: the question bank, then the rest of Marking. Same two-list rule,
   // and its invite box.
   { k: "marking", label: "Marking" }
 ];

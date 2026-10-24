@@ -738,7 +738,7 @@ function doPost(e) {
     // own audience, so the 12-hour portal ticket kept in the browser can never
     // be used to read the recovery store. The recovery function checks both.
     if (action === 'recoveryTicket') return jsonOut(mintPortalTicket_(user, 'recovery', 10, { aud: 'recovery' }));
-    // r245: Marking. Its back end runs on Vercel (ardent-portal), not Supabase,
+    // r246: Marking. Its back end runs on Vercel (ardent-portal), not Supabase,
     // so it gets a key of its own rather than the people key: Vercel has never
     // held REPORTS_TICKET_SECRET and a leak there should open Marking and
     // nothing else. Own audience too. Half an hour, like the portal tickets.
@@ -908,7 +908,7 @@ var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_
 // (Edd, 19 Sep), so like irpcs nobody holds it until an admin ticks it.
 // r243: 'recovery' reads students' in-progress quiz answers (migration 045).
 // Hand-picked like irpcs and resources: nobody holds it until an admin ticks it.
-// r245: 'marking' opens the Marking section (the question bank first, then
+// r246: 'marking' opens the Marking section (the question bank first, then
 // the papers), whose back end is ardent-portal on Vercel. Hand-picked: Edd
 // only to start with (24 Oct), and nobody holds it until an admin ticks it.
 var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery', 'marking'];
@@ -1321,7 +1321,7 @@ function reqPerm_(action) {
     // r243: hands out a credential that reads students' typed names, emails
     // and answers, so it is gated here and again where it is minted.
     case 'recoveryTicket': return 'recovery';
-    // r245: hands out a credential for the marking back end.
+    // r246: hands out a credential for the marking back end.
     case 'markingTicket': return 'marking';
     // Fail closed. Every action reaching this point is one nobody listed above,
     // which means nobody decided who should be allowed to call it. The public
@@ -3523,7 +3523,7 @@ var READ_ONLY_ACTIONS = {
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, caseTouch: 1,
   recoveryTicket: 1,                    // r243: mints a ticket, no sheet
-  markingTicket: 1,                     // r245: same
+  markingTicket: 1,                     // r246: same
   trackerTicket: 1, mirrorSyncNow: 1,   // r202: neither touches a sheet
   instructorGuide: 1,                   // r205: reads a Google Doc
   // nextAction DOES write one cell (its own cached answer), and it still
@@ -7241,7 +7241,7 @@ function setTicketSecrets_(data) {
   var key = props.getProperty('DEPLOY_KEY');
   if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var set = [];
-  // r245: 'marking' joins. Its other copy is MARKING_TICKET_SECRET in the
+  // r246: 'marking' joins. Its other copy is MARKING_TICKET_SECRET in the
   // ardent-portal Vercel project, not a Supabase function secret.
   [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET'], ['marking', 'MARKING_TICKET_SECRET']].forEach(function (pair) {
     var v = data[pair[0]];
@@ -15096,7 +15096,7 @@ function irpcsTicket_(user) {
  *   machine  MACHINE_TICKET_SECRET  (store@, mirror@, inbox@) - aud names the
  *            one function the ticket is for: 'store', 'mirror', 'inbox'
  *   nudge    TRACKER_NUDGE_SECRET   signed by tracker-save, verified here only
- *   marking  MARKING_TICKET_SECRET  (markingTicket, r245) - aud 'marking', verified
+ *   marking  MARKING_TICKET_SECRET  (markingTicket, r246) - aud 'marking', verified
  *            by ardent-portal on Vercel, which holds no other key of ours
  * Each function checks the aud, so a ticket minted for one job cannot be
  * replayed at another. While MACHINE_TICKET_SECRET is not yet set (the
@@ -15107,7 +15107,7 @@ var TICKET_AUD_PORTAL_ = 'portal';
 function mintPortalTicket_(user, requiredPerm, minutes, opts) {
   opts = opts || {};
   var props = PropertiesService.getScriptProperties();
-  // r245: a caller may name its own key (Marking does). There is deliberately
+  // r246: a caller may name its own key (Marking does). There is deliberately
   // no fallback to the people key for a named one: an unset key is a refusal
   // that says which property is missing, never a ticket signed with a key the
   // other side does not hold.
