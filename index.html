@@ -11109,7 +11109,10 @@ function markingRenderList() {
   var rows = markingFiltered();
   if (!rows.length) { host.innerHTML = '<p class="small muted" style="padding:10px;">' + (marking.f.state === "todo" ? "Nothing waiting here: every question in this view is approved." : "Nothing matches.") + '</p>'; return; }
   host.innerHTML = rows.map(function (q) {
-    return '<button type="button" class="irpcs-row' + (q.question_id === marking.openId ? " active" : "") + '" onclick="markingOpen(\'' + esc(q.question_id) + '\')">' +
+    // The id rides in a data attribute, not inside a JS string in onclick:
+    // esc() is undone by the browser before an onclick runs, so it can't
+    // protect a quoted string there (cold review, 24 Oct).
+    return '<button type="button" class="irpcs-row' + (q.question_id === marking.openId ? " active" : "") + '" data-id="' + esc(q.question_id) + '" onclick="markingOpen(this.dataset.id)">' +
       '<div class="lbl"><strong>' + esc(q.question_code) + '</strong> ' + esc(q.snippet) + '</div>' +
       '<div class="meta">' +
         (q.reviewed ? '<span style="color:var(--low,#2e7d32);">&#10003; Approved</span>' : '<span class="irpcs-pending">Not reviewed</span>') +
@@ -11119,9 +11122,11 @@ function markingRenderList() {
   }).join("");
 }
 
-function markingOpen(id) {
+// force: reopen without asking about unsaved changes (after a write, or a
+// Reload when someone else has saved).
+function markingOpen(id, force) {
   if (marking.busy) return;
-  if (marking.item && marking.openId !== id && markingDirty() && !confirm("This question has unsaved changes. Leave it?")) return;
+  if (!force && marking.item && marking.openId !== id && markingDirty() && !confirm("This question has unsaved changes. Leave it?")) return;
   marking.openId = id; marking.item = null; marking.itemError = ""; marking.msg = null; marking.start = null;
   marking.itemLoading = true;
   markingRenderList(); markingRenderItem();
@@ -11253,6 +11258,15 @@ function markingFormRead() {
   return e;
 }
 
+// Only the fields that differ from what was loaded, so a save of one field
+// never sends the others back over someone else's newer text.
+function markingChanged() {
+  var now = markingFormRead(), out = {}, n = 0;
+  if (!now || !marking.start) return null;
+  for (var k in now) if (JSON.stringify(now[k]) !== JSON.stringify(marking.start[k])) { out[k] = now[k]; n++; }
+  return n ? out : null;
+}
+
 function markingDirty() {
   var now = markingFormRead();
   return !!(now && marking.start && JSON.stringify(now) !== JSON.stringify(marking.start));
@@ -11268,7 +11282,8 @@ function markingRenderMsg() {
   var host = $("markingMsg");
   if (!host) return;
   var m = marking.msg;
-  host.innerHTML = m ? '<p class="small" role="' + (m.error ? "alert" : "status") + '" style="margin:10px 0 0;' + (m.error ? "color:var(--coral);" : "") + '">' + esc(m.text) + '</p>' : "";
+  host.innerHTML = m ? '<p class="small" role="' + (m.error ? "alert" : "status") + '" style="margin:10px 0 0;' + (m.error ? "color:var(--coral);" : "") + '">' + esc(m.text) +
+    (m.reload ? ' <button type="button" class="ghost small" style="padding:3px 8px;" onclick="markingOpen(marking.openId, true)">Reload</button>' : '') + '</p>' : "";
 }
 
 function markingBusy(on) {
@@ -11295,36 +11310,49 @@ function markingAfterWrite(changes) {
   markingRenderHead(); markingRenderList();
 }
 
+// Someone else saved first: say so and offer the reload, never overwrite.
+function markingRefused(r, fallback) {
+  var text = (r && r.error) || fallback;
+  marking.msg = { error: true, text: text, reload: /since you opened it/.test(text) };
+}
+
 function markingSave() {
-  var q = marking.item, edits = markingFormRead();
+  var q = marking.item, edits = markingChanged();
   if (!q || !edits || marking.busy) return;
+  var all = markingFormRead();
   markingBusy(true); marking.msg = null; markingRenderMsg();
-  markingApi("/questions", { body: { op: "save", question_id: q.question_id, edits: edits } }).then(function (r) {
-    if (!r.ok) { marking.msg = { error: true, text: r.error || "That didn't save." }; return; }
-    marking.start = edits;
-    q.edited_at = r.edited_at;
-    markingAfterWrite({ category: edits.category, has_requirements: !!(edits.marking_requirements || "").trim() });
-    marking.msg = { text: "Saved." };
+  markingApi("/questions", { body: { op: "save", question_id: q.question_id, edits: edits, expected_edited_at: q.edited_at || null } }).then(function (r) {
+    if (!r.ok) { markingRefused(r, "That didn't save."); markingBusy(false); markingTouched(); markingRenderMsg(); return; }
+    markingAfterWrite({ category: all.category, has_requirements: !!(all.marking_requirements || "").trim() });
+    marking.busy = false;
+    toast("Saved " + q.question_code + ".");
+    // Read it back, so the card above the form shows what is now stored.
+    markingOpen(q.question_id, true);
   }).catch(function (e) {
     marking.msg = { error: true, text: (e && e.message) || String(e) };
-  }).then(function () { markingBusy(false); markingTouched(); markingRenderMsg(); });
+    markingBusy(false); markingTouched(); markingRenderMsg();
+  });
 }
 
 function markingApprove() {
   var q = marking.item;
   if (!q || marking.busy) return;
-  var dirty = markingDirty(), edits = dirty ? markingFormRead() : null;
+  var edits = markingChanged(), all = markingFormRead();
   markingBusy(true); marking.msg = null; markingRenderMsg();
-  markingApi("/questions", { body: { op: "approve", question_id: q.question_id, edits: edits } }).then(function (r) {
-    if (!r.ok) { marking.msg = { error: true, text: r.error || "That wasn't approved." }; markingBusy(false); markingTouched(); markingRenderMsg(); return; }
+  // expected_edited_at: approve only the version this card was loaded with
+  // (plus these edits). If anyone saved since, it's refused, so nobody
+  // approves text they haven't read.
+  markingApi("/questions", { body: { op: "approve", question_id: q.question_id, edits: edits, expected_edited_at: q.edited_at || null } }).then(function (r) {
+    if (!r.ok) { markingRefused(r, "That wasn't approved."); markingBusy(false); markingTouched(); markingRenderMsg(); return; }
     var next = markingNextWaiting(q.question_id);
     markingAfterWrite({ reviewed: true, reviewed_by: (marking.viewer && marking.viewer.name) || "you", reviewed_at: r.reviewed_at,
-      category: edits ? edits.category : q.category });
+      category: all ? all.category : q.category });
     marking.busy = false;
     toast(next ? "Approved " + q.question_code + ". On to the next one waiting." : "Approved " + q.question_code + ". Nothing else is waiting here.");
     marking.start = null;   // the form is gone; nothing is unsaved
-    if (next) markingOpen(next.question_id);
-    else { marking.item.reviewed = true; marking.item.reviewed_by = (marking.viewer && marking.viewer.name) || "you"; marking.item.reviewed_at = r.reviewed_at; markingRenderItem(); }
+    // Nothing left: read this one back, so the approved card shows what was
+    // actually approved rather than the text from before the save.
+    markingOpen(next ? next.question_id : q.question_id, true);
   }).catch(function (e) {
     marking.msg = { error: true, text: (e && e.message) || String(e) };
     markingBusy(false); markingTouched(); markingRenderMsg();
@@ -11341,7 +11369,7 @@ function markingUnapprove() {
     markingAfterWrite({ reviewed: false, reviewed_by: null, reviewed_at: null });
     toast("Un-approved " + q.question_code + ". It can be edited again.");
     marking.start = null;
-    markingOpen(q.question_id);
+    markingOpen(q.question_id, true);
   }).catch(function (e) {
     marking.busy = false;
     marking.msg = { error: true, text: (e && e.message) || String(e) }; markingRenderMsg();
