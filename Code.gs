@@ -735,6 +735,10 @@ function doPost(e) {
     // history and logs; bodies don't). The GET versions below still work.
     if (action === 'reportsTicket') return jsonOut(reportsTicket_(user));
     if (action === 'tasksTicket') return jsonOut(tasksTicket_(user));
+    // r243: short on purpose (a lookup is one search, not a session), and its
+    // own audience, so the 12-hour portal ticket kept in the browser can never
+    // be used to read the recovery store. The recovery function checks both.
+    if (action === 'recoveryTicket') return jsonOut(mintPortalTicket_(user, 'recovery', 10, { aud: 'recovery' }));
     // r202/r203: reads from the Supabase mirror. Twelve hours, because the page
     // keeps it with the saved board so an open does not first wait on Apps
     // Script; it only ever reads the board, the same thing the session can.
@@ -895,7 +899,9 @@ var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_
 // the Users page. The two lists move together, always.
 // r187: 'resources' joins, for the website resources page. Hand-picked
 // (Edd, 19 Sep), so like irpcs nobody holds it until an admin ticks it.
-var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources'];
+// r243: 'recovery' reads students' in-progress quiz answers (migration 045).
+// Hand-picked like irpcs and resources: nobody holds it until an admin ticks it.
+var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery'];
 var SESSION_DAYS = 30;
 var HASH_ROUNDS = 2000;
 // Password-reset links expire after this many minutes. The expiry is packed into
@@ -1273,6 +1279,9 @@ function reqPerm_(action) {
     // only a learner id, and it gets the same gate as the editor because the
     // only reason to hold one is to test content you are working on.
     case 'irpcsTicket': case 'irpcsLearnerToken': return 'irpcs';
+    // r243: hands out a credential that reads students' typed names, emails
+    // and answers, so it is gated here and again where it is minted.
+    case 'recoveryTicket': return 'recovery';
     // Fail closed. Every action reaching this point is one nobody listed above,
     // which means nobody decided who should be allowed to call it. The public
     // and key-gated actions (login, acceptInvite, requestPasswordReset, ping,
@@ -3305,6 +3314,7 @@ var READ_ONLY_ACTIONS = {
   // caseTouch writes the live-case sheet only (unread flag), never an issue row.
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, caseTouch: 1,
+  recoveryTicket: 1,                    // r243: mints a ticket, no sheet
   trackerTicket: 1, mirrorSyncNow: 1,   // r202: neither touches a sheet
   instructorGuide: 1,                   // r205: reads a Google Doc
   // nextAction DOES write one cell (its own cached answer), and it still
@@ -3448,6 +3458,7 @@ var PURE_READS_ = {
   // r201: pure reads that were missing, and each dropped every extra.
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, trackerTicket: 1, mirrorSyncNow: 1,
+  recoveryTicket: 1,
   instructorGuide: 1,
   // r227: this one reads a single script property, and the page asked for it
   // three times on every open (once per renderLive). Each ask dropped every

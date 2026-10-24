@@ -1224,6 +1224,12 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 13 12 16 15 13"/><line x1="12" y1="10" x2="12" y2="16"/></svg>
     <span class="ri-word">Resources</span>
   </button>
+  <!-- r243: in-progress quiz answers, for when Submit All never arrived.
+       Its own permission, hand-picked in Admin. -->
+  <button type="button" class="rail-item" id="railRecovery" onclick="railGo('recovery')" title="Recovery - a student's quiz answers from before Submit All">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/><polyline points="12 7 12 12 15 14"/></svg>
+    <span class="ri-word">Recovery</span>
+  </button>
   <button type="button" class="rail-item" id="railReports" onclick="railGo('reports')" title="Reports">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><polyline points="7 14 11 9 15 12 20 6"/></svg>
     <span class="ri-word">Reports</span>
@@ -2097,6 +2103,42 @@
     .rs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   }
 </style>
+<!-- r243: Recovery. Reads the recovery Edge Function with a ten-minute
+     ticket; nothing here is cached or kept in the browser. -->
+<div id="recoveryView" class="wrap hidden">
+  <style>
+    #recoveryView .rec-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+    #recoveryView .rec-table th, #recoveryView .rec-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    #recoveryView .rec-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    #recoveryView .rec-sub { background: rgba(94,114,235,0.12); }
+    #recoveryView .rec-unsub { background: rgba(254,193,149,0.35); }
+    #recoveryView .rec-err { color: var(--coral); }
+  </style>
+  <h2 style="margin-top:0;">Recovery</h2>
+  <p class="small muted" style="margin-top:-6px;">A student's quiz answers as they had them, from the last save before Submit All. We keep a save for 48 hours after the quiz is submitted, or 14 days if it never is. Every search is logged with your name.</p>
+  <div class="card">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:2;min-width:220px;">
+        <label for="recEmail">Email they typed into the quiz</label>
+        <input id="recEmail" name="ait-recemail" autocomplete="off" placeholder="student@example.com"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();recoveryFind();}" />
+      </div>
+      <div style="flex:1;min-width:120px;">
+        <label for="recLesson">Lesson code</label>
+        <input id="recLesson" name="ait-reclesson" autocomplete="off" placeholder="DS.07.11"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();recoveryFind();}" />
+      </div>
+      <div style="flex:2;min-width:220px;">
+        <label for="recReg">Attempt id (optional)</label>
+        <input id="recReg" name="ait-recreg" autocomplete="off" placeholder="from a fault report"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();recoveryFind();}" />
+      </div>
+      <div><button type="button" class="primary" id="recFindBtn" onclick="recoveryFind()">Find</button></div>
+    </div>
+    <p class="small muted" style="margin:8px 0 0;">The email is whatever the student typed into the quiz's own form, so it can be misspelt. If nothing turns up, try the lesson code on its own.</p>
+  </div>
+  <div id="recoveryResults"></div>
+</div>
 <div id="resourcesView" class="wrap hidden">
   <div class="rs-head">
     <div>
@@ -2407,6 +2449,7 @@
              degrade quietly - it throws, and nobody can be invited at all. -->
         <label class="small"><input type="checkbox" id="inv_irpcs"> IRPCS</label>
         <label class="small"><input type="checkbox" id="inv_resources"> Resources</label>
+        <label class="small"><input type="checkbox" id="inv_recovery"> Recovery</label>
       </div>
       <label style="margin-top:8px;">Fixes they can be given<span class="helphost" data-help="This is who can be picked in Assigned to, not who can see the page. Anyone with Manage users sees both queues anyway, so leave these unticked for an admin who does not actually take fixes."></span></label>
       <div class="permrow">
@@ -2736,6 +2779,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="recovery"><td><span class="ui">Recovery</span></td><td>A student's quiz answers from before Submit All, for when their submission never arrived.</td></tr>
     <tr data-perm="resources"><td><span class="ui">Resources</span></td><td>The free downloads on the website's resources page: edit them, add new ones, and change their order.</td></tr>
     <tr data-perm="log"><td><span class="ui">Shipping</span></td><td>The monthly shipping report, and a commercial invoice for a student's pack when customs ask for one again.</td></tr>
     <tr data-perm="dev,users"><td><span class="ui">Dev</span></td><td>The developer queue: tech faults an admin has handed over to be fixed.</td></tr>
@@ -3077,6 +3121,14 @@
   <p>Changes wait in the bar at the bottom until we press <span class="ui">Save to website</span>, and then they all go at once. A coral dot marks anything not saved yet. If somebody has changed the sheet since the page loaded, the save stops and says so rather than writing over them. Press <span class="ui">Refresh</span> and make the change again.</p>
   <p><span class="ui">Add resource</span> takes a PDF, puts it in the tracker's Website resources folder in Google Drive, makes the thumbnail from its first page, and has a go at the title, description and category. Check those over, as they are a first draft. <span class="ui">Replace</span> on a resource swaps its file or thumbnail the same way.</p>
   <p><span class="ui">Hide from website</span> moves the row to a Hidden tab in the sheet, so nothing is ever deleted and <span class="ui">Put back on the website</span> undoes it. Every save is also written to the ResourcesLog tab of the tracker's own sheet, with what each resource looked like before.</p>
+</section>
+
+<section id="man-recovery" data-perm="recovery" data-title="Recovering quiz answers">
+  <h3>Recovering quiz answers</h3>
+  <p>When a student does a module assessment, the quiz quietly saves everything they've answered every few seconds, and again when they close it. If Submit All then never reaches us, <span class="ui">Recovery</span> on the rail is where we find what they had.</p>
+  <p>Search by the email the student typed into the quiz, by a lesson code, or both. The email is whatever they typed, so it can be misspelt. If nothing comes back, try the lesson code on its own and look for their name. Each result shows when it was last saved, whether the quiz was submitted, and every question they were given with their answer. A tick or cross shows where the quiz can tell right from wrong, which is multiple choice and matching. Typed answers are shown as typed. <span class="ui">Show questions</span> adds the question wording, and <span class="ui">Copy answers</span> puts the lot on the clipboard for an email or a note to the marker.</p>
+  <p>Two things to know. A save is deleted 48 hours after the quiz is submitted, or 14 days after the last save if it never is. And the last box a student typed in before closing may be missing, because the quiz only saves a box once they click away from it.</p>
+  <p>Only people an admin has given the Recovery permission can see this, and every search is logged with who did it.</p>
 </section>
 
 <section id="man-dev" data-perm="dev,users" data-title="Fixing what comes through">
@@ -5373,12 +5425,12 @@ function applyPermGates() {
   applyShell();
   var railGate = [["railNew", p.log], ["railShipping", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
-                  ["railIrpcs", p.irpcs], ["railResources", p.resources],
+                  ["railIrpcs", p.irpcs], ["railResources", p.resources], ["railRecovery", p.recovery],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
   // The divider only earns its place if there is something on both sides.
-  if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs || p.resources) ? "" : "none";
+  if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs || p.resources || p.recovery) ? "" : "none";
 
   // Everybody gets to say whether a student is behind this report (Edd,
   // FB-0206). It used to be an admins-only "internal task" switch, which left
@@ -5402,7 +5454,7 @@ function permsKey_(p) {
 var VIEW_RAIL_ = {
   instructor: "railNew", customs: "railShipping", shipreport: "railShipping", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
   edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
-  irpcs: "railIrpcs", resources: "railResources", reports: "railReports", analytics: "railStats", users: "railUsers"
+  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", reports: "railReports", analytics: "railStats", users: "railUsers"
 };
 
 // Called when a refresh brings a different permission set than the one the
@@ -8864,6 +8916,8 @@ function setView(v) {
   if ($("resourcesView")) $("resourcesView").classList.toggle("hidden", v !== "resources");
   if (v !== "resources") document.body.classList.remove("rs-drawer-open");
   if (v === "resources") renderResources();
+  if ($("recoveryView")) $("recoveryView").classList.toggle("hidden", v !== "recovery");
+  if (v === "recovery") renderRecovery();
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "instructors") renderInstructors();
@@ -8937,7 +8991,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -8981,6 +9035,7 @@ function railGo(v) {
   if (v === "shipreport" && !(state.perms || {}).users) return;
   if (v === "shipping") v = (state.shipSub === "shipreport" && (state.perms || {}).users) ? "shipreport" : "customs";
   if (v === "resources" && !(state.perms || {}).resources) return;  // r187: and the backend checks the same key
+  if (v === "recovery" && !(state.perms || {}).recovery) return;    // r243: and so does the Edge Function
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -8997,7 +9052,7 @@ function updateRail() {
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railShipping", v === "customs" || v === "shipreport"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
-               ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"],
+               ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"], ["railRecovery", v === "recovery"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual" || v === "instructors"],
                ["railRCA", v === "rca"]];
@@ -10835,6 +10890,148 @@ function customsAgain(no, copy) {
 }
 
 // ===================== TASKS (10 Sep 2026) =====================
+// ============================ RECOVERY (r243) ============================
+// A student's in-progress quiz answers, from the recovery store (migration
+// 045). iSpring saves the whole attempt every few seconds as the student goes;
+// when Submit All never lands, this is where an instructor finds what they had.
+//
+// Auth is a ticket of its own (aud 'recovery') that must carry the 'recovery'
+// permission, minted for ten minutes. The tracker's long portal ticket is
+// refused by the function, so removing the permission bites within ten minutes. The Edge Function refuses an unfiltered search and logs every
+// lookup in the database, so the log does not depend on this page behaving.
+// Nothing here is cached: results live in this variable until the page moves on.
+var RECOVERY_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/recovery";
+var recovery = { ticket: "", exp: 0, loading: false, saves: null, error: "", open: {} };
+
+function recoveryTicket(force) {
+  var now = Math.floor(Date.now() / 1000);
+  if (!force && recovery.ticket && recovery.exp - now > 30) return Promise.resolve(recovery.ticket);
+  return apiPost({ action: "recoveryTicket" }).then(function (r) {
+    if (!r || !r.ok || !r.ticket) throw new Error((r && r.error) === "forbidden"
+      ? "This account doesn't have the Recovery permission." : ((r && r.error) || "Couldn't get a recovery ticket."));
+    recovery.ticket = r.ticket;
+    recovery.exp = r.expires_at || (now + 540);
+    return recovery.ticket;
+  });
+}
+
+function recoveryApi(payload, retried) {
+  return recoveryTicket(!!retried).then(function (t) {
+    return fetch(RECOVERY_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + t },
+      body: JSON.stringify(payload)
+    });
+  }).then(function (r) {
+    return r.text().then(function (txt) {
+      var j = null;
+      try { j = JSON.parse(txt); } catch (e) {}
+      // One silent retry for a ticket that expired in flight, never more.
+      if (r.status === 401 && !retried) { recovery.ticket = ""; recovery.exp = 0; return recoveryApi(payload, true); }
+      if (r.status === 403) throw new Error("This account doesn't have the Recovery permission.");
+      if (!r.ok) throw new Error((j && j.error) || ("The recovery service returned " + r.status + "."));
+      return j || {};
+    });
+  });
+}
+
+function recoveryFind() {
+  var email = ($("recEmail").value || "").trim();
+  var lesson = ($("recLesson").value || "").trim().toUpperCase();
+  var reg = ($("recReg").value || "").trim();
+  if (!email && !lesson && !reg) { toast("Give an email, a lesson code or an attempt id."); return; }
+  if (recovery.loading) return;
+  recovery.loading = true; recovery.error = ""; recovery.saves = null; recovery.open = {};
+  if ($("recFindBtn")) $("recFindBtn").disabled = true;
+  renderRecovery();
+  var body = { action: "find" };
+  if (email) body.email = email;
+  if (lesson) body.lesson_id = lesson;
+  if (reg) body.registration = reg;
+  recoveryApi(body).then(function (j) {
+    // Only a proper answer counts as "nothing found". Anything else is an
+    // error, so a broken reply can never be mistaken for "no saves".
+    if (!j || j.ok !== true || !Array.isArray(j.saves)) throw new Error("The recovery service gave an answer we couldn't read.");
+    recovery.saves = j.saves;
+  }).catch(function (e) {
+    recovery.error = (e && e.message) || String(e);
+  }).then(function () {
+    recovery.loading = false;
+    if ($("recFindBtn")) $("recFindBtn").disabled = false;
+    renderRecovery();
+  });
+}
+
+function renderRecovery() {
+  var host = $("recoveryResults");
+  if (!host) return;
+  if (recovery.loading) { host.innerHTML = '<p class="small muted">Looking...</p>'; return; }
+  if (recovery.error) { host.innerHTML = '<div class="card"><p class="rec-err" style="margin:0;">' + esc(recovery.error) + '</p></div>'; return; }
+  if (recovery.saves === null) { host.innerHTML = ""; return; }
+  if (!recovery.saves.length) {
+    host.innerHTML = '<div class="card"><p style="margin:0;">Nothing saved for that. Either the quiz isn\'t one that saves to us yet, the save has already been deleted, or the email was typed differently.</p></div>';
+    return;
+  }
+  host.innerHTML = recovery.saves.map(function (s, i) { return recoveryCard(s, i); }).join("");
+}
+
+function recoveryCard(s, i) {
+  var d = s.decoded || { questions: [], drawn: 0, answered: 0, unmapped: [] };
+  var who = s.typed_name ? esc(s.typed_name) + (s.typed_email ? ' &lt;' + esc(s.typed_email) + '&gt;' : '') : esc(s.typed_email || "No name typed");
+  var sub = s.submitted_at
+    ? '<span class="badge rec-sub">Submitted ' + esc(fmtWhen(s.submitted_at)) + '</span>'
+    : '<span class="badge rec-unsub">Not submitted</span>';
+  var open = !!recovery.open[i];
+  var rows = (d.questions || []).map(function (q) {
+    var mark = q.correct === true ? '<span title="Right">&#10003;</span>' : (q.correct === false ? '<span title="Wrong or incomplete">&#10007;</span>' : '');
+    var ans = q.answered ? q.answer.map(esc).join('<br>') : '<span class="small muted">not answered</span>';
+    var label = esc(q.code || ("Question at position " + q.index)) + (q.type && q.type !== "unknown" ? ' <span class="small muted">' + esc(q.type) + '</span>' : '');
+    var prompt = open && q.prompt ? '<div class="small muted" style="white-space:pre-wrap;margin-top:4px;">' + esc(q.prompt) + '</div>' : '';
+    return '<tr><td style="vertical-align:top;white-space:nowrap;">' + label + prompt + '</td><td style="vertical-align:top;">' + ans + '</td><td style="vertical-align:top;text-align:center;">' + mark + '</td></tr>';
+  }).join("");
+  var unmapped = s.mapped ? "" : '<p class="small muted" style="margin:6px 0;">This quiz version hasn\'t got a map yet, so questions show by position rather than by code. Re-running Clean Exports on its folder adds one.</p>';
+  // The save doesn't say which version of the quiz the student had open, so it
+  // is read against the newest map. When the shapes don't fit, say so.
+  if (d.map_mismatch) unmapped += '<p class="rec-err" style="margin:6px 0;">Some answers don\'t fit the questions we have for this quiz, so it was probably a different version of it. The answers are as the student typed them, but the question labels may be wrong.</p>';
+  return '<div class="card">' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between;">' +
+      '<div><strong>' + who + '</strong><br><span class="small muted">' + esc(s.lesson_id || "?") + ' &middot; last saved ' + esc(fmtWhen(s.saved_at)) +
+      ' &middot; ' + (d.answered || 0) + ' of ' + (d.drawn || 0) + ' answered</span></div>' +
+      '<div style="display:flex;gap:6px;align-items:center;">' + sub +
+        '<button type="button" onclick="recoveryToggle(' + i + ')">' + (open ? 'Hide questions' : 'Show questions') + '</button>' +
+        '<button type="button" onclick="recoveryCopy(' + i + ')">Copy answers</button></div>' +
+    '</div>' + unmapped +
+    '<table class="rec-table"><tr><th style="text-align:left;">Question</th><th style="text-align:left;">Their answer</th><th></th></tr>' + rows + '</table>' +
+    '<p class="small muted" style="margin:6px 0 0;">Attempt ' + esc(s.registration) + '. Typed into the last box before closing? That one may be missing: the quiz only saves a box once they click away from it.</p>' +
+  '</div>';
+}
+
+function recoveryToggle(i) { recovery.open[i] = !recovery.open[i]; renderRecovery(); }
+
+// A fixed date and time for text that leaves the page ("14 minutes ago" means
+// nothing once it is pasted into an email). UK time, as the instructors read it.
+function recoveryStamp(iso) {
+  if (!iso) return "";
+  var d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  return d.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+}
+
+// Plain text for pasting into an email or a note to the marking instructor.
+function recoveryCopy(i) {
+  var s = (recovery.saves || [])[i];
+  if (!s) return;
+  var d = s.decoded || { questions: [] };
+  var lines = [(s.typed_name || "") + (s.typed_email ? " <" + s.typed_email + ">" : ""),
+               (s.lesson_id || "") + ", saved " + recoveryStamp(s.saved_at) + (s.submitted_at ? ", submitted " + recoveryStamp(s.submitted_at) : ", not submitted"), ""];
+  (d.questions || []).forEach(function (q) {
+    lines.push((q.code || ("Position " + q.index)) + ": " + (q.answered ? q.answer.join("; ") : "not answered"));
+  });
+  var text = lines.join("\n");
+  (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : Promise.reject())
+    .then(function () { toast("Answers copied."); }, function () { toast("Couldn't copy. Select the table instead."); });
+}
+
 // The one part of this app whose data does not live in the Sheet. Tasks sits
 // in Postgres (schema tasks.*, migrations 022-024) behind its own Edge
 // Function, because the point of it is that Claude can read and write the
@@ -13438,6 +13635,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 70, date: "2026-10-24", who: ["recovery"], text: "Recovery on the rail finds a student's quiz answers from before Submit All, for when their submission never arrived." },
   { n: 69, date: "2026-10-24", who: ["users"], text: "RCA reads as a conversation: the investigator's tool calls fold into one Worked through line, and its replies lead with a short answer with the detail under headings you open. It moves the stage along itself (Gathering evidence through Fix pending), and an admin can add 1M tokens when a record runs out of budget." },
   { n: 68, date: "2026-10-24", who: ["log"], text: "Customs invoice: Edit on anything under Made recently. It puts the invoice back in the form to correct a mistake, and saving keeps the same number and replaces the PDF and Word copy." },
   { n: 67, date: "2026-10-20", who: ["log"], text: "The Customs parcel search can also read the instructor and info mailboxes for an order or courier email, when the parcels we posted do not have the student." },
@@ -20333,7 +20531,9 @@ var PERM_LABELS = [
   { k: "irpcs", label: "IRPCS" },
   // r187: the website resources page. Same two-list rule as above, and it
   // needs its box on the invite form too (doInvite reads every key here).
-  { k: "resources", label: "Resources" }
+  { k: "resources", label: "Resources" },
+  // r243: in-progress quiz answers. Same two-list rule, and its invite box.
+  { k: "recovery", label: "Recovery" }
 ];
 
 function invitePreset(kind) {
