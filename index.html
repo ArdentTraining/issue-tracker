@@ -4624,9 +4624,11 @@ function localDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
 // ============================ HELPERS ============================
 function $(id) { return document.getElementById(id); }
 function esc(s) {
-  // Escapes single quotes too, because some values end up inside
-  // single-quoted strings in onclick attributes (e.g. lesson codes), and a
-  // stray ' there would let pasted text break out and run as script.
+  // Escapes single quotes too, so a value is safe inside a single-quoted
+  // HTML ATTRIBUTE. It does NOT make a value safe inside a JavaScript string
+  // in an onclick: the browser decodes &#39; back to ' before the handler is
+  // parsed. For a value that reaches script, put it in a data-* attribute and
+  // read this.dataset.* in the handler (the Marking pages do this).
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
@@ -11508,7 +11510,7 @@ function renderQueue() {
       '</div>' +
       (q ? '<div class="small muted" style="margin-top:8px;">' +
         (q.summary.open ? q.summary.open + " open paper" + (q.summary.open === 1 ? "" : "s") + "." : "Nothing open.") +
-        (q.summary.oldest && q.summary.oldest.days >= 1 ? ' Longest waiting: <a href="#" onclick="mpOpen(\'' + esc(q.summary.oldest.submission_id) + '\');return false;">' + q.summary.oldest.days + ' day' + (q.summary.oldest.days === 1 ? "" : "s") + '</a>, ' + esc(String(q.summary.oldest.stage_label).toLowerCase()) + '.' : '') +
+        (q.summary.oldest && q.summary.oldest.days >= 1 ? ' Longest waiting: <a href="#" data-id="' + esc(q.summary.oldest.submission_id) + '" onclick="mpOpen(this.dataset.id);return false;">' + q.summary.oldest.days + ' day' + (q.summary.oldest.days === 1 ? "" : "s") + '</a>, ' + esc(String(q.summary.oldest.stage_label).toLowerCase()) + '.' : '') +
         (q.viewer && q.viewer.name ? ' Marking as ' + esc(q.viewer.name) + '.' : '') +
         '</div>' +
         (q.summary.by_stage.length ? '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">' + q.summary.by_stage.map(function (s) { return '<span class="badge" style="' + mpTone(s.tone) + '">' + s.n + ' ' + esc(String(s.label).toLowerCase()) + '</span>'; }).join("") + '</div>' : '')
@@ -11541,7 +11543,9 @@ function mpOpen(id, keep) {
   mp.openId = id; mp.student = null;
   if (!keep) { mp.paper = null; mp.msg = null; mp.tri = {}; mp.rev = {}; mp.fin = { readiness: "", rya: "", summary: "" }; mp.send = { message: null, revisionChecked: false, state: "" }; }
   mp.paperError = ""; mp.paperLoading = true;
-  renderPaper();
+  // With `keep` the paper is already on screen and the instructor may be
+  // typing in it, so it is redrawn once, when the fresh copy arrives.
+  if (!keep) renderPaper();
   mpApi({ query: "op=paper&id=" + encodeURIComponent(id) }).then(function (j) {
     if (mp.openId !== id) return;
     if (!j || !j.paper) throw new Error("Marking sent a paper we couldn't read.");
@@ -11602,6 +11606,14 @@ function mpAnyUnsaved() {
   for (var k in mp.rev) if (mp.rev[k].dirty) return true;
   return false;
 }
+// The question codes with feedback typed but not saved. Accept-the-rest and
+// Finalise refuse while there are any, because both would send the engine's
+// words to the student in place of what was typed (cold review, 24 Oct).
+function mpUnsavedCodes() {
+  var out = [];
+  (mp.paper && mp.paper.answers || []).forEach(function (a) { var l = mp.rev[a.answer_id]; if (l && l.dirty) out.push(a.question_code); });
+  return out;
+}
 
 function mpMsg(kind, text) { mp.msg = text ? { kind: kind, text: text } : null; var h = $("mpMsg"); if (h) h.innerHTML = mpMsgHtml(); }
 function mpMsgHtml() {
@@ -11619,7 +11631,10 @@ function renderPaper() {
   var stage = p.screen === "claim" ? "waiting to be claimed" : p.screen === "triage" ? "grading" : p.status === "Exported" ? "sent" + (p.exported_at ? " " + esc(mpDay(p.exported_at)) : "") : esc(p.status);
   var html = '<p style="margin:0 0 8px;"><a href="#" onclick="mpBack();return false;">&larr; All papers</a></p>' +
     '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">' +
-      '<h3 style="margin:0;">' + (p.screen === "review" ? '<a href="#" onclick="mpStudent(\'' + esc(p.learner_id) + '\');return false;" title="Their other papers and module record">' + name + '</a>' : name) + '</h3>' +
+      // The learner id rides in a data attribute, never inside a JS string in
+      // onclick: esc() is undone by the browser before the handler is parsed,
+      // and an id can be built from an email the student typed.
+      '<h3 style="margin:0;">' + (p.screen === "review" ? '<a href="#" data-l="' + esc(p.learner_id) + '" onclick="mpStudent(this.dataset.l);return false;" title="Their other papers and module record">' + name + '</a>' : name) + '</h3>' +
       '<span class="small muted">' + esc(p.exam_id) + ' &middot; ' + p.answers_total + ' answers' + (p.counts ? ' &middot; ' + p.counts.flagged + ' with feedback' : '') + ' &middot; ' + stage + (p.instructor_name ? ' &middot; ' + esc(p.instructor_name) + (p.mine ? ' (you)' : '') : '') + '</span>' +
     '</div>' +
     '<div id="mpMsg">' + mpMsgHtml() + '</div>';
@@ -11823,6 +11838,10 @@ document.addEventListener("keydown", function (e) {
   if (!mp.openId || !mp.paper || mp.paper.screen !== "triage" || !mp.keysOn || mp.writing) return;
   if (state.view !== "marking" || mp.tab !== "papers" || !mp.paper.mine) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // Not under a modal or the detail drawer: a digit there is not a grade.
+  var covered = Array.prototype.concat.call(Array.prototype.slice.call(document.querySelectorAll(".modal-bg")), $("overlay") ? [$("overlay")] : [])
+    .some(function (m) { return getComputedStyle(m).display !== "none"; });
+  if (covered) return;
   var el = e.target, tag = (el && el.tagName || "").toUpperCase();
   if (tag === "TEXTAREA" || tag === "SELECT" || (el && el.isContentEditable)) return;
   if (tag === "INPUT" && !(el.type === "checkbox" || el.type === "radio" || el.type === "button")) return;
@@ -11855,11 +11874,17 @@ function mpWrite() {
   mp.writing = true; mpMsg("ok", flagged ? "Writing... 0 of " + flagged : "Opening the paper...");
   renderPaper();
   var guard = 0;
-  function finish(kind, text, failed) {
-    mp.writing = false;
-    mpApi({ body: { op: "synthesis", submission_id: mp.openId } }).catch(function () {});
-    mpMsg(kind, text);
-    mpOpen(mp.openId, true);
+  // The whole-paper pass runs after the marking and takes about a minute
+  // (it writes a long structured reply). It is waited for, with a line
+  // saying so, because the covering email draft and the "across the whole
+  // paper" notes come from it.
+  function finish(kind, text) {
+    mpMsg("ok", (kind === "ok" ? text + " " : "") + "Now working out the patterns across the whole paper, about a minute...");
+    mpApi({ body: { op: "synthesis", submission_id: mp.openId } }).catch(function () {}).then(function () {
+      mp.writing = false;
+      mpMsg(kind, text);
+      mpOpen(mp.openId, true);
+    });
   }
   function loop() {
     if (guard++ >= 40) { mp.writing = false; mpMsg("bad", "Stopped after forty batches. Open the paper and press Write it now to carry on."); mpOpen(mp.openId, true); return; }
@@ -11990,6 +12015,8 @@ function mpRewrite(id) {
 }
 function mpAcceptRest() {
   if (mp.busy) return;
+  var unsaved = mpUnsavedCodes();
+  if (unsaved.length) { mpMsg("bad", "You've typed feedback on " + unsaved.join(", ") + " that isn't saved. Press Looks right on each first, or reload the paper to discard it."); return; }
   mp.busy = true;
   mpApi({ body: { op: "accept_rest", submission_id: mp.openId } }).then(function (r) {
     mp.busy = false;
@@ -12005,7 +12032,7 @@ function mpFinaliseHtml(p, readOnly) {
   var f = p.finalise, c = p.counts, left = c.flagged - c.reviewed, ready = left === 0 && c.unwritten === 0;
   var needsRya = f.final && !mp.fin.rya;
   var html = '<div class="card" style="margin-top:14px;"><h4 style="margin:0 0 6px;">Finalise</h4>';
-  if (left > 0) html += '<p class="small muted">' + left + ' feedback answer' + (left === 1 ? "" : "s") + ' still to check. <a href="#" onclick="mpAcceptRest();return false;"' + (readOnly || c.unwritten > 0 ? ' style="pointer-events:none;opacity:.5;"' : '') + '>Accept the rest as written</a></p>';
+  if (left > 0) html += '<p class="small muted">' + left + ' feedback answer' + (left === 1 ? "" : "s") + ' still to check. <button type="button" class="ghost small" style="width:auto;padding:2px 8px;" onclick="mpAcceptRest()"' + (readOnly || c.unwritten > 0 ? ' disabled' : '') + '>Accept the rest as written</button></p>';
   if (f.final) {
     html += '<h5 style="margin:8px 0 2px;">RYA grade for this paper</h5><p class="small">' + esc(f.rya_count || "") + '. <span class="muted">An answer graded Fair or Poor at triage is counted as an error in principle. It\'s a guide to the RYA\'s wording, not a grade: choose the one that fits the paper.</span></p>' +
       f.rya_grades.map(function (g) { return '<label class="small" style="display:flex;gap:8px;align-items:flex-start;justify-content:flex-start;margin:4px 0;width:auto;"><input type="radio" style="width:auto;margin:3px 0 0;flex:0 0 auto;" name="mpRya" value="' + esc(g.grade) + '"' + (mp.fin.rya === g.grade ? " checked" : "") + (readOnly ? " disabled" : "") + ' onchange="mp.fin.rya=this.value;mpRefreshFinaliseBtn()"> <span><strong>' + esc(g.grade) + '</strong>. ' + esc(g.headline) + '<br><span class="muted">' + esc(g.detail) + '</span></span></label>'; }).join("") +
@@ -12030,6 +12057,8 @@ function mpRefreshFinaliseBtn() {
 }
 function mpFinalise() {
   if (mp.busy) return;
+  var unsaved = mpUnsavedCodes();
+  if (unsaved.length) { mpMsg("bad", "You've typed feedback on " + unsaved.join(", ") + " that isn't saved. Press Looks right on each first, or reload the paper to discard it."); return; }
   var p = mp.paper, body = { op: "finalise", submission_id: mp.openId, summary: mp.fin.summary || "" };
   if (p.finalise.final) body.rya_grade = mp.fin.rya || null; else body.readiness = mp.fin.readiness || null;
   mp.busy = true;
