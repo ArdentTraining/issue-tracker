@@ -1528,14 +1528,52 @@ function migrateSession_(f, token) {
 function autoHashSessionsOnce_() {
   try {
     var props = PropertiesService.getScriptProperties();
-    if (props.getProperty('SESSIONS_HASHED_AT')) return;
+    if (props.getProperty('SESSIONS_HASHED_AT') && props.getProperty('SHEET_SESSIONS_HASHED_AT')) return;
     var cache = CacheService.getScriptCache();
     if (cache.get('r245_sweeping')) return;
     cache.put('r245_sweeping', '1', 300);
-    var res = hashSessionsNow_();
-    props.setProperty('SESSIONS_HASHED_AT', new Date().toISOString() + ' ' + JSON.stringify(res));
-    Logger.log('r245 auto sweep: ' + JSON.stringify(res));
+    if (!props.getProperty('SESSIONS_HASHED_AT')) {
+      var res = hashSessionsNow_();
+      props.setProperty('SESSIONS_HASHED_AT', new Date().toISOString() + ' ' + JSON.stringify(res));
+      Logger.log('r245 auto sweep: ' + JSON.stringify(res));
+    }
+    if (!props.getProperty('SHEET_SESSIONS_HASHED_AT')) {
+      var res2 = hashSheetSessionCopies_();
+      props.setProperty('SHEET_SESSIONS_HASHED_AT', new Date().toISOString() + ' ' + JSON.stringify(res2));
+      Logger.log('r245.1 sheet copy sweep: ' + JSON.stringify(res2));
+    }
   } catch (e) { Logger.log('r245 auto sweep failed, will try again next request: ' + e); }
+}
+// r245.1: once Users is live in the store, the Users Sheet is no longer read for
+// sign-in, but it still holds the session cells as they were at the switch-over,
+// in plain text, and some of those tokens are still alive in the store. Hash them
+// in place too, so the Sheet gives nothing away either. Only when the store is
+// live: while the Sheet is the record, hashSessionsNow_ already covers it.
+function hashSheetSessionCopies_() {
+  if (!usersLive_()) return { ok: true, skipped: 'sheet is the record' };
+  var sheet = usersSheet_();
+  if (!sheet) return { ok: true, skipped: 'no Users sheet' };
+  var values = sheet.getDataRange().getValues();
+  var col = (values[0] || []).indexOf('session_token');
+  if (col < 0 || values.length < 2) return { ok: true, cells: 0 };
+  var out = [], changed = 0;
+  for (var r = 1; r < values.length; r++) {
+    var cell = String(values[r][col] == null ? '' : values[r][col]);
+    var next = cell;
+    if (cell.trim()) {
+      var entries = sessionEntries_(cell);
+      if (entries === 'legacy') { if (!isSessionHash_(cell)) next = sessionHash_(cell); }
+      else if (entries && entries.length) {
+        var n = 0;
+        entries.forEach(function (e) { if (e && e.t && !isSessionHash_(e.t)) { e.t = sessionHash_(e.t); n++; } });
+        if (n) next = JSON.stringify(entries);
+      }
+    }
+    if (next !== cell) changed++;
+    out.push([next]);
+  }
+  if (changed) sheet.getRange(2, col + 1, out.length, 1).setValues(out);
+  return { ok: true, cells_changed: changed };
 }
 function hashSessionsNow_() {
   var t = usersTable_(true);
@@ -11051,7 +11089,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r245 · 2026-10-24';
+var CODE_STAMP = 'r245.1 · 2026-10-24';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
