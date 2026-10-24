@@ -2156,9 +2156,19 @@
     <div style="display:flex;gap:6px;">
       <button type="button" class="small" id="mpTabPapers" style="width:auto;padding:4px 10px;" onclick="markingTab('papers')">Papers</button>
       <button type="button" class="small" id="mpTabQuestions" style="width:auto;padding:4px 10px;" onclick="markingTab('questions')">Questions</button>
+      <button type="button" class="small" id="mpTabInsights" style="width:auto;padding:4px 10px;" onclick="markingTab('insights')">Insights</button>
+      <button type="button" class="small" id="mpTabPhotos" style="width:auto;padding:4px 10px;" onclick="markingTab('photos')">Photos owed</button>
     </div>
   </div>
+  <style>
+    #mpInsights .rec-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+    #mpInsights .rec-table th, #mpInsights .rec-table td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    #mpInsights .rec-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    #mpInsights .card { margin-bottom: 10px; }
+  </style>
   <div id="mpPane"></div>
+  <div id="mpInsights" class="hidden"></div>
+  <div id="mpPhotos" class="hidden"></div>
   <div id="markingQuestions" class="hidden">
     <p class="hint" style="margin:0 0 14px;">The question bank: correct each question and approve it, so the engine can mark against it.</p>
     <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="markingHead"></div>
@@ -3160,6 +3170,7 @@
   <p><span class="ui">Claim</span> a paper and you grade it first, blind: every answer gets Strong, Good, Fair or Poor, and a tick says whether it needs written feedback. Nothing from the engine is on that screen, on purpose, so your grade is your own. Green and red are the quiz's own marking, and <span class="ui">mark right</span> or <span class="ui">mark wrong</span> corrects it where it compared text rather than meaning. The keys 1 to 4, f, j, k and Enter work down the paper without the mouse.</p>
   <p>Then <span class="ui">Write feedback</span>: the engine writes for the ticked answers only, a few at a time, and the paper opens for you to check. Read each one, edit the words, move the grade if you must (that is recorded as moved after reading), and press <span class="ui">Looks right</span>. Make the readiness call (or on a Final, the RYA grade), then <span class="ui">Finalise</span>. From then on the paper's answers are calibration for the next student on the same questions, so they can't change.</p>
   <p>Finally download the PDF, copy the covering email into Chatwoot with the PDF attached, and press <span class="ui">I've sent the email and the PDF</span>. <span class="ui">Not sent after all</span> undoes a misclick. Only the instructor who claimed a paper can change it.</p>
+  <p><span class="ui">Insights</span> shows how often the engine's grade agrees with yours (blind grades only), how long students wait, and which questions iSpring marks too strictly. <span class="ui">Photos owed</span> lists the open papers still waiting on chartwork photos, with a nudge drafted in the instructor's name to paste into Chatwoot.</p>
 </section>
 
 <section id="man-marking-questions" data-perm="marking" data-title="The question bank">
@@ -11029,11 +11040,14 @@ function markingApi(path, opts, retried) {
 
 function renderMarking() {
   if (!(state.perms || {}).marking) return;
-  var papers = mp.tab === "papers";
-  if ($("mpTabPapers")) { $("mpTabPapers").className = "small " + (papers ? "primary" : "ghost"); $("mpTabQuestions").className = "small " + (papers ? "ghost" : "primary"); }
-  if ($("mpPane")) $("mpPane").classList.toggle("hidden", !papers);
-  if ($("markingQuestions")) $("markingQuestions").classList.toggle("hidden", papers);
-  if (papers) { renderPapers(); return; }
+  var tab = mp.tab;
+  [["papers", "mpTabPapers", "mpPane"], ["questions", "mpTabQuestions", "markingQuestions"], ["insights", "mpTabInsights", "mpInsights"], ["photos", "mpTabPhotos", "mpPhotos"]].forEach(function (t) {
+    if ($(t[1])) $(t[1]).className = "small " + (tab === t[0] ? "primary" : "ghost");
+    if ($(t[2])) $(t[2]).classList.toggle("hidden", tab !== t[0]);
+  });
+  if (tab === "papers") { renderPapers(); return; }
+  if (tab === "insights") { renderInsights(); return; }
+  if (tab === "photos") { renderPhotosOwed(); return; }
   if (!marking.list && !marking.listLoading && !marking.listError) markingLoadList();
   markingRenderHead();
   markingRenderList();
@@ -12179,6 +12193,82 @@ function renderStudent() {
     }).join("") + '</div>' : '<p class="small muted">No papers yet.</p>') +
     '<h4>Module record</h4><p class="small muted">' + passed + ' of ' + d.modules.length + ' passed.</p>' +
     (d.modules.length ? '<ul class="small" style="padding-left:18px;">' + d.modules.map(function (m) { return '<li style="' + (m.passed ? "" : "color:var(--coral);") + '">' + esc(m.text) + '</li>'; }).join("") + '</ul>' : '');
+}
+
+
+// ---------------------------------------------------------------- insights
+// What the marking shows so far, and who still owes chartwork photos. Both
+// read /api/tracker/insights; nothing here is kept.
+var mi = { data: null, loading: false, error: "", owed: null, owedLoading: false, owedError: "", nudges: {} };
+function mpFmt(x, dp) { if (x === null || x === undefined) return "–"; return (x > 0 ? "+" : "") + Number(x).toFixed(dp === undefined ? 2 : dp); }
+function mpPct(a, n) { return n ? Math.round((a / n) * 100) + "%" : "–"; }
+function renderInsights(force) {
+  var host = $("mpInsights"); if (!host) return;
+  if (force) mi.data = null;
+  if (!mi.data && !mi.loading) {
+    mi.loading = true; mi.error = "";
+    host.innerHTML = '<p class="small muted">Working it out...</p>';
+    markingApi("/insights", { query: "op=summary" }).then(function (j) { mi.data = j; }).catch(function (e) { mi.error = (e && e.message) || String(e); })
+      .then(function () { mi.loading = false; renderInsights(); });
+    return;
+  }
+  if (mi.loading) return;
+  if (mi.error) { host.innerHTML = '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(mi.error) + '</p></div>'; return; }
+  var d = mi.data, a = d.agreement, bands = d.bands;
+  var html = '<p class="hint" style="margin:0 0 10px;">Fills itself in as papers are graded. Nothing to maintain. <a href="' + esc(d.csv_url) + '">Download every graded answer as a spreadsheet</a> (no student names in it). <a href="#" onclick="renderInsights(true);return false;">Refresh</a></p>' +
+    (d.error ? '<p class="small" style="color:var(--coral);">' + esc(d.error) + '</p>' : '');
+  html += '<div class="card"><h4 style="margin:0 0 4px;">Does the engine agree with us?</h4><p class="small muted">Only grades given blind at triage, before the engine had written anything, compared with the engine\'s grade on the same answer. A grade changed after reading the feedback is left out. The engine only grades the answers flagged for feedback at triage, which are mostly the weaker ones, so this says how it does on those rather than across the whole paper.</p>';
+  if (!a.n) html += '<p>No blind grades with an engine grade alongside yet. Grade a paper and write its feedback and the first ones land here.</p>';
+  else {
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;"><span class="badge">' + a.n + ' answers</span><span class="badge" style="background:rgba(46,125,50,.14);">' + mpPct(a.exact, a.n) + ' same band</span><span class="badge">' + mpPct(a.withinOne, a.n) + ' within one</span><span class="badge" style="background:rgba(255,214,102,.45);">engine ' + esc(mpFmt(a.meanDelta)) + ' bands on average' + (a.interval ? ' (95%: ' + esc(mpFmt(a.interval[0])) + ' to ' + esc(mpFmt(a.interval[1])) + ')' : '') + '</span></div>' +
+      (a.n < 30 ? '<p class="small muted">Fewer than 30 answers. The evaluation runs found a third of answers change band between two identical runs, so read nothing into a difference this small yet.</p>' : '') +
+      '<table class="rec-table"><tr><th>You said &darr; / engine said &rarr;</th>' + bands.map(function (b) { return '<th>' + esc(b) + '</th>'; }).join("") + '</tr>' +
+      bands.map(function (h, i) { return '<tr><th>' + esc(h) + '</th>' + bands.map(function (e, j) { return '<td style="' + (i === j ? "background:var(--surface-2);" : "") + '">' + (a.matrix[i][j] || "") + '</td>'; }).join("") + '</tr>'; }).join("") + '</table>' +
+      '<table class="rec-table"><tr><th>Question</th><th>Answers</th><th>Same band</th><th>Engine vs you</th></tr>' + a.byQuestion.map(function (q) { return '<tr><td>' + esc(q.question_code) + '</td><td>' + q.n + '</td><td>' + mpPct(q.exact, q.n) + '</td><td>' + esc(mpFmt(q.meanDelta)) + '</td></tr>'; }).join("") + '</table>';
+  }
+  html += '</div>';
+  html += '<div class="card"><h4 style="margin:0 0 4px;">How long students wait</h4><p class="small muted">From the moment they pressed submit to the moment the paper was finalised, in days. That\'s the wait the student feels.</p>';
+  if (!d.turnaround.length) html += '<p>No papers yet.</p>';
+  else html += '<table class="rec-table"><tr><th>Instructor</th><th>Finalised</th><th>Typical wait</th><th>Longest</th><th>Still open</th><th>Oldest open</th></tr>' + d.turnaround.map(function (t) {
+    var dd = function (x) { return x === null ? "–" : Number(x).toFixed(1) + "d"; };
+    return '<tr><td>' + esc(t.instructor) + '</td><td>' + t.finalised + '</td><td>' + dd(t.medianDays) + '</td><td>' + dd(t.slowestDays) + '</td><td>' + t.open + '</td><td>' + dd(t.oldestOpenDays) + '</td></tr>';
+  }).join("") + '</table>' + (d.weeks.length ? '<p class="small muted">Finalised per week: ' + esc(d.weeks.map(function (w) { return w.week.slice(5) + " " + w.count; }).join(" · ")) + '</p>' : '');
+  html += '</div>';
+  html += '<div class="card"><h4 style="margin:0 0 4px;">Where iSpring\'s marking is too strict</h4><p class="small muted">Every part an instructor turned from red to green. iSpring compares text rather than meaning, so a question near the top here has accepted answers worth widening in QuizMaker.</p>';
+  if (!d.flips.length) html += '<p>No parts flipped yet.</p>';
+  else html += '<table class="rec-table"><tr><th>Question</th><th>Answers graded</th><th>Red turned green</th><th>Green turned red</th></tr>' + d.flips.map(function (f) { return '<tr><td>' + esc(f.question_code) + '</td><td>' + f.answers + '</td><td>' + f.toGreen + '</td><td>' + f.toRed + '</td></tr>'; }).join("") + '</table>';
+  html += '</div>';
+  host.innerHTML = html;
+}
+
+function renderPhotosOwed(force) {
+  var host = $("mpPhotos"); if (!host) return;
+  if (force) { mi.owed = null; mi.nudges = {}; }
+  if (!mi.owed && !mi.owedLoading) {
+    mi.owedLoading = true; mi.owedError = "";
+    host.innerHTML = '<p class="small muted">Looking...</p>';
+    markingApi("/insights", { query: "op=photos_owed" }).then(function (j) { mi.owed = j.papers || []; }).catch(function (e) { mi.owedError = (e && e.message) || String(e); })
+      .then(function () { mi.owedLoading = false; renderPhotosOwed(); });
+    return;
+  }
+  if (mi.owedLoading) return;
+  if (mi.owedError) { host.innerHTML = '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(mi.owedError) + '</p></div>'; return; }
+  var o = mi.owed;
+  host.innerHTML = '<p class="hint" style="margin:0 0 10px;">' + (o.length ? o.length + ' paper' + (o.length === 1 ? "" : "s") + ' waiting on chartwork photos.' : 'Nobody owes us any photos.') + ' Copy the nudge into the student\'s Chatwoot conversation; when they reply with photos, Look in Chatwoot on the paper finds them. <a href="#" onclick="renderPhotosOwed(true);return false;">Refresh</a></p>' +
+    o.map(function (p, i) {
+      var msg = mi.nudges[p.submission_id] === undefined ? p.nudge : mi.nudges[p.submission_id];
+      return '<div class="card" style="margin-bottom:8px;"><div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">' +
+        '<a href="#" data-id="' + esc(p.submission_id) + '" onclick="mp.tab=\'papers\';mpOpen(this.dataset.id);renderMarking();return false;"><strong>' + esc(p.learner_name || p.learner_email || "Unnamed") + '</strong></a>' +
+        '<span class="small muted">' + (p.days_waiting === 0 ? "today" : p.days_waiting + " day" + (p.days_waiting === 1 ? "" : "s")) + ' &middot; missing ' + esc(p.missing.map(function (m) { return m.split(".").pop(); }).join(", ")) + (p.instructor_name ? ' &middot; ' + esc(p.instructor_name) : ' &middot; unclaimed') + '</span></div>' +
+        '<textarea rows="7" style="width:100%;margin-top:6px;" aria-label="Message asking for the photos" data-id="' + esc(p.submission_id) + '" oninput="mi.nudges[this.dataset.id]=this.value">' + esc(msg) + '</textarea>' +
+        '<div style="margin-top:6px;"><button type="button" class="ghost small" style="width:auto;padding:4px 10px;" data-id="' + esc(p.submission_id) + '" onclick="mpNudgeCopy(this.dataset.id)">Copy</button> <span class="small muted" id="mpNudge-' + esc(p.submission_id) + '"></span></div></div>';
+    }).join("");
+}
+function mpNudgeCopy(id) {
+  var p = (mi.owed || []).filter(function (x) { return x.submission_id === id; })[0]; if (!p) return;
+  var text = mi.nudges[id] === undefined ? p.nudge : mi.nudges[id];
+  var say = function (t) { var h = $("mpNudge-" + id); if (h) h.textContent = t; };
+  (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { say("Copied. Paste it into their Chatwoot conversation."); }, function () { say("Could not reach the clipboard. Select the text and copy it by hand."); });
 }
 
 // ===================== TASKS (10 Sep 2026) =====================
@@ -14927,7 +15017,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
-  { n: 74, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email. The separate portal is no longer needed for any of it." },
+  { n: 74, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email, plus Insights and Photos owed. The separate portal is no longer needed for any of it." },
   { n: 73, date: "2026-10-24", who: ["marking"], text: "Marking on the rail: review, correct and approve the question bank behind AI marking, without signing in to the separate portal." },
   { n: 72, date: "2026-10-24", who: ["users"], text: "Sign-in sessions are now stored scrambled, so someone who could read the tracker's database still could not use what they found there to sign in as anyone. Nobody is signed out by the change." },
   { n: 71, date: "2026-10-24", who: ["users"], text: "Security tidy-up: the Slack reply relay has its own key and no keys travel in web addresses any more, the RCA investigator strips emails and phone numbers before anything reaches the AI, and closed RCA records clear their messages and screenshots after 90 days (the findings stay)." },
