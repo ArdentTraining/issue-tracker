@@ -628,30 +628,23 @@ function doGet(e) {
     CURRENT_ACTION_ = action;
     TOUCHED_IDS_ = {};
     MIRROR_FULL_ = {};
+    BLIND_REQ_ = false;   // r244
     if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
     if (action === 'getInvite') return jsonOut(getInvite_(p.token));   // public: validate an invite link
-    if (action === 'mirror') return jsonOut(mirror_(p));               // read-only, key-gated mirror for the local Cowork sync
-    if (action === 'readSheet') return jsonOut(readSheet_(p));         // read-only, MIRROR_KEY-gated: read a tab of any spreadsheet Edd can open (legacy-form reconciliation, r101)
-    if (action === 'importLegacyBatch') return jsonOut(importLegacyBatch_(p));
-    if (action === 'slackThreadReply') return jsonOut(slackThreadReply_(p));   // WRITE, DEPLOY_KEY-gated: r122, a thread reply in Slack answers the question // WRITE, DEPLOY_KEY-gated: r102 legacy-form catch-up
-
-    var user = userForToken_(p.token, action);
-    if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
-    if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
-    if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
-
-    if (action === 'bootstrap') return jsonOut(bootstrap_(user));
-    if (action === 'getIssuesList') return jsonOut(getIssuesList_());
-    if (action === 'getIssue') return jsonOut(getIssueFull_(p));
-    if (action === 'getIssues') return jsonOut(getIssues_());
-    if (action === 'getInstructors') return jsonOut(getInstructors_());
-    if (action === 'listUsers') return jsonOut(listUsers_());
-    if (action === 'getPlaybook') return jsonOut(getPlaybookEndpoint_());
-    if (action === 'listPlaybookSuggestions') return jsonOut(listPlaybookSuggestions_());
-    if (action === 'listKnownFixFlags') return jsonOut(listKnownFixFlags_());
-    if (action === 'getFeedback') return jsonOut(getFeedback_());
-    if (action === 'getAssignees') return jsonOut(listAssignees_());
-    return jsonOut({ ok: false, error: 'Unknown GET action: ' + action });
+    // r244: key-gated reads move to POST (the key in the body, not the URL).
+    // The GET mirror stays for one release so the local sync keeps working;
+    // the RCA Worker already sends it by POST.
+    if (action === 'mirror') { Logger.log('r244: mirror by GET (key in the URL); move the caller to POST'); return jsonOut(mirror_(p)); }
+    // r244: the Slack relay has its own key (SLACK_RELAY_KEY) and arrives by
+    // POST. This GET path only works while that key is unset, with DEPLOY_KEY,
+    // so nothing breaks between this deploy and the key being set.
+    if (action === 'slackThreadReply') return jsonOut(slackThreadReplyLegacyGet_(p));
+    // r244: readSheet (r101, any spreadsheet Edd can open) and importLegacyBatch
+    // (r102, the finished legacy-form catch-up) are gone. Session reads by GET
+    // are gone too: the page has sent every read by POST since round 54, and a
+    // session token in a URL lands in browser history and logs.
+    if (p.token) sessionLog_('GET with a session token refused (r244)', '', '', 'GET', action || '(none)');
+    return jsonOut({ ok: false, error: 'Unknown GET action: ' + action + ' (reads are POST only since r244)' });
   } catch (err) {
     return jsonOut({ ok: false, error: String(err) });
   }
@@ -684,12 +677,16 @@ function doPost(e) {
     CURRENT_ACTION_ = action;
     TOUCHED_IDS_ = {};
     MIRROR_FULL_ = {};
+    BLIND_REQ_ = false;   // r244
 
     // Public auth actions (no session yet).
     // Self-deploy: gated by its own DEPLOY_KEY (script property), not a user
     // session — same pattern as the mirror. See deployBackend_ below.
     if (action === 'ping') return jsonOut({ ok: true, time: new Date().toISOString(), backend: backendInfo_() });
     if (action === 'getManifest') return jsonOut(getManifest_(body));
+    // r244: the mirror and the Slack relay by POST, keys in the body.
+    if (action === 'mirror') return jsonOut(mirror_(body));
+    if (action === 'slackThreadReply') return jsonOut(slackThreadReply_(body));
     if (action === 'deployBackend') return jsonOut(deployBackend_(body));
     if (action === 'setSlackWebhook') return jsonOut(setSlackWebhook_(body));
     if (action === 'setTicketSecrets') return jsonOut(setTicketSecrets_(body));   // r235: machine + nudge signing keys, DEPLOY_KEY gated
@@ -706,7 +703,7 @@ function doPost(e) {
     if (action === 'storeNudge') return jsonOut(storeNudge_(body));
     if (action === 'runMigrateAudience') {
       var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-      if (!mk || String(body.key || '') !== mk) return jsonOut({ ok: false, error: 'bad deploy key' });
+      if (!mk || !safeEq_(String(body.key || ''), mk)) return jsonOut({ ok: false, error: 'bad deploy key' });
       return jsonOut({ ok: true, result: migrateAudience() });
     }
     // The backtest harness (r46): key-gated maintenance machinery, not a user
@@ -729,6 +726,7 @@ function doPost(e) {
     if (action === 'logout') return jsonOut(logout_(body.token));
     if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
     body._user = user;
+    BLIND_REQ_ = studentBlind_(user);   // r244: every answer from here is cleaned for code-only accounts
 
     // Reads are served over POST too, so the front-end can keep the session
     // token in the request body rather than the URL (URLs leak into browser
@@ -752,9 +750,11 @@ function doPost(e) {
     if (action === 'irpcsLearnerToken') return jsonOut(irpcsLearnerToken_(user));
     if (action === 'me') return jsonOut({ ok: true, user: publicUser_(user), backend: backendInfo_() });
     if (action === 'bootstrap') return jsonOut(bootstrap_(user, body));
-    if (action === 'getIssuesList') return jsonOut(getIssuesList_());
-    if (action === 'getIssue') return jsonOut(getIssueFull_(body));
-    if (action === 'getIssues') return jsonOut(getIssues_());
+    // r244: accounts that only fix code (dev, no log/manage/course/users) get
+    // the issues with the student's details taken out. See blankStudent_.
+    if (action === 'getIssuesList') return jsonOut(blankIssues_(user, getIssuesList_()));
+    if (action === 'getIssue') return jsonOut(blankIssues_(user, getIssueFull_(body)));
+    if (action === 'getIssues') return jsonOut(blankIssues_(user, getIssues_()));
     if (action === 'getInstructors') return jsonOut(getInstructors_());
     if (action === 'listUsers') return jsonOut(listUsers_());
     if (action === 'getPlaybook') return jsonOut(getPlaybookEndpoint_());
@@ -822,7 +822,7 @@ function doPost(e) {
     if (action === 'assignIssue') return jsonOut(assignIssue_(body));
     if (action === 'bulkAssign') return jsonOut(bulkAssign_(body));
     if (action === 'courseReview') return jsonOut(courseReview_(body));
-    if (action === 'fetchStudentUpdate') return jsonOut(fetchStudentUpdate_(body));
+    if (action === 'fetchStudentUpdate') return jsonOut(studentBlind_(user) ? blindStudentUpdate_(fetchStudentUpdate_(body)) : fetchStudentUpdate_(body));
     if (action === 'peekStudentActivity') return jsonOut(peekStudentActivity_(body)); // FB-0281: cheap no-AI look before the card claims silence
     if (action === 'listLiveCases') return jsonOut(listLiveCases_(body));
     if (action === 'caseBrief') return jsonOut(caseBrief_(body));
@@ -1232,7 +1232,9 @@ function reqPerm_(action) {
     // therefore changing a corpus row, is Edd's alone (FB-0231).
     case 'flagKnownFix': return 'log';
     // Confusion -> content-tweak suggestions sit with anyone who works a queue.
-    case 'listContentSuggestions': case 'resolveContentSuggestion': case 'runConfusionReview': return 'work';
+    case 'listContentSuggestions': case 'resolveContentSuggestion': return 'work';
+    // r244: it starts an AI run on our API credit, so admins only.
+    case 'runConfusionReview': return 'users';
     case 'resurfaceIssue':
     case 'inviteUser': case 'updateUser': case 'deleteUser': case 'adminResetLink': case 'listUsers':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion': case 'suggestPlaybook':
@@ -1285,7 +1287,7 @@ function reqPerm_(action) {
     // Fail closed. Every action reaching this point is one nobody listed above,
     // which means nobody decided who should be allowed to call it. The public
     // and key-gated actions (login, acceptInvite, requestPasswordReset, ping,
-    // mirror, getInvite, getManifest, deployBackend, runSetup, setSlackWebhook,
+    // mirror, slackThreadReply, getInvite, getManifest, deployBackend, runSetup, setSlackWebhook,
     // setTicketSecrets, setChatwootConfig, runMigrateAudience, backtest) all return from doGet /
     // doPost before this gate, so they are unaffected.
     default: return 'none';
@@ -1850,6 +1852,84 @@ function adminInviteLink(email) {
     (url || '(set APP_URL first)') + ((url && url.indexOf('?') > -1) ? '&' : '?') + 'invite=' + f.user.invite_token);
 }
 
+// r244: compare a presented key with the stored one in time that does not
+// depend on where they first differ. Every key and signature check goes
+// through here.
+function safeEq_(a, b) {
+  a = String(a == null ? '' : a); b = String(b == null ? '' : b);
+  // Runs over the whole stored value whatever is presented, so the time says
+  // nothing about how much of a guess was right.
+  var diff = a.length ^ b.length;
+  for (var i = 0; i < b.length; i++) diff |= (a.charCodeAt(i) | 0) ^ b.charCodeAt(i);
+  return diff === 0 && b.length > 0;
+}
+
+// r244 (security sweep, finding 2): accounts that fix code but do not work
+// students (dev, devcourse, with none of log, manage, course, users) see the
+// issue without the student. Applied at the response edge, never inside the
+// cached builders, because the cached list is shared by every account.
+var STUDENT_FIELDS_ = ['raw_text', 'student_name', 'student_contact', 'device_info',
+  'chatwoot_contact_id', 'instructor_email'];
+var REPORT_STUDENT_FIELDS_ = ['student_name', 'student_contact', 'raw_text', 'device_info', 'chatwoot_contact_id'];
+// r244: built and tested, switched OFF on 24 Oct 2026 by Edd's choice (devs keep
+// seeing student details for now). Set to true to hide them from code-only
+// accounts; nothing else needs changing, and tracker-mirror's matching refusal
+// was deliberately not deployed, so turn both on together.
+var STUDENT_BLIND_ON_ = false;
+function studentBlind_(user) {
+  if (!STUDENT_BLIND_ON_) return false;
+  var p = permsOf_(user || {});
+  return !(p.log || p.manage || p.course || p.users);
+}
+function blankStudent_(issue) {
+  if (!issue || typeof issue !== 'object') return issue;
+  var o = {}, k;
+  for (k in issue) if (Object.prototype.hasOwnProperty.call(issue, k)) o[k] = issue[k];
+  STUDENT_FIELDS_.forEach(function (f) { if (f in o) o[f] = null; });
+  if (o.reports_json) {
+    var arr = null;
+    try { arr = JSON.parse(String(o.reports_json)); } catch (e) { arr = null; }
+    if (arr && arr.length !== undefined && arr.map) {
+      // Date, kind, summary and the conversation id stay, so a developer can
+      // still say "the report from 12 Oct" and ask an instructor about it.
+      o.reports_json = JSON.stringify(arr.map(function (rp) {
+        var q = {}, rk;
+        for (rk in rp) if (Object.prototype.hasOwnProperty.call(rp, rk) && REPORT_STUDENT_FIELDS_.indexOf(rk) < 0) q[rk] = rp[rk];
+        return q;
+      }));
+    } else {
+      o.reports_json = null;   // unreadable, so it cannot be cleaned: send nothing
+    }
+  }
+  if (o.clipped) delete o.clipped;
+  return o;
+}
+var BLIND_REQ_ = false;   // r244: set per request once the account is known
+function blankOut_(res) {
+  var out = {}, k;
+  for (k in res) if (Object.prototype.hasOwnProperty.call(res, k)) out[k] = res[k];
+  if (out.issues && out.issues.map) out.issues = out.issues.map(blankStudent_);
+  if (out.issue && typeof out.issue === 'object') out.issue = blankStudent_(out.issue);
+  if (out.changed && out.changed.map) out.changed = out.changed.map(blankStudent_);
+  return out;
+}
+function blankIssues_(user, res) {
+  if (!res || !studentBlind_(user)) return res;
+  var out = {}, k;
+  for (k in res) if (Object.prototype.hasOwnProperty.call(res, k)) out[k] = res[k];
+  if (out.issues && out.issues.map) out.issues = out.issues.map(blankStudent_);
+  if (out.issue) out.issue = blankStudent_(out.issue);
+  return out;
+}
+// fetchStudentUpdate_ reads the student's Chatwoot thread onto the issue. A
+// code-only account may press it (it is 'work'), but only learns whether
+// something new arrived, not what the student said.
+function blindStudentUpdate_(res) {
+  if (!res || !res.ok) return res && res.error ? { ok: false, error: 'The check could not finish. An instructor can try it from their account.' } : res;
+  if (!res.found) return { ok: true, found: false, message: 'Nothing new from the student that could be added.' };
+  return { ok: true, found: true, message: 'New student messages were added to this issue. The details are visible to instructors.', images: res.images || 0 };
+}
+
 // The front-end sends POSTs with Content-Type text/plain so the browser
 // treats them as "simple" requests and skips the CORS preflight.
 function jsonOut(obj) {
@@ -1861,6 +1941,11 @@ function jsonOut(obj) {
   maybeInvalidate_();
   fileMark_('end_jobs');
   if (FILE_T_) { fileTag_('merged', !!(obj && obj.merged)); fileTag_('ok', !!(obj && obj.ok)); fileTimingSave_(); }
+  // r244: and the one place every answer to a code-only account passes, so an
+  // issue row that rides back on a write (updateIssue, markDevFixed...) is
+  // cleaned the same way as the board. blankStudent_ is idempotent, so rows
+  // already cleaned for the bootstrap fingerprints come out unchanged.
+  if (BLIND_REQ_ && obj && typeof obj === 'object') obj = blankOut_(obj);
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
@@ -1938,48 +2023,17 @@ function targetSheetName_(category) {
 
 function getInstructorsSheet_() { return sheetByName_(INSTRUCTORS_SHEET); }
 
-// Read-only mirror for the local Cowork sync. Gated by a standalone key held
-// in the MIRROR_KEY script property, separate from user accounts and sessions,
-// so if the key ever leaks it exposes read-only issue/feedback data and nothing
-// more (no writes, no login, no account access). Rotate it by changing the
-// property. Returns the most recent issues (newest first) plus all feedback.
+// Key-gated mirror for the local Cowork sync and the RCA Worker. Gated by a
+// standalone key held in the MIRROR_KEY script property, separate from user
+// accounts and sessions. r244: it is NOT low-privilege. It returns full issue
+// rows, student names, emails and conversations included, and searches them by
+// name, so treat MIRROR_KEY like a password to the whole board: never in a
+// shared note, and rotate it if it has been. It writes nothing. Accepts the key
+// in a POST body (preferred) or, for one release, the GET query.
 // Optional params: key (required), limit (default 50), since (ISO date).
-// r101 (22 Aug 2026): key-gated read of an external spreadsheet tab, so the
-// legacy form sheets (Tech Fix Requests, Course Errors responses, strafe
-// launch bugs) can be reconciled against the tracker before launch. Runs as
-// Edd, so it can open anything Edd can. Read-only; never writes.
-function readSheet_(p) {
-  var key = PropertiesService.getScriptProperties().getProperty('MIRROR_KEY');
-  if (!key || !p || p.key !== key) return { ok: false, error: 'unauthorized' };
-  if (!p.sheet_id) return { ok: false, error: 'sheet_id required' };
-  try {
-    var ss = SpreadsheetApp.openById(String(p.sheet_id));
-    var tabs = ss.getSheets().map(function (sh) { return { name: sh.getName(), gid: sh.getSheetId(), rows: sh.getLastRow(), cols: sh.getLastColumn() }; });
-    if (p.list_tabs) return { ok: true, title: ss.getName(), tabs: tabs };
-    var sheet = null;
-    if (p.gid != null && p.gid !== '') {
-      var gid = parseInt(p.gid, 10);
-      ss.getSheets().forEach(function (sh) { if (sh.getSheetId() === gid) sheet = sh; });
-    } else if (p.tab) {
-      sheet = ss.getSheetByName(String(p.tab));
-    }
-    if (!sheet) return { ok: false, error: 'tab not found', tabs: tabs };
-    var lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
-    if (!lastRow || !lastCol) return { ok: true, title: ss.getName(), tab: sheet.getName(), values: [] };
-    var start = parseInt(p.start_row, 10) || 1;
-    var max = parseInt(p.max_rows, 10) || 1000;
-    var n = Math.min(max, lastRow - start + 1);
-    if (n < 1) return { ok: true, title: ss.getName(), tab: sheet.getName(), values: [], last_row: lastRow };
-    var values = sheet.getRange(start, 1, n, lastCol).getDisplayValues();
-    return { ok: true, title: ss.getName(), tab: sheet.getName(), start_row: start, last_row: lastRow, values: values };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-}
-
 function mirror_(p) {
   var key = PropertiesService.getScriptProperties().getProperty('MIRROR_KEY');
-  if (!key || !p || p.key !== key) return { ok: false, error: 'unauthorized' };
+  if (!key || !p || !safeEq_(String(p.key || ''), key)) return { ok: false, error: 'unauthorized' };
 
   var limit = parseInt(p.limit, 10);
   if (isNaN(limit) || limit < 1) limit = 50;
@@ -3033,7 +3087,7 @@ function verifyTicket_(raw) {
     var dot = raw.indexOf('.');
     if (!secrets.length || dot < 1) return null;
     var p = raw.slice(0, dot), sig = raw.slice(dot + 1);
-    var signed = secrets.some(function (s) { return b64UrlEncode_(Utilities.computeHmacSha256Signature(p, s)) === sig; });
+    var signed = secrets.some(function (s) { return safeEq_(b64UrlEncode_(Utilities.computeHmacSha256Signature(p, s)), sig); });
     if (!signed) return null;
     var padded = p + '===='.slice((p.length % 4) || 4);
     var t = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(padded)).getDataAsString());
@@ -3691,6 +3745,9 @@ function bootstrap_(user, body) {
   if (hasPerm_(user, reqPerm_('chatBackSweepState'))) {
     try { var bs = chatBackSweepState_(); out.back_sweep = { next_page: bs.next_page, pages: bs.pages }; } catch (e) {}
   }
+  // r244: student details out for code-only accounts, before the
+  // fingerprints below, so they match the rows that page actually holds.
+  if (studentBlind_(user)) out.issues = out.issues.map(blankStudent_);
   // r201: only now, because the live cases above were built from the FULL list.
   try {
     var d = deltaIssues_(out.issues, body && body.have);
@@ -7012,7 +7069,7 @@ function monthlyChecklistReview() {
 // straight in Script Properties. DEPLOY_KEY gated, same as deployBackend.
 function setSlackWebhook_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var url = String(data.webhook || '');
   if (!/^https:\/\/hooks\.slack\.com\/services\//.test(url)) return { ok: false, error: 'not a Slack webhook URL' };
   PropertiesService.getScriptProperties().setProperty('SLACK_WEBHOOK_URL', url);
@@ -7027,7 +7084,7 @@ function setSlackWebhook_(data) {
 function setTicketSecrets_(data) {
   var props = PropertiesService.getScriptProperties();
   var key = props.getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var set = [];
   [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET']].forEach(function (pair) {
     var v = data[pair[0]];
@@ -7059,7 +7116,7 @@ var CHATWOOT_BASE = 'https://app.chatwoot.com';
 // it never returns the token itself.
 function chatwootProbe_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var cfg = chatwootCfg_();
   var out = { token_head: String(cfg.token).slice(0, 4), token_len: String(cfg.token).length,
               account: cfg.account, base: CHATWOOT_BASE };
@@ -7138,7 +7195,7 @@ function chatwootProbe_(data) {
 // apiPost overwrites a body field named token with the session (the r95 trap).
 function setSlackChannel_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var allowed = { SLACK_INSTRUCTING_DAILY: 1, SLACK_AUREUS_TECH: 1, SLACK_INSTRUCTING_UPDATES: 1,
                   SLACK_SHIPPING_ISSUES: 1, SLACK_WEBHOOK_URL: 1, SLACK_IMPROVEMENTS_FIXES: 1,
                   SLACK_ADMINS: 1, SLACK_BUSINESS_MGMT: 1 };  // r109 + r119 + r129 + r141
@@ -7207,7 +7264,7 @@ function setSlackChannel_(data) {
 
 function setChatwootConfig_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var props = PropertiesService.getScriptProperties();
   // THE TRAP (22 Aug 2026): the app's own apiPost overwrites a body field named
   // `token` with the caller's SESSION token, on every request. Called through
@@ -8455,7 +8512,7 @@ function chatScanReview_(data) {
 // Reading it beats guessing, and this never writes anything.
 function getManifest_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   try {
     var res = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + ScriptApp.getScriptId() + '/content', {
       headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true
@@ -8469,7 +8526,7 @@ function getManifest_(data) {
 
 function deployBackend_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
 
   var src = String(data.source || '');
   if (src.length < 50000) return { ok: false, error: 'source suspiciously short (' + src.length + ' chars) - refusing' };
@@ -9263,7 +9320,7 @@ function backfillConversationIds() {
 }
 function runJob_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var name = String(data.job || '');
   if (!RUNNABLE_JOBS_[name]) return { ok: false, error: 'not a runnable job: ' + name };
   var said;
@@ -9276,7 +9333,7 @@ function runJob_(data) {
 
 function runSetup_(data) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(data.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   setup();
   // Round 65: touching the corpus sheet is what appends its three new header
   // cells, so the post-deploy runSetup covers KnownFixes as well as Issues.
@@ -13550,9 +13607,36 @@ function legacyGapRows_() {
 // the tracker. The author is resolved from SLACK_MEMBER_IDS in reverse; the
 // same permission rules as answerQuery_ apply, so Slack grants nobody
 // anything the tracker would not.
+// r244: its own key, SLACK_RELAY_KEY, which the RCA Worker sends in a POST
+// body. It used to be DEPLOY_KEY in a GET query string, so the key that can
+// replace this whole backend travelled in a URL on every Slack reply.
+function slackRelayKeyOk_(given) {
+  var k = PropertiesService.getScriptProperties().getProperty('SLACK_RELAY_KEY');
+  return !!k && safeEq_(String(given || ''), k);
+}
+// The old GET route, kept only until SLACK_RELAY_KEY is set: then it refuses.
+function slackThreadReplyLegacyGet_(p) {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SLACK_RELAY_KEY')) return { ok: false, error: 'slackThreadReply is POST only now that SLACK_RELAY_KEY is set' };
+  var mk = props.getProperty('DEPLOY_KEY');
+  if (!mk || !p || !safeEq_(String(p.key || ''), mk)) return { ok: false, error: 'unauthorized' };
+  Logger.log('r244 WARNING: Slack relay arrived by GET with DEPLOY_KEY. Set SLACK_RELAY_KEY here and in the ardent-rca Worker, then rotate DEPLOY_KEY.');
+  return slackThreadReplyCore_(p);
+}
 function slackThreadReply_(p) {
-  var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!mk || !p || p.key !== mk) return { ok: false, error: 'unauthorized' };
+  if (!p || !slackRelayKeyOk_(p.key)) {
+    // The Worker sends DEPLOY_KEY (its TRACKER_KEY) until SLACK_RELAY_KEY is
+    // set there too, so it is still accepted here, by POST only. That opens
+    // nothing new: whoever holds DEPLOY_KEY can already replace this backend.
+    // Set the key here FIRST, then in Cloudflare, so no reply is refused in
+    // between; then rotating DEPLOY_KEY ends the old route for good.
+    var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
+    if (!mk || !p || !safeEq_(String(p.key || ''), mk)) return { ok: false, error: 'unauthorized' };
+    Logger.log('r244 WARNING: Slack relay used DEPLOY_KEY. Set SLACK_RELAY_KEY in the ardent-rca Worker, then rotate DEPLOY_KEY.');
+  }
+  return slackThreadReplyCore_(p);
+}
+function slackThreadReplyCore_(p) {
   var channel = String(p.channel || ''), ts = String(p.ts || ''), uid = String(p.uid || ''), text = String(p.text || '').trim();
   if (!channel || !ts || !text) return { ok: false, error: 'channel, ts and text required' };
   // Find the issue whose stamped thread this is.
@@ -13623,33 +13707,9 @@ function slackThreadReply_(p) {
   return { ok: !!(res && res.ok), matched: true, error: res && res.error };
 }
 
-function importLegacyBatch_(p) {
-  var mk = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!mk || !p || p.key !== mk) return { ok: false, error: 'unauthorized' };
-  var props = PropertiesService.getScriptProperties();
-  if (p.reset) props.setProperty('LEGACY_IMPORT_IDX', '0');
-  var idx = parseInt(props.getProperty('LEGACY_IMPORT_IDX') || '0', 10);
-  var rows = legacyGapRows_();
-  if (p.count_only) {
-    var bySrc = {}; rows.forEach(function (r) { bySrc[r.src] = (bySrc[r.src] || 0) + 1; });
-    return { ok: true, total: rows.length, idx: idx, by_source: bySrc };
-  }
-  var n = parseInt(p.n, 10) || 3;
-  var end = Math.min(idx + n, rows.length);
-  var results = [];
-  for (var i = idx; i < end; i++) {
-    try {
-      var res = addIssue_(rows[i].data);
-      results.push({ i: i, src: rows[i].src, ok: !!(res && res.ok), merged: !!(res && res.merged),
-        id: (res && res.issue && res.issue.issue_id) ? String(res.issue.issue_id).slice(0, 8) : (res && res.issue_id ? String(res.issue_id).slice(0, 8) : ''),
-        sum: String(rows[i].data.summary || '').slice(0, 80) });
-    } catch (err) {
-      results.push({ i: i, src: rows[i].src, ok: false, error: String(err).slice(0, 160) });
-    }
-    props.setProperty('LEGACY_IMPORT_IDX', String(i + 1));
-  }
-  return { ok: true, from: idx, done: end, total: rows.length, results: results };
-}
+// r244: importLegacyBatch_ (r102, the legacy-form catch-up of 22 Aug) removed;
+// it was finished work behind DEPLOY_KEY in a GET query. legacyGapRows_ stays
+// for the record of what was imported.
 
 
 function importHistoricalIssues() {
@@ -14634,7 +14694,7 @@ function btDraftAt_(prefix, suggestions, replyIdx, agentName, studentName) {
 // replay row so the write-up happens outside the 6-minute window.
 function backtest_(body) {
   var key = PropertiesService.getScriptProperties().getProperty('DEPLOY_KEY');
-  if (!key || String(body.key || '') !== key) return { ok: false, error: 'bad deploy key' };
+  if (!key || !safeEq_(String(body.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var op = String(body.op || '');
   if (op === 'backfill') return btBackfill_(body);
   if (op === 'dedupe') return btDedupe_();

@@ -3,6 +3,8 @@
 #   ANTHROPIC_API_KEY  - the tracker's existing Anthropic key
 #   CHATWOOT_TOKEN     - a Chatwoot agent token (limited-scope agent preferred)
 #   MIRROR_KEY         - the tracker backend's MIRROR_KEY script property
+#   SLACK_RELAY_KEY    - r244: the tracker's SLACK_RELAY_KEY script property
+#                        (TRACKER_KEY, which is DEPLOY_KEY, is used until it is set)
 name = "ardent-rca"
 main = "index.js"
 compatibility_date = "2026-08-01"
@@ -24,3 +26,7 @@ ALLOWED_ORIGIN = "https://ardenttraining.github.io"
 # build nudge: first deploy from this directory (23 Aug 2026)
 # secrets nudge 23 Aug 17:5x
 # secrets bind: slack signing + tracker key (25 Aug)
+
+# r244: nightly retention, 03:17 UTC (see purgeOld in index.js)
+[triggers]
+crons = ["17 3 * * *"]

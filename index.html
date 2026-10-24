@@ -6984,7 +6984,17 @@ function rcaButtonHtml(issue) {
 function rcaApi(path, payload) {
   payload = payload || {};
   payload.token = getToken();
-  return fetch(RCA_WORKER_URL + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+  // r244: the session also goes in an Authorization header, which the Worker
+  // now prefers. The body copy stays for one release, and if the Worker has not
+  // picked up r244 yet its CORS answer refuses the header, so a failed request
+  // is tried once more without it.
+  var body = JSON.stringify(payload);
+  var send = function (withHeader) {
+    var h = { "Content-Type": "application/json" };
+    if (withHeader) h.Authorization = "Bearer " + payload.token;
+    return fetch(RCA_WORKER_URL + path, { method: "POST", headers: h, body: body });
+  };
+  return send(true).catch(function () { return send(false); })
     .then(function (r) { return r.json(); });
 }
 var RCA_STATUS_WORDS = { gathering: "Gathering evidence", hypotheses: "Hypotheses open", root_cause: "Root cause confirmed", fix_pending: "Fix pending", verified: "Verified" };
@@ -13635,6 +13645,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 71, date: "2026-10-24", who: ["users"], text: "Security tidy-up: the Slack reply relay has its own key and no keys travel in web addresses any more, the RCA investigator strips emails and phone numbers before anything reaches the AI, and closed RCA records clear their messages and screenshots after 90 days (the findings stay)." },
   { n: 70, date: "2026-10-24", who: ["recovery"], text: "Recovery on the rail finds a student's quiz answers from before Submit All, for when their submission never arrived." },
   { n: 69, date: "2026-10-24", who: ["users"], text: "RCA reads as a conversation: the investigator's tool calls fold into one Worked through line, and its replies lead with a short answer with the detail under headings you open. It moves the stage along itself (Gathering evidence through Fix pending), and an admin can add 1M tokens when a record runs out of budget." },
   { n: 68, date: "2026-10-24", who: ["log"], text: "Customs invoice: Edit on anything under Made recently. It puts the invoice back in the form to correct a mistake, and saving keeps the same number and replaces the PDF and Word copy." },
