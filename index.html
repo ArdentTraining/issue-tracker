@@ -1232,7 +1232,7 @@
   </button>
   <!-- r246: Marking, moving across from the separate portal a screen at a
        time. The question bank first. Its own permission, hand-picked. -->
-  <button type="button" class="rail-item" id="railMarking" onclick="railGo('marking')" title="Marking - review and approve the question bank">
+  <button type="button" class="rail-item" id="railMarking" onclick="railGo('marking')" title="Marking - the papers to mark, and the question bank behind the engine">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
     <span class="ri-word">Marking</span>
   </button>
@@ -2149,12 +2149,23 @@
      reached with a half-hour markingTicket. Nothing real is in this file:
      questions and answers arrive from the API at run time. -->
 <div id="markingView" class="wrap hidden">
-  <h2 style="margin:0 0 4px;">Marking</h2>
-  <p class="hint" style="margin:0 0 14px;">The question bank: correct each question and approve it, so the engine can mark against it. Marking papers stays on the portal for now, and moves here next.</p>
-  <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="markingHead"></div>
-  <div class="irpcs-split">
-    <div class="irpcs-list" id="markingList"></div>
-    <div id="markingItem"></div>
+  <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin:0 0 10px;">
+    <h2 style="margin:0;">Marking</h2>
+    <!-- r247: two panes. Papers is the marking queue and the paper itself;
+         Questions is the question bank behind the engine. -->
+    <div style="display:flex;gap:6px;">
+      <button type="button" class="small" id="mpTabPapers" style="width:auto;padding:4px 10px;" onclick="markingTab('papers')">Papers</button>
+      <button type="button" class="small" id="mpTabQuestions" style="width:auto;padding:4px 10px;" onclick="markingTab('questions')">Questions</button>
+    </div>
+  </div>
+  <div id="mpPane"></div>
+  <div id="markingQuestions" class="hidden">
+    <p class="hint" style="margin:0 0 14px;">The question bank: correct each question and approve it, so the engine can mark against it.</p>
+    <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="markingHead"></div>
+    <div class="irpcs-split">
+      <div class="irpcs-list" id="markingList"></div>
+      <div id="markingItem"></div>
+    </div>
   </div>
 </div>
 <div id="resourcesView" class="wrap hidden">
@@ -2798,7 +2809,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
-    <tr data-perm="marking"><td><span class="ui">Marking</span></td><td>The question bank behind AI marking: correct each question and approve it before the engine marks against it.</td></tr>
+    <tr data-perm="marking"><td><span class="ui">Marking</span></td><td>Students' exam papers to mark, with the engine's help, and the question bank it marks against.</td></tr>
     <tr data-perm="recovery"><td><span class="ui">Recovery</span></td><td>A student's quiz answers from before Submit All, for when their submission never arrived.</td></tr>
     <tr data-perm="resources"><td><span class="ui">Resources</span></td><td>The free downloads on the website's resources page: edit them, add new ones, and change their order.</td></tr>
     <tr data-perm="log"><td><span class="ui">Shipping</span></td><td>The monthly shipping report, and a commercial invoice for a student's pack when customs ask for one again.</td></tr>
@@ -3143,7 +3154,15 @@
   <p><span class="ui">Hide from website</span> moves the row to a Hidden tab in the sheet, so nothing is ever deleted and <span class="ui">Put back on the website</span> undoes it. Every save is also written to the ResourcesLog tab of the tracker's own sheet, with what each resource looked like before.</p>
 </section>
 
-<section id="man-marking" data-perm="marking" data-title="The question bank">
+<section id="man-marking" data-perm="marking" data-title="Marking papers">
+  <h3>Marking papers</h3>
+  <p>When a student submits a mock or final exam, the paper lands in <span class="ui">Marking</span>. The queue opens on the open papers; <span class="ui">Mine</span>, <span class="ui">Unclaimed</span> and <span class="ui">Sent</span> narrow it, and the search finds a student by name or email.</p>
+  <p><span class="ui">Claim</span> a paper and you grade it first, blind: every answer gets Strong, Good, Fair or Poor, and a tick says whether it needs written feedback. Nothing from the engine is on that screen, on purpose, so your grade is your own. Green and red are the quiz's own marking, and <span class="ui">mark right</span> or <span class="ui">mark wrong</span> corrects it where it compared text rather than meaning. The keys 1 to 4, f, j, k and Enter work down the paper without the mouse.</p>
+  <p>Then <span class="ui">Write feedback</span>: the engine writes for the ticked answers only, a few at a time, and the paper opens for you to check. Read each one, edit the words, move the grade if you must (that is recorded as moved after reading), and press <span class="ui">Looks right</span>. Make the readiness call (or on a Final, the RYA grade), then <span class="ui">Finalise</span>. From then on the paper's answers are calibration for the next student on the same questions, so they can't change.</p>
+  <p>Finally download the PDF, copy the covering email into Chatwoot with the PDF attached, and press <span class="ui">I've sent the email and the PDF</span>. <span class="ui">Not sent after all</span> undoes a misclick. Only the instructor who claimed a paper can change it.</p>
+</section>
+
+<section id="man-marking-questions" data-perm="marking" data-title="The question bank">
   <h3>The question bank</h3>
   <p>The AI marking engine marks each answer against its question's marking requirements, category and model answer. A question nobody has approved isn't marked by the engine at all, so every new bank goes through <span class="ui">Marking</span> first.</p>
   <p>Pick an exam at the top; the list opens on the questions still waiting. Each question shows the wording and pictures, any notes left for the reviewer, the model answer (which can reach a student), the marker's version where there is one (what the engine actually marks against), the marking requirements and the house feedback. Correct what needs it underneath and press <span class="ui">Save</span>, or <span class="ui">Approve</span>, which saves anything unsaved first and moves on to the next one waiting.</p>
@@ -11008,6 +11027,11 @@ function markingApi(path, opts, retried) {
 
 function renderMarking() {
   if (!(state.perms || {}).marking) return;
+  var papers = mp.tab === "papers";
+  if ($("mpTabPapers")) { $("mpTabPapers").className = "small " + (papers ? "primary" : "ghost"); $("mpTabQuestions").className = "small " + (papers ? "ghost" : "primary"); }
+  if ($("mpPane")) $("mpPane").classList.toggle("hidden", !papers);
+  if ($("markingQuestions")) $("markingQuestions").classList.toggle("hidden", papers);
+  if (papers) { renderPapers(); return; }
   if (!marking.list && !marking.listLoading && !marking.listError) markingLoadList();
   markingRenderHead();
   markingRenderList();
@@ -11382,6 +11406,750 @@ function markingSkip() {
   var next = markingNextWaiting(q.question_id);
   if (next && next.question_id !== q.question_id) markingOpen(next.question_id);
   else toast("Nothing else is waiting in this view.");
+}
+
+// ============================ MARKING: PAPERS (r247) ============================
+// The marking queue and the paper itself, moved across from the portal. The
+// back end is /api/tracker/papers on ardent-portal (see MARKING above for
+// the ticket). What this page is sent is decided there: at triage it gets no
+// AI text and no AI grade, and after triage it gets the engine's feedback
+// but never its grade. So the blind grading rule holds because the data
+// never arrives, not because this page is careful.
+//
+// The flow (MARKING-FLOW-SPEC in ardent-marking):
+//   claim -> triage (grade every answer blind, tick which need feedback)
+//         -> write (the engine, flagged answers only, a batch at a time)
+//         -> review (read the feedback, edit it, check each one)
+//         -> finalise (readiness call, or the RYA grade on a Final)
+//         -> send (PDF, covering email, "I've sent it")
+//
+// PUBLIC REPO: no student, answer or feedback ever appears in this file.
+var mp = {
+  tab: "papers",
+  // the queue
+  queue: null, show: "open", q: "", loading: false, error: "",
+  // the paper
+  openId: "", paper: null, paperLoading: false, paperError: "", msg: null, busy: false,
+  // triage: per answer { grade, needsFeedback, override, tickedByHand, saved, error }
+  tri: {}, focus: 0, keysOn: true, showKeys: false, writing: false,
+  // review: per answer { grade, feedback, open, saved, error }
+  rev: {},
+  fin: { readiness: "", rya: "", summary: "" },
+  send: { message: null, revisionChecked: false, state: "" },
+  student: null
+};
+var MP_GRADES = ["Strong", "Good", "Fair", "Poor"];
+var MP_PHOTO_KIND = { route_plot: "route plot", ep_plot: "EP plot", tidal_curve: "tidal curve", cts_plot: "course to steer plot" };
+var MP_READINESS = [["ready", "Ready. Go ahead and book the final"], ["conditional", "Ready once the revision is done"], ["not yet", "Not yet. Work through this first"]];
+
+function mpApi(opts, retried) { return markingApi("/papers", opts, retried); }
+
+function markingTab(t) {
+  mp.tab = t;
+  renderMarking();
+}
+
+function renderPapers() {
+  var host = $("mpPane");
+  if (!host) return;
+  if (mp.openId) { renderPaper(); return; }
+  if (mp.student) { renderStudent(); return; }
+  if (!mp.queue && !mp.loading && !mp.error) { mpLoadQueue(); return; }
+  renderQueue();
+}
+
+// ---------------------------------------------------------------- the queue
+function mpLoadQueue(force) {
+  if (mp.loading) return;
+  mp.loading = true; mp.error = "";
+  if (force) mp.queue = null;
+  renderQueue();
+  var query = "op=queue&show=" + encodeURIComponent(mp.show) + (mp.q.trim() ? "&q=" + encodeURIComponent(mp.q.trim()) : "");
+  mpApi({ query: query }).then(function (j) {
+    if (!j || !Array.isArray(j.papers)) throw new Error("Marking sent a queue we couldn't read.");
+    mp.queue = j;
+  }).catch(function (e) {
+    mp.error = (e && e.message) || String(e);
+  }).then(function () { mp.loading = false; renderQueue(); });
+}
+
+function mpShow(v) { mp.show = v; mpLoadQueue(true); }
+function mpSearch(v) { mp.q = v; }
+function mpSearchGo() { mpLoadQueue(true); }
+
+function mpAgo(iso) {
+  var mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 60) return mins + "m ago";
+  if (mins < 1440) return Math.round(mins / 60) + "h ago";
+  return Math.round(mins / 1440) + "d ago";
+}
+function mpDay(iso) {
+  if (!iso) return "";
+  var d = new Date(iso); if (isNaN(d)) return String(iso);
+  return d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+}
+function mpTone(t) { return t === "attention" ? "background:rgba(254,193,149,.45);" : t === "warn" ? "background:rgba(255,214,102,.45);" : t === "ok" ? "background:rgba(46,125,50,.14);" : "background:var(--surface-2);"; }
+function mpGradeStyle(g) {
+  return g === "Strong" ? "background:rgba(46,125,50,.18);" : g === "Good" ? "background:rgba(94,114,235,.14);" : g === "Fair" ? "background:rgba(255,214,102,.45);" : g === "Poor" ? "background:rgba(239,83,80,.18);" : "";
+}
+
+function renderQueue() {
+  var host = $("mpPane");
+  if (!host || mp.openId || mp.student) return;
+  var q = mp.queue;
+  var shows = (q && q.shows) || [{ key: "open", label: "Open" }, { key: "mine", label: "Mine" }, { key: "unclaimed", label: "Unclaimed" }, { key: "done", label: "Sent" }, { key: "all", label: "Everything" }];
+  var head =
+    '<div class="card" style="padding:10px 12px;margin-bottom:12px;">' +
+      '<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center;">' +
+        shows.map(function (s) { return '<button type="button" class="' + (s.key === mp.show ? "primary" : "ghost") + ' small" style="padding:5px 10px;width:auto;flex:0 0 auto;" onclick="mpShow(\'' + esc(s.key) + '\')">' + esc(s.label) + '</button>'; }).join("") +
+        '<input type="search" placeholder="Student name or email" value="' + esc(mp.q) + '" oninput="mpSearch(this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();mpSearchGo();}" style="max-width:220px;" />' +
+        '<button type="button" class="ghost small" style="padding:5px 10px;width:auto;flex:0 0 auto;" onclick="mpSearchGo()">Find</button>' +
+        '<button type="button" class="ghost small" style="padding:5px 10px;width:auto;flex:0 0 auto;" onclick="mpLoadQueue(true)" title="Fetch the queue again">Refresh</button>' +
+      '</div>' +
+      (q ? '<div class="small muted" style="margin-top:8px;">' +
+        (q.summary.open ? q.summary.open + " open paper" + (q.summary.open === 1 ? "" : "s") + "." : "Nothing open.") +
+        (q.summary.oldest && q.summary.oldest.days >= 1 ? ' Longest waiting: <a href="#" onclick="mpOpen(\'' + esc(q.summary.oldest.submission_id) + '\');return false;">' + q.summary.oldest.days + ' day' + (q.summary.oldest.days === 1 ? "" : "s") + '</a>, ' + esc(String(q.summary.oldest.stage_label).toLowerCase()) + '.' : '') +
+        (q.viewer && q.viewer.name ? ' Marking as ' + esc(q.viewer.name) + '.' : '') +
+        '</div>' +
+        (q.summary.by_stage.length ? '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">' + q.summary.by_stage.map(function (s) { return '<span class="badge" style="' + mpTone(s.tone) + '">' + s.n + ' ' + esc(String(s.label).toLowerCase()) + '</span>'; }).join("") + '</div>' : '')
+      : '') +
+    '</div>';
+  var body;
+  if (mp.loading && !q) body = '<p class="small muted">Loading the queue...</p>';
+  else if (mp.error) body = '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(mp.error) + '</p></div>';
+  else if (q && q.empty) body = '<p class="small muted">' + esc(q.empty) + '</p>';
+  else if (!q || !q.papers.length) body = '<div class="card"><p style="margin:0;">' + (mp.q.trim() ? 'No papers for "' + esc(mp.q.trim()) + '" here.' : mp.show === "open" ? "No exams waiting. Papers arrive here on their own when a student submits a quiz." : "No papers here.") + '</p></div>';
+  else body = '<div class="card" style="padding:0;">' + q.papers.map(function (p) {
+    return '<button type="button" class="irpcs-row" data-id="' + esc(p.submission_id) + '" onclick="mpOpen(this.dataset.id)" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">' +
+      '<div style="flex:2;min-width:160px;"><strong>' + esc(p.learner_name || p.learner_email || "Unnamed") + '</strong>' +
+        '<div class="small muted">' + esc(p.exam_id) + ' &middot; ' + esc(mpAgo(p.submitted_at)) + '</div></div>' +
+      '<div style="flex:3;min-width:200px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' +
+        '<span class="badge" style="' + mpTone(p.stage_tone) + '">' + esc(p.stage_label) + '</span>' +
+        (p.rya_grade ? '<span class="small">RYA grade ' + esc(p.rya_grade) + '</span>' : '') +
+        (p.answers ? '<span class="small muted">' + p.answers + ' answer' + (p.answers === 1 ? "" : "s") + (p.flagged ? ' &middot; ' + p.flagged + ' with feedback' : '') + '</span>' : '') +
+        (p.instructor_name ? '<span class="small muted">&middot; ' + esc(p.instructor_name) + (p.mine ? ' (you)' : '') + '</span>' : '') +
+      '</div>' +
+      '<div class="small" style="flex:0 0 auto;color:var(--accent);">' + esc(p.go) + ' &rarr;</div>' +
+    '</button>';
+  }).join("") + '</div>';
+  host.innerHTML = head + body;
+}
+
+// ---------------------------------------------------------------- the paper
+function mpOpen(id, keep) {
+  if (mp.busy || mp.writing) return;
+  mp.openId = id; mp.student = null;
+  if (!keep) { mp.paper = null; mp.msg = null; mp.tri = {}; mp.rev = {}; mp.fin = { readiness: "", rya: "", summary: "" }; mp.send = { message: null, revisionChecked: false, state: "" }; }
+  mp.paperError = ""; mp.paperLoading = true;
+  renderPaper();
+  mpApi({ query: "op=paper&id=" + encodeURIComponent(id) }).then(function (j) {
+    if (mp.openId !== id) return;
+    if (!j || !j.paper) throw new Error("Marking sent a paper we couldn't read.");
+    mp.paper = j.paper;
+    mpSeed(keep);
+  }).catch(function (e) {
+    if (mp.openId === id) mp.paperError = (e && e.message) || String(e);
+  }).then(function () {
+    if (mp.openId !== id) return;
+    mp.paperLoading = false;
+    renderPaper();
+    if (mp.paper && mp.paper.screen === "triage" && !keep) {
+      var first = mp.paper.answers.findIndex(function (a) { return !a.saved; });
+      mp.focus = first < 0 ? 0 : first;
+    }
+  });
+}
+
+// Local state from what the server sent, so a paper picked up again opens
+// where it was left. With `keep`, what the instructor has typed survives a
+// reload of the paper underneath it.
+function mpSeed(keep) {
+  var p = mp.paper;
+  if (p.screen === "triage") {
+    var tri = {};
+    p.answers.forEach(function (a) {
+      var old = keep && mp.tri[a.answer_id];
+      tri[a.answer_id] = old || {
+        grade: a.human_grade, needsFeedback: a.needs_feedback === null ? a.suggests_feedback : a.needs_feedback,
+        override: a.part_override || {}, saved: a.saved, error: null
+      };
+    });
+    mp.tri = tri;
+  } else if (p.screen === "review") {
+    var rev = {};
+    p.answers.forEach(function (a) {
+      var old = keep && mp.rev[a.answer_id];
+      rev[a.answer_id] = old ? old : { grade: a.grade, feedback: a.feedback || "", open: !a.checked, saved: a.checked, error: null, pending: false };
+      // A reload after a save: the server's word on checked wins.
+      if (old) { rev[a.answer_id].saved = a.checked; if (a.checked && !old.dirty) rev[a.answer_id].open = false; }
+    });
+    mp.rev = rev;
+    if (!keep || !mp.fin.readiness) mp.fin.readiness = p.finalise.readiness || p.finalise.readiness_suggested;
+    if (!keep) { mp.fin.rya = p.finalise.rya_grade || ""; mp.fin.summary = p.finalise.summary || ""; }
+    if (mp.send.message === null || !keep) mp.send.message = p.send.message;
+  }
+}
+
+function mpBack() {
+  if (mp.writing) { toast("Feedback is still being written. Wait for it to finish."); return; }
+  if (mp.paper && mp.paper.screen === "review" && mpAnyUnsaved() && !confirm("There are unsaved changes on this paper. Leave it?")) return;
+  mp.openId = ""; mp.paper = null; mp.student = null;
+  mpLoadQueue(true);
+  renderPapers();
+}
+
+function mpAnyUnsaved() {
+  for (var k in mp.rev) if (mp.rev[k].dirty) return true;
+  return false;
+}
+
+function mpMsg(kind, text) { mp.msg = text ? { kind: kind, text: text } : null; var h = $("mpMsg"); if (h) h.innerHTML = mpMsgHtml(); }
+function mpMsgHtml() {
+  var m = mp.msg; if (!m) return "";
+  return '<p class="small" role="' + (m.kind === "bad" ? "alert" : "status") + '" style="white-space:pre-line;margin:8px 0;padding:8px 10px;border-radius:6px;background:var(--surface-2);' + (m.kind === "bad" ? "color:var(--coral);" : "") + '">' + esc(m.text) + '</p>';
+}
+
+function renderPaper() {
+  var host = $("mpPane");
+  if (!host || !mp.openId) return;
+  if (mp.paperLoading && !mp.paper) { host.innerHTML = '<p class="small muted">Loading the paper...</p>'; return; }
+  if (mp.paperError) { host.innerHTML = '<p><a href="#" onclick="mpBack();return false;">&larr; All papers</a></p><div class="card"><p style="margin:0;color:var(--coral);">' + esc(mp.paperError) + '</p></div>'; return; }
+  var p = mp.paper; if (!p) { host.innerHTML = ""; return; }
+  var name = esc(p.learner_name || p.learner_email || "Unnamed student");
+  var stage = p.screen === "claim" ? "waiting to be claimed" : p.screen === "triage" ? "grading" : p.status === "Exported" ? "sent" + (p.exported_at ? " " + esc(mpDay(p.exported_at)) : "") : esc(p.status);
+  var html = '<p style="margin:0 0 8px;"><a href="#" onclick="mpBack();return false;">&larr; All papers</a></p>' +
+    '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">' +
+      '<h3 style="margin:0;">' + (p.screen === "review" ? '<a href="#" onclick="mpStudent(\'' + esc(p.learner_id) + '\');return false;" title="Their other papers and module record">' + name + '</a>' : name) + '</h3>' +
+      '<span class="small muted">' + esc(p.exam_id) + ' &middot; ' + p.answers_total + ' answers' + (p.counts ? ' &middot; ' + p.counts.flagged + ' with feedback' : '') + ' &middot; ' + stage + (p.instructor_name ? ' &middot; ' + esc(p.instructor_name) + (p.mine ? ' (you)' : '') : '') + '</span>' +
+    '</div>' +
+    '<div id="mpMsg">' + mpMsgHtml() + '</div>';
+  if (p.screen === "claim") html += mpClaimHtml(p);
+  else if (p.screen === "triage") html += mpTriageHtml(p);
+  else html += mpReviewHtml(p);
+  host.innerHTML = html;
+}
+
+// ---------------------------------------------------------------- claim
+function mpClaimHtml(p) {
+  return '<div class="card"><p>Nobody has claimed this paper yet. Claiming it opens the grading pass: you grade every answer first, and the engine writes nothing until you have.</p>' +
+    '<button type="button" class="primary" onclick="mpClaim()"' + (mp.busy ? " disabled" : "") + '>Claim it and start grading</button></div>' + mpPhotosHtml(p, true);
+}
+function mpClaim() {
+  if (mp.busy) return;
+  mp.busy = true;
+  mpApi({ body: { op: "claim", submission_id: mp.openId } }).then(function (r) {
+    mp.busy = false;
+    if (!r.ok) { mpMsg("bad", r.error || "That didn't claim."); return; }
+    mpOpen(mp.openId);
+  }).catch(function (e) { mp.busy = false; mpMsg("bad", (e && e.message) || String(e)); });
+}
+
+// ---------------------------------------------------------------- photos
+function mpPhotosHtml(p, readOnly) {
+  var qs = p.photo_questions || [], photos = p.photos || [];
+  if (!qs.length && !photos.length) return "";
+  var placed = {}; photos.forEach(function (ph) { if (ph.question_code) placed[ph.question_code] = 1; });
+  var missing = qs.filter(function (q) { return !placed[q.question_code]; });
+  return '<div class="card" style="margin-top:10px;">' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><h4 style="margin:0;">Chartwork photos</h4>' +
+      '<span class="small muted">' + qs.length + ' question' + (qs.length === 1 ? "" : "s") + ' expect one' + (missing.length ? ' &middot; still missing: ' + esc(missing.map(function (q) { return q.question_code; }).join(", ")) : '') + '</span>' +
+      '<button type="button" class="ghost small" style="margin-left:auto;padding:5px 10px;width:auto;flex:0 0 auto;" onclick="mpPhotosFind()"' + (readOnly || mp.busy || !p.photos_available ? " disabled" : "") + '>Look in Chatwoot</button></div>' +
+    (!p.photos_available ? '<p class="small muted">Photos need migration 0016 applying before they can be found and stored.</p>' : '') +
+    (photos.length ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">' + photos.map(function (ph) {
+      return '<div style="width:170px;' + (ph.ignored ? "opacity:.5;" : "") + '">' +
+        '<a href="' + esc(ph.data_url) + '" target="_blank" rel="noreferrer"><img src="' + esc(ph.thumb_url || ph.data_url) + '" alt="Photo from the student" style="width:170px;height:120px;object-fit:cover;border:1px solid var(--line);border-radius:6px;" /></a>' +
+        '<select data-id="' + esc(ph.photo_id) + '" onchange="mpPhotoPlace(this.dataset.id, this.value)" style="width:100%;margin-top:4px;"' + (readOnly || mp.busy ? " disabled" : "") + '>' +
+          '<option value=""' + (!ph.ignored && !ph.question_code ? " selected" : "") + '>Not placed yet</option>' +
+          qs.map(function (q) { return '<option value="' + esc(q.question_code) + '"' + (ph.question_code === q.question_code && !ph.ignored ? " selected" : "") + '>' + esc(q.question_code) + ' &middot; ' + esc(MP_PHOTO_KIND[q.kind] || q.kind) + '</option>'; }).join("") +
+          '<option value="__ignore"' + (ph.ignored ? " selected" : "") + '>Not for this paper</option>' +
+        '</select>' +
+        (ph.received_at ? '<div class="small muted">' + esc(mpDay(ph.received_at)) + '</div>' : '') +
+      '</div>';
+    }).join("") + '</div>' : '') +
+  '</div>';
+}
+function mpAnswerPhotosHtml(code) {
+  var mine = ((mp.paper && mp.paper.photos) || []).filter(function (ph) { return ph.question_code === code && !ph.ignored; });
+  if (!mine.length) return "";
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;">' + mine.map(function (ph) {
+    return '<a href="' + esc(ph.data_url) + '" target="_blank" rel="noreferrer"><img src="' + esc(ph.thumb_url || ph.data_url) + '" alt="The student\'s photo for this question" style="max-width:220px;max-height:160px;border:1px solid var(--line);border-radius:6px;" /></a>';
+  }).join("") + '</div>';
+}
+function mpPhotosFind() {
+  if (mp.busy) return;
+  mp.busy = true;
+  mpApi({ body: { op: "photos_find", submission_id: mp.openId } }).then(function (r) {
+    mp.busy = false;
+    if (!r.ok) { mpMsg("bad", r.error || "Couldn't look for photos."); return; }
+    mpMsg("ok", (r.note || "") + (r.added ? " " + r.added + " new." : ""));
+    mpOpen(mp.openId, true);
+  }).catch(function (e) { mp.busy = false; mpMsg("bad", (e && e.message) || String(e)); });
+}
+function mpPhotoPlace(photoId, v) {
+  if (mp.busy) return;
+  mp.busy = true;
+  mpApi({ body: { op: "photo_place", submission_id: mp.openId, photo_id: photoId, question_code: v && v !== "__ignore" ? v : null, ignored: v === "__ignore" } }).then(function (r) {
+    mp.busy = false;
+    if (!r.ok) { mpMsg("bad", r.error || "That photo didn't move."); return; }
+    mpOpen(mp.openId, true);
+  }).catch(function (e) { mp.busy = false; mpMsg("bad", (e && e.message) || String(e)); });
+}
+
+// ---------------------------------------------------------------- parts
+// The verdict to show for each part: the source's, with the instructor's
+// flips applied. The override stored is only the real disagreements.
+function mpViews(a, override) {
+  return a.parts.map(function (p) {
+    var f = override ? override[String(p.part_index)] : undefined;
+    if (f === undefined) return { part_index: p.part_index, prompt: p.prompt, value: p.value, verdict: p.source_verdict, source_verdict: p.source_verdict, overridden: false };
+    var v = f ? "correct" : "incorrect";
+    return { part_index: p.part_index, prompt: p.prompt, value: p.value, verdict: v, source_verdict: p.source_verdict, overridden: v !== p.source_verdict };
+  });
+}
+function mpNextOverride(views, current, partIndex) {
+  var next = {}; for (var k in (current || {})) next[k] = current[k];
+  var v = views.filter(function (x) { return x.part_index === partIndex; })[0];
+  var wanted = v.verdict !== "correct";
+  var key = String(partIndex);
+  if ((v.source_verdict === "correct") === wanted) delete next[key]; else next[key] = wanted;
+  return next;
+}
+function mpPartsHtml(views, answerId, canFlip) {
+  if (!views.length) return '<p class="small muted">No answer recorded.</p>';
+  return '<div style="margin:6px 0;">' + views.map(function (p) {
+    var col = p.verdict === "correct" ? "color:#2e7d32;" : p.verdict === "incorrect" ? "color:#c62828;" : "";
+    return '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin:3px 0;">' +
+      (p.prompt ? '<span class="small muted">' + esc(p.prompt) + '</span>' : '') +
+      '<span style="white-space:pre-wrap;' + col + '">' + (p.value == null ? '<em class="muted">left blank</em>' : esc(p.value)) + '</span>' +
+      (p.overridden ? '<span class="badge" style="background:rgba(255,214,102,.45);">corrected</span>' : '') +
+      (canFlip && p.verdict !== "unmarked" ? '<button type="button" class="ghost small" style="padding:1px 7px;width:auto;flex:0 0 auto;" data-a="' + esc(answerId) + '" data-p="' + p.part_index + '" onclick="mpFlip(this.dataset.a, Number(this.dataset.p))" title="' + (p.verdict === "correct" ? "iSpring marked this right. Mark it wrong." : "iSpring marked this wrong. It compares text, not meaning, so mark it right if it is.") + '">mark ' + (p.verdict === "correct" ? "wrong" : "right") + '</button>' : '') +
+    '</div>';
+  }).join("") + '</div>';
+}
+
+// ---------------------------------------------------------------- triage
+function mpTriageHtml(p) {
+  var graded = 0, flagged = 0;
+  p.answers.forEach(function (a) { var l = mp.tri[a.answer_id]; if (l && l.saved) { graded++; if (l.needsFeedback) flagged++; } });
+  var total = p.answers.length, done = graded === total;
+  return '<p style="margin:8px 0;">Grade every answer first. Nothing has been generated yet and nothing has been spent, and the answers marked as needing feedback are the only ones that will be. Green and red are iSpring\'s own marking, so flip anything it has got wrong.</p>' +
+    '<p class="small muted">Keys' + (mp.keysOn ? "" : " (off)") + ': <kbd>1</kbd> Strong, <kbd>2</kbd> Good, <kbd>3</kbd> Fair, <kbd>4</kbd> Poor, <kbd>f</kbd> feedback on or off, <kbd>j</kbd>/<kbd>k</kbd> or <kbd>Enter</kbd> to move. ' +
+      '<a href="#" onclick="mp.showKeys=!mp.showKeys;renderPaper();return false;">' + (mp.showKeys ? "Hide" : "More") + '</a> &middot; <a href="#" onclick="mp.keysOn=!mp.keysOn;renderPaper();return false;">' + (mp.keysOn ? "Turn keys off" : "Turn keys on") + '</a>' +
+      (mp.showKeys ? ' <span>The keys act on the outlined answer. Click any answer to move the outline there. Grading doesn\'t move you on by itself, so you can set the feedback tick for the same answer first. Nothing happens while you\'re typing in a box.</span>' : '') + '</p>' +
+    (p.mine ? '' : '<p class="small" style="color:var(--coral);">Claimed by ' + esc(p.instructor_name || "someone else") + '. Only they can grade it.</p>') +
+    mpPhotosHtml(p, !p.mine) +
+    '<ol style="list-style:none;padding:0;margin:10px 0;" id="mpTriList">' + p.answers.map(function (a, i) { return mpTriageCard(a, i); }).join("") + '</ol>' +
+    '<div class="card" style="position:sticky;bottom:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
+      '<div><strong>' + graded + ' of ' + total + '</strong> graded' + (graded ? ' <span class="small muted">&middot; ' + flagged + ' need' + (flagged === 1 ? "s" : "") + ' feedback</span>' : '') + '</div>' +
+      '<button type="button" class="primary" style="margin-left:auto;width:auto;" onclick="mpWrite()"' + (!done || mp.busy || mp.writing || !p.mine ? " disabled" : "") + '>' +
+        (mp.writing ? "Writing..." : !done ? (total - graded) + " still to grade" : flagged === 0 ? "Nothing to write, open the paper" : "Write feedback for " + flagged + " &middot; about " + Math.max(1, Math.round(flagged * 1.6)) + "p") +
+      '</button></div>';
+}
+function mpTriageCard(a, i) {
+  var l = mp.tri[a.answer_id] || { grade: null, needsFeedback: false, override: {}, saved: false };
+  var views = mpViews(a, l.override);
+  var hasPhoto = ((mp.paper.photos) || []).some(function (ph) { return ph.question_code === a.question_code && !ph.ignored; });
+  return '<li id="mpCard' + i + '" tabindex="-1" data-i="' + i + '" onmousedown="mp.focus=Number(this.dataset.i);mpOutline()" class="card" style="margin-bottom:10px;' + (i === mp.focus ? "box-shadow:0 0 0 2px var(--accent);" : "") + (l.saved ? "opacity:.92;" : "") + '">' +
+    '<div class="small muted">' + (i + 1) + '. ' + esc(a.question_code) + '</div>' +
+    '<p style="white-space:pre-wrap;margin:4px 0 6px;">' + esc(a.question_text) + '</p>' +
+    mpPartsHtml(views, a.answer_id, mp.paper.mine) +
+    (a.expected_answer ? '<p class="small muted" style="white-space:pre-wrap;">Expected: ' + esc(a.expected_answer) + '</p>' : '') +
+    mpAnswerPhotosHtml(a.question_code) +
+    (a.expects_photo && !hasPhoto ? '<p class="small muted">No photo placed for this one yet. The plot is most of the answer.</p>' : '') +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">' +
+      MP_GRADES.map(function (g) { return '<button type="button" class="small" style="width:auto;padding:4px 10px;' + mpGradeStyle(g) + (l.grade === g ? "outline:2px solid var(--text);" : "opacity:.75;") + '" data-a="' + esc(a.answer_id) + '" data-g="' + g + '" onclick="mpTriGrade(this.dataset.a, this.dataset.g)"' + (mp.paper.mine ? "" : " disabled") + '>' + g + '</button>'; }).join("") +
+      '<label class="small" style="display:flex;align-items:center;gap:5px;white-space:nowrap;width:auto;margin:0;"><input type="checkbox" style="width:auto;margin:0;" data-a="' + esc(a.answer_id) + '" onchange="mpTriToggle(this.dataset.a)"' + (l.needsFeedback ? " checked" : "") + (mp.paper.mine ? "" : " disabled") + '> Needs written feedback</label>' +
+      (l.saved ? '<span class="small" style="color:#2e7d32;">saved</span>' : l.grade ? '<span class="small muted">saving...</span>' : '') +
+      (l.error ? '<span class="small" style="color:var(--coral);">' + esc(l.error) + '</span>' : '') +
+    '</div></li>';
+}
+function mpOutline() {
+  var list = $("mpTriList"); if (!list) return;
+  Array.prototype.forEach.call(list.children, function (li, i) { li.style.boxShadow = i === mp.focus ? "0 0 0 2px var(--accent)" : ""; });
+}
+function mpRedrawCard(answerId) {
+  var p = mp.paper; if (!p || p.screen !== "triage") return;
+  var i = p.answers.findIndex(function (a) { return a.answer_id === answerId; });
+  var li = $("mpCard" + i); if (!li) return;
+  var tmp = document.createElement("ol"); tmp.innerHTML = mpTriageCard(p.answers[i], i);
+  li.replaceWith(tmp.firstElementChild);
+  // The bar's counts.
+  var host = $("mpPane"); var bar = host && host.querySelector(".card[style*='sticky']");
+  if (bar) { var tmp2 = document.createElement("div"); tmp2.innerHTML = mpTriageHtml(p); var nb = tmp2.querySelector(".card[style*='sticky']"); if (nb) bar.replaceWith(nb); }
+}
+// One answer saved on its own, so a dead browser costs one judgement.
+function mpTriCommit(answerId, next) {
+  mp.tri[answerId] = next;
+  mpRedrawCard(answerId);
+  if (!next.grade) return;
+  var seq = (next.seq = (next.seq || 0) + 1);
+  mpApi({ body: { op: "triage", submission_id: mp.openId, answer_id: answerId, grade: next.grade, needs_feedback: !!next.needsFeedback, part_override: next.override } }).then(function (r) {
+    var cur = mp.tri[answerId]; if (!cur || cur.seq !== seq) return;   // a later save is in flight
+    cur.saved = !!r.ok; cur.error = r.ok ? null : (r.error || "That didn't save.");
+    mpRedrawCard(answerId);
+  }).catch(function (e) {
+    var cur = mp.tri[answerId]; if (!cur || cur.seq !== seq) return;
+    cur.saved = false; cur.error = (e && e.message) || String(e); mpRedrawCard(answerId);
+  });
+}
+function mpTriGrade(answerId, g) {
+  var l = mp.tri[answerId]; if (!l) return;
+  var implies = g === "Fair" || g === "Poor";
+  mpTriCommit(answerId, Object.assign({}, l, { grade: g, needsFeedback: (l.saved || l.grade || l.tickedByHand) ? l.needsFeedback : implies, saved: false }));
+}
+function mpTriToggle(answerId) {
+  var l = mp.tri[answerId]; if (!l) return;
+  mpTriCommit(answerId, Object.assign({}, l, { needsFeedback: !l.needsFeedback, tickedByHand: true, saved: false }));
+}
+function mpFlip(answerId, partIndex) {
+  var p = mp.paper, a = p.answers.filter(function (x) { return x.answer_id === answerId; })[0]; if (!a) return;
+  if (p.screen === "triage") {
+    var l = mp.tri[answerId]; var views = mpViews(a, l.override);
+    mpTriCommit(answerId, Object.assign({}, l, { override: mpNextOverride(views, l.override, partIndex), saved: false }));
+  } else {
+    var cur = a.part_override || {}; var vs = mpViews(a, cur);
+    var next = mpNextOverride(vs, cur, partIndex);
+    a.part_override = Object.keys(next).length ? next : null;
+    mpRedrawReviewCard(answerId);
+    mpApi({ body: { op: "flip", submission_id: mp.openId, answer_id: answerId, part_override: a.part_override } }).then(function (r) {
+      if (!r.ok) { mpMsg("bad", r.error || "That flip didn't save."); mpOpen(mp.openId, true); }
+    }).catch(function (e) { mpMsg("bad", (e && e.message) || String(e)); });
+  }
+}
+
+// The keys: 1-4 grade, f feedback, j/k/Enter move. Only on the triage screen
+// of the open paper, never while typing, and never with a modifier held.
+document.addEventListener("keydown", function (e) {
+  if (!mp.openId || !mp.paper || mp.paper.screen !== "triage" || !mp.keysOn || mp.writing) return;
+  if (state.view !== "marking" || mp.tab !== "papers" || !mp.paper.mine) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  var el = e.target, tag = (el && el.tagName || "").toUpperCase();
+  if (tag === "TEXTAREA" || tag === "SELECT" || (el && el.isContentEditable)) return;
+  if (tag === "INPUT" && !(el.type === "checkbox" || el.type === "radio" || el.type === "button")) return;
+  if (e.key === "Enter" && (tag === "BUTTON" || tag === "A")) return;
+  var a = mp.paper.answers[mp.focus]; if (!a) return;
+  var by = { "1": "Strong", "2": "Good", "3": "Fair", "4": "Poor" }[e.key];
+  if (by) { if (e.repeat) return; e.preventDefault(); mpTriGrade(a.answer_id, by); }
+  else if (e.key === "f" || e.key === "F") { if (e.repeat) return; e.preventDefault(); mpTriToggle(a.answer_id); }
+  else if (e.key === "j" || e.key === "ArrowDown" || e.key === "Enter" || e.key === "k" || e.key === "ArrowUp") {
+    e.preventDefault();
+    var byN = (e.key === "k" || e.key === "ArrowUp") ? -1 : 1;
+    mp.focus = Math.min(mp.paper.answers.length - 1, Math.max(0, mp.focus + byN));
+    mpOutline();
+    var li = $("mpCard" + mp.focus); if (li) { li.focus({ preventScroll: true }); li.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    return;
+  } else if (e.key === "?") { e.preventDefault(); mp.showKeys = !mp.showKeys; renderPaper(); return; }
+  else return;
+  var card = $("mpCard" + mp.focus); if (card) card.focus({ preventScroll: true });
+});
+
+// Write feedback for the flagged answers, a batch at a time: a serverless
+// call has a wall-clock limit and a long paper does not fit inside it. Then
+// the whole-paper pass on its own (it takes about a minute), and the paper
+// reloads onto the review screen.
+function mpWrite() {
+  if (mp.writing || mp.busy) return;
+  var p = mp.paper, flagged = 0;
+  p.answers.forEach(function (a) { var l = mp.tri[a.answer_id]; if (l && l.saved && l.needsFeedback) flagged++; });
+  if (p.screen === "review") flagged = p.counts.unwritten;
+  mp.writing = true; mpMsg("ok", flagged ? "Writing... 0 of " + flagged : "Opening the paper...");
+  renderPaper();
+  var guard = 0;
+  function finish(kind, text, failed) {
+    mp.writing = false;
+    mpApi({ body: { op: "synthesis", submission_id: mp.openId } }).catch(function () {});
+    mpMsg(kind, text);
+    mpOpen(mp.openId, true);
+  }
+  function loop() {
+    if (guard++ >= 40) { mp.writing = false; mpMsg("bad", "Stopped after forty batches. Open the paper and press Write it now to carry on."); mpOpen(mp.openId, true); return; }
+    mpApi({ body: { op: "write", submission_id: mp.openId, batch: 8 } }).then(function (r) {
+      if (!r.ok) { mp.writing = false; mpMsg("bad", r.error || "The writing stopped."); renderPaper(); return; }
+      if (!r.remaining) {
+        if (r.failed && r.failed.length) finish("bad", mpFailures(r.failed));
+        else finish("ok", flagged ? "Written. Now check it." : "Nothing needed writing on this one.");
+        return;
+      }
+      if (r.marked === 0) { finish("bad", r.failed && r.failed.length ? mpFailures(r.failed) : "Nothing more could be written."); return; }
+      mpMsg("ok", "Writing... " + (flagged - r.remaining) + " of " + flagged);
+      loop();
+    }).catch(function (e) { mp.writing = false; mpMsg("bad", (e && e.message) || String(e)); renderPaper(); });
+  }
+  loop();
+}
+function mpFailures(failed) {
+  return failed.map(function (f) { return f.error.indexOf(f.question_code) >= 0 ? f.error : f.question_code + ": " + f.error; }).join("\n");
+}
+
+// ---------------------------------------------------------------- review
+function mpReviewHtml(p) {
+  var c = p.counts, readOnly = !p.mine || p.finalised || mp.busy;
+  var flagged = p.answers.filter(function (a) { return a.flagged; }), clean = p.answers.filter(function (a) { return !a.flagged; });
+  var html = "";
+  if (!p.mine) html += '<p class="small muted">Claimed by ' + esc(p.instructor_name || "someone else") + '. You can read it; only they can change it.</p>';
+  if (c.unwritten > 0 && !p.finalised) html += '<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><strong>' + c.unwritten + '</strong> flagged answer' + (c.unwritten === 1 ? " has" : "s have") + ' no feedback yet <span class="small muted">&middot; about ' + Math.max(1, Math.round(c.unwritten * 1.6)) + 'p</span>' +
+    '<button type="button" class="primary" style="margin-left:auto;width:auto;" onclick="mpWrite()"' + (readOnly || mp.writing ? " disabled" : "") + '>' + (mp.writing ? "Writing..." : "Write it now") + '</button></div>';
+  html += mpPhotosHtml(p, readOnly);
+  if (p.synthesis) {
+    html += '<div class="card" style="margin-top:10px;"><h4 style="margin:0 0 6px;">Across the whole paper</h4>' + (p.synthesis.overall_summary ? '<p style="white-space:pre-wrap;">' + esc(p.synthesis.overall_summary) + '</p>' : '') +
+      (p.synthesis.patterns.length ? '<ul style="padding-left:18px;">' + p.synthesis.patterns.map(function (pt) {
+        return '<li style="margin-bottom:6px;"><span class="badge" style="' + (pt.kind === "secure" ? "background:rgba(46,125,50,.14);" : pt.kind === "slip" ? "background:rgba(255,214,102,.45);" : "background:rgba(239,83,80,.18);") + '">' + (pt.kind === "secure" ? "solid" : pt.kind === "slip" ? "a slip" : "a gap") + '</span> <strong>' + esc(pt.topic) + '</strong> <span class="small muted">' + esc(pt.question_codes.join(", ")) + '</span><div style="white-space:pre-wrap;">' + esc(pt.note) + '</div></li>';
+      }).join("") + '</ul>' : '') + '</div>';
+  }
+  html += '<h4 style="margin:14px 0 6px;">Feedback to check &middot; ' + c.reviewed + ' of ' + c.flagged + ' done</h4>';
+  if (!flagged.length) html += '<p class="small muted">Nothing on this paper was flagged for feedback at triage.</p>';
+  html += '<div id="mpRevList">' + flagged.map(function (a) { return mpReviewCard(a, readOnly); }).join("") + '</div>';
+  if (clean.length) html += '<details class="card" style="margin-top:10px;"><summary>' + clean.length + ' answer' + (clean.length === 1 ? "" : "s") + ' graded at triage with nothing to write</summary>' +
+    '<ul style="list-style:none;padding:0;">' + clean.map(function (a) {
+      return '<li id="mpRev-' + esc(a.answer_id) + '" style="border-top:1px solid var(--line);padding:8px 0;"><span class="small"><strong>' + esc(a.question_code) + '</strong></span> ' + (a.grade ? '<span class="badge" style="' + mpGradeStyle(a.grade) + '">' + esc(a.grade) + '</span>' : '') + mpPartsHtml(mpViews(a, a.part_override), a.answer_id, !readOnly) + '</li>';
+    }).join("") + '</ul><p class="small muted">These are closed off when you finalise. Nothing was generated for them and nothing needs checking.</p></details>';
+  if (!p.finalise.answers_approved) html += '<p class="small" style="margin-top:10px;">The PDF won\'t show correct answers yet: the student-facing answers list is still a draft. Feedback, colours and diagrams all work without it.</p>';
+  html += p.finalised ? mpSendHtml(p) : mpFinaliseHtml(p, readOnly);
+  html += mpTimelineHtml(p);
+  return html;
+}
+function mpReviewCard(a, readOnly) {
+  var l = mp.rev[a.answer_id] || { grade: a.grade, feedback: a.feedback || "", open: !a.checked, saved: a.checked };
+  var views = mpViews(a, a.part_override);
+  var hasPhoto = ((mp.paper.photos) || []).some(function (ph) { return ph.question_code === a.question_code && !ph.ignored; });
+  var moved = a.grade_moved_from && l.grade && l.grade !== a.grade_moved_from;
+  var head = '<button type="button" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;width:100%;text-align:left;background:none;border:0;padding:0;color:var(--text);cursor:pointer;" data-a="' + esc(a.answer_id) + '" onclick="mpRevToggle(this.dataset.a)">' +
+    '<strong>' + esc(a.question_code) + '</strong><span class="small muted">' + esc(String(a.category || "").replace(/_/g, " ")) + '</span>' +
+    (l.grade ? '<span class="badge" style="' + mpGradeStyle(l.grade) + '">' + esc(l.grade) + '</span>' : '') +
+    (!a.has_engine_feedback && !l.saved ? '<span class="badge" style="background:rgba(239,83,80,.18);">no feedback yet</span>' : '') +
+    (!a.has_engine_feedback && l.saved ? '<span class="badge">written by hand</span>' : '') +
+    (a.serious_flags || []).map(function (f) { return '<span class="badge" style="background:rgba(239,83,80,.18);">' + esc(f.replace(/_/g, " ")) + '</span>'; }).join("") +
+    (l.saved ? '<span class="badge" style="background:rgba(46,125,50,.14);">checked</span>' : '') +
+    '<span style="margin-left:auto;">' + (l.open ? "&#9662;" : "&#9656;") + '</span></button>';
+  var body = "";
+  if (l.open) {
+    body = '<p style="white-space:pre-wrap;margin:8px 0 4px;">' + esc(a.question_text) + '</p>' +
+      '<h5 style="margin:8px 0 2px;">The student wrote</h5>' + mpPartsHtml(views, a.answer_id, !readOnly) + mpAnswerPhotosHtml(a.question_code) +
+      (a.expects_photo && a.has_engine_feedback && hasPhoto && !readOnly ? '<p class="small muted">If this feedback was written before the photo was placed, the engine didn\'t see the plot. <a href="#" data-a="' + esc(a.answer_id) + '" onclick="mpRewrite(this.dataset.a);return false;">Write it again with the photo</a></p>' : '') +
+      (a.expected_answer ? '<p class="small muted" style="white-space:pre-wrap;">Expected: ' + esc(a.expected_answer) + '</p>' : '') +
+      '<h5 style="margin:8px 0 2px;">Your grade, from triage</h5><div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+        MP_GRADES.map(function (g) { return '<button type="button" class="small" style="width:auto;padding:4px 10px;' + mpGradeStyle(g) + (l.grade === g ? "outline:2px solid var(--text);" : "opacity:.75;") + '" data-a="' + esc(a.answer_id) + '" data-g="' + g + '" onclick="mpRevGrade(this.dataset.a, this.dataset.g)"' + (readOnly ? " disabled" : "") + '>' + g + '</button>'; }).join("") + '</div>' +
+      (moved ? '<p class="small muted">Changed from ' + esc(a.grade_moved_from) + '. That\'s fine, and it\'s recorded as a grade moved after reading the feedback, so it is kept apart from the blind ones.</p>' : '') +
+      (a.history && a.history.length ? '<h5 style="margin:8px 0 2px;">Their module assessments on this</h5><ul style="padding-left:18px;" class="small">' + a.history.map(function (h) { return '<li style="' + (h.passed ? "" : "color:var(--coral);") + '">' + esc(h.text) + '</li>'; }).join("") + '</ul><p class="small muted">Evidence for whether this was a slip or a gap, for the feedback. It isn\'t a reason to move the grade above, which was formed without it.</p>' : '') +
+      '<h5 style="margin:8px 0 2px;">Feedback to the student ' + (a.feedback_source === "house" ? '<span class="badge" style="background:rgba(46,125,50,.14);">Ardent\'s own wording</span>' : a.feedback_source === "generated" ? '<span class="badge">written by the engine</span>' : '') + '</h5>' +
+      (a.cross_note ? '<div class="small" style="background:var(--surface-2);padding:6px 8px;border-radius:6px;margin-bottom:6px;"><strong>From the rest of the paper.</strong> ' + esc(a.cross_note) + ' <a href="#" data-a="' + esc(a.answer_id) + '" onclick="mpRevAddNote(this.dataset.a);return false;">Add it to the feedback</a></div>' : '') +
+      (!a.has_engine_feedback && !l.saved ? '<p class="small muted">The engine hasn\'t written anything for this one. Write it here, or approve the question in the question bank and press Write it now.</p>' : '') +
+      '<textarea id="mpFb-' + esc(a.answer_id) + '" rows="5" style="width:100%;" aria-label="Feedback for ' + esc(a.question_code) + '" placeholder="Leave it empty if there is nothing worth saying." data-a="' + esc(a.answer_id) + '" oninput="mpRevType(this.dataset.a, this.value)"' + (readOnly ? " disabled" : "") + '>' + esc(l.feedback) + '</textarea>' +
+      (a.feedback_images.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;">' + a.feedback_images.map(function (u) { return '<a href="' + esc(u) + '" target="_blank" rel="noreferrer"><img src="' + esc(u) + '" alt="Diagram that goes with this feedback" referrerpolicy="no-referrer" style="max-width:220px;max-height:160px;border:1px solid var(--line);border-radius:6px;background:#fff;" /></a>'; }).join("") + '</div><p class="small muted">These diagrams go into the PDF with the feedback.</p>' : '') +
+      (l.error ? '<p class="small" style="color:var(--coral);">' + esc(l.error) + '</p>' : '') +
+      '<div style="margin-top:8px;"><button type="button" class="' + (l.saved ? "ghost" : "primary") + '" style="width:auto;" data-a="' + esc(a.answer_id) + '" onclick="mpRevSave(this.dataset.a)"' + (readOnly || l.pending || !l.grade || (!a.has_engine_feedback && !(l.feedback || "").trim()) ? " disabled" : "") + '>' +
+        (l.pending ? "Saving..." : l.saved ? "Saved, save again" : a.has_engine_feedback ? "Looks right, next" : "Save my feedback, next") + '</button></div>';
+  }
+  return '<div class="card" id="mpRev-' + esc(a.answer_id) + '" style="margin-bottom:8px;' + (l.saved ? "opacity:.92;" : "") + '">' + head + body + '</div>';
+}
+function mpRedrawReviewCard(answerId) {
+  var p = mp.paper; if (!p || p.screen !== "review") return;
+  var a = p.answers.filter(function (x) { return x.answer_id === answerId; })[0]; if (!a) return;
+  var el = $("mpRev-" + answerId); if (!el) return;
+  var readOnly = !p.mine || p.finalised || mp.busy;
+  var tmp = document.createElement("div");
+  if (a.flagged) tmp.innerHTML = mpReviewCard(a, readOnly);
+  else tmp.innerHTML = '<li id="mpRev-' + esc(a.answer_id) + '" style="border-top:1px solid var(--line);padding:8px 0;"><span class="small"><strong>' + esc(a.question_code) + '</strong></span> ' + (a.grade ? '<span class="badge" style="' + mpGradeStyle(a.grade) + '">' + esc(a.grade) + '</span>' : '') + mpPartsHtml(mpViews(a, a.part_override), a.answer_id, !readOnly) + '</li>';
+  el.replaceWith(tmp.firstElementChild);
+}
+function mpRevToggle(id) { var l = mp.rev[id]; if (!l) return; l.open = !l.open; mpRedrawReviewCard(id); }
+function mpRevGrade(id, g) { var l = mp.rev[id]; if (!l) return; l.grade = g; l.dirty = true; mpRedrawReviewCard(id); }
+function mpRevType(id, v) {
+  var l = mp.rev[id]; if (!l) return;
+  l.feedback = v; l.dirty = true;
+  // The hand-written case: the button wakes up once there is something to save.
+  var card = $("mpRev-" + id), btn = card && card.querySelector("button[data-a][onclick*='mpRevSave']");
+  if (btn && l.grade) btn.disabled = false;
+}
+function mpRevAddNote(id) {
+  var l = mp.rev[id], a = mp.paper.answers.filter(function (x) { return x.answer_id === id; })[0]; if (!l || !a) return;
+  l.feedback = (l.feedback || "").trim() ? (l.feedback.trim() + "\n\n" + a.cross_note) : a.cross_note; l.dirty = true;
+  mpRedrawReviewCard(id);
+}
+function mpRevSave(id) {
+  var l = mp.rev[id]; if (!l || l.pending || !l.grade) return;
+  l.pending = true; l.error = null; mpRedrawReviewCard(id);
+  mpApi({ body: { op: "decision", submission_id: mp.openId, answer_id: id, grade: l.grade, feedback: l.feedback || "" } }).then(function (r) {
+    l.pending = false;
+    if (!r.ok) { l.error = r.error || "That didn't save."; mpRedrawReviewCard(id); return; }
+    l.saved = true; l.dirty = false; l.open = false;
+    // The counts and the Finalise button come from the server.
+    mpOpen(mp.openId, true);
+  }).catch(function (e) { l.pending = false; l.error = (e && e.message) || String(e); mpRedrawReviewCard(id); });
+}
+function mpRewrite(id) {
+  if (mp.busy) return;
+  mp.busy = true; mpMsg("ok", "Writing it again with the photo...");
+  mpApi({ body: { op: "rewrite", submission_id: mp.openId, answer_id: id } }).then(function (r) {
+    mp.busy = false;
+    if (!r.ok) { mpMsg("bad", r.error || "That didn't rewrite."); return; }
+    delete mp.rev[id];   // take the new text from the server
+    mpMsg("ok", "Rewritten.");
+    mpOpen(mp.openId, true);
+  }).catch(function (e) { mp.busy = false; mpMsg("bad", (e && e.message) || String(e)); });
+}
+function mpAcceptRest() {
+  if (mp.busy) return;
+  mp.busy = true;
+  mpApi({ body: { op: "accept_rest", submission_id: mp.openId } }).then(function (r) {
+    mp.busy = false;
+    if (!r.ok) { mpMsg("bad", r.error || "That didn't go through."); return; }
+    mpMsg(r.stuck ? "bad" : "ok", r.accepted + " accepted." + (r.stuck ? " " + r.stuck + " have no feedback to accept yet." : ""));
+    mp.rev = {};
+    mpOpen(mp.openId, true);
+  }).catch(function (e) { mp.busy = false; mpMsg("bad", (e && e.message) || String(e)); });
+}
+
+// ---------------------------------------------------------------- finalise
+function mpFinaliseHtml(p, readOnly) {
+  var f = p.finalise, c = p.counts, left = c.flagged - c.reviewed, ready = left === 0 && c.unwritten === 0;
+  var needsRya = f.final && !mp.fin.rya;
+  var html = '<div class="card" style="margin-top:14px;"><h4 style="margin:0 0 6px;">Finalise</h4>';
+  if (left > 0) html += '<p class="small muted">' + left + ' feedback answer' + (left === 1 ? "" : "s") + ' still to check. <a href="#" onclick="mpAcceptRest();return false;"' + (readOnly || c.unwritten > 0 ? ' style="pointer-events:none;opacity:.5;"' : '') + '>Accept the rest as written</a></p>';
+  if (f.final) {
+    html += '<h5 style="margin:8px 0 2px;">RYA grade for this paper</h5><p class="small">' + esc(f.rya_count || "") + '. <span class="muted">An answer graded Fair or Poor at triage is counted as an error in principle. It\'s a guide to the RYA\'s wording, not a grade: choose the one that fits the paper.</span></p>' +
+      f.rya_grades.map(function (g) { return '<label class="small" style="display:flex;gap:8px;align-items:flex-start;justify-content:flex-start;margin:4px 0;width:auto;"><input type="radio" style="width:auto;margin:3px 0 0;flex:0 0 auto;" name="mpRya" value="' + esc(g.grade) + '"' + (mp.fin.rya === g.grade ? " checked" : "") + (readOnly ? " disabled" : "") + ' onchange="mp.fin.rya=this.value;mpRefreshFinaliseBtn()"> <span><strong>' + esc(g.grade) + '</strong>. ' + esc(g.headline) + '<br><span class="muted">' + esc(g.detail) + '</span></span></label>'; }).join("") +
+      (f.rya_note || []).map(function (n) { return '<p class="small muted">' + esc(n) + '</p>'; }).join("");
+  } else {
+    html += '<h5 style="margin:8px 0 2px;">Ready for the final exam?</h5>' + MP_READINESS.map(function (r) {
+      return '<label class="small" style="display:flex;gap:8px;align-items:center;justify-content:flex-start;margin:4px 0;width:auto;"><input type="radio" style="width:auto;margin:0;flex:0 0 auto;" name="mpReadiness" value="' + r[0] + '"' + (mp.fin.readiness === r[0] ? " checked" : "") + (readOnly ? " disabled" : "") + ' onchange="mp.fin.readiness=this.value"> ' + esc(r[1]) + (r[0] === f.readiness_suggested ? ' <span class="badge">suggested from the grades</span>' : '') + '</label>';
+    }).join("") + '<p class="small muted">Only a suggestion. There\'s no pass mark and it\'s your call, but it\'s the one decision that has to be consistent between instructors, so it\'s stored.</p>';
+  }
+  html += '<input type="text" style="width:100%;margin-top:6px;" placeholder="A line for your own notes on this paper, optional" value="' + esc(mp.fin.summary) + '" oninput="mp.fin.summary=this.value"' + (readOnly ? " disabled" : "") + ' />' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">' +
+      '<button type="button" class="primary" id="mpFinaliseBtn" style="width:auto;" onclick="mpFinalise()"' + (!ready || needsRya || readOnly ? " disabled" : "") + '>' + (!ready ? (left + c.unwritten) + " still to do" : needsRya ? "Choose the RYA grade first" : "Finalise") + '</button>' +
+      '<a href="' + esc(p.send.pdf_draft_url) + '" target="_blank" rel="noreferrer" class="small">Preview the PDF as it stands</a>' +
+    '</div></div>';
+  return html;
+}
+function mpRefreshFinaliseBtn() {
+  var p = mp.paper, b = $("mpFinaliseBtn"); if (!p || !b) return;
+  var c = p.counts, left = c.flagged - c.reviewed, ready = left === 0 && c.unwritten === 0, needsRya = p.finalise.final && !mp.fin.rya;
+  b.disabled = !ready || needsRya || !p.mine || p.finalised;
+  b.textContent = !ready ? (left + c.unwritten) + " still to do" : needsRya ? "Choose the RYA grade first" : "Finalise";
+}
+function mpFinalise() {
+  if (mp.busy) return;
+  var p = mp.paper, body = { op: "finalise", submission_id: mp.openId, summary: mp.fin.summary || "" };
+  if (p.finalise.final) body.rya_grade = mp.fin.rya || null; else body.readiness = mp.fin.readiness || null;
+  mp.busy = true;
+  mpApi({ body: body }).then(function (r) {
+    mp.busy = false;
+    if (!r.ok) { mpMsg("bad", r.error || "That didn't finalise."); return; }
+    mpMsg("ok", "Finalised. Every answer on this paper is now calibration for the next student who answers the same question.");
+    mp.send = { message: null, revisionChecked: false, state: "" };
+    mpOpen(mp.openId, true);
+  }).catch(function (e) { mp.busy = false; mpMsg("bad", (e && e.message) || String(e)); });
+}
+
+// ---------------------------------------------------------------- send
+function mpSendHtml(p) {
+  var sent = p.status === "Exported", s = p.send, msg = mp.send.message === null ? s.message : mp.send.message;
+  var suggestsRevision = /DS\.16\.04\.\d{2}/.test(msg);
+  return '<div class="card" style="margin-top:14px;"><h4 style="margin:0 0 6px;">' + (sent ? "Sent" : "Send it") + '</h4>' +
+    (p.finalise.rya_grade ? '<p>RYA grade: <span class="badge">' + esc(p.finalise.rya_grade) + '</span></p>' : '') +
+    '<p class="small muted">Finalised. Every answer on this paper is now calibration for the next student who answers the same question.</p>' +
+    '<div class="two-col" style="gap:14px;"><div>' +
+      '<h5 style="margin:6px 0;">1. The feedback PDF</h5><p><a style="display:inline-block;padding:7px 14px;border-radius:999px;text-decoration:none;background:var(--accent);color:#fff;font-weight:600;" href="' + esc(s.pdf_url) + '" target="_blank" rel="noreferrer">Download the PDF</a></p>' +
+      '<p class="small muted">Answers with feedback, plus anything the student got wrong with the correct answer alongside. Right parts in green, wrong parts in red. Nothing they got right is answered for them. <a href="' + esc(s.pdf_all_url) + '" target="_blank" rel="noreferrer">Every question instead</a>.</p>' +
+    '</div><div>' +
+      '<h5 style="margin:6px 0;">2. The covering email</h5>' +
+      '<textarea rows="16" style="width:100%;" aria-label="Covering email" oninput="mp.send.message=this.value"' + (sent ? " readonly" : "") + '>' + esc(msg) + '</textarea>' +
+      (suggestsRevision ? '<label class="small" style="display:flex;gap:6px;align-items:center;justify-content:flex-start;margin:6px 0;width:auto;"><input type="checkbox" style="width:auto;margin:0;flex:0 0 auto;"' + (mp.send.revisionChecked ? " checked" : "") + ' onchange="mp.send.revisionChecked=this.checked"> I\'ve checked the revision questions, and they\'re in the student\'s classroom</label>' : '') +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">' +
+        '<button type="button" class="primary" style="width:auto;" onclick="mpEmailCopy()">Copy</button>' +
+        '<button type="button" class="ghost" style="width:auto;" onclick="mpEmailSave()"' + (mp.busy || !p.mine || sent ? " disabled" : "") + '>Save</button>' +
+        (!sent ? '<a href="#" class="small" onclick="mp.send.message=mp.paper.send.draft;renderPaper();return false;">Start again from the draft</a>' : '') +
+        '<span class="small muted" id="mpSendState">' + esc(mp.send.state || "") + '</span>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">' +
+        (sent ? '<span class="badge" style="background:rgba(46,125,50,.14);">Marked as sent' + (p.exported_at ? ' ' + esc(mpDay(p.exported_at)) : '') + '</span>' + (p.mine ? ' <a href="#" class="small" onclick="mpNotSent();return false;">Not sent after all</a>' : '')
+              : '<button type="button" class="primary" style="width:auto;" onclick="mpSent()"' + (mp.busy || !p.mine ? " disabled" : "") + '>I\'ve sent the email and the PDF</button>') +
+      '</div>' +
+      '<p class="small muted" style="margin-top:8px;">' + (p.finalise.final ? "Drafted from your grades and the patterns across the paper. The result and what happens about the certificate are yours to write, in the gap in square brackets. Nothing sends to Chatwoot from here yet." : "Drafted from your grades, the readiness call, and the patterns across the paper. Where it suggests revision questions, they come from the DS Mock revision list, so check they're the right ones and that 'Day Skipper Revision Questions' is in their classroom. Nothing sends to Chatwoot from here yet.") + '</p>' +
+    '</div></div></div>';
+}
+function mpSendMsg() { return mp.send.message === null ? mp.paper.send.message : mp.send.message; }
+function mpSendState(t) { mp.send.state = t; var h = $("mpSendState"); if (h) h.textContent = t; }
+// The same two checks on Copy and on Sent, so the stored record is never an
+// email that could not have been sent as written.
+function mpSendChecks() {
+  var m = mpSendMsg();
+  if (/\[[^\]]*\]/.test(m)) return "There's still a gap in square brackets. Fill it in or take it out first.";
+  if (/DS\.16\.04\.\d{2}/.test(m) && !mp.send.revisionChecked) return "Tick the box to say you've checked the revision questions first.";
+  return null;
+}
+function mpEmailCopy() {
+  var bad = mpSendChecks(); if (bad) { mpSendState(bad); return; }
+  (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(mpSendMsg()) : Promise.reject()).then(function () { mpSendState("Copied. Paste it into Chatwoot and attach the PDF."); }, function () { mpSendState("Could not reach the clipboard. Select the text and copy it by hand."); });
+}
+function mpEmailSave() {
+  if (mp.busy) return;
+  mp.busy = true;
+  mpApi({ body: { op: "email", submission_id: mp.openId, message: mpSendMsg() } }).then(function (r) { mp.busy = false; mpSendState(r.ok ? "Saved." : (r.error || "That didn't save.")); })
+    .catch(function (e) { mp.busy = false; mpSendState((e && e.message) || String(e)); });
+}
+function mpSent() {
+  var bad = mpSendChecks(); if (bad) { mpSendState(bad); return; }
+  if (mp.busy) return;
+  mp.busy = true;
+  mpApi({ body: { op: "email", submission_id: mp.openId, message: mpSendMsg() } }).then(function (r) {
+    if (!r.ok && !/0015/.test(r.error || "")) throw new Error(r.error || "The email didn't save.");
+    return mpApi({ body: { op: "sent", submission_id: mp.openId } });
+  }).then(function (r) {
+    mp.busy = false;
+    if (!r.ok) { mpSendState(r.error || "That didn't go through."); return; }
+    mpMsg("ok", "Done. The paper is closed.");
+    mpOpen(mp.openId, true);
+  }).catch(function (e) { mp.busy = false; mpSendState((e && e.message) || String(e)); });
+}
+function mpNotSent() {
+  if (mp.busy) return;
+  mp.busy = true;
+  mpApi({ body: { op: "not_sent", submission_id: mp.openId } }).then(function (r) {
+    mp.busy = false;
+    if (!r.ok) { mpSendState(r.error || "That didn't go through."); return; }
+    mpMsg("ok", "Back to finalised. Nothing else has changed.");
+    mpOpen(mp.openId, true);
+  }).catch(function (e) { mp.busy = false; mpSendState((e && e.message) || String(e)); });
+}
+
+function mpTimelineHtml(p) {
+  var t = p.timeline; if (!t || !t.events.length) return "";
+  return '<details class="card" style="margin-top:10px;"><summary>How long this paper has taken' + (t.wait ? ' <span class="small muted">&middot; ' + esc(t.wait.took) + ' from submitting to ' + (t.wait.to === "sent" ? "being sent" : "finalised") + '</span>' : '') + '</summary>' +
+    '<ol class="small" style="padding-left:18px;">' + t.events.map(function (e) { return '<li>' + esc(e.label) + ' <span class="muted">' + esc(mpDay(e.at)) + (e.later ? ' &middot; ' + esc(e.later) + ' later' : '') + '</span></li>'; }).join("") + '</ol>' +
+    '<p class="small muted">Claiming isn\'t timed. Grading times are each answer\'s latest change, so a grade changed late moves them.</p></details>';
+}
+
+// ---------------------------------------------------------------- student
+function mpStudent(learnerId) {
+  mp.student = { id: learnerId, loading: true, data: null, error: "" };
+  mp.openId = ""; mp.paper = null;
+  renderStudent();
+  mpApi({ query: "op=student&id=" + encodeURIComponent(learnerId) }).then(function (j) {
+    if (!mp.student || mp.student.id !== learnerId) return;
+    mp.student.data = j.student;
+  }).catch(function (e) { if (mp.student) mp.student.error = (e && e.message) || String(e); })
+  .then(function () { if (mp.student) { mp.student.loading = false; renderStudent(); } });
+}
+function renderStudent() {
+  var host = $("mpPane"); if (!host || !mp.student) return;
+  var s = mp.student;
+  var back = '<p style="margin:0 0 8px;"><a href="#" onclick="mp.student=null;renderPapers();return false;">&larr; All papers</a></p>';
+  if (s.loading) { host.innerHTML = back + '<p class="small muted">Loading...</p>'; return; }
+  if (s.error || !s.data) { host.innerHTML = back + '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(s.error || "No such student.") + '</p></div>'; return; }
+  var d = s.data, passed = d.modules.filter(function (m) { return m.passed; }).length;
+  host.innerHTML = back +
+    '<h3 style="margin:0;">' + esc(d.learner.name || d.learner.email || "Unnamed student") + '</h3>' +
+    '<p class="small muted">' + esc(d.learner.email || "") + (d.learner.email ? ' &middot; ' : '') + d.papers.length + ' paper' + (d.papers.length === 1 ? "" : "s") + ' marked or in marking</p>' +
+    '<h4>Papers</h4>' + (d.papers.length ? '<div class="card" style="padding:0;">' + d.papers.map(function (p) {
+      var bands = MP_GRADES.map(function (g) { return p.bands && p.bands[g] ? p.bands[g] + " " + g : null; }).filter(Boolean).join(", ");
+      return '<button type="button" class="irpcs-row" data-id="' + esc(p.submission_id) + '" onclick="mpOpen(this.dataset.id)"><strong>' + esc(p.exam_id) + '</strong> <span class="small muted">' + esc(mpDay(p.submitted_at)) + '</span> <span class="badge" style="' + mpTone(p.stage_tone) + '">' + esc(p.stage_label) + '</span>' +
+        (p.rya_grade ? ' <span class="small">RYA grade ' + esc(p.rya_grade) + '</span>' : '') + (p.readiness ? ' <span class="small">' + esc({ ready: "Ready", conditional: "Ready once the revision is done", "not yet": "Not yet" }[p.readiness] || p.readiness) + '</span>' : '') +
+        (bands ? '<div class="small muted">' + esc(bands) + '</div>' : '') + (p.instructor_name ? '<div class="small muted">' + esc(p.instructor_name) + '</div>' : '') + '</button>';
+    }).join("") + '</div>' : '<p class="small muted">No papers yet.</p>') +
+    '<h4>Module record</h4><p class="small muted">' + passed + ' of ' + d.modules.length + ' passed.</p>' +
+    (d.modules.length ? '<ul class="small" style="padding-left:18px;">' + d.modules.map(function (m) { return '<li style="' + (m.passed ? "" : "color:var(--coral);") + '">' + esc(m.text) + '</li>'; }).join("") + '</ul>' : '');
 }
 
 // ===================== TASKS (10 Sep 2026) =====================
@@ -14130,6 +14898,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 74, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email. The separate portal is no longer needed for any of it." },
   { n: 73, date: "2026-10-24", who: ["marking"], text: "Marking on the rail: review, correct and approve the question bank behind AI marking, without signing in to the separate portal." },
   { n: 72, date: "2026-10-24", who: ["users"], text: "Sign-in sessions are now stored scrambled, so someone who could read the tracker's database still could not use what they found there to sign in as anyone. Nobody is signed out by the change." },
   { n: 71, date: "2026-10-24", who: ["users"], text: "Security tidy-up: the Slack reply relay has its own key and no keys travel in web addresses any more, the RCA investigator strips emails and phone numbers before anything reaches the AI, and closed RCA records clear their messages and screenshots after 90 days (the findings stay)." },
