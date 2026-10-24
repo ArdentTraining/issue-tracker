@@ -11685,6 +11685,9 @@ function mpPhotosHtml(p, readOnly) {
       '<button type="button" class="ghost small" style="margin-left:auto;padding:5px 10px;width:auto;flex:0 0 auto;" onclick="mpPhotosFind()"' + (readOnly || mp.busy || !p.photos_available ? " disabled" : "") + '>Look in Chatwoot</button></div>' +
     (!p.photos_available ? '<p class="small muted">Photos need migration 0016 applying before they can be found and stored.</p>' : '') +
     (photos.length ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">' + photos.map(function (ph) {
+      // A photo whose link the server wouldn't send (not https) is shown as a
+      // box saying so, never placed: the engine would read the real link.
+      if (ph.blocked || !ph.data_url) return '<div style="width:170px;"><div class="small muted" style="width:170px;height:120px;border:1px dashed var(--line);border-radius:6px;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px;">Photo link not shown. Open it in Chatwoot.</div></div>';
       return '<div style="width:170px;' + (ph.ignored ? "opacity:.5;" : "") + '">' +
         '<a href="' + esc(ph.data_url) + '" target="_blank" rel="noreferrer"><img src="' + esc(ph.thumb_url || ph.data_url) + '" alt="Photo from the student" style="width:170px;height:120px;object-fit:cover;border:1px solid var(--line);border-radius:6px;" /></a>' +
         '<select data-id="' + esc(ph.photo_id) + '" onchange="mpPhotoPlace(this.dataset.id, this.value)" style="width:100%;margin-top:4px;"' + (readOnly || mp.busy ? " disabled" : "") + '>' +
@@ -11698,7 +11701,7 @@ function mpPhotosHtml(p, readOnly) {
   '</div>';
 }
 function mpAnswerPhotosHtml(code) {
-  var mine = ((mp.paper && mp.paper.photos) || []).filter(function (ph) { return ph.question_code === code && !ph.ignored; });
+  var mine = ((mp.paper && mp.paper.photos) || []).filter(function (ph) { return ph.question_code === code && !ph.ignored && ph.data_url && !ph.blocked; });
   if (!mine.length) return "";
   return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;">' + mine.map(function (ph) {
     return '<a href="' + esc(ph.data_url) + '" target="_blank" rel="noreferrer"><img src="' + esc(ph.thumb_url || ph.data_url) + '" alt="The student\'s photo for this question" style="max-width:220px;max-height:160px;border:1px solid var(--line);border-radius:6px;" /></a>';
@@ -12012,6 +12015,7 @@ function mpRevSave(id) {
     l.pending = false;
     if (!r.ok) { l.error = r.error || "That didn't save."; mpRedrawReviewCard(id); return; }
     l.saved = true; l.dirty = false; l.open = false;
+    mpRedrawReviewCard(id);
     // The counts and the Finalise button come from the server.
     mpOpen(mp.openId, true);
   }).catch(function (e) { l.pending = false; l.error = (e && e.message) || String(e); mpRedrawReviewCard(id); });
@@ -12213,7 +12217,8 @@ function renderInsights(force) {
     return;
   }
   if (mi.loading) return;
-  if (mi.error) { host.innerHTML = '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(mi.error) + '</p></div>'; return; }
+  if (!mi.error && (!mi.data || !mi.data.agreement || !mi.data.agreement.matrix || !mi.data.turnaround || !mi.data.flips || !mi.data.bands)) { mi.error = "Marking sent something we couldn't read."; mi.data = null; }
+  if (mi.error) { host.innerHTML = '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(mi.error) + ' <a href="#" onclick="renderInsights(true);return false;">Try again</a></p></div>'; return; }
   var d = mi.data, a = d.agreement, bands = d.bands;
   var html = '<p class="hint" style="margin:0 0 10px;">Fills itself in as papers are graded. Nothing to maintain. <a href="' + esc(d.csv_url) + '">Download every graded answer as a spreadsheet</a> (no student names in it). <a href="#" onclick="renderInsights(true);return false;">Refresh</a></p>' +
     (d.error ? '<p class="small" style="color:var(--coral);">' + esc(d.error) + '</p>' : '');
@@ -12252,7 +12257,8 @@ function renderPhotosOwed(force) {
     return;
   }
   if (mi.owedLoading) return;
-  if (mi.owedError) { host.innerHTML = '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(mi.owedError) + '</p></div>'; return; }
+  if (!mi.owedError && !Array.isArray(mi.owed)) { mi.owedError = "Marking sent something we couldn't read."; mi.owed = null; }
+  if (mi.owedError) { host.innerHTML = '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(mi.owedError) + ' <a href="#" onclick="renderPhotosOwed(true);return false;">Try again</a></p></div>'; return; }
   var o = mi.owed;
   host.innerHTML = '<p class="hint" style="margin:0 0 10px;">' + (o.length ? o.length + ' paper' + (o.length === 1 ? "" : "s") + ' waiting on chartwork photos.' : 'Nobody owes us any photos.') + ' Copy the nudge into the student\'s Chatwoot conversation; when they reply with photos, Look in Chatwoot on the paper finds them. <a href="#" onclick="renderPhotosOwed(true);return false;">Refresh</a></p>' +
     o.map(function (p, i) {
