@@ -742,7 +742,7 @@ function doPost(e) {
     // so it gets a key of its own rather than the people key: Vercel has never
     // held REPORTS_TICKET_SECRET and a leak there should open Marking and
     // nothing else. Own audience too. Half an hour, like the portal tickets.
-    if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET' }));
+    if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET', onlyPerm: true }));
     // r202/r203: reads from the Supabase mirror. Twelve hours, because the page
     // keeps it with the saved board so an open does not first wait on Apps
     // Script; it only ever reads the board, the same thing the session can.
@@ -15139,8 +15139,11 @@ function mintPortalTicket_(user, requiredPerm, minutes, opts) {
     name: pub.name || null,
     // The whole permission set travels, not just the one being checked. It
     // costs nothing and it means adding a second view with a different
-    // permission later needs no change on this side.
-    perms: perms,
+    // permission later needs no change on this side. Except where the caller
+    // asks for only its own (Marking, 25 Oct): that service has no use for
+    // anyone's admin or developer flags, and a flag it can't see is one it
+    // can never come to trust by accident.
+    perms: opts.onlyPerm && requiredPerm ? (function () { var o = {}; o[requiredPerm] = true; return o; })() : perms,
     // r235: what the ticket is for. A person's ticket is for the portal
     // functions; a machine ticket names the one function that may accept it.
     aud: opts.aud || TICKET_AUD_PORTAL_,
