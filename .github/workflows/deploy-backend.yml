@@ -15,6 +15,9 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # 24 Oct 2026: DEPLOY_KEY lives in the production environment, which needs
+    # Edd's approval, so a stolen token can push code but cannot deploy it.
+    environment: production
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
