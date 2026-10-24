@@ -671,6 +671,7 @@ function doPost(e) {
     var body = {};
     if (e && e.postData && e.postData.contents) body = JSON.parse(e.postData.contents);
     var action = body.action || '';
+    autoHashSessionsOnce_();   // r245: no-op after the first run
     FILE_T_ = action === 'addIssue' ? { t0: Date.now(), m: [], tags: {} } : null;   // r221: timing a filing
     DEFER_AFTER_ = (action === 'addIssue' || action === 'caseCheckpoint') && !!body.defer_after;   // r222
     KEEP_CACHE_ = false;   // r241
@@ -757,6 +758,7 @@ function doPost(e) {
     if (action === 'getIssues') return jsonOut(blankIssues_(user, getIssues_()));
     if (action === 'getInstructors') return jsonOut(getInstructors_());
     if (action === 'listUsers') return jsonOut(listUsers_());
+    if (action === 'hashSessionsNow') return jsonOut(hashSessionsNow_());   // r245: one-off sweep
     if (action === 'getPlaybook') return jsonOut(getPlaybookEndpoint_());
     if (action === 'listPlaybookSuggestions') return jsonOut(listPlaybookSuggestions_());
     if (action === 'listKnownFixFlags') return jsonOut(listKnownFixFlags_());
@@ -1035,6 +1037,7 @@ function userForToken_(token, action) {
   var f = findUserBySession_(token);
   if (!f) { UNAUTH_WHY_ = 'token not found on any account'; sessionLog_('refused', '', token, UNAUTH_WHY_, action); return null; }
   if (String(f.user.status).toLowerCase() !== 'active') { UNAUTH_WHY_ = 'account disabled'; sessionLog_('refused', f.user.email, token, UNAUTH_WHY_, action); return null; }
+  if (f.plain) migrateSession_(f, token);   // r245: a pre-r245 session, stored as its hash from now on
   if (f.legacy) {
     // Legacy single-token row: expiry lives in the column, as it always did.
     // Deliberately NOT slid. The Claude service account is one of these and its
@@ -1063,12 +1066,38 @@ function userForToken_(token, action) {
 var SESSION_LOG_SHEET = 'SessionLog';
 var SESSION_USED_EVERY_MS = 24 * 3600 * 1000;
 var SESSION_IDLE_DAYS = 14;
+// r245 (Edd, 24 Oct 2026: "storing tracker logins in a form that can't be
+// reused if the database were read"). The browser still holds the raw random
+// token, exactly as before. What the Users sheet and the store hold is now
+// sha256 of it, marked "h1:", so someone who reads the database cannot sign in
+// as anyone with what they find there.
+//
+// Nobody is signed out by the change. A stored value without the marker is a
+// session from before r245: it still matches the raw token presented, and the
+// moment it does it is rewritten as its hash (migrateSession_). hashSessionsNow_
+// does the same for every idle session in one go, so no plain value has to wait
+// for its device to come back.
+var SESSION_HASH_PREFIX_ = 'h1:';
+function sessionHash_(token) {
+  var d = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'ait-session-v1:' + String(token));
+  return SESSION_HASH_PREFIX_ + bytesToHex_(d);
+}
+function isSessionHash_(v) { return String(v == null ? '' : v).indexOf(SESSION_HASH_PREFIX_) === 0; }
+// Does the stored value belong to this raw token? h is sessionHash_(token),
+// worked out once by the caller rather than once per stored value.
+function sessionMatch_(stored, token, h) {
+  stored = String(stored == null ? '' : stored);
+  if (!stored || !token) return false;
+  return isSessionHash_(stored) ? safeEq_(h, stored) : safeEq_(String(token), stored);
+}
+// What a stored value should become: already hashed values are left alone.
+function sessionStored_(v) { return isSessionHash_(v) ? String(v) : sessionHash_(v); }
+// The log fingerprint. Taken from the hash, so a raw token and its stored form
+// print the same and one log line can still be matched to another.
 function tokenPrint_(token) {
   if (!token) return '';
-  try {
-    var d = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'ait-session:' + String(token));
-    return bytesToHex_(d).slice(0, 10);
-  } catch (e) { return ''; }
+  try { return sessionStored_(token).slice(SESSION_HASH_PREFIX_.length, SESSION_HASH_PREFIX_.length + 10); }
+  catch (e) { return ''; }
 }
 function sessionLog_(what, email, token, why, action) {
   try {
@@ -1097,9 +1126,9 @@ function touchSession_(f, token, extend) {
     withSessionLock_(function () {
       var entries = sessionEntries_(readSessionCell_(f));
       if (!entries || entries === 'legacy') return;
-      var hit = false;
+      var hit = false, h = sessionHash_(token);
       for (var i = 0; i < entries.length; i++) {
-        if (String(entries[i].t) === String(token)) {
+        if (sessionMatch_(entries[i].t, token, h)) {
           if (extend !== false) entries[i].e = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
           entries[i].u = Date.now();
           hit = true;
@@ -1236,7 +1265,7 @@ function reqPerm_(action) {
     // r244: it starts an AI run on our API credit, so admins only.
     case 'runConfusionReview': return 'users';
     case 'resurfaceIssue':
-    case 'inviteUser': case 'updateUser': case 'deleteUser': case 'adminResetLink': case 'listUsers':
+    case 'inviteUser': case 'updateUser': case 'deleteUser': case 'adminResetLink': case 'listUsers': case 'hashSessionsNow':
     case 'getPlaybook': case 'savePlaybook': case 'listPlaybookSuggestions': case 'resolvePlaybookSuggestion': case 'suggestPlaybook':
     case 'listKnownFixFlags': case 'resolveKnownFixFlag':
     case 'getFeedback': case 'updateFeedback': case 'deleteFeedback': case 'setVoiceGuide': case 'setEddTools': case 'listVoiceGuides': return 'users';
@@ -1437,8 +1466,9 @@ function sessionEntries_(cell) {
   if (raw.charAt(0) !== '[') return 'legacy';
   try { var a = JSON.parse(raw); return (a && a.length !== undefined) ? a : null; } catch (e) { return null; }
 }
-function findUserBySession_(token, fresh) {
+function findUserBySession_(token, fresh, h) {
   if (!token) return null;
+  h = h || sessionHash_(token);   // r245: compared against the stored hashes
   var t = usersTable_(fresh);
   var values = t.values, idx = t.idx;
   if (values.length < 2) return null;
@@ -1446,22 +1476,97 @@ function findUserBySession_(token, fresh) {
     var cell = values[r][idx['session_token']];
     var entries = sessionEntries_(cell);
     if (entries === 'legacy') {
-      if (String(cell) === String(token)) { var fl = userF_(t, r); fl.legacy = true; return fl; }
+      if (sessionMatch_(cell, token, h)) { var fl = userF_(t, r); fl.legacy = true; fl.plain = !isSessionHash_(cell); return fl; }
     } else if (entries) {
       for (var i = 0; i < entries.length; i++) {
-        if (String(entries[i].t) === String(token)) {
-          var fe = userF_(t, r); fe.entry = entries[i]; fe.entries = entries; return fe;
+        if (sessionMatch_(entries[i].t, token, h)) {
+          var fe = userF_(t, r); fe.entry = entries[i]; fe.entries = entries; fe.plain = !isSessionHash_(entries[i].t); return fe;
         }
       }
     }
   }
   // r216: a sign-in seconds old may not be in the cache yet. Look again fresh
   // before refusing anyone.
-  if (t.store && !fresh) return findUserBySession_(token, true);
+  if (t.store && !fresh) return findUserBySession_(token, true, h);
   return null;
+}
+
+// r245: rewrite a pre-r245 plain session as its hash, in place, keeping its
+// expiry and last-used time. Best-effort like touchSession_: if the write
+// fails the session is still good and will be migrated on a later call.
+function migrateSession_(f, token) {
+  try {
+    withSessionLock_(function () {
+      var cell = readSessionCell_(f);
+      var entries = sessionEntries_(cell);
+      if (entries === 'legacy') {
+        if (!isSessionHash_(cell) && safeEq_(String(token), String(cell))) setCell_(f, 'session_token', sessionHash_(token));
+        return;
+      }
+      if (!entries) return;
+      var changed = false;
+      for (var i = 0; i < entries.length; i++) {
+        if (entries[i] && !isSessionHash_(entries[i].t) && safeEq_(String(token), String(entries[i].t))) {
+          entries[i].t = sessionHash_(token); changed = true;
+        }
+      }
+      if (changed) writeSessionCell_(f, entries);
+    });
+  } catch (e) {}
+}
+
+// r245: the one-off sweep. Every stored session still held as a plain token
+// becomes its hash. The hash of a plain value is exactly what a lookup works
+// out from the token the browser sends, so every device stays signed in.
+// Admin only. Answers with counts, never with a stored value.
+// r245: the sweep runs itself once, on the first request after this code goes
+// live, so nobody has to remember to call it. A script property records that it
+// ran. No script lock here: hashSessionsNow_ takes the session lock per row
+// itself, and the script lock is not something to hold twice. Two requests
+// racing would both sweep, which is harmless (the sweep is idempotent); a cache
+// marker keeps that to the rare case.
+function autoHashSessionsOnce_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (props.getProperty('SESSIONS_HASHED_AT')) return;
+    var cache = CacheService.getScriptCache();
+    if (cache.get('r245_sweeping')) return;
+    cache.put('r245_sweeping', '1', 300);
+    var res = hashSessionsNow_();
+    props.setProperty('SESSIONS_HASHED_AT', new Date().toISOString() + ' ' + JSON.stringify(res));
+    Logger.log('r245 auto sweep: ' + JSON.stringify(res));
+  } catch (e) { Logger.log('r245 auto sweep failed, will try again next request: ' + e); }
+}
+function hashSessionsNow_() {
+  var t = usersTable_(true);
+  var values = t.values, idx = t.idx;
+  var users = 0, hashed = 0, already = 0;
+  for (var r = 1; r < values.length; r++) {
+    if (!values[r][idx['email']] || !String(values[r][idx['session_token']] || '').trim()) continue;
+    var f = userF_(t, r), n = 0;
+    withSessionLock_(function () {
+      var cell = readSessionCell_(f);
+      var entries = sessionEntries_(cell);
+      if (entries === 'legacy') {
+        if (isSessionHash_(cell)) { already++; return; }
+        setCell_(f, 'session_token', sessionHash_(cell)); n++;
+        return;
+      }
+      if (!entries) return;
+      for (var i = 0; i < entries.length; i++) {
+        if (!entries[i] || !entries[i].t) continue;
+        if (isSessionHash_(entries[i].t)) { already++; continue; }
+        entries[i].t = sessionHash_(entries[i].t); n++;
+      }
+      if (n) writeSessionCell_(f, entries);
+    });
+    if (n) { users++; hashed += n; }
+  }
+  return { ok: true, accounts_changed: users, sessions_hashed: hashed, already_hashed: already };
 }
 function startSession_(f) {
   var token = newToken_();
+  var stored = sessionHash_(token);   // r245: what is kept; the raw token goes only to the browser
   var expiry = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
   withSessionLock_(function () {
     // Read the cell HERE, not from the row snapshot. Between that snapshot and
@@ -1473,10 +1578,10 @@ function startSession_(f) {
       // Carry the existing single token forward as an entry, so logging in on a
       // second device no longer kills the first - the whole point.
       var legacyExp = new Date(f.user.session_expires).getTime();
-      entries = [{ t: String(cell), e: isFinite(legacyExp) ? legacyExp : expiry }];
+      entries = [{ t: sessionStored_(cell), e: isFinite(legacyExp) ? legacyExp : expiry }];
     } else if (!entries) entries = [];
     var now = Date.now();
-    entries.unshift({ t: token, e: expiry, u: now });
+    entries.unshift({ t: stored, e: expiry, u: now });
     entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > now; });
     // r206: a device nobody has used for a fortnight goes, and past the cap
     // the one used longest ago goes. Before this the cap dropped the entry
@@ -1489,8 +1594,8 @@ function startSession_(f) {
       // before r206 has no `u`, and a laptop used daily since it signed in
       // three weeks ago must not be thrown out on the day this goes live.
       var idle = isFinite(Number(x.u)) && now - Number(x.u) > SESSION_IDLE_DAYS * 24 * 3600 * 1000;
-      if (idle && x.t !== token) dropped.push({ x: x, why: 'unused for ' + SESSION_IDLE_DAYS + ' days' });
-      return !idle || x.t === token;
+      if (idle && x.t !== stored) dropped.push({ x: x, why: 'unused for ' + SESSION_IDLE_DAYS + ' days' });
+      return !idle || x.t === stored;
     });
     if (entries.length > MAX_SESSIONS) {
       entries.sort(function (a, b) { return sessionUsedAt_(b) - sessionUsedAt_(a); });   // most recently used first
@@ -1509,14 +1614,14 @@ function startSession_(f) {
   for (var tries = 0; tries < 3; tries++) {
     Utilities.sleep(250);
     var check = sessionEntries_(readSessionCell_(f));
-    var there = check && check !== 'legacy' && check.some(function (x) { return String(x.t) === token; });
+    var there = check && check !== 'legacy' && check.some(function (x) { return String(x.t) === stored; });
     if (there) break;
     sessionLog_('sign-in overwritten, putting it back', f.user.email, token, 'try ' + (tries + 1), 'login');
     withSessionLock_(function () {
       var again = sessionEntries_(readSessionCell_(f));
       if (!again || again === 'legacy') again = [];
-      if (!again.some(function (x) { return String(x.t) === token; })) {
-        again.unshift({ t: token, e: expiry, u: Date.now() });
+      if (!again.some(function (x) { return String(x.t) === stored; })) {
+        again.unshift({ t: stored, e: expiry, u: Date.now() });
         writeSessionCell_(f, again.slice(0, MAX_SESSIONS));
       }
     });
@@ -1598,7 +1703,8 @@ function logout_(token) {
     var entries = sessionEntries_(readSessionCell_(f));
     if (!entries || entries === 'legacy') return;
     // Log out THIS device only. The others stay signed in, which is the point.
-    writeSessionCell_(f, entries.filter(function (x) { return String(x.t) !== String(token); }));
+    var h = sessionHash_(token);
+    writeSessionCell_(f, entries.filter(function (x) { return !sessionMatch_(x.t, token, h); }));
   });
   sessionLog_('signed out', f.user.email, token, 'Sign out pressed', 'logout');
   return { ok: true };
@@ -10945,7 +11051,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r244.2 · 2026-10-24';
+var CODE_STAMP = 'r245 · 2026-10-24';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -14094,23 +14200,25 @@ function createClaudeServiceUser() {
   var expires = new Date(Date.now() + 5 * 365 * 24 * 3600 * 1000).toISOString();
   var perms = {}; PERM_KEYS.forEach(function (k) { perms[k] = true; });
   var f = findUserByEmail_(email);
+  // r245: only the hash is stored now, so the token is shown here once and
+  // nowhere else. Copy it into mirror-sync-config.json straight away.
   if (f) {
     setCell_(f, 'status', 'active');
     setCell_(f, 'perms_json', JSON.stringify(perms));
-    setCell_(f, 'session_token', token);
+    setCell_(f, 'session_token', sessionHash_(token));
     setCell_(f, 'session_expires', expires);
-    Logger.log('Claude service user refreshed; new token written to the Users sheet.');
+    Logger.log('Claude service user refreshed. New token (shown once, not stored anywhere): ' + token);
     return 'refreshed';
   }
   var u = {
     email: email, name: 'Claude', status: 'active',
     perms_json: JSON.stringify(perms),
     pass_hash: '', pass_salt: '',            // no password: this account can never log in with one
-    invite_token: '', session_token: token,
+    invite_token: '', session_token: sessionHash_(token),
     session_expires: expires, created_at: new Date().toISOString()
   };
   usersAppend_(u);
-  Logger.log('Claude service user created; token written to the Users sheet.');
+  Logger.log('Claude service user created. Token (shown once, not stored anywhere): ' + token);
   return 'created';
 }
 

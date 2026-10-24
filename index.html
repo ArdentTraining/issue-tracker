@@ -13645,6 +13645,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 72, date: "2026-10-24", who: ["users"], text: "Sign-in sessions are now stored scrambled, so someone who could read the tracker's database still could not use what they found there to sign in as anyone. Nobody is signed out by the change." },
   { n: 71, date: "2026-10-24", who: ["users"], text: "Security tidy-up: the Slack reply relay has its own key and no keys travel in web addresses any more, the RCA investigator strips emails and phone numbers before anything reaches the AI, and closed RCA records clear their messages and screenshots after 90 days (the findings stay)." },
   { n: 70, date: "2026-10-24", who: ["recovery"], text: "Recovery on the rail finds a student's quiz answers from before Submit All, for when their submission never arrived." },
   { n: 69, date: "2026-10-24", who: ["users"], text: "RCA reads as a conversation: the investigator's tool calls fold into one Worked through line, and its replies lead with a short answer with the detail under headings you open. It moves the stage along itself (Gathering evidence through Fix pending), and an admin can add 1M tokens when a record runs out of budget." },
