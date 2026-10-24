@@ -738,6 +738,11 @@ function doPost(e) {
     // own audience, so the 12-hour portal ticket kept in the browser can never
     // be used to read the recovery store. The recovery function checks both.
     if (action === 'recoveryTicket') return jsonOut(mintPortalTicket_(user, 'recovery', 10, { aud: 'recovery' }));
+    // r246: Marking. Its back end runs on Vercel (ardent-portal), not Supabase,
+    // so it gets a key of its own rather than the people key: Vercel has never
+    // held REPORTS_TICKET_SECRET and a leak there should open Marking and
+    // nothing else. Own audience too. Half an hour, like the portal tickets.
+    if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET' }));
     // r202/r203: reads from the Supabase mirror. Twelve hours, because the page
     // keeps it with the saved board so an open does not first wait on Apps
     // Script; it only ever reads the board, the same thing the session can.
@@ -903,7 +908,10 @@ var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_
 // (Edd, 19 Sep), so like irpcs nobody holds it until an admin ticks it.
 // r243: 'recovery' reads students' in-progress quiz answers (migration 045).
 // Hand-picked like irpcs and resources: nobody holds it until an admin ticks it.
-var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery'];
+// r246: 'marking' opens the Marking section (the question bank first, then
+// the papers), whose back end is ardent-portal on Vercel. Hand-picked: Edd
+// only to start with (24 Oct), and nobody holds it until an admin ticks it.
+var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery', 'marking'];
 var SESSION_DAYS = 30;
 var HASH_ROUNDS = 2000;
 // Password-reset links expire after this many minutes. The expiry is packed into
@@ -1313,6 +1321,8 @@ function reqPerm_(action) {
     // r243: hands out a credential that reads students' typed names, emails
     // and answers, so it is gated here and again where it is minted.
     case 'recoveryTicket': return 'recovery';
+    // r246: hands out a credential for the marking back end.
+    case 'markingTicket': return 'marking';
     // Fail closed. Every action reaching this point is one nobody listed above,
     // which means nobody decided who should be allowed to call it. The public
     // and key-gated actions (login, acceptInvite, requestPasswordReset, ping,
@@ -3513,6 +3523,7 @@ var READ_ONLY_ACTIONS = {
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, caseTouch: 1,
   recoveryTicket: 1,                    // r243: mints a ticket, no sheet
+  markingTicket: 1,                     // r246: same
   trackerTicket: 1, mirrorSyncNow: 1,   // r202: neither touches a sheet
   instructorGuide: 1,                   // r205: reads a Google Doc
   // nextAction DOES write one cell (its own cached answer), and it still
@@ -3656,7 +3667,7 @@ var PURE_READS_ = {
   // r201: pure reads that were missing, and each dropped every extra.
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, trackerTicket: 1, mirrorSyncNow: 1,
-  recoveryTicket: 1,
+  recoveryTicket: 1, markingTicket: 1,
   instructorGuide: 1,
   // r227: this one reads a single script property, and the page asked for it
   // three times on every open (once per renderLive). Each ask dropped every
@@ -7230,7 +7241,9 @@ function setTicketSecrets_(data) {
   var key = props.getProperty('DEPLOY_KEY');
   if (!key || !safeEq_(String(data.key || ''), key)) return { ok: false, error: 'bad deploy key' };
   var set = [];
-  [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET']].forEach(function (pair) {
+  // r246: 'marking' joins. Its other copy is MARKING_TICKET_SECRET in the
+  // ardent-portal Vercel project, not a Supabase function secret.
+  [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET'], ['marking', 'MARKING_TICKET_SECRET']].forEach(function (pair) {
     var v = data[pair[0]];
     if (v === undefined || v === null || v === '') return;
     v = String(v).trim();
@@ -7242,7 +7255,8 @@ function setTicketSecrets_(data) {
   return {
     ok: true, set: set,
     machine_len: (props.getProperty('MACHINE_TICKET_SECRET') || '').length,
-    nudge_len: (props.getProperty('TRACKER_NUDGE_SECRET') || '').length
+    nudge_len: (props.getProperty('TRACKER_NUDGE_SECRET') || '').length,
+    marking_len: (props.getProperty('MARKING_TICKET_SECRET') || '').length
   };
 }
 
@@ -11089,7 +11103,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r245.1 · 2026-10-24';
+var CODE_STAMP = 'r246 · 2026-10-24';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -15082,6 +15096,8 @@ function irpcsTicket_(user) {
  *   machine  MACHINE_TICKET_SECRET  (store@, mirror@, inbox@) - aud names the
  *            one function the ticket is for: 'store', 'mirror', 'inbox'
  *   nudge    TRACKER_NUDGE_SECRET   signed by tracker-save, verified here only
+ *   marking  MARKING_TICKET_SECRET  (markingTicket, r246) - aud 'marking', verified
+ *            by ardent-portal on Vercel, which holds no other key of ours
  * Each function checks the aud, so a ticket minted for one job cannot be
  * replayed at another. While MACHINE_TICKET_SECRET is not yet set (the
  * switch-over), machine tickets fall back to the people key and say so in
@@ -15091,7 +15107,11 @@ var TICKET_AUD_PORTAL_ = 'portal';
 function mintPortalTicket_(user, requiredPerm, minutes, opts) {
   opts = opts || {};
   var props = PropertiesService.getScriptProperties();
-  var secretName = opts.machine ? 'MACHINE_TICKET_SECRET' : 'REPORTS_TICKET_SECRET';
+  // r246: a caller may name its own key (Marking does). There is deliberately
+  // no fallback to the people key for a named one: an unset key is a refusal
+  // that says which property is missing, never a ticket signed with a key the
+  // other side does not hold.
+  var secretName = opts.secretName || (opts.machine ? 'MACHINE_TICKET_SECRET' : 'REPORTS_TICKET_SECRET');
   var secret = props.getProperty(secretName);
   if (!secret && opts.machine) {
     // Switch-over only: the machine key is not set yet, so sign with the

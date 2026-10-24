@@ -1230,6 +1230,12 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/><polyline points="12 7 12 12 15 14"/></svg>
     <span class="ri-word">Recovery</span>
   </button>
+  <!-- r246: Marking, moving across from the separate portal a screen at a
+       time. The question bank first. Its own permission, hand-picked. -->
+  <button type="button" class="rail-item" id="railMarking" onclick="railGo('marking')" title="Marking - review and approve the question bank">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
+    <span class="ri-word">Marking</span>
+  </button>
   <button type="button" class="rail-item" id="railReports" onclick="railGo('reports')" title="Reports">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><polyline points="7 14 11 9 15 12 20 6"/></svg>
     <span class="ri-word">Reports</span>
@@ -2139,6 +2145,18 @@
   </div>
   <div id="recoveryResults"></div>
 </div>
+<!-- r246: Marking. The back end is ardent-portal on Vercel (/api/tracker),
+     reached with a half-hour markingTicket. Nothing real is in this file:
+     questions and answers arrive from the API at run time. -->
+<div id="markingView" class="wrap hidden">
+  <h2 style="margin:0 0 4px;">Marking</h2>
+  <p class="hint" style="margin:0 0 14px;">The question bank: correct each question and approve it, so the engine can mark against it. Marking papers stays on the portal for now, and moves here next.</p>
+  <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="markingHead"></div>
+  <div class="irpcs-split">
+    <div class="irpcs-list" id="markingList"></div>
+    <div id="markingItem"></div>
+  </div>
+</div>
 <div id="resourcesView" class="wrap hidden">
   <div class="rs-head">
     <div>
@@ -2450,6 +2468,7 @@
         <label class="small"><input type="checkbox" id="inv_irpcs"> IRPCS</label>
         <label class="small"><input type="checkbox" id="inv_resources"> Resources</label>
         <label class="small"><input type="checkbox" id="inv_recovery"> Recovery</label>
+        <label class="small"><input type="checkbox" id="inv_marking"> Marking</label>
       </div>
       <label style="margin-top:8px;">Fixes they can be given<span class="helphost" data-help="This is who can be picked in Assigned to, not who can see the page. Anyone with Manage users sees both queues anyway, so leave these unticked for an admin who does not actually take fixes."></span></label>
       <div class="permrow">
@@ -2779,6 +2798,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="marking"><td><span class="ui">Marking</span></td><td>The question bank behind AI marking: correct each question and approve it before the engine marks against it.</td></tr>
     <tr data-perm="recovery"><td><span class="ui">Recovery</span></td><td>A student's quiz answers from before Submit All, for when their submission never arrived.</td></tr>
     <tr data-perm="resources"><td><span class="ui">Resources</span></td><td>The free downloads on the website's resources page: edit them, add new ones, and change their order.</td></tr>
     <tr data-perm="log"><td><span class="ui">Shipping</span></td><td>The monthly shipping report, and a commercial invoice for a student's pack when customs ask for one again.</td></tr>
@@ -3121,6 +3141,14 @@
   <p>Changes wait in the bar at the bottom until we press <span class="ui">Save to website</span>, and then they all go at once. A coral dot marks anything not saved yet. If somebody has changed the sheet since the page loaded, the save stops and says so rather than writing over them. Press <span class="ui">Refresh</span> and make the change again.</p>
   <p><span class="ui">Add resource</span> takes a PDF, puts it in the tracker's Website resources folder in Google Drive, makes the thumbnail from its first page, and has a go at the title, description and category. Check those over, as they are a first draft. <span class="ui">Replace</span> on a resource swaps its file or thumbnail the same way.</p>
   <p><span class="ui">Hide from website</span> moves the row to a Hidden tab in the sheet, so nothing is ever deleted and <span class="ui">Put back on the website</span> undoes it. Every save is also written to the ResourcesLog tab of the tracker's own sheet, with what each resource looked like before.</p>
+</section>
+
+<section id="man-marking" data-perm="marking" data-title="The question bank">
+  <h3>The question bank</h3>
+  <p>The AI marking engine marks each answer against its question's marking requirements, category and model answer. A question nobody has approved isn't marked by the engine at all, so every new bank goes through <span class="ui">Marking</span> first.</p>
+  <p>Pick an exam at the top; the list opens on the questions still waiting. Each question shows the wording and pictures, any notes left for the reviewer, the model answer (which can reach a student), the marker's version where there is one (what the engine actually marks against), the marking requirements and the house feedback. Correct what needs it underneath and press <span class="ui">Save</span>, or <span class="ui">Approve</span>, which saves anything unsaved first and moves on to the next one waiting.</p>
+  <p>Approved questions are read-only. <span class="ui">Un-approve</span> takes it back for a correction, and the engine stops marking against it until it's approved again. Approving needs a category and marking requirements. The DS Mock is still marked without approval for now, so a change to one of its questions changes live marking straight away.</p>
+  <p>Only people an admin has given the Marking permission can see this, and every save and approval is stamped with their name.</p>
 </section>
 
 <section id="man-recovery" data-perm="recovery" data-title="Recovering quiz answers">
@@ -5425,12 +5453,12 @@ function applyPermGates() {
   applyShell();
   var railGate = [["railNew", p.log], ["railShipping", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
-                  ["railIrpcs", p.irpcs], ["railResources", p.resources], ["railRecovery", p.recovery],
+                  ["railIrpcs", p.irpcs], ["railResources", p.resources], ["railRecovery", p.recovery], ["railMarking", p.marking],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
   // The divider only earns its place if there is something on both sides.
-  if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs || p.resources || p.recovery) ? "" : "none";
+  if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs || p.resources || p.recovery || p.marking) ? "" : "none";
 
   // Everybody gets to say whether a student is behind this report (Edd,
   // FB-0206). It used to be an admins-only "internal task" switch, which left
@@ -5454,7 +5482,7 @@ function permsKey_(p) {
 var VIEW_RAIL_ = {
   instructor: "railNew", customs: "railShipping", shipreport: "railShipping", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
   edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
-  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", reports: "railReports", analytics: "railStats", users: "railUsers"
+  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", marking: "railMarking", reports: "railReports", analytics: "railStats", users: "railUsers"
 };
 
 // Called when a refresh brings a different permission set than the one the
@@ -8928,6 +8956,8 @@ function setView(v) {
   if (v === "resources") renderResources();
   if ($("recoveryView")) $("recoveryView").classList.toggle("hidden", v !== "recovery");
   if (v === "recovery") renderRecovery();
+  if ($("markingView")) $("markingView").classList.toggle("hidden", v !== "marking");
+  if (v === "marking") renderMarking();
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "instructors") renderInstructors();
@@ -9001,7 +9031,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -9046,6 +9076,7 @@ function railGo(v) {
   if (v === "shipping") v = (state.shipSub === "shipreport" && (state.perms || {}).users) ? "shipreport" : "customs";
   if (v === "resources" && !(state.perms || {}).resources) return;  // r187: and the backend checks the same key
   if (v === "recovery" && !(state.perms || {}).recovery) return;    // r243: and so does the Edge Function
+  if (v === "marking" && !(state.perms || {}).marking) return;      // r246: and so does ardent-portal
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -9062,7 +9093,7 @@ function updateRail() {
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railShipping", v === "customs" || v === "shipreport"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
-               ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"], ["railRecovery", v === "recovery"],
+               ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"], ["railRecovery", v === "recovery"], ["railMarking", v === "marking"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual" || v === "instructors"],
                ["railRCA", v === "rca"]];
@@ -10897,6 +10928,460 @@ function customsAgain(no, copy) {
     $("cu_status").textContent = edit ? "Editing " + no + ". Change what you need, then save." : "Copied from " + no + ". Change what you need, then make the invoice.";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }).catch(function () { $("cu_status").textContent = "That did not work."; });
+}
+
+// ============================ MARKING (r246) ============================
+// Marking moving into the tracker, a screen at a time. First: the Question
+// Bank, where questions are corrected and approved before the engine may mark
+// against them (the review gate, ardent-marking lib/questions/gate.ts).
+//
+// The back end is NOT a Supabase function. It is ardent-portal on Vercel
+// (private repo ArdentTraining/ardent-marking), whose /api/tracker/* routes
+// wrap the same store functions the portal's own Questions tab uses, so every
+// rule (approved is read-only, the live mock can't be blanked, approval needs
+// a category and requirements) is enforced there, once. This page holds no
+// rules of its own beyond not offering a button that would be refused.
+//
+// Auth: markingTicket, signed with MARKING_TICKET_SECRET (not the people key)
+// for aud 'marking', and the 'marking' permission inside it. The portal maps
+// the ticket's account to an instructor by hand (shared.instructors
+// .tracker_account), so edits are stamped with a person.
+//
+// Pictures come back as signed links good for 30 minutes, because an <img>
+// cannot send the ticket. Nothing is cached in the browser.
+//
+// PUBLIC REPO: no question, answer or student ever appears in this file or in
+// a manual screenshot. Everything real arrives from the API at run time.
+var MARKING_API = "https://ardent-portal.vercel.app/api/tracker";
+var marking = {
+  ticket: "", exp: 0,
+  list: null, listLoading: false, listError: "", viewer: null,
+  categories: [], photoOptions: [], grandfathered: [],
+  f: { exam: "", state: "todo", category: "", q: "" },
+  openId: "", item: null, itemLoading: false, itemError: "",
+  start: null, busy: false, msg: null
+};
+
+function markingTicket(force) {
+  var now = Math.floor(Date.now() / 1000);
+  if (!force && marking.ticket && marking.exp - now > 60) return Promise.resolve(marking.ticket);
+  return apiPost({ action: "markingTicket" }).then(function (r) {
+    if (!r || !r.ok || !r.ticket) {
+      var e = (r && r.error) || "";
+      throw new Error(e === "forbidden" ? "This account doesn't have the Marking permission."
+        : /MARKING_TICKET_SECRET/.test(e) ? "Marking isn't switched on yet: MARKING_TICKET_SECRET isn't set in the tracker's Script Properties."
+        : (e || "Couldn't get a Marking ticket."));
+    }
+    marking.ticket = r.ticket;
+    marking.exp = r.expires_at || (now + 1500);
+    return marking.ticket;
+  });
+}
+
+// opts: { query } for a GET, { body } for a POST. One silent retry on a 401
+// with a fresh ticket, never more, so a real permission problem can't loop.
+// A 409 is the store saying no in words meant for the reader, so it is
+// returned rather than thrown, and shown on the card.
+function markingApi(path, opts, retried) {
+  opts = opts || {};
+  return markingTicket(!!retried).then(function (t) {
+    var url = MARKING_API + path + (opts.query ? "?" + opts.query : "");
+    var init = { method: opts.body ? "POST" : "GET", cache: "no-store", headers: { authorization: "Bearer " + t } };
+    if (opts.body) { init.headers["content-type"] = "application/json"; init.body = JSON.stringify(opts.body); }
+    return fetch(url, init);
+  }).then(function (r) {
+    return r.text().then(function (txt) {
+      var j = null;
+      try { j = JSON.parse(txt); } catch (e) {}
+      if (r.status === 401 && !retried) { marking.ticket = ""; marking.exp = 0; return markingApi(path, opts, true); }
+      if (r.status === 409) return j || { ok: false, error: "That was refused." };
+      if (!r.ok) throw new Error((j && j.error) || ("Marking returned " + r.status + "."));
+      return j || {};
+    });
+  }, function (e) {
+    // fetch itself failing is almost always the network or CORS, and the
+    // browser says nothing useful about which.
+    if (e && /ticket|permission|Marking/.test(e.message || "")) throw e;
+    throw new Error("Couldn't reach Marking (" + ((e && e.message) || e) + ").");
+  });
+}
+
+function renderMarking() {
+  if (!(state.perms || {}).marking) return;
+  if (!marking.list && !marking.listLoading && !marking.listError) markingLoadList();
+  markingRenderHead();
+  markingRenderList();
+  markingRenderItem();
+}
+
+function markingLoadList(force) {
+  if (marking.listLoading) return;
+  marking.listLoading = true; marking.listError = "";
+  if (force) marking.list = null;
+  markingRenderList();
+  markingApi("/questions", { query: "op=list" }).then(function (j) {
+    if (!j || !Array.isArray(j.questions)) throw new Error("Marking sent a list we couldn't read.");
+    marking.list = j.questions;
+    marking.viewer = j.viewer || null;
+    marking.categories = j.categories || [];
+    marking.photoOptions = j.photo_options || [];
+    marking.grandfathered = j.grandfathered || [];
+    // First open: land on the first exam with something waiting.
+    if (!marking.f.exam) {
+      var waiting = marking.list.filter(function (q) { return !q.reviewed; });
+      marking.f.exam = (waiting[0] || marking.list[0] || {}).exam_id || "";
+    }
+  }).catch(function (e) {
+    marking.listError = (e && e.message) || String(e);
+  }).then(function () {
+    marking.listLoading = false;
+    markingRenderHead(); markingRenderList();
+    if (!marking.openId) { var first = markingFiltered().filter(function (q) { return !q.reviewed; })[0] || markingFiltered()[0]; if (first) markingOpen(first.question_id); }
+  });
+}
+
+function markingInExam() {
+  var f = marking.f;
+  return (marking.list || []).filter(function (q) { return !f.exam || q.exam_id === f.exam; });
+}
+
+function markingFiltered(ignoreState) {
+  var f = marking.f, needle = (f.q || "").trim().toLowerCase();
+  return markingInExam().filter(function (q) {
+    if (f.category && q.category !== f.category) return false;
+    if (!ignoreState && f.state === "todo" && q.reviewed) return false;
+    if (!ignoreState && f.state === "done" && !q.reviewed) return false;
+    if (needle && (q.question_code + " " + q.snippet).toLowerCase().indexOf(needle) < 0) return false;
+    return true;
+  });
+}
+
+function markingFilter(k, v) {
+  marking.f[k] = v;
+  if (k === "exam") marking.f.category = "";
+  markingRenderHead(); markingRenderList();
+}
+
+function mkLabel(s) { return String(s || "").replace(/_/g, " "); }
+
+function markingRenderHead() {
+  var host = $("markingHead");
+  if (!host) return;
+  if (!marking.list) { host.innerHTML = ""; return; }
+  var exams = {};
+  marking.list.forEach(function (q) { exams[q.exam_id] = (exams[q.exam_id] || 0) + 1; });
+  var cats = {};
+  markingInExam().forEach(function (q) { if (q.category) cats[q.category] = 1; });
+  var base = markingFiltered(true);
+  var todo = base.filter(function (q) { return !q.reviewed; }).length;
+  var done = base.length - todo;
+  var f = marking.f;
+  var opt = function (v, label, on) { return '<option value="' + esc(v) + '"' + (on ? " selected" : "") + '>' + esc(label) + '</option>'; };
+  host.innerHTML =
+    '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">' +
+      '<select onchange="markingFilter(\'exam\', this.value)" title="Which exam">' +
+        opt("", "All exams (" + marking.list.length + ")", !f.exam) +
+        Object.keys(exams).sort().map(function (e) { return opt(e, e + " (" + exams[e] + ")", f.exam === e); }).join("") +
+      '</select>' +
+      '<select onchange="markingFilter(\'state\', this.value)" title="Review state">' +
+        opt("todo", "Not reviewed (" + todo + ")", f.state === "todo") +
+        opt("done", "Approved (" + done + ")", f.state === "done") +
+        opt("all", "All (" + base.length + ")", f.state === "all") +
+      '</select>' +
+      '<select onchange="markingFilter(\'category\', this.value)" title="Category">' +
+        opt("", "All categories", !f.category) +
+        Object.keys(cats).sort().map(function (c) { return opt(c, mkLabel(c), f.category === c); }).join("") +
+      '</select>' +
+      '<input type="search" placeholder="Code or words" value="' + esc(f.q) + '" oninput="markingFilter(\'q\', this.value)" style="max-width:180px;" />' +
+      '<button class="ghost small" style="padding:5px 10px;width:auto;flex:0 0 auto;" onclick="markingLoadList(true)" title="Fetch the list again">Refresh</button>' +
+    '</div>' +
+    '<div class="small muted" style="margin-top:8px;">' + done + ' approved and eligible for AI marking, ' + todo + ' waiting.' +
+      (marking.grandfathered.length ? ' ' + esc(marking.grandfathered.join(", ")) + ' is marked by the engine without approval for now.' : '') +
+      (marking.viewer && marking.viewer.name ? ' Reviewing as ' + esc(marking.viewer.name) + '.' : '') +
+    '</div>';
+}
+
+function markingRenderList() {
+  var host = $("markingList");
+  if (!host) return;
+  if (marking.listLoading && !marking.list) { host.innerHTML = '<p class="small muted" style="padding:10px;">Loading the question bank...</p>'; return; }
+  if (marking.listError) { host.innerHTML = '<p class="small" style="padding:10px;color:var(--coral);">' + esc(marking.listError) + '</p>'; return; }
+  var rows = markingFiltered();
+  if (!rows.length) { host.innerHTML = '<p class="small muted" style="padding:10px;">' + (marking.f.state === "todo" ? "Nothing waiting here: every question in this view is approved." : "Nothing matches.") + '</p>'; return; }
+  host.innerHTML = rows.map(function (q) {
+    // The id rides in a data attribute, not inside a JS string in onclick:
+    // esc() is undone by the browser before an onclick runs, so it can't
+    // protect a quoted string there (cold review, 24 Oct).
+    return '<button type="button" class="irpcs-row' + (q.question_id === marking.openId ? " active" : "") + '" data-id="' + esc(q.question_id) + '" onclick="markingOpen(this.dataset.id)">' +
+      '<div class="lbl"><strong>' + esc(q.question_code) + '</strong> ' + esc(q.snippet) + '</div>' +
+      '<div class="meta">' +
+        (q.reviewed ? '<span style="color:var(--low,#2e7d32);">&#10003; Approved</span>' : '<span class="irpcs-pending">Not reviewed</span>') +
+        (q.category ? '<span class="irpcs-kind">' + esc(mkLabel(q.category)) + '</span>' : '<span class="irpcs-kind">no category</span>') +
+        (q.has_notes && !q.reviewed ? '<span title="Has drafting notes to read">notes</span>' : '') +
+      '</div></button>';
+  }).join("");
+}
+
+// force: reopen without asking about unsaved changes (after a write, or a
+// Reload when someone else has saved).
+function markingOpen(id, force) {
+  if (marking.busy) return;
+  if (!force && marking.item && marking.openId !== id && markingDirty() && !confirm("This question has unsaved changes. Leave it?")) return;
+  marking.openId = id; marking.item = null; marking.itemError = ""; marking.msg = null; marking.start = null;
+  marking.itemLoading = true;
+  markingRenderList(); markingRenderItem();
+  markingApi("/questions", { query: "op=item&id=" + encodeURIComponent(id) }).then(function (j) {
+    if (marking.openId !== id) return;
+    if (!j || !j.question) throw new Error("Marking sent a question we couldn't read.");
+    marking.item = j.question;
+  }).catch(function (e) {
+    if (marking.openId === id) marking.itemError = (e && e.message) || String(e);
+  }).then(function () {
+    if (marking.openId !== id) return;
+    marking.itemLoading = false;
+    markingRenderItem();
+    if (marking.item) marking.start = markingFormRead();
+  });
+}
+
+function mkImages(urls, alt) {
+  if (!urls || !urls.length) return "";
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px;">' + urls.map(function (u) {
+    return '<a href="' + esc(u) + '" target="_blank" rel="noreferrer"><img src="' + esc(u) + '" alt="' + esc(alt) + '" loading="lazy" referrerpolicy="no-referrer" ' +
+      'style="max-width:240px;max-height:180px;border:1px solid var(--line);border-radius:6px;background:#fff;" /></a>';
+  }).join("") + '</div>';
+}
+
+function mkPre(text, empty) {
+  return text ? '<div class="irpcs-verbatim" style="max-height:none;color:var(--text);">' + esc(text) + '</div>' : '<p class="small muted">' + esc(empty || "None.") + '</p>';
+}
+
+function markingRenderItem() {
+  var host = $("markingItem");
+  if (!host) return;
+  if (!marking.openId) { host.innerHTML = '<p class="small muted">Pick a question on the left.</p>'; return; }
+  if (marking.itemLoading) { host.innerHTML = '<p class="small muted">Loading...</p>'; return; }
+  if (marking.itemError) { host.innerHTML = '<div class="card"><p style="margin:0;color:var(--coral);">' + esc(marking.itemError) + '</p></div>'; return; }
+  var q = marking.item;
+  if (!q) { host.innerHTML = ""; return; }
+  var status = q.reviewed
+    ? '<span class="badge" style="background:rgba(46,125,50,.14);">Approved by ' + esc(q.reviewed_by || "someone") + (q.reviewed_at ? ", " + esc(fmtDate(q.reviewed_at)) : "") + '</span>'
+    : '<span class="badge" style="background:rgba(254,193,149,.45);">Not reviewed</span>';
+  var house = (q.house_feedback || []);
+  host.innerHTML =
+    '<div class="card">' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
+        '<h3 style="margin:0;" id="markingCode" tabindex="-1">' + esc(q.question_code) + '</h3>' + status +
+        '<span class="small muted">' + esc(q.exam_id) + (q.exam_version ? " " + esc(q.exam_version) : "") + '</span>' +
+        (q.edited_at ? '<span class="small muted">Edited by ' + esc(q.edited_by || "someone") + ', ' + esc(fmtDate(q.edited_at)) + '</span>' : '') +
+      '</div>' +
+      (q.grandfathered && !q.reviewed ? '<p class="small" style="margin:8px 0 0;color:var(--coral);">This exam is marked live without approval: saving changes the marking straight away.</p>' : '') +
+      '<p style="white-space:pre-wrap;margin:12px 0 4px;">' + esc(q.question_text) + '</p>' +
+      mkImages(q.question_images, "Picture for " + q.question_code) +
+      (q.review_notes ? '<div style="border-left:3px solid var(--medium);background:var(--surface-2);padding:8px 10px;margin:10px 0;border-radius:4px;"><strong class="small">Notes for review</strong><div class="small" style="white-space:pre-wrap;margin-top:4px;">' + esc(q.review_notes) + '</div></div>' : '') +
+      '<div class="two-col" style="gap:14px;margin-top:8px;">' +
+        '<div>' +
+          '<h4 style="margin:6px 0;">Model answer <span class="small muted">(student-safe)</span></h4>' + mkPre(q.expected_answer, "None yet.") +
+          mkImages(q.model_answer_images, "Model answer diagram for " + q.question_code) +
+          (q.expected_answer_marker != null && q.expected_answer_marker !== q.expected_answer ? '<h4 style="margin:10px 0 6px;">Marker\'s version <span class="small muted">(what the engine marks against)</span></h4>' + mkPre(q.expected_answer_marker) : '') +
+          (q.method_credit_guidance ? '<h4 style="margin:10px 0 6px;">Method credit</h4>' + mkPre(q.method_credit_guidance) : '') +
+          (q.tolerances != null ? '<h4 style="margin:10px 0 6px;">Tolerances</h4>' + mkPre(JSON.stringify(q.tolerances, null, 2)) : '') +
+        '</div>' +
+        '<div>' +
+          '<h4 style="margin:6px 0;">Marking requirements</h4>' + mkPre(q.marking_requirements, "No marking requirements yet.") +
+          (q.category_note ? '<p class="small muted">Category note: ' + esc(q.category_note) + '</p>' : '') +
+          (q.expects_photo ? '<p class="small muted">Expects a photo: ' + esc(q.expects_photo) + '</p>' : '') +
+        '</div>' +
+      '</div>' +
+      '<details style="margin-top:10px;"' + (q.reviewed ? '' : ' open') + '><summary>House feedback (' + house.length + ')</summary>' +
+        (house.length ? '<ol style="padding-left:18px;">' + house.map(function (b) {
+          return '<li style="margin-bottom:10px;">' + (b.condition ? '<div class="small" style="color:var(--coral);">' + esc(b.condition) + '</div>' : '') +
+            (b.feedback ? '<div style="white-space:pre-wrap;">' + esc(b.feedback) + '</div>' : '') + mkImages(b.images, "Diagram that goes with this feedback") + '</li>';
+        }).join("") + '</ol>' : '<p class="small muted">No house feedback for this question.</p>') +
+      '</details>' +
+    '</div>' +
+    '<div class="card" style="margin-top:12px;">' + markingFormHtml(q) + '<div id="markingMsg"></div></div>';
+  markingRenderMsg();
+}
+
+function markingFormHtml(q) {
+  if (q.reviewed) {
+    return '<h4 style="margin:0 0 8px;">Approved</h4>' +
+      '<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;">' +
+        '<button type="button" class="ghost" onclick="markingUnapprove()"' + (marking.busy ? " disabled" : "") + '>Un-approve</button>' +
+        '<span class="small muted">Approved questions are read-only. Un-approve to correct a mistake.</span>' +
+      '</div>';
+  }
+  var photo = q.expects_photo;
+  var known = photo === null || marking.photoOptions.indexOf(photo) >= 0;
+  var choice = photo === null ? "none" : known ? photo : "other";
+  var o = function (v, label, on) { return '<option value="' + esc(v) + '"' + (on ? " selected" : "") + '>' + esc(label) + '</option>'; };
+  var hasMarker = q.expected_answer_marker != null;
+  return '<h4 style="margin:0 0 8px;">Correct and approve</h4>' +
+    '<div class="irpcs-edit" style="min-height:0;">' +
+      '<div class="fld"><label for="mkCat">Category</label><select id="mkCat" oninput="markingTouched()">' + o("", "Choose...", !q.category) +
+        marking.categories.map(function (c) { return o(c, mkLabel(c), q.category === c); }).join("") + '</select></div>' +
+      '<div class="fld"><label for="mkNote">Category note</label><input id="mkNote" type="text" style="width:100%;" value="' + esc(q.category_note || "") + '" oninput="markingTouched()" /></div>' +
+      '<div class="fld"><label for="mkPhoto">Expects a photo</label><div class="row" style="gap:6px;">' +
+        '<select id="mkPhoto" onchange="markingTouched();markingRenderPhotoOther()">' + o("none", "none", choice === "none") +
+          marking.photoOptions.map(function (p) { return o(p, p, choice === p); }).join("") + o("other", "other...", choice === "other") + '</select>' +
+        '<input id="mkPhotoOther" type="text" placeholder="e.g. clearance_plot" value="' + esc(known ? "" : photo) + '" oninput="markingTouched()"' + (choice === "other" ? "" : ' style="display:none;"') + ' aria-label="Other photo key" /></div></div>' +
+      '<div class="fld"><label for="mkReq">Marking requirements <span class="small muted">one per line, starting "- "</span></label><textarea id="mkReq" rows="9" oninput="markingTouched()">' + esc(q.marking_requirements || "") + '</textarea></div>' +
+      '<div class="fld"><label for="mkAns">Model answer <span class="small muted">student-safe: this can reach a student</span></label><textarea id="mkAns" rows="4" oninput="markingTouched()">' + esc(q.expected_answer || "") + '</textarea></div>' +
+      (hasMarker ? '<div class="fld"><label for="mkMarker">Marker\'s version <span class="small muted">the engine marks against this while it exists; clear it to use the model answer</span></label><textarea id="mkMarker" rows="5" oninput="markingTouched()">' + esc(q.expected_answer_marker || "") + '</textarea></div>' : '') +
+    '</div>' +
+    '<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;">' +
+      '<button type="button" class="ghost" id="mkSaveBtn" onclick="markingSave()" disabled>Saved</button>' +
+      '<button type="button" class="primary" id="mkApproveBtn" onclick="markingApprove()"' + (marking.busy ? " disabled" : "") + '>Approve</button>' +
+      '<button type="button" class="ghost small" onclick="markingSkip()">Skip to next waiting</button>' +
+    '</div>';
+}
+
+function markingRenderPhotoOther() {
+  var sel = $("mkPhoto"), other = $("mkPhotoOther");
+  if (sel && other) other.style.display = sel.value === "other" ? "" : "none";
+}
+
+// What the form says now, in the shape the store takes. Only fields the form
+// has are sent; the marker's version only when the row has one.
+function markingFormRead() {
+  if (!$("mkCat")) return null;
+  var photo = $("mkPhoto").value;
+  var e = {
+    category: $("mkCat").value || null,
+    category_note: $("mkNote").value,
+    expects_photo: photo === "other" ? $("mkPhotoOther").value : photo,
+    marking_requirements: $("mkReq").value,
+    expected_answer: $("mkAns").value
+  };
+  if ($("mkMarker")) e.expected_answer_marker = $("mkMarker").value;
+  return e;
+}
+
+// Only the fields that differ from what was loaded, so a save of one field
+// never sends the others back over someone else's newer text.
+function markingChanged() {
+  var now = markingFormRead(), out = {}, n = 0;
+  if (!now || !marking.start) return null;
+  for (var k in now) if (JSON.stringify(now[k]) !== JSON.stringify(marking.start[k])) { out[k] = now[k]; n++; }
+  return n ? out : null;
+}
+
+function markingDirty() {
+  var now = markingFormRead();
+  return !!(now && marking.start && JSON.stringify(now) !== JSON.stringify(marking.start));
+}
+
+function markingTouched() {
+  var dirty = markingDirty();
+  if ($("mkSaveBtn")) { $("mkSaveBtn").disabled = marking.busy || !dirty; $("mkSaveBtn").textContent = dirty ? "Save" : "Saved"; }
+  if ($("mkApproveBtn")) $("mkApproveBtn").textContent = dirty ? "Save and approve" : "Approve";
+}
+
+function markingRenderMsg() {
+  var host = $("markingMsg");
+  if (!host) return;
+  var m = marking.msg;
+  host.innerHTML = m ? '<p class="small" role="' + (m.error ? "alert" : "status") + '" style="margin:10px 0 0;' + (m.error ? "color:var(--coral);" : "") + '">' + esc(m.text) +
+    (m.reload ? ' <button type="button" class="ghost small" style="padding:3px 8px;" onclick="markingOpen(marking.openId, true)">Reload</button>' : '') + '</p>' : "";
+}
+
+function markingBusy(on) {
+  marking.busy = on;
+  ["mkSaveBtn", "mkApproveBtn"].forEach(function (id) { if ($(id)) $(id).disabled = on || (id === "mkSaveBtn" && !markingDirty()); });
+}
+
+// The question after this one still waiting, in the list as it is filtered
+// now, wrapping round to the top. Mirrors nextUnreviewed in the portal.
+function markingNextWaiting(afterId) {
+  var rows = markingFiltered(true).filter(function (q) { return !q.reviewed || q.question_id === afterId; });
+  var i = -1;
+  rows.forEach(function (q, n) { if (q.question_id === afterId) i = n; });
+  var after = rows.slice(i + 1).filter(function (q) { return !q.reviewed && q.question_id !== afterId; })[0];
+  return after || rows.slice(0, Math.max(i, 0)).filter(function (q) { return !q.reviewed; })[0] || null;
+}
+
+function markingAfterWrite(changes) {
+  // Patch the row in the list in place, so the counts move without a refetch.
+  (marking.list || []).forEach(function (q) {
+    if (q.question_id !== marking.openId) return;
+    for (var k in changes) q[k] = changes[k];
+  });
+  markingRenderHead(); markingRenderList();
+}
+
+// Someone else saved first: say so and offer the reload, never overwrite.
+function markingRefused(r, fallback) {
+  var text = (r && r.error) || fallback;
+  marking.msg = { error: true, text: text, reload: /since you opened it/.test(text) };
+}
+
+function markingSave() {
+  var q = marking.item, edits = markingChanged();
+  if (!q || !edits || marking.busy) return;
+  var all = markingFormRead();
+  markingBusy(true); marking.msg = null; markingRenderMsg();
+  markingApi("/questions", { body: { op: "save", question_id: q.question_id, edits: edits, expected_edited_at: q.edited_at || null } }).then(function (r) {
+    if (!r.ok) { markingRefused(r, "That didn't save."); markingBusy(false); markingTouched(); markingRenderMsg(); return; }
+    markingAfterWrite({ category: all.category, has_requirements: !!(all.marking_requirements || "").trim() });
+    marking.busy = false;
+    toast("Saved " + q.question_code + ".");
+    // Read it back, so the card above the form shows what is now stored.
+    markingOpen(q.question_id, true);
+  }).catch(function (e) {
+    marking.msg = { error: true, text: (e && e.message) || String(e) };
+    markingBusy(false); markingTouched(); markingRenderMsg();
+  });
+}
+
+function markingApprove() {
+  var q = marking.item;
+  if (!q || marking.busy) return;
+  var edits = markingChanged(), all = markingFormRead();
+  markingBusy(true); marking.msg = null; markingRenderMsg();
+  // expected_edited_at: approve only the version this card was loaded with
+  // (plus these edits). If anyone saved since, it's refused, so nobody
+  // approves text they haven't read.
+  markingApi("/questions", { body: { op: "approve", question_id: q.question_id, edits: edits, expected_edited_at: q.edited_at || null } }).then(function (r) {
+    if (!r.ok) { markingRefused(r, "That wasn't approved."); markingBusy(false); markingTouched(); markingRenderMsg(); return; }
+    var next = markingNextWaiting(q.question_id);
+    markingAfterWrite({ reviewed: true, reviewed_by: (marking.viewer && marking.viewer.name) || "you", reviewed_at: r.reviewed_at,
+      category: all ? all.category : q.category });
+    marking.busy = false;
+    toast(next ? "Approved " + q.question_code + ". On to the next one waiting." : "Approved " + q.question_code + ". Nothing else is waiting here.");
+    marking.start = null;   // the form is gone; nothing is unsaved
+    // Nothing left: read this one back, so the approved card shows what was
+    // actually approved rather than the text from before the save.
+    markingOpen(next ? next.question_id : q.question_id, true);
+  }).catch(function (e) {
+    marking.msg = { error: true, text: (e && e.message) || String(e) };
+    markingBusy(false); markingTouched(); markingRenderMsg();
+  });
+}
+
+function markingUnapprove() {
+  var q = marking.item;
+  if (!q || marking.busy) return;
+  markingBusy(true);
+  markingApi("/questions", { body: { op: "unapprove", question_id: q.question_id } }).then(function (r) {
+    marking.busy = false;
+    if (!r.ok) { marking.msg = { error: true, text: r.error || "That wasn't un-approved." }; markingRenderMsg(); return; }
+    markingAfterWrite({ reviewed: false, reviewed_by: null, reviewed_at: null });
+    toast("Un-approved " + q.question_code + ". It can be edited again.");
+    marking.start = null;
+    markingOpen(q.question_id, true);
+  }).catch(function (e) {
+    marking.busy = false;
+    marking.msg = { error: true, text: (e && e.message) || String(e) }; markingRenderMsg();
+  });
+}
+
+function markingSkip() {
+  var q = marking.item;
+  if (!q) return;
+  var next = markingNextWaiting(q.question_id);
+  if (next && next.question_id !== q.question_id) markingOpen(next.question_id);
+  else toast("Nothing else is waiting in this view.");
 }
 
 // ===================== TASKS (10 Sep 2026) =====================
@@ -13645,6 +14130,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 73, date: "2026-10-24", who: ["marking"], text: "Marking on the rail: review, correct and approve the question bank behind AI marking, without signing in to the separate portal." },
   { n: 72, date: "2026-10-24", who: ["users"], text: "Sign-in sessions are now stored scrambled, so someone who could read the tracker's database still could not use what they found there to sign in as anyone. Nobody is signed out by the change." },
   { n: 71, date: "2026-10-24", who: ["users"], text: "Security tidy-up: the Slack reply relay has its own key and no keys travel in web addresses any more, the RCA investigator strips emails and phone numbers before anything reaches the AI, and closed RCA records clear their messages and screenshots after 90 days (the findings stay)." },
   { n: 70, date: "2026-10-24", who: ["recovery"], text: "Recovery on the rail finds a student's quiz answers from before Submit All, for when their submission never arrived." },
@@ -20545,7 +21031,10 @@ var PERM_LABELS = [
   // needs its box on the invite form too (doInvite reads every key here).
   { k: "resources", label: "Resources" },
   // r243: in-progress quiz answers. Same two-list rule, and its invite box.
-  { k: "recovery", label: "Recovery" }
+  { k: "recovery", label: "Recovery" },
+  // r246: the question bank, then the rest of Marking. Same two-list rule,
+  // and its invite box.
+  { k: "marking", label: "Marking" }
 ];
 
 function invitePreset(kind) {
