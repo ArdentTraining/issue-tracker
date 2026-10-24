@@ -660,6 +660,17 @@
   .rca-att .chip { display: inline-block; border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
   #rcaPanel.dragging .rca-input { outline: 2px dashed var(--accent); outline-offset: -4px; }
   .rca-tool { align-self: flex-start; font-size: 12px; color: var(--muted); }
+  .rca-msg.assistant { white-space: normal; }
+  .rca-lead, .rca-sec > div, .rca-step { white-space: pre-wrap; }
+  .rca-work { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .rca-work > summary, .rca-sec > summary { cursor: pointer; }
+  .rca-step { margin: 6px 0 0 12px; }
+  .rca-step pre { white-space: pre-wrap; max-height: 300px; overflow: auto; }
+  .rca-sec { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .rca-sec > summary { font-weight: 600; }
+  .rca-sec > div { margin-top: 6px; }
+  .rca-note { align-self: center; font-size: 12px; color: var(--muted); }
+  .rca-capbar { align-self: stretch; border: 1px solid var(--medium); border-radius: 8px; padding: 8px 12px; font-size: 13px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .rca-tool details { cursor: pointer; }
   .rca-input { border-top: 1px solid var(--line); padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; }
   .rca-input textarea { width: 100%; }
@@ -2238,6 +2249,7 @@
 
   <div class="card" style="margin-top:14px;">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <div id="cu_editbar" class="hint hidden" style="flex-basis:100%;"></div>
       <button class="primary" id="cu_go" onclick="customsGenerate()">Make the invoice</button>
       <span id="cu_status" class="hint"></span>
     </div>
@@ -2262,7 +2274,7 @@
 
   <div class="card" style="margin-top:14px;">
     <h2>Made recently</h2>
-    <p class="hint" style="margin-top:-8px;">If customs ask again, download the same invoice here. "Copy" starts a new one from its details, for when something has changed.</p>
+    <p class="hint" style="margin-top:-8px;">If customs ask again, download the same invoice here. "Edit" corrects one and keeps its number. "Copy" starts a new one from its details.</p>
     <div id="cu_hist" class="small muted">Loading…</div>
   </div>
 </div>
@@ -3055,7 +3067,7 @@
   <p>The declaration at the bottom is signed by whoever makes the invoice. Set your own printed name, title and signature once under <span class="ui">Signed by</span>, by drawing it or uploading a photo of it on white paper. Without one, your name prints over a blank line to sign by hand. Nobody else can use or change yours.</p>
   <p>When the chat has nothing, <span class="ui">Or find the parcel</span> searches the parcels we have actually posted. Type the student's name, their email, their postcode or the waybill. It looks through the labels we bought over the last few months, and if nothing matches it reads the instructor and info mailboxes for an order or courier email about them. Pick the right parcel and it fills the address, phone and waybill, leaving anything you have already typed alone.</p>
   <p><span class="ui">Make the invoice</span> downloads a PDF to send and a Word copy in case something needs tweaking, and saves both in the tracker's Drive folder. The totals are added up by the tracker, not typed, so they always match the lines.</p>
-  <p>Everything made shows under <span class="ui">Made recently</span>. If customs ask a second time, <span class="ui">Download</span> gives the identical invoice again, same number and date. <span class="ui">Copy</span> starts a new one from its details, for when the address or contents have changed.</p>
+  <p>Everything made shows under <span class="ui">Made recently</span>. If customs ask a second time, <span class="ui">Download</span> gives the identical invoice again, same number and date. <span class="ui">Edit</span> puts it back in the form to correct a mistake; saving keeps the same number and replaces the files. <span class="ui">Copy</span> starts a new one from its details, for a fresh invoice with its own number.</p>
 </section>
 
 <section id="man-resources" data-perm="resources" data-title="Website resources">
@@ -3135,10 +3147,13 @@
   <h4>Working it</h4>
   <p>Type into the box at the bottom and press <span class="ui">Send</span>. Every tool the investigator has is read-only, so the worst any of them can do is read something. It can go through Chatwoot, the tracker, and the infrastructure timeline.</p>
   <p>A single message can take a minute or two, because it will often make several rounds of tool calls before it answers, and it says <em>investigating - tool calls can take a minute or two…</em> while it does. There is no cancel, so it is worth asking one clear thing at a time.</p>
+  <p>Each answer reads as one reply. The tool calls and their results fold into a <span class="ui">Worked through</span> line above it, opened only if we want to see how it got there. The reply leads with a few sentences on what it thinks and what comes next, and the detail (the incident log, the hypotheses) sits under headings that open when clicked.</p>
   <p>The conversation is shared and it only ever gets added to. Anyone with access opens the same record and reads the whole thread, which is the point: the reasoning stays with the fault instead of in somebody's head.</p>
   <h4>Where it has got to</h4>
-  <p>The dropdown at the top runs <span class="ui">Gathering evidence</span>, <span class="ui">Hypotheses open</span>, <span class="ui">Root cause confirmed</span>, <span class="ui">Fix pending</span>, and <span class="ui">Verified</span>.</p>
+  <p>The dropdown at the top runs <span class="ui">Gathering evidence</span>, <span class="ui">Hypotheses open</span>, <span class="ui">Root cause confirmed</span>, <span class="ui">Fix pending</span>, and <span class="ui">Verified</span>. The investigator moves it along itself as the work gets there, and names the verification test once it knows it. It can go back a step but never forward to Verified; that one is ours. The dropdown still works if it has got the stage wrong.</p>
   <p><span class="ui">Verified</span> is the one with a condition on it. It needs a named test in the box beside the dropdown, ticked as passed, and it refuses otherwise with <em>Verified needs a named verification test, marked as passed. Name the test first.</em> Anybody can believe a fault is fixed, and the test is what makes that checkable by the next person.</p>
+  <h4>The token budget</h4>
+  <p>Each record has a budget of tokens, shown at the foot as how much has been used out of how much. When it runs out, sending says so and the message goes back in the box. An admin gets an <span class="ui">Add 1M tokens and send</span> button there, and an <span class="ui">add 1M</span> link by the count once it is most of the way through. Each raise is noted in the conversation with who did it.</p>
   <h4>Log infra event</h4>
   <p>Puts a deploy or an infrastructure change onto the shared timeline the investigator reads, so a fault that started on a Tuesday afternoon can be lined up against what changed that Tuesday afternoon. That is what turned the images fault from a mystery into a bucket permission change.</p>
   <p>It is typed in by hand rather than fed from anywhere, so a gap in the timeline means nobody recorded a change, not that no change happened. The investigator is told to say so when it is leaning on that timeline.</p>
@@ -3824,7 +3839,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r241 · 2026-10-23";  // bump this with each round, it lands on every feedback report
+var BUILD = "r242 · 2026-10-24";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6986,27 +7001,129 @@ function rcaRender() {
   $("rcaStatus").value = r.rec.status;
   $("rcaTest").value = r.rec.verification_test || "";
   $("rcaTestPassed").checked = !!r.rec.verification_passed;
-  $("rcaUsage").textContent = Math.round(((r.rec.usage_input_tokens || 0) + (r.rec.usage_output_tokens || 0)) / 1000) + "k tokens used" + (r.rec.published_at ? " · published " + fmtDate(r.rec.published_at) : "");
+  rcaUsageLine();
   var host = $("rcaMsgs");
-  host.innerHTML = r.messages.map(rcaMsgHtml).join("") || '<p class="muted small">A fresh record, seeded from the issue. The investigator starts on its own and comes back with where it thinks we should start.</p>';
+  host.innerHTML = rcaTurnsHtml(r.messages) || '<p class="muted small">A fresh record, seeded from the issue. The investigator starts on its own and comes back with where it thinks we should start.</p>';
   host.scrollTop = host.scrollHeight;
 }
-function rcaMsgHtml(m) {
-  if (m.role === "tool") {
-    var results = (m.content || []).length;
-    return '<div class="rca-tool"><details><summary>tool result' + (results > 1 ? "s (" + results + ")" : "") + '</summary><pre style="white-space:pre-wrap;max-height:300px;overflow:auto;">' +
-      esc((m.content || []).map(function (c) { return (c.content && c.content[0] && c.content[0].text) || ""; }).join("\n---\n").slice(0, 8000)) + '</pre></details></div>';
-  }
-  var parts = [];
+// r242 (FB-0475): the usage line says how much of the budget is gone, and an
+// admin can add more right there rather than in D1.
+function rcaUsageLine() {
+  var r = state.rca; if (!r) return;
+  var used = (r.rec.usage_input_tokens || 0) + (r.rec.usage_output_tokens || 0), cap = r.rec.token_cap || 2000000;
+  var near = used > cap * 0.8;
+  $("rcaUsage").innerHTML = esc(Math.round(used / 1000) + "k of " + Math.round(cap / 1000) + "k tokens used") +
+    (r.rec.published_at ? " · published " + esc(fmtDate(r.rec.published_at)) : "") +
+    (near && (state.perms || {}).users ? ' · <a href="#" onclick="rcaRaiseCap();return false;">add 1M</a>' : "");
+}
+function rcaRaiseCap(resend) {
+  var r = state.rca; if (!r) return;
+  rcaApi("/api/cap", { rca_id: r.rec.id }).then(function (res) {
+    if (!res.ok) { toast("RCA: " + (res.error || "failed"), 8000); return; }
+    r.rec.token_cap = res.token_cap;
+    r.messages.push({ role: "note", author: (state.user && state.user.name) || "", content: [{ type: "text", text: "Token cap raised to " + Math.round(res.token_cap / 1000) + "k." }] });
+    rcaRender();
+    toast("Cap raised to " + Math.round(res.token_cap / 1000) + "k tokens.");
+    if (resend) rcaSend(resend === true ? undefined : resend);
+  });
+}
+
+// r242 (FB-0476, Edd): "hide more of this text unless asked for (accordion
+// style) and just make it more of a back and forth". Each of the
+// investigator's turns becomes ONE reply: the tool calls, their results and
+// any thinking-aloud on the way fold into a single "worked through" line, and
+// only the answer it landed on shows. The answer itself leads with a short
+// paragraph and folds its '## ' sections (the system prompt asks for that
+// shape); older long replies without headings fold after the opening.
+function rcaTurnsHtml(msgs) {
+  var out = [], run = [];
+  var flush = function () { if (run.length) out.push(rcaTurnHtml(run)); run = []; };
+  (msgs || []).forEach(function (m) {
+    if (m.role === "assistant" || m.role === "tool") { run.push(m); return; }
+    flush();
+    if (m.role === "note") { out.push('<div class="rca-note">' + esc(((m.content || [])[0] || {}).text || "") + '</div>'); return; }
+    out.push(rcaUserHtml(m));
+  });
+  flush();
+  return out.join("");
+}
+function rcaUserHtml(m) {
+  var parts = [], auto = false;
   (m.content || []).forEach(function (c) {
     if (c.type === "file_ref") { parts.push(rcaAttHtml(c)); return; }
-    if (c.type === "text" && c.text) parts.push(esc(c.text));
-    if (c.type === "tool_use") parts.push('<span class="muted small">→ ' + esc(c.name) + '(' + esc(JSON.stringify(c.input || {}).slice(0, 160)) + ')</span>');
+    if (c.type !== "text" || !c.text) return;
+    if (c.text === RCA_KICKOFF_TEXT || /^\(Started automatically/.test(c.text)) { auto = true; return; }
+    if (/^Draft the structured findings for publication/.test(c.text)) { parts.push('<span class="muted">Asked for a findings draft.</span>'); return; }
+    if (/^\[system\]/.test(c.text)) return;
+    // A long paste (an export, a table) folds after its opening too.
+    var cut = c.text.length > 900 ? c.text.indexOf("\n", 250) : -1;
+    if (c.text.length > 900 && (cut < 0 || cut > 900)) cut = c.text.indexOf(" ", 500);
+    if (cut > 0 && cut < 1000) parts.push(esc(c.text.slice(0, cut)) + '<details class="rca-sec"><summary>The rest (' + Math.round((c.text.length - cut) / 100) / 10 + 'k characters)</summary><div>' + esc(c.text.slice(cut + 1)) + '</div></details>');
+    else parts.push(esc(c.text));
   });
+  if (auto) return '<div class="rca-note">Started automatically when the issue was promoted.</div>';
   if (!parts.length) return "";
-  var who = m.role === "user" ? (m.author || "you") : "investigator";
-  return '<div class="rca-msg ' + (m.role === "user" ? "user" : "assistant") + '"><div class="who">' + esc(who) + '</div>' + parts.join("<br>") + '</div>';
+  return '<div class="rca-msg user"><div class="who">' + esc(m.author || "you") + '</div>' + parts.join("<br>") + '</div>';
 }
+function rcaTurnHtml(run) {
+  // The answer is the last text the investigator wrote in this turn.
+  var answerAt = -1, answerIdx = -1;
+  run.forEach(function (m, i) {
+    if (m.role !== "assistant") return;
+    (m.content || []).forEach(function (c, j) { if (c.type === "text" && c.text && c.text.trim()) { answerAt = i; answerIdx = j; } });
+  });
+  var steps = [], counts = {}, results = {};
+  run.forEach(function (m) {
+    if (m.role === "tool") (m.content || []).forEach(function (c) { if (c.tool_use_id) results[c.tool_use_id] = (c.content && c.content[0] && c.content[0].text) || ""; });
+  });
+  run.forEach(function (m, i) {
+    if (m.role !== "assistant") return;
+    (m.content || []).forEach(function (c, j) {
+      if (c.type === "tool_use") {
+        counts[c.name] = (counts[c.name] || 0) + 1;
+        var res = results[c.id];
+        steps.push('<div class="rca-step"><span class="muted">→ ' + esc(c.name) + '(' + esc(JSON.stringify(c.input || {}).slice(0, 160)) + ')</span>' +
+          (res != null ? '<details><summary>result</summary><pre>' + esc(res.replace(/^UNTRUSTED RETRIEVED DATA[^\n]*\n/, "").slice(0, 8000)) + '</pre></details>' : "") + '</div>');
+      } else if (c.type === "text" && c.text && c.text.trim() && !(i === answerAt && j === answerIdx)) {
+        steps.push('<div class="rca-step">' + esc(c.text) + '</div>');
+      }
+    });
+  });
+  var html = "";
+  if (steps.length) {
+    var names = Object.keys(counts).map(function (n) { return n.replace(/_/g, " ") + (counts[n] > 1 ? " ×" + counts[n] : ""); });
+    html += '<details class="rca-work"><summary>Worked through ' + steps.length + ' step' + (steps.length > 1 ? "s" : "") +
+      (names.length ? " · " + esc(names.join(", ")) : "") + '</summary>' + steps.join("") + '</details>';
+  }
+  if (answerAt >= 0) html += rcaAnswerHtml(run[answerAt].content[answerIdx].text);
+  else if (steps.length) html += '<div class="rca-note">No reply in words this turn. Send a message to carry on.</div>';
+  return html ? '<div class="rca-msg assistant"><div class="who">investigator</div>' + html + '</div>' : "";
+}
+function rcaInline(t) {
+  return esc(t).replace(/^#{1,4} +(.+)$/gm, "<b>$1</b>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, "<code>$1</code>");
+}
+function rcaAnswerHtml(text) {
+  var t = String(text).replace(/\s+$/, "");
+  var parts = t.split(/\n(?=#{2,4} )/);
+  var lead = parts.shift();
+  var html = "";
+  if (!parts.length && lead.length > 900) {
+    // An older reply with no headings: keep the opening, fold the rest.
+    var cut = lead.indexOf("\n\n", 300);
+    if (cut > 0 && cut < 1200) { parts.push("## The rest\n" + lead.slice(cut + 2)); lead = lead.slice(0, cut); }
+  }
+  if (/^#{2,4} /.test(lead)) { parts.unshift(lead); lead = ""; }
+  if (lead.trim()) html += '<div class="rca-lead">' + rcaInline(lead.trim()) + '</div>';
+  parts.forEach(function (sec) {
+    var nl = sec.indexOf("\n");
+    var head = (nl < 0 ? sec : sec.slice(0, nl)).replace(/^#+\s*/, "");
+    var body = nl < 0 ? "" : sec.slice(nl + 1).replace(/^\s+|\s+$/g, "");
+    html += '<details class="rca-sec"><summary>' + rcaInline(head) + '</summary>' + (body ? '<div>' + rcaInline(body) + '</div>' : "") + '</details>';
+  });
+  return html;
+}
+// Kept for anything else that draws a single message.
+function rcaMsgHtml(m) { return m.role === "user" ? rcaUserHtml(m) : rcaTurnsHtml([m]); }
 // ---------------------------------------------------------------- r191: files
 // Edd: "I could do with being able to upload files... and screenshots in RCA."
 // Screenshots are shrunk here to 1600px on the long side before they go, which
@@ -7142,6 +7259,18 @@ function rcaSend(presetText) {
     $("rcaSendBtn").disabled = false;
     if (!res.ok) {
       var t = $("rcaThinking"); if (t) t.remove();
+      if (res.cap_reached) {
+        state.rca.messages.pop();
+        if (!presetText) { $("rcaText").value = text; state.rcaPending = pending; rcaRenderPending(); }
+        r.rec.usage_input_tokens = res.used || r.rec.usage_input_tokens; r.rec.usage_output_tokens = 0; r.rec.token_cap = res.token_cap || r.rec.token_cap;
+        rcaRender();
+        var admin = (state.perms || {}).users;
+        state.rcaResend = presetText || true;
+        $("rcaMsgs").insertAdjacentHTML("beforeend", '<div class="rca-capbar">' + esc(res.error) +
+          (admin ? ' <button class="primary small" onclick="this.disabled=true;rcaRaiseCap(state.rcaResend)">Add 1M tokens and send</button>' : "") + '</div>');
+        $("rcaMsgs").scrollTop = $("rcaMsgs").scrollHeight;
+        return res;
+      }
       // Refused before anything was stored (a file it cannot take, the token
       // cap): the words and the files go back in the box to try again. An
       // "Anthropic:" error comes after the message was saved, so that one stays.
@@ -7154,6 +7283,11 @@ function rcaSend(presetText) {
       return;
     }
     state.rca.messages = state.rca.messages.concat(res.messages || []);
+    if (res.usage) { r.rec.usage_input_tokens = (r.rec.usage_input_tokens || 0) + (res.usage.input || 0); r.rec.usage_output_tokens = (r.rec.usage_output_tokens || 0) + (res.usage.output || 0); }
+    // FB-0476: the investigator moves the stage itself now.
+    var pg = res.progress || {};
+    if (pg.status && pg.status !== r.rec.status) { r.rec.status = pg.status; toast("Stage moved to " + (RCA_STATUS_WORDS[pg.status] || pg.status) + "."); }
+    if (pg.verification_test) r.rec.verification_test = pg.verification_test;
     rcaRender();
     return res;
   }).catch(function (e) { $("rcaSendBtn").disabled = false; var t = $("rcaThinking"); if (t) t.remove(); toast("RCA error - see console."); console.error(e); });
@@ -9699,6 +9833,7 @@ function customsReset() {
   $("cu_terms").value = "";
   $("cu_date").value = new Date().toISOString().slice(0, 10);
   customs.items = []; customs.convId = ""; customs.issueId = ""; customs.sources = {}; customs.missing = [];
+  if (customs.editOf) customsEditing("");
   $("cu_from").textContent = ""; $("cu_notes").innerHTML = ""; $("cu_status").textContent = "";
   customsDrawItems(); customsMarkMissing(); customsSources();
 }
@@ -10627,7 +10762,8 @@ function customsGenerate() {
     date: d.slice(8, 10) + "/" + d.slice(5, 7) + "/" + d.slice(0, 4),
     weight_kg: $("cu_weight").value.trim(), terms: $("cu_terms").value, freight: $("cu_freight").value.trim(),
     reason: $("cu_reason").value.trim(), remarks: $("cu_remarks").value.trim(),
-    items: customs.items, conversation_id: customs.convId, issue_id: customs.issueId
+    items: customs.items, conversation_id: customs.convId, issue_id: customs.issueId,
+    edit_of: customs.editOf || ""
   };
   $("cu_go").disabled = true;
   $("cu_status").textContent = "Making the invoice…";
@@ -10636,10 +10772,11 @@ function customsGenerate() {
     if (!r || !r.ok) { $("cu_status").textContent = (r && r.error) || "That did not work."; return; }
     customsDownload(r.pdf, CUSTOMS_PDF);
     customsDownload(r.docx, CUSTOMS_DOCX);
-    $("cu_status").textContent = "Done: " + r.invoice_no + ", £" + r.total + ". The PDF and Word copy have downloaded." +
+    if (r.edited) customsEditing("");
+    $("cu_status").textContent = (r.edited ? "Saved: " + r.invoice_no + " now reads as you left it, same number" : "Done: " + r.invoice_no) + ", £" + r.total + ". The PDF and Word copy have downloaded." +
       (r.saved ? " Both are saved in the tracker's Drive folder too." : " They could NOT be saved to Drive (" + r.save_error + "), so keep the downloads.") +
       (r.signed ? "" : " It is NOT signed, because you have no signature on file (see Signed by below), so sign the printed copy by hand.");
-    toast("Invoice " + r.invoice_no + " made.");
+    toast("Invoice " + r.invoice_no + (r.edited ? " updated." : " made."));
     customsHistory();
   }).catch(function (e) { $("cu_go").disabled = false; $("cu_status").textContent = "That did not work (" + String(e && e.message || e) + ")."; });
 }
@@ -10649,11 +10786,13 @@ function customsHistory() {
     if (!r || !r.ok) { $("cu_hist").textContent = "Could not load the list: " + ((r && r.error) || "no reply"); return; }
     if (!r.invoices.length) { $("cu_hist").textContent = "None yet."; return; }
     $("cu_hist").innerHTML = '<table class="cu-hist" style="width:100%;border-collapse:collapse;">' + r.invoices.map(function (x) {
-      return "<tr><td><b>" + esc(x.invoice_no) + "</b><br><span class=\"muted\">" + esc(fmtDate(x.created_at)) + (x.created_by ? " · " + esc(x.created_by) : "") + "</span></td>" +
+      return "<tr><td><b>" + esc(x.invoice_no) + "</b><br><span class=\"muted\">" + esc(fmtDate(x.created_at)) + (x.created_by ? " · " + esc(x.created_by) : "") +
+        (x.edited_at ? "<br>edited " + esc(fmtDate(x.edited_at)) + (x.edited_by ? " · " + esc(x.edited_by) : "") : "") + "</span></td>" +
         "<td>" + esc(x.student_name) + "<br><span class=\"muted\">" + esc(x.country) + "</span></td>" +
         "<td>" + esc(x.pack) + "<br><span class=\"muted\">" + esc(x.waybill) + "</span></td>" +
         '<td class="cu-num">£' + esc(x.total_gbp) + "</td>" +
         '<td class="cu-num"><button class="ghost small" onclick="customsAgain(\'' + esc(x.invoice_no) + '\',false)">Download</button> ' +
+        '<button class="ghost small" onclick="customsAgain(\'' + esc(x.invoice_no) + '\',\'edit\')">Edit</button> ' +
         '<button class="ghost small" onclick="customsAgain(\'' + esc(x.invoice_no) + '\',true)">Copy</button></td></tr>';
     }).join("") + "</table>";
   }).catch(function () { $("cu_hist").textContent = "Could not load the list."; });
@@ -10661,13 +10800,28 @@ function customsHistory() {
 
 // Download: the same invoice again, same number and date. Copy: its details
 // into the form for a fresh one (new number), for when something has changed.
+// Edit (r242, FB-0477): the same, but making it rewrites that invoice in place,
+// keeping its number, for putting a mistake right.
+function customsEditing(no) {
+  customs.editOf = no || "";
+  $("cu_go").textContent = no ? "Save changes to " + no : "Make the invoice";
+  var b = $("cu_editbar");
+  if (b) {
+    b.classList.toggle("hidden", !no);
+    b.innerHTML = no ? "Editing <b>" + esc(no) + "</b>. Saving keeps its number and replaces the PDF and Word copy. " +
+      '<button class="ghost small" onclick="customsEditing(\'\');customsReset()">Cancel edit</button>' : "";
+  }
+}
 function customsAgain(no, copy) {
+  var edit = copy === "edit";
   $("cu_status").textContent = (copy ? "Loading " : "Fetching ") + no + "…";
   apiPost({ action: "customsFetch", invoice_no: no }).then(function (r) {
     if (!r || !r.ok) { $("cu_status").textContent = (r && r.error) || "That did not work."; return; }
     if (!copy) { customsDownload(r.pdf, CUSTOMS_PDF); customsDownload(r.docx, CUSTOMS_DOCX); $("cu_status").textContent = no + " downloaded again."; return; }
     var m = r.model || {};
     customsReset();
+    customsEditing(edit ? no : "");
+    if (edit && /^\d{2}\/\d{2}\/\d{4}$/.test(m.date || "")) $("cu_date").value = m.date.slice(6, 10) + "-" + m.date.slice(3, 5) + "-" + m.date.slice(0, 2);
     Object.keys(m.receiver || {}).forEach(function (k) { var el = $("cu_" + k); if (el) { el.value = m.receiver[k] || ""; customs.sources[k] = "invoice " + no; } });
     $("cu_waybill").value = m.waybill || ""; customs.sources.waybill = "invoice " + no;
     $("cu_pack").value = m.pack || "";
@@ -10675,7 +10829,7 @@ function customsAgain(no, copy) {
     $("cu_weight").value = m.weight_kg || ""; $("cu_terms").value = m.terms || ""; $("cu_freight").value = m.freight || "";
     $("cu_reason").value = m.reason || ""; $("cu_remarks").value = m.remarks || "";
     customsDrawItems(); customsMarkMissing();
-    $("cu_status").textContent = "Copied from " + no + ". Change what you need, then make the invoice.";
+    $("cu_status").textContent = edit ? "Editing " + no + ". Change what you need, then save." : "Copied from " + no + ". Change what you need, then make the invoice.";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }).catch(function () { $("cu_status").textContent = "That did not work."; });
 }
@@ -13284,6 +13438,8 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 69, date: "2026-10-24", who: ["users"], text: "RCA reads as a conversation: the investigator's tool calls fold into one Worked through line, and its replies lead with a short answer with the detail under headings you open. It moves the stage along itself (Gathering evidence through Fix pending), and an admin can add 1M tokens when a record runs out of budget." },
+  { n: 68, date: "2026-10-24", who: ["log"], text: "Customs invoice: Edit on anything under Made recently. It puts the invoice back in the form to correct a mistake, and saving keeps the same number and replaces the PDF and Word copy." },
   { n: 67, date: "2026-10-20", who: ["log"], text: "The Customs parcel search can also read the instructor and info mailboxes for an order or courier email, when the parcels we posted do not have the student." },
   { n: 66, date: "2026-10-20", who: ["log"], text: "Customs invoice: a parcel search. If the chat does not have the address, type the student's name, email, postcode or waybill and it finds the parcel we posted, then fills the address, phone and waybill from the label." },
   { n: 65, date: "2026-10-17", who: ["users"], text: "Promote to RCA now gets straight on with it: the investigator gathers the evidence and comes back with what it thinks is going on and where to start." },

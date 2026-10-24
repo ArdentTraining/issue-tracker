@@ -15072,7 +15072,7 @@ var CUSTOMS_LOG_SHEET = 'CustomsInvoices';
 var CUSTOMS_PACK_HEADERS = ['pack', 'course', 'title', 'total_weight_kg', 'reason_for_export', 'notes'];
 var CUSTOMS_ITEM_HEADERS = ['pack', 'order', 'description', 'hs_code', 'qty', 'unit_value_gbp', 'origin'];
 var CUSTOMS_LOG_HEADERS = ['invoice_no', 'created_at', 'created_by', 'pack', 'student_name', 'student_email', 'country',
-  'waybill', 'total_gbp', 'conversation_id', 'issue_id', 'pdf_file_id', 'docx_file_id', 'data_json'];
+  'waybill', 'total_gbp', 'conversation_id', 'issue_id', 'pdf_file_id', 'docx_file_id', 'data_json', 'edited_at', 'edited_by'];
 // Columns that are identifiers made of digits. Left alone, Sheets turns a
 // waybill into a number and a long one into scientific notation (the same
 // trap the tracking_number column hit in Round 26), so they are pinned to text.
@@ -16138,18 +16138,36 @@ function customsGenerate_(data) {
   var sh, row;
   try {
     sh = customsSheet_(CUSTOMS_LOG_SHEET, CUSTOMS_LOG_HEADERS);
-    m.invoice_no = customsNextNo_(sh);
-    row = { invoice_no: m.invoice_no, created_at: new Date().toISOString(), created_by: user.name || user.email || '',
+    // r242 (FB-0477): Edit rewrites an invoice in place, same number, so a
+    // mistake can be put right without a second ACI number going to customs.
+    // The row keeps who made it and when; edited_at/edited_by say it changed.
+    var editOf = String(data.edit_of || '').trim(), prev = null, editAt = 0;
+    if (editOf) {
+      var hd = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+      var vals = sh.getDataRange().getValues();
+      for (var ri = vals.length - 1; ri >= 1; ri--) {
+        if (String(vals[ri][hd.indexOf('invoice_no')]) === editOf) {
+          prev = {}; hd.forEach(function (h, i) { prev[h] = vals[ri][i]; }); editAt = ri + 1; break;
+        }
+      }
+      if (!prev) return { ok: false, error: 'No invoice ' + editOf + ' to edit.' };
+    }
+    m.invoice_no = prev ? editOf : customsNextNo_(sh);
+    row = { invoice_no: m.invoice_no,
+            created_at: prev ? (prev.created_at instanceof Date ? prev.created_at.toISOString() : String(prev.created_at || '')) : new Date().toISOString(),
+            created_by: prev ? String(prev.created_by || '') : (user.name || user.email || ''),
+            edited_at: prev ? new Date().toISOString() : '', edited_by: prev ? (user.name || user.email || '') : '',
             pack: m.pack, student_name: m.receiver.name, student_email: m.receiver.email, country: m.receiver.country,
             waybill: m.waybill, total_gbp: customsMoney_(m.total),
-            conversation_id: String(data.conversation_id || ''), issue_id: String(data.issue_id || ''),
+            conversation_id: String(data.conversation_id || (prev && prev.conversation_id) || ''),
+            issue_id: String(data.issue_id || (prev && prev.issue_id) || ''),
             pdf_file_id: '', docx_file_id: '', data_json: JSON.stringify(m) };
     var head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
     // Not appendRow: it parses every value as if typed, ignoring the column's
     // text format, so the first live test waybill "0000000000" came back as
     // 0 and printed blank (r182.1). setValues onto a row pinned to text keeps
     // an identifier exactly as written.
-    var at = sh.getLastRow() + 1;
+    var at = editAt || (sh.getLastRow() + 1);
     head.forEach(function (h, i) { if (CUSTOMS_TEXT_COLS_[h]) sh.getRange(at, i + 1).setNumberFormat('@'); });
     sh.getRange(at, 1, 1, head.length).setValues([head.map(function (h) { return row[h] == null ? '' : String(row[h]); })]);
     row._at = at;
@@ -16168,8 +16186,15 @@ function customsGenerate_(data) {
     if (sd.ok) sh.getRange(row._at, h.indexOf('docx_file_id') + 1).setValue(sd.id);
   } catch (e) {}
   var saveErr = [sp, sd].filter(function (s) { return !s.ok; }).map(function (s) { return s.error; }).join('; ');
+  // The superseded copies go to Drive's bin (recoverable for 30 days), but only
+  // once their replacements are saved, so a failed save never loses both.
+  if (prev) {
+    [[prev.pdf_file_id, sp], [prev.docx_file_id, sd]].forEach(function (pair) {
+      if (pair[0] && pair[1].ok) { try { DriveApp.getFileById(String(pair[0])).setTrashed(true); } catch (e) {} }
+    });
+  }
   return {
-    ok: true, invoice_no: m.invoice_no, total: customsMoney_(m.total),
+    ok: true, invoice_no: m.invoice_no, edited: !!prev, total: customsMoney_(m.total),
     pdf: { name: pdf.getName(), b64: Utilities.base64Encode(pdf.getBytes()), drive_id: sp.ok ? sp.id : '' },
     docx: { name: docx.getName(), b64: Utilities.base64Encode(docx.getBytes()), drive_id: sd.ok ? sd.id : '' },
     saved: !saveErr, save_error: saveErr, signed: !!m._sig
@@ -16184,7 +16209,8 @@ function customsList_() {
              created_by: String(r.created_by || ''), pack: String(r.pack || ''), student_name: String(r.student_name || ''),
              country: String(r.country || ''), waybill: String(r.waybill == null ? '' : r.waybill), total_gbp: customsMoney_(r.total_gbp),
              conversation_id: String(r.conversation_id || ''), issue_id: String(r.issue_id || ''),
-             pdf_file_id: String(r.pdf_file_id || ''), docx_file_id: String(r.docx_file_id || '') };
+             pdf_file_id: String(r.pdf_file_id || ''), docx_file_id: String(r.docx_file_id || ''),
+             edited_at: r.edited_at instanceof Date ? r.edited_at.toISOString() : String(r.edited_at || ''), edited_by: String(r.edited_by || '') };
   }) };
 }
 

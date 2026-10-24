@@ -72,6 +72,7 @@ export default {
       if (route === "/api/message") return json(await postMessage(env, user, body), 200, cors);
       if (route === "/api/file") return json(await getFile(env, body), 200, cors);
       if (route === "/api/status") return json(await setStatus(env, user, body), 200, cors);
+      if (route === "/api/cap") return json(await raiseCap(env, user, body), 200, cors);
       if (route === "/api/publish") return json(await publish(env, user, body), 200, cors);
       if (route === "/api/infra") return json(await addInfra(env, user, body), 200, cors);
       if (route === "/api/context") return json(await addContext(env, user, body), 200, cors);
@@ -243,6 +244,22 @@ async function setStatus(env, user, body) {
   return { ok: true, status: status };
 }
 
+// r242 (FB-0475, Edd): "I am an admin, so give me the option to extend the
+// session cap from here" rather than an UPDATE in D1. Still a deliberate act:
+// admin only, one fixed step at a time, and the record is told who did it.
+const CAP_STEP = 1000000;
+async function raiseCap(env, user, body) {
+  if (!user.admin) return { ok: false, error: "raising the token cap is admin-only" };
+  const rec = await findRecord(env, body);
+  if (!rec) return { ok: false, error: "record not found" };
+  const used = (rec.usage_input_tokens || 0) + (rec.usage_output_tokens || 0);
+  // From whichever is higher, so a record already over its cap gets a full step of room.
+  const cap = Math.max(rec.token_cap || 0, used) + CAP_STEP;
+  await env.RCA_DB.prepare("UPDATE rca_records SET token_cap=?, updated_at=? WHERE id=?").bind(cap, new Date().toISOString(), rec.id).run();
+  await saveMsg(env, rec.id, "note", user.name, [{ type: "text", text: user.name + " raised the token cap to " + Math.round(cap / 1000) + "k." }]);
+  return { ok: true, token_cap: cap, used: used };
+}
+
 async function addInfra(env, user, body) {
   if (!body.event_date || !body.title) return { ok: false, error: "event_date and title required" };
   await env.RCA_DB.prepare("INSERT INTO infra_events (event_date, title, detail, source, added_by, added_at) VALUES (?,?,?,?,?,?)")
@@ -324,7 +341,8 @@ async function postMessage(env, user, body) {
 
   // Cost control: hard token cap per record. Raising it is a deliberate act.
   if ((rec.usage_input_tokens + rec.usage_output_tokens) > rec.token_cap) {
-    return { ok: false, error: "This record has reached its token cap. An admin can raise it in D1 if the investigation genuinely needs more." };
+    return { ok: false, cap_reached: true, token_cap: rec.token_cap, used: rec.usage_input_tokens + rec.usage_output_tokens,
+      error: "This record has used its token budget (" + Math.round((rec.usage_input_tokens + rec.usage_output_tokens) / 1000) + "k of " + Math.round(rec.token_cap / 1000) + "k). An admin can add more from the record." };
   }
 
   const now = new Date().toISOString();
@@ -367,6 +385,7 @@ async function postMessage(env, user, body) {
   const system = await buildSystem(env, rec);
   const newMessages = [];
   let usageIn = 0, usageOut = 0;
+  const progress = {};   // what record_progress changed this message, for the page
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const resp = await anthropic(env, system, messages);
@@ -395,7 +414,9 @@ async function postMessage(env, user, body) {
     const results = [];
     for (const block of resp.content) {
       if (block.type !== "tool_use") continue;
-      const out = await runTool(env, block.name, block.input || {});
+      const out = block.name === "record_progress"
+        ? await toolProgress(env, rec, block.input || {}, progress)
+        : await runTool(env, block.name, block.input || {});
       results.push({
         type: "tool_result", tool_use_id: block.id,
         // Retrieved support content is student/staff-authored DATA. The label
@@ -424,7 +445,7 @@ async function postMessage(env, user, body) {
 
   await env.RCA_DB.prepare("UPDATE rca_records SET usage_input_tokens = usage_input_tokens + ?, usage_output_tokens = usage_output_tokens + ?, updated_at = ? WHERE id = ?")
     .bind(usageIn, usageOut, now, rec.id).run();
-  return { ok: true, messages: newMessages, usage: { input: usageIn, output: usageOut } };
+  return { ok: true, messages: newMessages, usage: { input: usageIn, output: usageOut }, progress: progress };
 }
 
 // ---------------------------------------------------------------------------
@@ -495,6 +516,9 @@ async function buildSystem(env, rec) {
     "\n\n<promoted_issue>\nThis record was promoted from tracker issue " + rec.issue_id +
     ". Seed snapshot at promotion (assume it undercounts; rebuild the log yourself):\n" +
     JSON.stringify(seed, null, 1).slice(0, 6000) + "\n</promoted_issue>" +
+    "\n\n<response_shape>\nThe page shows your reply as a conversation. Lead with the answer in two to four plain sentences: what you found or think, how sure, and what happens next. " +
+    "Put supporting detail (incident tables, evidence, hypothesis lists) under '## ' headings after that; each heading renders folded, opened only if the reader wants it. " +
+    "End with the one thing you need from the humans, or the next step you will take, so the conversation keeps moving. Keep the stage current with record_progress.\n</response_shape>" +
     "\n\nRecord status: " + rec.status +
     (rec.verification_test ? ". Named verification test: " + rec.verification_test : ". No verification test named yet.");
 }
@@ -546,6 +570,17 @@ async function anthropic(env, system, messages) {
 // ---------------------------------------------------------------------------
 const TOOLS = [
   {
+    name: "record_progress",
+    description: "Move this RCA record to the stage the investigation has actually reached, and name the verification test once you know it. Call it whenever the stage changes, without being asked: gathering (building the incident log), hypotheses (log built, kill-tests open), root_cause (confirmed on quoted evidence, not a theory), fix_pending (fix agreed, awaiting deploy or proof). You cannot set Verified or mark the test passed; a human does that. Do not move forward on a hunch, and move back if a confirmed cause is refuted.",
+    input_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["gathering", "hypotheses", "root_cause", "fix_pending"] },
+        verification_test: { type: "string", description: "the observable test that will prove the fix, once known" }
+      }
+    }
+  },
+  {
     name: "chatwoot_query",
     description: "Read-only Chatwoot access. mode 'filter' lists conversations by last_activity_at (NEVER created_at - reports arrive inside old reopened threads) across an inbox or all three (Instructor 44317, WebWidget/live chat 44574, Info 44320). The list shows only each thread's LAST message - never conclude a conversation is irrelevant from the list; use mode 'thread' to fetch the full message history including private staff notes ('tech -' and 'Logged in Bugs' are escalation signals). Uses the filter endpoint (the search endpoint times out). 25 conversations per page.",
     input_schema: {
@@ -582,6 +617,25 @@ const TOOLS = [
     }
   }
 ];
+
+// r242 (FB-0476, Edd): "the gathering evidence etc should update
+// automatically by the AI". The one write the investigator has, and it only
+// touches this record's own stage and test name. It can never reach Verified
+// or mark a test passed: those stay with a human, as the brief requires.
+const AI_STAGES = ["gathering", "hypotheses", "root_cause", "fix_pending"];
+async function toolProgress(env, rec, input, progress) {
+  const st = String(input.status || "").trim();
+  const test = input.verification_test != null ? String(input.verification_test).trim().slice(0, 300) : null;
+  if (st && !AI_STAGES.includes(st)) return "status must be one of " + AI_STAGES.join(", ") + ". Verified is set by a human once the test has passed.";
+  const status = st || rec.status;
+  const vt = test != null && test ? test : rec.verification_test;
+  await env.RCA_DB.prepare("UPDATE rca_records SET status=?, verification_test=?, updated_at=? WHERE id=?")
+    .bind(status, vt, new Date().toISOString(), rec.id).run();
+  rec.status = status; rec.verification_test = vt;
+  progress.status = status;
+  if (test) progress.verification_test = vt;
+  return "Recorded. Stage is now " + status + (test ? "; verification test: " + vt : "") + ".";
+}
 
 async function runTool(env, name, input) {
   try {
