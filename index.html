@@ -822,6 +822,13 @@
   #newsPanel .news-day + .news-item { border-top: none; }
   #newsPanel .news-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--coral); color: #021231; margin-right: 6px; vertical-align: 1px; }
   #railHelp { margin-top: 0; }
+  /* r247 (FB-0478): What's new and the bell climb to the top of the rail while
+     they have something unread, and go back down once they are empty.
+     railFloat() moves them and marks whichever item now starts the bottom
+     group, so the gap that pushes that group to the foot travels with it. */
+  #rail > .rail-item.floated { margin-top: 0 !important; }
+  #rail > .rail-item.foot-start { margin-top: auto !important; }
+  .rail-float-div { height: 1px; background: var(--line); margin: 4px 10px 6px; }
   .rail-foot { padding-top: 8px; }
   body.shell .rail-foot #userbox { position: relative; display: block; text-align: center; }
   body.shell .rail-foot #userbox > button { width: 100%; padding: 8px 4px; white-space: normal; word-break: break-word; }
@@ -903,6 +910,11 @@
     body.shell.subrail-on #devSeg,
     body.shell.subrail-on .ship-seg { display: none; }
   }
+  /* r247 (FB-0479): RCA lives in the Developers sub-rail on a wide screen, so
+     its own rail button goes. The button stays in the markup and keeps its
+     permission gate (permsChanged_ reads it), and on a phone, where there is
+     no sub-rail, it still folds into the More sheet as before. */
+  #rail > #railRCA { display: none !important; }
   @media (max-width: 760px) {
     body.shell.subrail-on .subrail { display: none; }
     body.shell.subrail-on #shellMain { margin-left: 0; }
@@ -3154,7 +3166,7 @@
 <section id="man-recovery" data-perm="recovery" data-title="Recovering quiz answers">
   <h3>Recovering quiz answers</h3>
   <p>When a student does a module assessment, the quiz quietly saves everything they've answered every few seconds, and again when they close it. If Submit All then never reaches us, <span class="ui">Recovery</span> on the rail is where we find what they had.</p>
-  <p>Search by the email the student typed into the quiz, by a lesson code, or both. The email is whatever they typed, so it can be misspelt. If nothing comes back, try the lesson code on its own and look for their name. Each result shows when it was last saved, whether the quiz was submitted, and every question they were given with their answer. A tick or cross shows where the quiz can tell right from wrong, which is multiple choice and matching. Typed answers are shown as typed. <span class="ui">Show questions</span> adds the question wording, and <span class="ui">Copy answers</span> puts the lot on the clipboard for an email or a note to the marker.</p>
+  <p>Search by the email the student typed into the quiz, by a lesson code, or both. The email is whatever they typed, so it can be misspelt. If nothing comes back, try the lesson code on its own and look for their name. Each result shows when it was last saved, whether the quiz was submitted, and every question they were given with their answer. A tick or cross shows where the quiz can tell right from wrong, which is multiple choice and matching. Typed answers are shown as typed. The question wording shows under each code (<span class="ui">Hide questions</span> folds it away), and <span class="ui">Copy answers</span> puts the lot on the clipboard for an email or a note to the marker.</p>
   <p>Two things to know. A save is deleted 48 hours after the quiz is submitted, or 14 days after the last save if it never is. And the last box a student typed in before closing may be missing, because the quiz only saves a box once they click away from it.</p>
   <p>Only people an admin has given the Recovery permission can see this, and every search is logged with who did it.</p>
 </section>
@@ -3213,7 +3225,7 @@
 <section id="man-rca" data-perm="users" data-title="RCA records">
   <h3>RCA records</h3>
   <p>Some faults are not a fix, they are an investigation. The assessment images that stopped loading in August took days of reading conversations, lining them up against deploys, and working out which change broke what. RCA is that job, made repeatable.</p>
-  <p>Promoting an issue opens a private diagnostic record on it: a running conversation with an investigator that can read our support data, kept on the issue so anyone can pick it up where the last person stopped. It is on the rail as <span class="ui">RCA</span>, under Dev. For now only admins have it, while it is put through its paces; the developers get it once it has earned its keep.</p>
+  <p>Promoting an issue opens a private diagnostic record on it: a running conversation with an investigator that can read our support data, kept on the issue so anyone can pick it up where the last person stopped. It lives under <span class="ui">Dev</span> on the rail, as <span class="ui">RCA records</span> in the list beside it (on a phone, <span class="ui">RCA</span> under More). For now only admins have it, while it is put through its paces; the developers get it once it has earned its keep.</p>
   <p>The page opens on the cases themselves. <span class="ui">Open investigations</span> is anything still being worked, with a count on the heading, and <span class="ui">Verified</span> is the finished ones below it. So a fault under investigation keeps a presence of its own rather than being a thing somebody remembers to go and look at.</p>
   <p>With nothing on it, it reads <em>Nothing under investigation. Open any issue and press Promote to RCA to start one.</em></p>
   <div class="man-note warn">
@@ -3415,7 +3427,7 @@
     <li data-perm="log">The issue I just logged, <span class="ui">Issues</span> then <span class="ui">All issues</span>, top of the list.</li>
     <li data-perm="log">A student who is in touch right now, <span class="ui">Today</span>, at the top.</li>
     <li data-perm="dev">A fault waiting on me to fix, <span class="ui">Dev</span> then <span class="ui">To do</span>.</li>
-    <li data-perm="users">An investigation somebody has started, <span class="ui">RCA</span> on the rail.</li>
+    <li data-perm="users">An investigation somebody has started, under <span class="ui">Dev</span> then <span class="ui">RCA records</span>.</li>
     <li data-perm="course">A course error waiting to be corrected, <span class="ui">Course</span> then <span class="ui">To do</span>.</li>
     <li data-perm="users">Adding somebody to the team, <span class="ui">Admin</span> then <span class="ui">People</span>.</li>
     <li>Something wrong with this app, the <span class="ui">Feedback</span> pill, bottom right.</li>
@@ -3919,7 +3931,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r242 · 2026-10-24";  // bump this with each round, it lands on every feedback report
+var BUILD = "r247 · 2026-10-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -9038,11 +9050,61 @@ function railMoreApply() {
   var phone = window.matchMedia("(max-width: 760px)").matches;
   if (phone) {
     RAIL_MORE_IDS.forEach(function (id) { var el = $(id); if (el && el.parentElement !== sheet) sheet.appendChild(el); });
+    railFloat();
   } else {
     var foot = rail.querySelector(".rail-foot");
     RAIL_MORE_IDS.forEach(function (id) { var el = $(id); if (el && el.parentElement === sheet) rail.insertBefore(el, foot); });
     railMoreClose();
+    railFloat();
   }
+}
+// r247 (FB-0478, Edd): "move what's new and notifications to the top of the
+// rail and then move them to the bottom when there is nothing new in them".
+// Unread means the same thing the badges already say: news not yet opened,
+// and bell items not yet cleared with Got it (bellItems() leaves read ones
+// out). Desktop only: on a phone both live in the More sheet, whose pill
+// already carries their count. A thin line under them keeps them from
+// reading as two more sections.
+function railFloat() {
+  var rail = $("rail");
+  if (!rail) return;
+  var news = $("railNews"), bell = $("railBell"), help = $("railHelp");
+  var div = $("railFloatDiv");
+  if (!div) { div = document.createElement("div"); div.id = "railFloatDiv"; div.className = "rail-float-div"; }
+  var phone = window.matchMedia("(max-width: 760px)").matches;
+  var up = {
+    railNews: !phone && !!state.user && newsUnseen().length > 0,
+    railBell: !phone && !!state.user && bellItems().length > 0
+  };
+  var first = rail.firstElementChild;
+  // Top group, in a fixed order, News then the bell.
+  var anchor = first;
+  ["railNews", "railBell"].forEach(function (id) {
+    var el = $(id);
+    if (!el || el.parentElement !== rail) return;
+    el.classList.toggle("floated", up[id]);
+    if (up[id]) {
+      if (el !== anchor) rail.insertBefore(el, anchor);
+      anchor = el.nextElementSibling;
+    }
+  });
+  if (up.railNews || up.railBell) { if (div.parentElement !== rail || div !== anchor) rail.insertBefore(div, anchor); }
+  else if (div.parentElement) div.parentElement.removeChild(div);
+  // Bottom group goes back just above Help, News first as before.
+  ["railNews", "railBell"].forEach(function (id) {
+    var el = $(id);
+    if (!el || el.parentElement !== rail || up[id] || !help || help.parentElement !== rail) return;
+    rail.insertBefore(el, help);
+  });
+  if (news && news.parentElement === rail && !up.railNews && bell && bell.parentElement === rail && !up.railBell) rail.insertBefore(news, bell);
+  // Whichever of News, bell, Help is now first at the bottom takes the gap.
+  var startSet = false;
+  [news, bell, help].forEach(function (el) {
+    if (!el) return;
+    var isStart = !startSet && el.parentElement === rail && !el.classList.contains("floated");
+    el.classList.toggle("foot-start", isStart);
+    if (isStart) startSet = true;
+  });
 }
 function railMoreToggle(ev) {
   if (ev) ev.stopPropagation();
@@ -9092,7 +9154,7 @@ function updateRail() {
   var v = state.view;
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railShipping", v === "customs" || v === "shipreport"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
-               ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
+               ["railDev", v === "dev" || v === "rca"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
                ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"], ["railRecovery", v === "recovery"], ["railMarking", v === "marking"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual" || v === "instructors"],
@@ -11396,7 +11458,7 @@ function markingSkip() {
 // lookup in the database, so the log does not depend on this page behaving.
 // Nothing here is cached: results live in this variable until the page moves on.
 var RECOVERY_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/recovery";
-var recovery = { ticket: "", exp: 0, loading: false, saves: null, error: "", open: {} };
+var recovery = { ticket: "", exp: 0, loading: false, saves: null, error: "", hidden: {} };  // r247 (FB-0480): questions show by default, so this records the cards someone has collapsed
 
 function recoveryTicket(force) {
   var now = Math.floor(Date.now() / 1000);
@@ -11436,7 +11498,7 @@ function recoveryFind() {
   var reg = ($("recReg").value || "").trim();
   if (!email && !lesson && !reg) { toast("Give an email, a lesson code or an attempt id."); return; }
   if (recovery.loading) return;
-  recovery.loading = true; recovery.error = ""; recovery.saves = null; recovery.open = {};
+  recovery.loading = true; recovery.error = ""; recovery.saves = null; recovery.hidden = {};
   if ($("recFindBtn")) $("recFindBtn").disabled = true;
   renderRecovery();
   var body = { action: "find" };
@@ -11476,7 +11538,7 @@ function recoveryCard(s, i) {
   var sub = s.submitted_at
     ? '<span class="badge rec-sub">Submitted ' + esc(fmtWhen(s.submitted_at)) + '</span>'
     : '<span class="badge rec-unsub">Not submitted</span>';
-  var open = !!recovery.open[i];
+  var open = !recovery.hidden[i];
   var rows = (d.questions || []).map(function (q) {
     var mark = q.correct === true ? '<span title="Right">&#10003;</span>' : (q.correct === false ? '<span title="Wrong or incomplete">&#10007;</span>' : '');
     var ans = q.answered ? q.answer.map(esc).join('<br>') : '<span class="small muted">not answered</span>';
@@ -11501,7 +11563,7 @@ function recoveryCard(s, i) {
   '</div>';
 }
 
-function recoveryToggle(i) { recovery.open[i] = !recovery.open[i]; renderRecovery(); }
+function recoveryToggle(i) { recovery.hidden[i] = !recovery.hidden[i]; renderRecovery(); }
 
 // A fixed date and time for text that leaves the page ("14 minutes ago" means
 // nothing once it is pasted into an email). UK time, as the instructors read it.
@@ -14130,6 +14192,9 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 76, date: "2026-10-25", text: "What's new and Alerts jump to the top of the rail while there is something unread in them, and drop back to the bottom once there is not." },
+  { n: 75, date: "2026-10-25", who: ["users"], text: "RCA has moved under Dev: open Dev and it is RCA records in the list beside it." },
+  { n: 74, date: "2026-10-25", who: ["recovery"], text: "Recovery shows the question wording under each answer straight away. Hide questions folds it away." },
   { n: 73, date: "2026-10-24", who: ["marking"], text: "Marking on the rail: review, correct and approve the question bank behind AI marking, without signing in to the separate portal." },
   { n: 72, date: "2026-10-24", who: ["users"], text: "Sign-in sessions are now stored scrambled, so someone who could read the tracker's database still could not use what they found there to sign in as anyone. Nobody is signed out by the change." },
   { n: 71, date: "2026-10-24", who: ["users"], text: "Security tidy-up: the Slack reply relay has its own key and no keys travel in web addresses any more, the RCA investigator strips emails and phone numbers before anything reaches the AI, and closed RCA records clear their messages and screenshots after 90 days (the findings stay)." },
@@ -14299,6 +14364,7 @@ function updateRailBadges() {
     nw.title = nn ? "What's new (" + nn + " unread)" : "What's new";
     if (nwb) { nwb.textContent = nn > 99 ? "99+" : String(nn); nwb.classList.toggle("on", !!nn); }
   }
+  railFloat();
   // Last on purpose: the More pill just re-reads the badges that were set
   // above, summed for whatever is folded into the sheet (the r60 rule - one
   // source, never a second count).
@@ -14409,9 +14475,17 @@ function subRailSpec() {
             { key: "preview", label: "Preview" }, { key: "results", label: "Results" },
             { key: "models", label: "Models" }]
   };
-  if (v === "dev") return {
-    head: "Developers", cur: state.devFilter, go: setDevFilter,
+  // r247 (FB-0479): RCA sits under Dev, below a heading of its own, for the
+  // people who can open it (admins, as railGo's gate says).
+  if (v === "dev" || v === "rca") return {
+    head: "Developers", cur: v === "rca" ? "@rca" : state.devFilter,
+    go: function (k) {
+      if (k === "@rca") { if (state.view !== "rca") railGo("rca"); return; }
+      if (state.view !== "dev") setView("dev");
+      setDevFilter(k);
+    },
     items: [{ key: "todo", label: "To do" }, { key: "fixed", label: "Fixed" }, { key: "all", label: "All" }]
+      .concat(p.users ? [{ head: true, label: "Diagnosis" }, { key: "@rca", label: "RCA records" }] : [])
   };
   if (v === "course") return {
     head: "Course fixes", cur: state.courseFilter, go: setCourseFilter,
