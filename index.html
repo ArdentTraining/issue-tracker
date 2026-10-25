@@ -3932,7 +3932,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r249 · 2026-10-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r250 · 2026-10-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -14311,6 +14311,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 81, date: "2026-10-25", who: ["manage", "users"], text: "A repeat report that makes a tech issue high priority no longer sends it straight to the developers while the troubleshooting is barely started. It needs the same as a new filing (a few checklist steps done, including logging out and back in or looking as the student), and the issue says what is missing. Three different students reporting it still sends it on." },
   { n: 80, date: "2026-10-25", text: "Every page now says what it is at the top (and in the browser tab), for example Today, Log a new issue, or Issues · Board, so you can name the screen in feedback without a screenshot." },
   { n: 79, date: "2026-10-25", who: ["log"], text: "Live cases: Open in the form takes a case to the log form with the conversation in, the details pulled out, and the checklist and steps for the student. If the student already has an open issue, the case says so, updates go on it, and the form opens as an update to it." },
   { n: 78, date: "2026-10-25", who: ["log"], text: "When a pasted conversation is split and you keep just one issue from it, the tracker now still asks whether it belongs on the student's open issue." },

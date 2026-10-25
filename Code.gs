@@ -4755,11 +4755,34 @@ function addReportToIssue_(id, data, report) {
   // including the same conversation imported twice, so counting entries here
   // would still send one student to the developers on a triple-filing even
   // with the score fixed. Three reports means three PEOPLE.
+  //
+  // r250 (FB-0483, Edd): "this shouldn't be with developers yet... we haven't
+  // even got iPad model... The developers would just ask for that." Paul
+  // Devine's second chat bumped his issue to high and this sent it straight on,
+  // with the troubleshooting barely started. A fresh filing has had a gate for
+  // that since FB-0462 (three checklist steps done, and the student logged out
+  // and back in or one of us looked as them); the repeat-report path never got
+  // it. Now high priority needs the same, judged on the issue's checklist and
+  // this report's together. Three different people still route on their own:
+  // that is a real fault whatever one student's checklist says. Fast-track by
+  // an admin still routes, as at filing.
   if (String(rec.category).toLowerCase() === 'tech_issue' &&
-      String(rec.status).toLowerCase() === 'open' &&
-      (rec.report_count >= 3 || String(rec.priority).toLowerCase() === 'high')) {
-    rec.status = 'with_dev';
-    if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
+      String(rec.status).toLowerCase() === 'open') {
+    var cl250 = {}, tried250 = 0;
+    [rec.checklist_json, data.checklist_json].forEach(function (j) {
+      try { var o = j ? JSON.parse(j) : {}; for (var k in o) if (o[k] === 'done') cl250[k] = 'done'; } catch (e) {}
+    });
+    for (var k250 in cl250) tried250++;
+    var basics250 = cl250.logout_login === 'done' || cl250.checked_as_student === 'done';
+    var ft250 = (data.fast_track === true || data.fast_track === 'true') && data._user && hasPerm_(data._user, 'users');
+    var high250 = String(rec.priority).toLowerCase() === 'high';
+    if (rec.report_count >= 3 || ft250 || (high250 && tried250 >= 3 && basics250)) {
+      rec.status = 'with_dev';
+      if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
+    } else if (high250 && !/Not passed to the developers yet/.test(String(rec.priority_reason || ''))) {
+      rec.priority_reason = (String(rec.priority_reason || '') +
+        ' [Not passed to the developers yet: the troubleshooting checklist is not far enough on (the device and how it fails, the student logging out and back in or one of us looking as them). Once it is, an admin can pass it on, or fast-track it if it cannot wait.]').trim();
+    }
   }
 
   var stamp = new Date().toISOString().slice(0, 10);
