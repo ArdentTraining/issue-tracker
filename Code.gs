@@ -679,6 +679,7 @@ function doPost(e) {
     TOUCHED_IDS_ = {};
     MIRROR_FULL_ = {};
     BLIND_REQ_ = false;   // r244
+    WRITE_REQ_ = false;   // r248: set once the action is known, below
 
     // Public auth actions (no session yet).
     // Self-deploy: gated by its own DEPLOY_KEY (script property), not a user
@@ -725,7 +726,22 @@ function doPost(e) {
     fileMark_('auth');
     if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
     if (action === 'logout') return jsonOut(logout_(body.token));
-    if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
+    // r248 (FB-0481): read-only access. Everything not on READ_ACTIONS_ is a
+    // write, and while WRITE_REQ_ is set hasPerm_ treats a read-only key as
+    // absent, so every check further in (updateIssue_'s field rules, the
+    // admin-only statuses...) follows the same rule without being touched.
+    WRITE_REQ_ = !READ_ACTIONS_[action];
+    if (!hasPerm_(user, reqPerm_(action))) {
+      // Say which it was. "forbidden" for somebody who can see the screen
+      // reads like a fault; read-only is a decision, and it should say so.
+      if (WRITE_REQ_) {
+        WRITE_REQ_ = false;
+        var couldRead = hasPerm_(user, reqPerm_(action));
+        WRITE_REQ_ = true;
+        if (couldRead) return jsonOut({ ok: false, error: 'read_only', message: 'You have read-only access here, so nothing was changed.' });
+      }
+      return jsonOut({ ok: false, error: 'forbidden' });
+    }
     body._user = user;
     BLIND_REQ_ = studentBlind_(user);   // r244: every answer from here is cleaned for code-only accounts
 
@@ -1146,10 +1162,62 @@ function touchSession_(f, token, extend) {
     });
   } catch (e) {}
 }
+// r248 (FB-0481, Edd): hidden / read / write per permission. perms_json keeps
+// its booleans (true = the account can SEE that area, which is what Reports,
+// the tickets and every Edge Function already read), plus "_ro": the keys it
+// may only read. permsOf_ strips "_ro" so nothing downstream ever sees a
+// non-boolean in perms; roOf_ hands it out separately as perms_ro.
+//
+// Only keys whose back end refuses a read-only write can be read-only:
+//   Code.gs        log, manage, dev, course, users, resources
+//   tracker-save   the same keys (it reads the person's record on every save,
+//                  so a change lands at once rather than when a ticket expires)
+// analytics and recovery only ever read, so "on" already means read. irpcs and
+// marking write through their own back ends (irpcs-editor / irpcs-media, and
+// ardent-portal in the marking project), which do not check perms_ro yet, so
+// they stay on/off until they do. perms_ro is in every ticket already, so
+// adding either is a change on that side only, plus its key here.
+var RO_KEYS = ['log', 'manage', 'dev', 'course', 'users', 'resources'];
+// Pure reads. Everything else is a write, so a new action is a write until
+// somebody decides otherwise (the same fail-closed rule as reqPerm_).
+var READ_ACTIONS_ = {};
+['getIssues', 'getIssuesList', 'getIssue', 'bootstrap', 'getInstructors', 'me', 'getAssignees',
+ 'listLiveCases', 'chatwootList', 'chatwootContactUrl', 'peekStudentActivity',
+ 'customsList', 'customsFetch', 'customsPacks', 'customsFind', 'customsMySigner',
+ 'shipReport', 'shipCostHistory', 'shipMonthlyPreview', 'resourcesList',
+ 'chatScanList', 'chatBackSweepState', 'lessonIssueCounts', 'faultIssueMap', 'devMetrics',
+ 'listContentSuggestions', 'listUsers', 'getPlaybook', 'listPlaybookSuggestions', 'listKnownFixFlags',
+ 'getFeedback', 'listVoiceGuides', 'myFeedback', 'instructorGuide', 'slackHistory',
+ // Tickets are reads here: what the ticket opens is checked where it is used,
+ // and perms_ro travels inside it.
+ 'reportsTicket', 'tasksTicket', 'trackerTicket', 'irpcsTicket', 'recoveryTicket', 'markingTicket'
+].forEach(function (a) { READ_ACTIONS_[a] = true; });
+var WRITE_REQ_ = false;
+
 function permsOf_(user) {
   var p = {};
   try { p = user.perms_json ? JSON.parse(user.perms_json) : {}; } catch (e) { p = {}; }
+  if (!p || typeof p !== 'object') p = {};
+  delete p._ro;
   return p;
+}
+function roOf_(user) {
+  var raw = {};
+  try { raw = user.perms_json ? JSON.parse(user.perms_json) : {}; } catch (e) { raw = {}; }
+  var ro = (raw && raw._ro && typeof raw._ro === 'object') ? raw._ro : {};
+  var out = {};
+  RO_KEYS.forEach(function (k) { if (raw[k] === true && ro[k] === true) out[k] = true; });
+  return out;
+}
+// Build the stored perms_json from what the admin screen sent: perms (seen)
+// and perms_ro (of those, read only). A read-only tick on a key that is not
+// seen, or that cannot be read-only, is dropped rather than stored.
+function permsJsonFrom_(perms, permsRo) {
+  var out = {}, ro = {};
+  PERM_KEYS.forEach(function (k) { out[k] = !!(perms && perms[k]); });
+  RO_KEYS.forEach(function (k) { if (out[k] && permsRo && permsRo[k] === true) ro[k] = true; });
+  if (Object.keys(ro).length) out._ro = ro;
+  return JSON.stringify(out);
 }
 function hasPerm_(user, req) {
   if (req === 'any') return true;
@@ -1158,6 +1226,8 @@ function hasPerm_(user, req) {
   // rather than open. If a new action 403s, the fix is a case in reqPerm_.
   if (req === 'none') return false;
   var p = permsOf_(user);
+  // r248: on a write, a read-only key counts as not held.
+  if (WRITE_REQ_) { var ro = roOf_(user); for (var rk in ro) if (ro[rk]) p[rk] = false; }
   if (req === 'devcourse') return !!(p.dev || p.course || p.users);
   // 'work' = anyone who actually works issues, so they can tick the checklist
   // wherever it shows (Track or the Developers / Course queues).
@@ -1335,7 +1405,7 @@ function reqPerm_(action) {
 function publicUser_(user) {
   // {email, name, perms} is an embedding contract with Reports (r67) - only
   // ever ADD to this shape.
-  return { email: user.email, name: user.name, perms: permsOf_(user), prefs: prefsOf_(user) };
+  return { email: user.email, name: user.name, perms: permsOf_(user), perms_ro: roOf_(user), prefs: prefsOf_(user) };
 }
 function prefsOf_(user) {
   try { var p = JSON.parse(String((user && user.prefs_json) || '') || '{}'); return (p && typeof p === 'object') ? p : {}; }
@@ -1841,13 +1911,12 @@ function adminResetLink_(body) {
 function inviteUser_(body) {
   var email = String(body.email || '').trim().toLowerCase();
   if (!email || email.indexOf('@') < 0) return { ok: false, error: 'Enter a valid email.' };
-  var perms = {};
-  PERM_KEYS.forEach(function (k) { perms[k] = !!(body.perms && body.perms[k]); });
+  var permsJson = permsJsonFrom_(body.perms, body.perms_ro);   // r248
   var token = newInviteToken_();
   var existing = findUserByEmail_(email);
   if (existing) {
     setCell_(existing, 'name', body.name || existing.user.name || '');
-    setCell_(existing, 'perms_json', JSON.stringify(perms));
+    setCell_(existing, 'perms_json', permsJson);
     setCell_(existing, 'status', 'invited');
     setCell_(existing, 'invite_token', token);
     setCell_(existing, 'pass_hash', '');
@@ -1855,7 +1924,7 @@ function inviteUser_(body) {
   } else {
     var u = {
       email: email, name: body.name || '', status: 'invited',
-      perms_json: JSON.stringify(perms), pass_hash: '', pass_salt: '',
+      perms_json: permsJson, pass_hash: '', pass_salt: '',
       invite_token: token, session_token: '', session_expires: '',
       created_at: new Date().toISOString()
     };
@@ -1878,7 +1947,7 @@ function listUsers_() {
     // unopened somewhere.
     var accepted = !!String(values[r][idx['pass_hash']] || '').trim();
     var invitePending = !accepted && !!String(values[r][idx['invite_token']] || '').trim();
-    out.push({ email: u.email, name: u.name, status: u.status, perms: permsOf_(u),
+    out.push({ email: u.email, name: u.name, status: u.status, perms: permsOf_(u), perms_ro: roOf_(u),
                accepted: accepted, invite_pending: invitePending,
                created_at: String(values[r][idx['created_at']] || '') });
   }
@@ -1959,8 +2028,22 @@ function updateUser_(body) {
   var f = findUserByEmail_(body.email);
   if (!f) return { ok: false, error: 'No such user.' };
   if (body.perms) {
-    var perms = {}; PERM_KEYS.forEach(function (k) { perms[k] = !!body.perms[k]; });
-    setCell_(f, 'perms_json', JSON.stringify(perms));
+    var nextJson = permsJsonFrom_(body.perms, body.perms_ro);   // r248
+    // Never leave the tracker with nobody who can change Admin: making the
+    // last full admin read-only (or taking Admin away) would lock everyone
+    // out of this screen.
+    var next = JSON.parse(nextJson);
+    var keepsWrite = next.users === true && !(next._ro && next._ro.users);
+    if (!keepsWrite && String(f.user.status || '') === 'active' && permsOf_(f.user).users === true && !roOf_(f.user).users) {
+      var others = usersTable_(true), ov = others.values, oi = others.idx, n = 0;
+      for (var r = 1; r < ov.length; r++) {
+        var ou = rowToUser_(ov[r], oi);
+        if (!ou.email || String(ou.email).toLowerCase() === String(f.user.email).toLowerCase()) continue;
+        if (String(ou.status || '') === 'active' && permsOf_(ou).users === true && !roOf_(ou).users) n++;
+      }
+      if (!n) return { ok: false, error: 'That would leave nobody who can change Admin. Give someone else full Admin first.' };
+    }
+    setCell_(f, 'perms_json', nextJson);
   }
   if (body.name != null) setCell_(f, 'name', body.name);
   if (body.disable === true) {
@@ -5656,9 +5739,12 @@ function listAssignees_() {
   for (var r = 1; r < values.length; r++) {
     var u = rowToUser_(values[r], idx);
     if (String(u.status).toLowerCase() !== 'active') continue;
-    var p = permsOf_(u);
-    if (!p.course && !p.dev) continue; // only people who can take a fix queue
-    out.push({ name: u.name || u.email, email: u.email, course: !!p.course, dev: !!p.dev });
+    var p = permsOf_(u), ro = roOf_(u);
+    // r248: read-only on a queue means looking, not taking fixes, so they are
+    // not offered in Assigned to for it.
+    var dev = !!p.dev && !ro.dev, course = !!p.course && !ro.course;
+    if (!course && !dev) continue; // only people who can take a fix queue
+    out.push({ name: u.name || u.email, email: u.email, course: course, dev: dev });
   }
   return { ok: true, assignees: out };
 }
@@ -15141,6 +15227,9 @@ function mintPortalTicket_(user, requiredPerm, minutes, opts) {
     // costs nothing and it means adding a second view with a different
     // permission later needs no change on this side.
     perms: perms,
+    // r248: the keys this person may only read. Every function that writes on
+    // a ticket refuses a write for a key listed here.
+    perms_ro: pub.perms_ro || {},
     // r235: what the ticket is for. A person's ticket is for the portal
     // functions; a machine ticket names the one function that may accept it.
     aud: opts.aud || TICKET_AUD_PORTAL_,

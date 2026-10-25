@@ -687,6 +687,21 @@
   .muted { color: var(--muted); }
   .small { font-size: 12px; }
   .permrow { display: flex; flex-wrap: wrap; gap: 4px 0; }
+  /* r248 (FB-0481): Hidden / Read / Write per permission. */
+  .permgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 18px; }
+  .permline { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+  .permname { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seg3 { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+  .seg3-opt { display: inline-flex; align-items: center; padding: 3px 9px; font-size: 12px; color: var(--muted); cursor: pointer; border-left: 1px solid var(--line); user-select: none; }
+  .seg3-opt:first-child { border-left: none; }
+  .seg3-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+  .seg3-opt.on { color: var(--text); background: var(--surface-2); font-weight: 600; }
+  /* The text stays the theme's own ink (peach on white was unreadable); the
+     level shows as a coloured bar under the chosen option. */
+  .seg3-opt.on.lv-read { box-shadow: inset 0 -3px 0 var(--medium); }
+  .seg3-opt.on.lv-write, .seg3-opt.on.lv-on { box-shadow: inset 0 -3px 0 var(--low); }
+  .seg3-opt:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+  #roBar { margin: 10px 16px; padding: 7px 12px; border: 1px solid var(--medium); border-radius: 8px; font-size: 13px; color: var(--text); background: var(--surface); }
   .permrow label { display: inline-flex; align-items: center; margin-right: 14px; }
   .permrow input { width: auto; margin-right: 5px; vertical-align: -1px; }
   .hidden { display: none !important; }
@@ -2466,27 +2481,11 @@
         <button type="button" onclick="invitePreset('course')">Course dev</button>
       </div>
     </div>
-    <div class="field"><label>Pages they can see</label>
-      <div class="permrow">
-        <label class="small"><input type="checkbox" id="inv_log"> Log</label>
-        <label class="small"><input type="checkbox" id="inv_manage"> Admin</label>
-        <label class="small"><input type="checkbox" id="inv_analytics"> Analytics</label>
-        <label class="small"><input type="checkbox" id="inv_users"> Manage users</label>
-        <!-- r161. These boxes are hand-written, unlike the per-user row lower
-             down which builds itself from PERM_LABELS, and doInvite() reads
-             every key in PERM_LABELS without checking the element is there.
-             So a new permission key that is not also given a box here does not
-             degrade quietly - it throws, and nobody can be invited at all. -->
-        <label class="small"><input type="checkbox" id="inv_irpcs"> IRPCS</label>
-        <label class="small"><input type="checkbox" id="inv_resources"> Resources</label>
-        <label class="small"><input type="checkbox" id="inv_recovery"> Recovery</label>
-        <label class="small"><input type="checkbox" id="inv_marking"> Marking</label>
-      </div>
-      <label style="margin-top:8px;">Fixes they can be given<span class="helphost" data-help="This is who can be picked in Assigned to, not who can see the page. Anyone with Manage users sees both queues anyway, so leave these unticked for an admin who does not actually take fixes."></span></label>
-      <div class="permrow">
-        <label class="small"><input type="checkbox" id="inv_dev"> Developer (tech fixes)</label>
-        <label class="small"><input type="checkbox" id="inv_course"> Course fixes</label>
-      </div>
+    <div class="field"><label>What they can see and change<span class="helphost" data-help="Hidden: not on their rail at all. Read: they can open it and look, but nothing they press there saves. Write: full use. Developers and Course fixes on Write is also who can be picked in Assigned to; on Read they can follow the queue without being given fixes."></span></label>
+      <!-- r248 (FB-0481): built by renderInvitePerms() from PERM_LABELS, the
+           same control as each person's row below, so a new permission key
+           needs no hand-written box here any more (the r161 trap is gone). -->
+      <div id="invPerms"></div>
     </div>
     <button class="primary" onclick="doInvite()">Send invite</button>
     <div id="inviteResult" class="hidden" style="margin-top:10px;">
@@ -3324,13 +3323,12 @@
   <p>Admin holds three things: the people, the feedback on this app, and the playbook behind the troubleshooting steps. It opens on whichever section you were last in.</p>
   <h4>Adding somebody</h4>
   <p><span class="ui">Invite a person</span> sits at the top of <span class="ui">People</span>. Email, first name, then the permissions, then <span class="ui">Send invite</span>. They get an email headed <span class="ui">Your Bugs invite</span> with a link that sets their password and drops them straight in. If it needs sending by hand, the link is shown on screen after the invite goes.</p>
-  <div class="man-note stop">
-    <strong>The invite form and the People list use different words for the same tick</strong>
-    <p>On the invite form, <span class="ui">Admin</span> is the Track permission, and the one that makes somebody an actual admin is <span class="ui">Manage users</span>. In the People list below, those same two ticks read <span class="ui">Track</span> and <span class="ui">Admin</span>.</p>
-    <p>So ticking <span class="ui">Admin</span> on the invite form does not make an admin. Use the <span class="ui">Quick preset</span> buttons and check the result in the People list, where the labels are the ones to trust.</p>
-  </div>
-  <p>The presets only tick boxes, they save nothing, so pressing one and then adjusting a tick is the normal way to use them. There is no role stored anywhere, just the six permissions.</p>
-  <p>The second group, <span class="ui">Fixes they can be given</span>, is a different kind of thing from the first. It decides who can be picked in Assigned to, not who can see the page. An admin sees both fix queues regardless, so leave these unticked for an admin who does not actually take fixes, or they end up in everyone's assignee dropdown.</p>
+  <h4>Hidden, Read and Write</h4>
+  <p>Each permission has its own control, on the invite form and on each person in the list, with the same names in both. <span class="ui">Hidden</span> leaves it off their rail. <span class="ui">Write</span> is full use. <span class="ui">Read</span> lets them open it and look, with a line across the top saying it is read only, and anything they press that would change something is refused with a message saying why.</p>
+  <p>Read is enforced by the back end, not just hidden on the screen, which is why only some areas offer it. Analytics and Recovery only ever read, so they are Hidden or Read. IRPCS and Marking are Hidden or On for now, because they save through their own systems, which do not know about Read yet.</p>
+  <p>The presets only set the controls, they save nothing, so pressing one and then adjusting is the normal way to use them. There is no role stored anywhere, just the permissions.</p>
+  <p><span class="ui">Developers</span> and <span class="ui">Course fixes</span> also decide who can be picked in Assigned to. On Write they can be given fixes; on Read they can follow the queue without turning up in anyone's assignee dropdown. An admin sees both queues regardless, so leave these Hidden for an admin who does not actually take fixes.</p>
+  <p>The tracker will not save a change that leaves nobody with Admin on Write, so it is not possible to lock everyone out of this screen.</p>
   <h4>Disable, do not delete</h4>
   <p>Disabling clears their sessions and any outstanding invite, and keeps the record intact. Deleting removes the account, and anyone whose name is on logged work would leave those entries pointing at nobody.</p>
   <p>The app blocks the two cases that would actually break something. It refuses to delete the last account that can manage users, and it refuses to delete anyone whose name is on a report, a fix, an assignment, or a question. <span class="ui">Delete</span> is for a mistyped invite or a test account.</p>
@@ -3931,7 +3929,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r247 · 2026-10-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r248 · 2026-10-25";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4379,12 +4377,19 @@ function apiGet(action) {
 function apiPost(payload) {
   if (payload && (payload.action === "addIssue" || payload.action === "caseCheckpoint")) {
     payload.defer_after = 1;
-    return apiPostCore_(payload).then(function (res) {
+    return apiPostCore_(payload).then(readOnlyWords_).then(function (res) {
       if (res && res.ok && res.after_id) fileAfterSend_(res.after_id);
       return res;
     });
   }
-  return apiPostCore_(payload);
+  return apiPostCore_(payload).then(readOnlyWords_);
+}
+// r248 (FB-0481): a write refused because the account is read-only there comes
+// back as error "read_only". Every caller shows res.error in a toast, so the
+// sentence goes into error here, once, rather than "Save failed: read_only".
+function readOnlyWords_(res) {
+  if (res && res.error === "read_only") { res.read_only = true; res.error = res.message || "You have read-only access here, so nothing was changed."; }
+  return res;
 }
 function fileAfterSend_(id) {
   var pe = state._pressEl; state._pressEl = null;   // not a button press: no busy spinner on anything
@@ -5534,6 +5539,7 @@ function applyPerms(user) {
   if (!state.viewAs) state.realUser = user;
   state.user = user;
   state.perms = (user && user.perms) || {};
+  state.permsRo = (user && user.perms_ro) || {};   // r248: the areas this account may only read
   // r171 (Edd: the preferences box "showing up over and over again as I change
   // my 'view as' or device").
   //
@@ -9169,6 +9175,25 @@ function updateRail() {
   });
   updateRailBadges();
   renderSubRail();
+  renderRoBar();
+}
+// r248 (FB-0481): say so before anyone presses anything. Which permission a
+// screen belongs to, for the ones that can be read-only. The back end refuses
+// the write either way; this is so nobody finds out by losing an edit.
+var VIEW_RO_KEY_ = { live: "log", instructor: "log", customs: "log", admin: "manage", actions: "manage",
+  dev: "dev", course: "course", users: "users", shipreport: "users", resources: "resources" };
+function renderRoBar() {
+  var main = $("shellMain");
+  if (!main) return;
+  var bar = $("roBar");
+  var k = VIEW_RO_KEY_[state.view];
+  var ro = !!(k && (state.permsRo || {})[k] && (state.perms || {})[k]);
+  if (!ro) { if (bar) bar.remove(); return; }
+  if (!bar) { bar = document.createElement("div"); bar.id = "roBar"; bar.setAttribute("role", "note"); }
+  var label = "";
+  PERM_LABELS.forEach(function (x) { if (x.k === k) label = x.label; });
+  bar.textContent = "Read only: you can look around " + (label ? label + " " : "here ") + "but nothing you change here will save. Ask an admin if you need more.";
+  if (bar.parentElement !== main || main.firstElementChild !== bar) main.insertBefore(bar, main.firstElementChild);
 }
 // Two badges, and only two. Chats counts the open conversations. Issues
 // counts the things waiting on somebody, NOT the size of the log - a number
@@ -14192,6 +14217,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 77, date: "2026-10-25", who: ["users"], text: "Admin: each permission is now Hidden, Read or Write rather than a tick. Read lets someone open an area and look without being able to change anything, and the tracker refuses any change they try. IRPCS and Marking are on or off for now." },
   { n: 76, date: "2026-10-25", text: "What's new and Alerts jump to the top of the rail while there is something unread in them, and drop back to the bottom once there is not." },
   { n: 75, date: "2026-10-25", who: ["users"], text: "RCA has moved under Dev: open Dev and it is RCA records in the list beside it." },
   { n: 74, date: "2026-10-25", who: ["recovery"], text: "Recovery shows the question wording under each answer straight away. Hide questions folds it away." },
@@ -21118,18 +21144,21 @@ function invitePreset(kind) {
     dev: { dev: true },
     course: { course: true }
   };
-  var p = presets[kind] || {};
-  PERM_LABELS.forEach(function (x) { var el = $("inv_" + x.k); if (el) el.checked = !!p[x.k]; });
+  renderInvitePerms(presets[kind] || {});
+}
+function renderInvitePerms(p) {
+  var host = $("invPerms");
+  if (host) host.innerHTML = permControlsHtml("invite", p || {}, {});
 }
 function doInvite() {
   var email = $("invEmail").value.trim(), name = $("invName").value.trim();
   if (!email) { toast("Enter an email."); return; }
-  var perms = {}; PERM_LABELS.forEach(function (x) { perms[x.k] = $("inv_" + x.k).checked; });
-  apiPost({ action: "inviteUser", email: email, name: name, perms: perms }).then(function (res) {
+  var lv = collectPermLevels("invite");
+  apiPost({ action: "inviteUser", email: email, name: name, perms: lv.perms, perms_ro: lv.perms_ro }).then(function (res) {
     if (!res || !res.ok) { toast("Invite failed: " + ((res && res.error) || "unknown")); return; }
     toast("Invited " + email + ".");
     $("invEmail").value = ""; $("invName").value = "";
-    PERM_LABELS.forEach(function (x) { var el = $("inv_" + x.k); if (el) el.checked = false; });
+    renderInvitePerms({});
     if (res.invite_url) showInviteLink(res.invite_url);
     renderUsers();
   }).catch(function (e) { toast("Invite error."); console.error(e); });
@@ -21139,6 +21168,7 @@ function showInviteLink(url) {
   $("inviteLink").value = url;
 }
 function renderUsers() {
+  if ($("invPerms") && !$("invPerms").firstChild) renderInvitePerms({});
   setUsersSection(state.usersSection || localGet("ait_users_section") || "feedback");
   apiGet("listUsers").then(function (res) {
     if (!res || !res.ok) { $("usersList").innerHTML = '<p class="muted">Could not load users.</p>'; return; }
@@ -21586,10 +21616,7 @@ function userRowHtml(u) {
         : (u.invite_pending ? '<span class="badge" style="border-color:var(--medium);color:var(--medium);" title="They have an invite but have not set a password yet.">invite not accepted</span>'
         : '<span class="badge" style="border-color:var(--muted);color:var(--muted);" title="No password and no outstanding invite - send one.">no invite sent</span>')) +
     '</div>' +
-    '<div class="permrow">' + PERM_LABELS.map(function (p) {
-      return '<label class="small"><input type="checkbox" data-email="' + esc(u.email) + '" data-perm="' + p.k + '"' +
-        (u.perms && u.perms[p.k] ? " checked" : "") + '> ' + p.label + '</label>';
-    }).join("") + '</div>' +
+    permControlsHtml(u.email, u.perms || {}, u.perms_ro || {}) +
     '<div class="row" style="margin-top:8px;">' +
       '<button class="ghost small" onclick="saveUserPerms(\'' + esc(u.email) + '\')">Save access</button>' +
       '<button class="ghost small" onclick="resendInvite(\'' + esc(u.email) + '\')">Resend invite</button>' +
@@ -21601,14 +21628,63 @@ function userRowHtml(u) {
     '</div>' +
   '</div>';
 }
-function collectPerms(email) {
-  var perms = {};
-  var boxes = document.querySelectorAll('input[data-email="' + email + '"]');
-  Array.prototype.forEach.call(boxes, function (b) { perms[b.getAttribute("data-perm")] = b.checked; });
-  return perms;
+// ===================== r248 (FB-0481): HIDDEN / READ / WRITE =====================
+// Edd: "Instead of tick boxes, can I have toggles for each of these options for
+// 'hidden/read/write' to give more granular controls."
+//
+// Write is what a tick used to mean. Read is enforced by the back end, not
+// just drawn: every action that is not a pure read refuses a read-only key
+// (hasPerm_ in Code.gs, and tracker-save reads the person's record on each
+// fast save). Only the areas whose back end does that offer Read; Analytics
+// and Recovery only ever read, so their "on" is Read; IRPCS and Marking save
+// through their own back ends, which do not check it yet, so they are on/off.
+var PERM_LEVELS_ = { analytics: ["off", "read"], recovery: ["off", "read"], irpcs: ["off", "on"], marking: ["off", "on"] };
+var PERM_LEVEL_WORDS_ = { off: "Hidden", read: "Read", write: "Write", on: "On" };
+var PERM_RO_KEYS_ = ["log", "manage", "dev", "course", "users", "resources"];   // RO_KEYS in Code.gs
+function permLevelsFor(k) { return PERM_LEVELS_[k] || ["off", "read", "write"]; }
+function permLevelOf(perms, ro, k) {
+  if (!perms || !perms[k]) return "off";
+  var lv = permLevelsFor(k);
+  if (lv.indexOf("write") < 0) return lv[1];
+  return (ro && ro[k]) ? "read" : "write";
+}
+function permControlsHtml(scope, perms, ro) {
+  return '<div class="permgrid" data-scope="' + esc(scope) + '">' + PERM_LABELS.map(function (x) {
+    var cur = permLevelOf(perms, ro, x.k), nm = "perm|" + scope + "|" + x.k;
+    return '<div class="permline"><span class="permname">' + esc(x.label) + '</span>' +
+      '<span class="seg3" role="radiogroup" aria-label="' + esc(x.label) + '">' +
+      permLevelsFor(x.k).map(function (lv) {
+        return '<label class="seg3-opt lv-' + lv + (lv === cur ? " on" : "") + '">' +
+          '<input type="radio" name="' + esc(nm) + '" value="' + lv + '" data-perm="' + x.k + '"' + (lv === cur ? " checked" : "") +
+          ' onchange="permSegChanged(this)">' + PERM_LEVEL_WORDS_[lv] + '</label>';
+      }).join("") + '</span></div>';
+  }).join("") + '</div>';
+}
+function permSegChanged(el) {
+  var seg = el.closest(".seg3");
+  if (!seg) return;
+  Array.prototype.forEach.call(seg.querySelectorAll(".seg3-opt"), function (l) {
+    l.classList.toggle("on", !!l.querySelector("input").checked);
+  });
+}
+function permGrid_(scope) {
+  var grids = document.querySelectorAll(".permgrid");
+  for (var i = 0; i < grids.length; i++) if (grids[i].getAttribute("data-scope") === scope) return grids[i];
+  return null;
+}
+function collectPermLevels(scope) {
+  var grid = permGrid_(scope), perms = {}, ro = {};
+  PERM_LABELS.forEach(function (x) {
+    var c = grid ? grid.querySelector('input[data-perm="' + x.k + '"]:checked') : null;
+    var lv = c ? c.value : "off";
+    perms[x.k] = lv !== "off";
+    if (lv === "read" && PERM_RO_KEYS_.indexOf(x.k) >= 0) ro[x.k] = true;
+  });
+  return { perms: perms, perms_ro: ro };
 }
 function saveUserPerms(email) {
-  apiPost({ action: "updateUser", email: email, perms: collectPerms(email) }).then(function (res) {
+  var lv = collectPermLevels(email);
+  apiPost({ action: "updateUser", email: email, perms: lv.perms, perms_ro: lv.perms_ro }).then(function (res) {
     if (!res || !res.ok) { toast("Save failed: " + ((res && res.error) || "unknown")); return; }
     toast("Access saved.");
   }).catch(function (e) { toast("Save error."); console.error(e); });
