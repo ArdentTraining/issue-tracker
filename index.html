@@ -832,6 +832,9 @@
   }
   .rail-badge.on { display: block; }
   .rail-badge.quiet { background: var(--accent); color: #fff; }
+  /* r256: a page folded into a group, and a group with fewer than two pages. Classes, not
+     style.display, so the lost-view check (which reads style.display) is unaffected. */
+  .rail-item.in-group, .rail-item.rail-group.group-off { display: none !important; }
   .rail-div { height: 1px; background: var(--line); margin: 7px 4px; flex-shrink: 0; }
   /* r147: the bell's panel */
   #bellPanel { position: fixed; z-index: 61; width: min(420px, calc(100vw - 24px)); max-height: 70vh; overflow-y: auto;
@@ -1226,6 +1229,18 @@
        anyone who hasn't got it yet. r253.1: its own permission, hand-picked in
        Admin (Edd only to start). Ardent Notes only ever shows a person their own
        meetings and ones shared with them. -->
+  <!-- r256 (Edd, 27 Oct): "my rail has far too much on it. It needs some more
+       sub rails". Four groups, each one rail item with its pages in the sub-rail:
+       Mine (Notes, Tasks, Edd), Content (Course fixes, IRPCS, Resources),
+       Support (Shipping, Recovery, Marking) and Stats (Stats, Reports). The real
+       buttons stay in the page (ids, badges and gating untouched); a group hides
+       its members only when the person can open two or more of them, so anyone
+       with a single page in a group keeps that page's own button. -->
+  <button type="button" class="rail-item rail-group" id="railMine" onclick="railGroupGo('railMine')" title="Mine - your notes, tasks and tools">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/><polyline points="15.5 15.5 17.5 17.5 21 14"/></svg>
+    <span class="ri-word">Mine</span>
+    <span class="rail-badge" id="railBadgeMine"></span>
+  </button>
   <button type="button" class="rail-item" id="railNotes" onclick="railGo('notes')" title="Notes - your meeting notes from Ardent Notes">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><polyline points="15 3 15 7 19 7"/><line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="14" y2="16"/></svg>
     <span class="ri-word">Notes</span>
@@ -1241,6 +1256,10 @@
        occasional tools (Edd, 18 Sep); instructors only, i.e. 'log'. -->
   <!-- r188 (Edd): Customs grew into Shipping, with the monthly report and the
        customs invoice as its two sub-rail pages. Same people ('log'). -->
+  <button type="button" class="rail-item rail-group" id="railSupport" onclick="railGroupGo('railSupport')" title="Support - shipping, quiz recovery and marking">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/><line x1="6" y1="6" x2="9.5" y2="9.5"/><line x1="14.5" y1="14.5" x2="18" y2="18"/><line x1="18" y1="6" x2="14.5" y2="9.5"/><line x1="9.5" y1="14.5" x2="6" y2="18"/></svg>
+    <span class="ri-word">Support</span>
+  </button>
   <button type="button" class="rail-item" id="railShipping" onclick="railGo('shipping')" title="Shipping - customs invoices, and the monthly report for admins">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><polyline points="3 7.5 12 12 21 7.5"/><line x1="12" y1="12" x2="12" y2="21"/><line x1="7.5" y1="5.2" x2="16.5" y2="9.8"/></svg>
     <span class="ri-word">Shipping</span>
@@ -1259,13 +1278,9 @@
     <span class="ri-word">Tasks</span>
     <span class="rail-badge" id="railBadgeTasks"></span>
   </button>
-  <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-    <span class="ri-word">Dev</span>
-  </button>
-  <button type="button" class="rail-item" id="railRCA" onclick="railGo('rca')" title="RCA - private AI diagnostic records on promoted issues. Admin and developer eyes only.">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-    <span class="ri-word">RCA</span>
+  <button type="button" class="rail-item rail-group" id="railContent" onclick="railGroupGo('railContent')" title="Content - course fixes, IRPCS and website resources">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><path d="M9 3v7l2-1.5L13 10V3"/></svg>
+    <span class="ri-word">Content</span>
   </button>
   <button type="button" class="rail-item" id="railCourse" onclick="railGo('course')" title="Course fixes">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="15" y2="11"/></svg>
@@ -1296,6 +1311,10 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
     <span class="ri-word">Marking</span>
   </button>
+  <button type="button" class="rail-item rail-group" id="railInsights" onclick="railGroupGo('railInsights')" title="Stats - the numbers, and Reports">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>
+    <span class="ri-word">Stats</span>
+  </button>
   <button type="button" class="rail-item" id="railReports" onclick="railGo('reports')" title="Reports">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><polyline points="7 14 11 9 15 12 20 6"/></svg>
     <span class="ri-word">Reports</span>
@@ -1303,6 +1322,15 @@
   <button type="button" class="rail-item" id="railStats" onclick="railGo('analytics')" title="Analytics">
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>
     <span class="ri-word">Stats</span>
+  </button>
+  <!-- r256: Dev and RCA moved down beside Admin, under the groups. -->
+  <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+    <span class="ri-word">Dev</span>
+  </button>
+  <button type="button" class="rail-item" id="railRCA" onclick="railGo('rca')" title="RCA - private AI diagnostic records on promoted issues. Admin and developer eyes only.">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+    <span class="ri-word">RCA</span>
   </button>
   <button type="button" class="rail-item" id="railUsers" onclick="railGo('users')" title="Admin">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/></svg>
@@ -5529,6 +5557,7 @@ function applyPermGates() {
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
+  railGroupsApply();   // r256
   // The divider only earns its place if there is something on both sides.
   if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs || p.resources || p.recovery || p.marking) ? "" : "none";
 
@@ -9197,7 +9226,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railNotes", "railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railMine", "railSupport", "railContent", "railInsights", "railNotes", "railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -9316,6 +9345,11 @@ function updateRail() {
                ["railReports", v === "reports"], ["railHelp", v === "manual" || v === "instructors"],
                ["railRCA", v === "rca"]];
   pairs.forEach(function (p) { var el = $(p[0]); if (el) el.classList.toggle("active", !!p[1]); });
+  RAIL_GROUPS_.forEach(function (g) {
+    var el = $(g.id), page = railGroupPageOf(v);
+    if (el) el.classList.toggle("active", !!page && page.group === g);
+    if (page && page.group === g) state.railGroupLast[g.id] = page.view;
+  });
   // The segment bar belongs to Issues, so it only shows there.
   var wrap = $("issuesSegWrap");
   if (wrap) wrap.classList.toggle("on", v === "admin" && SHELL_ON);
@@ -11165,6 +11199,81 @@ function customsAgain(no, copy) {
     $("cu_status").textContent = edit ? "Editing " + no + ". Change what you need, then save." : "Copied from " + no + ". Change what you need, then make the invoice.";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }).catch(function () { $("cu_status").textContent = "That did not work."; });
+}
+
+// ===================== r256: RAIL GROUPS =====================
+// Each group lists its pages in order. `view` is what railGo() takes; `views`
+// are every state.view that counts as that page (Shipping has two); `ok` says
+// whether this person can open it, using exactly the rule railGate uses.
+var RAIL_GROUPS_ = [
+  { id: "railMine", label: "Mine", pages: [
+    { view: "notes", label: "Notes", rail: "railNotes", ok: function (p) { return !!p.notes; } },
+    { view: "tasks", label: "Tasks", rail: "railTasks", ok: function () { return isEddUser(); } },
+    { view: "edd", label: "Edd's tools", rail: "railEdd", ok: function () { return isEddUser(); } }
+  ], badges: ["railBadgeEdd", "railBadgeTasks"] },
+  { id: "railContent", label: "Content", pages: [
+    { view: "course", label: "Course fixes", rail: "railCourse", ok: function (p) { return !!(p.course || p.users); } },
+    { view: "irpcs", label: "IRPCS", rail: "railIrpcs", ok: function (p) { return !!p.irpcs; } },
+    { view: "resources", label: "Resources", rail: "railResources", ok: function (p) { return !!p.resources; } }
+  ] },
+  { id: "railSupport", label: "Support", pages: [
+    { view: "shipping", views: ["customs", "shipreport"], label: "Shipping", rail: "railShipping", ok: function (p) { return !!p.log; } },
+    { view: "recovery", label: "Recovery", rail: "railRecovery", ok: function (p) { return !!p.recovery; } },
+    { view: "marking", label: "Marking", rail: "railMarking", ok: function (p) { return !!p.marking; } }
+  ] },
+  { id: "railInsights", label: "Stats", pages: [
+    { view: "analytics", label: "Stats", rail: "railStats", ok: function (p) { return !!p.analytics; } },
+    { view: "reports", label: "Reports", rail: "railReports", ok: function (p) { return !!p.analytics; } }
+  ] }
+];
+state.railGroupLast = state.railGroupLast || {};
+
+function railGroupPages(g) {
+  var p = state.perms || {};
+  return g.pages.filter(function (x) { return x.ok(p); });
+}
+// The group page a view belongs to, if it is one the person can open.
+function railGroupPageOf(v) {
+  for (var i = 0; i < RAIL_GROUPS_.length; i++) {
+    var g = RAIL_GROUPS_[i];
+    var hit = railGroupPages(g).filter(function (x) { return x.view === v || (x.views || []).indexOf(v) >= 0; })[0];
+    if (hit) return { group: g, view: hit.view, page: hit };
+  }
+  return null;
+}
+// Two or more pages: show the group, fold the members in. One: just that page's
+// own button, as before. None: neither.
+function railGroupsApply() {
+  RAIL_GROUPS_.forEach(function (g) {
+    var pages = railGroupPages(g), grouped = pages.length >= 2;
+    var el = $(g.id);
+    if (el) el.classList.toggle("group-off", !grouped);
+    g.pages.forEach(function (x) { var b = $(x.rail); if (b) b.classList.toggle("in-group", grouped); });
+  });
+}
+// The group button goes back to the page last open in it, or its first page.
+function railGroupGo(id) {
+  var g = RAIL_GROUPS_.filter(function (x) { return x.id === id; })[0];
+  if (!g) return;
+  var pages = railGroupPages(g);
+  if (!pages.length) return;
+  var last = state.railGroupLast[id];
+  var to = pages.filter(function (x) { return x.view === last; })[0] || pages[0];
+  railGo(to.view);
+}
+// A group's badge is the sum of its members' badges (the r60 rule: one source).
+function railGroupBadges() {
+  RAIL_GROUPS_.forEach(function (g) {
+    if (!g.badges) return;
+    var badge = $(g.id === "railMine" ? "railBadgeMine" : ""), n = 0;
+    if (!badge) return;
+    g.badges.forEach(function (bid) {
+      var b = $(bid);
+      if (b && b.classList.contains("on")) n += parseInt(b.textContent, 10) || 0;
+    });
+    badge.textContent = n > 99 ? "99+" : String(n);
+    badge.classList.toggle("on", !!n);
+  });
 }
 
 // ============================ NOTES (r253) ============================
@@ -14582,6 +14691,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 83, date: "2026-10-27", text: "A shorter rail: Mine, Support, Content and Stats each gather a few pages, listed down the side when you open one." },
   { n: 82, date: "2026-10-27", who: ["notes"], text: "Notes on the rail shows your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet." },
   { n: 81, date: "2026-10-25", who: ["manage", "users"], text: "A repeat report that makes a tech issue high priority no longer sends it straight to the developers while the troubleshooting is barely started. It needs the same as a new filing (a few checklist steps done, including logging out and back in or looking as the student), and the issue says what is missing. Three different students reporting it still sends it on." },
   { n: 80, date: "2026-10-25", text: "Every page now says what it is at the top (and in the browser tab), for example Today, Log a new issue, or Issues · Board, so you can name the screen in feedback without a screenshot." },
@@ -14767,7 +14877,11 @@ function updateRailBadges() {
   var mb = $("railBadgeMore");
   if (mb) {
     var sheet = $("railMoreSheet"), total = 0;
-    if (sheet) sheet.querySelectorAll(".rail-badge.on").forEach(function (b) { total += parseInt(b.textContent, 10) || 0; });
+    railGroupBadges();
+    if (sheet) sheet.querySelectorAll(".rail-badge.on").forEach(function (b) {
+      if (b.closest(".in-group")) return;   // r256: counted once, on its group
+      total += parseInt(b.textContent, 10) || 0;
+    });
     mb.textContent = total > 99 ? "99+" : String(total);
     mb.classList.toggle("on", !!total);
   }
@@ -14843,7 +14957,30 @@ window.addEventListener("resize", sizeReportsFrame);
 // still in the markup and still work, this is a second way in, not a second
 // code path. A count next to an item is optional and comes from the same list
 // the view draws, never from its own sum (the Round 60 rule).
+// r256: a page in a rail group shows the group's pages at the top of its
+// sub-rail, then its own sections (if it has more than one) under its name.
 function subRailSpec() {
+  var own = subRailSpecOwn_();
+  var page = railGroupPageOf(state.view);
+  if (!page) return own;
+  var pages = railGroupPages(page.group);
+  if (pages.length < 2) return own;
+  var items = pages.map(function (x) { return { key: "@grp:" + x.view, label: x.label }; });
+  if (own && own.items && own.items.length > 1) {
+    items = items.concat([{ head: true, label: own.head }], own.items);
+  }
+  return {
+    head: page.group.label,
+    cur: own ? own.cur : null,
+    pageKey: "@grp:" + page.view,
+    items: items,
+    go: function (k) {
+      if (String(k).indexOf("@grp:") === 0) { railGo(k.slice(5)); return; }
+      if (own && own.go) own.go(k);
+    }
+  };
+}
+function subRailSpecOwn_() {
   var v = state.view, p = state.perms || {};
   if (v === "actions" || v === "admin") {
     var items = [];
