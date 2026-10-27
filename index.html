@@ -232,6 +232,16 @@
   .notes-acts li { display: flex; gap: 8px; margin: 6px 0; }
   .notes-tick { flex: 0 0 auto; color: var(--muted); }
   .notes-done > span:last-child { color: var(--muted); text-decoration: line-through; }
+  /* r257: series, folders, Ask */
+  .notes-series .lbl { display: flex; gap: 6px; align-items: baseline; }
+  .notes-caret { color: var(--muted); font-size: 11px; width: 10px; flex: 0 0 auto; }
+  .irpcs-row.notes-child { padding-left: 27px; background: var(--bg); }
+  .irpcs-row.notes-child .lbl { font-size: 12px; }
+  .notes-folder { font-size: 10px; border-radius: 999px; padding: 0 7px; background: var(--surface-2); color: var(--text); }
+  .notes-file select { width: auto; display: inline-block; padding: 3px 8px; font-size: 12px; margin-left: 4px; }
+  .notes-cite { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .notes-cite:hover { text-decoration: underline; }
+  .notes-answer .notes-body { font-size: 14px; }
 
   .irpcs-edit { min-height: 200px; }
   .irpcs-edit .fld { margin-bottom: 12px; }
@@ -2275,8 +2285,9 @@
      with a half-hour notesTicket. Nothing real is in this file. -->
 <div id="notesView" class="wrap hidden">
   <h2 style="margin:0 0 4px;">Notes</h2>
-  <p class="hint" style="margin:0 0 14px;">Your meeting notes from Ardent Notes, and any a colleague has shared with you.</p>
+  <p class="hint" style="margin:0 0 14px;">Your meeting notes from Ardent Notes, and any a colleague has shared with you. Ask a question across all of them, or file them into folders.</p>
   <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="notesHead"></div>
+  <div class="card notes-answer" style="padding:12px 14px;margin-bottom:12px;display:none;" id="notesAsk"></div>
   <div class="irpcs-split">
     <div class="irpcs-list" id="notesList"></div>
     <div id="notesItem"></div>
@@ -3258,6 +3269,8 @@
 <section id="man-notes" data-perm="notes" data-title="Meeting notes">
   <h3>Meeting notes</h3>
   <p><span class="ui">Notes</span> on the rail shows the notes Ardent Notes has written for your meetings, newest first, along with any a colleague has shared with you. Search finds a meeting by anything said in it. Pick one to read its notes and actions; <span class="ui">Open in Ardent Notes</span> goes to the full meeting, with the transcript, ticking actions and rewriting the notes.</p>
+  <p><span class="ui">Ask</span> answers a question from every meeting you can see, with numbered links to the meetings it used; pick a folder first to keep it to that folder. A follow-up question keeps the conversation going, and <span class="ui">Clear</span> starts again.</p>
+  <p>Repeating meetings show as one line with how many there have been; open it to see each one. Use the <span class="ui">Folder</span> menu on a meeting you recorded to file it (Instructing, Business management, Tech, Marketing, or a new one). The rest of its series moves with it, and later meetings in the series land there too. New meetings are often filed for you when a folder obviously fits.</p>
   <p>If you haven't used Ardent Notes yet, the page offers to install it: the laptop app on Windows, or the phone app on Android. Sign in with your Ardent email. Ardent Notes can also send a bot to a call you can't make.</p>
   <p>Only you see your meetings here. Nobody else's appear unless they've shared them with you. An admin turns Notes on for each person in Admin.</p>
 </section>
@@ -11313,26 +11326,35 @@ function railGroupBadges() {
   });
 }
 
-// ============================ NOTES (r253) ============================
+// ============================ NOTES (r253, r257) ============================
 // Meeting notes from Ardent Notes (our own note-taker: laptop and phone apps,
-// and the bot that joins calls). Read-only here: the list, a search, and each
-// meeting's notes and actions, with a link to open it in Ardent Notes.
+// and the bot that joins calls). The list, a search, an Ask box across every
+// meeting, folders, and repeating meetings grouped as a series. Reading is all
+// it does here, apart from filing your own meetings into folders.
 //
 // The back end is Ardent Notes on Vercel (/api/tracker). Auth: notesTicket,
-// signed with NOTES_TICKET_SECRET for aud 'notes'. Ardent Notes maps the email
-// in the ticket to its own account and returns only what that person could see
-// there: their own meetings and ones shared with them. No permission key here,
-// because there is nothing to gate beyond that.
+// signed with NOTES_TICKET_SECRET for aud 'notes', behind the 'notes'
+// permission. Ardent Notes maps the email in the ticket to its own account and
+// returns only what that person could see there: their own meetings and ones
+// shared with them. Filing is owner-only, checked there.
+//
+// r257 (Edd, 27 Oct): "repeating meetings group, and we should be able to sort
+// meetings into other groups, like instructing, business management, tech" and
+// "an LLM ask tool to ask questions from all the meeting notes". A series is
+// the calendar's own (every instance of a recurring event shares an iCal UID),
+// or the title when there's no calendar event. Filing one meeting files its
+// whole series, and later meetings in it follow.
 //
 // PUBLIC REPO: no meeting, note or name appears in this file. Everything real
-// arrives from the API at run time. Notes are rendered by notesMd(), which
-// escapes everything first and only then adds headings, bullets and bold.
+// arrives from the API at run time. Notes and answers are rendered by notesMd(),
+// which escapes everything first and only then adds headings, bullets and bold.
 var NOTES_API = "https://ardent-notes.vercel.app/api/tracker";
 var notes = {
   ticket: "", exp: 0,
-  list: null, account: null, apps: null, listLoading: false, listError: "",
-  q: "", qTimer: 0,
-  openId: "", item: null, itemLoading: false, itemError: ""
+  list: null, account: null, apps: null, folders: [], listLoading: false, listError: "",
+  q: "", qTimer: 0, folder: "", open: {},
+  openId: "", item: null, itemLoading: false, itemError: "", filing: false,
+  ask: { q: "", busy: false, text: "", sources: [], error: "", history: [] }
 };
 
 function notesTicket(force) {
@@ -11341,7 +11363,9 @@ function notesTicket(force) {
   return apiPost({ action: "notesTicket" }).then(function (r) {
     if (!r || !r.ok || !r.ticket) {
       var e = (r && r.error) || "";
-      throw new Error(/NOTES_TICKET_SECRET/.test(e) ? "Notes isn't switched on yet: NOTES_TICKET_SECRET isn't set in the tracker's Script Properties." : (e || "Couldn't get a Notes ticket."));
+      throw new Error(e === "forbidden" ? "This account doesn't have the Notes permission."
+        : /NOTES_TICKET_SECRET/.test(e) ? "Notes isn't switched on yet: NOTES_TICKET_SECRET isn't set in the tracker's Script Properties."
+        : (e || "Couldn't get a Notes ticket."));
     }
     notes.ticket = r.ticket;
     notes.exp = r.expires_at || (now + 1500);
@@ -11349,20 +11373,24 @@ function notesTicket(force) {
   });
 }
 
-// One silent retry on a 401 with a fresh ticket, never more.
-function notesApi(path, query, retried) {
+// opts: { query } for a GET, { body } for a POST. One silent retry on a 401
+// with a fresh ticket, never more.
+function notesApi(path, opts, retried) {
+  opts = opts || {};
   return notesTicket(!!retried).then(function (t) {
-    return fetch(NOTES_API + path + (query ? "?" + query : ""), { cache: "no-store", headers: { authorization: "Bearer " + t } });
+    var init = { method: opts.body ? "POST" : "GET", cache: "no-store", headers: { authorization: "Bearer " + t } };
+    if (opts.body) { init.headers["content-type"] = "application/json"; init.body = JSON.stringify(opts.body); }
+    return fetch(NOTES_API + path + (opts.query ? "?" + opts.query : ""), init);
   }).then(function (r) {
     return r.text().then(function (txt) {
       var j = null;
       try { j = JSON.parse(txt); } catch (e) {}
-      if (r.status === 401 && !retried) { notes.ticket = ""; notes.exp = 0; return notesApi(path, query, true); }
+      if (r.status === 401 && !retried && !(j && /different NOTES_TICKET_SECRET|doesn't have NOTES/.test(j.error || ""))) { notes.ticket = ""; notes.exp = 0; return notesApi(path, opts, true); }
       if (!r.ok) throw new Error((j && j.error) || ("Notes returned " + r.status + "."));
       return j || {};
     });
   }, function (e) {
-    if (e && /ticket|Notes/.test(e.message || "")) throw e;
+    if (e && /ticket|Notes|permission/.test(e.message || "")) throw e;
     throw new Error("Couldn't reach Ardent Notes (" + ((e && e.message) || e) + ").");
   });
 }
@@ -11370,7 +11398,7 @@ function notesApi(path, query, retried) {
 function renderNotes() {
   if (!(state.perms || {}).notes) return;
   if (!notes.list && !notes.listLoading && !notes.listError) notesLoadList();
-  notesRenderHead(); notesRenderList(); notesRenderItem();
+  notesRenderHead(); notesRenderAsk(); notesRenderList(); notesRenderItem();
 }
 
 function notesLoadList() {
@@ -11378,16 +11406,17 @@ function notesLoadList() {
   notes.listLoading = true; notes.listError = "";
   notesRenderList();
   var q = notes.q.trim();
-  notesApi("/meetings", q ? "q=" + encodeURIComponent(q) : "").then(function (j) {
+  notesApi("/meetings", { query: q ? "q=" + encodeURIComponent(q) : "" }).then(function (j) {
     if (q !== notes.q.trim()) return;   // typed again while this was on its way
     notes.list = j.meetings || [];
     notes.account = j.account !== false;
     notes.apps = j.apps || null;
+    notes.folders = j.folders || notes.folders || [];
   }).catch(function (e) {
     notes.listError = (e && e.message) || String(e);
   }).then(function () {
     notes.listLoading = false;
-    notesRenderHead(); notesRenderList(); notesRenderItem();
+    notesRenderHead(); notesRenderAsk(); notesRenderList(); notesRenderItem();
   });
 }
 
@@ -11396,6 +11425,7 @@ function notesSearch(v) {
   clearTimeout(notes.qTimer);
   notes.qTimer = setTimeout(function () { notes.list = null; notesLoadList(); }, 350);
 }
+function notesSetFolder(v) { notes.folder = v; notesRenderList(); }
 
 function notesWhen(iso) {
   if (!iso) return "";
@@ -11403,7 +11433,10 @@ function notesWhen(iso) {
   if (isNaN(d)) return "";
   return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
-
+function notesDay(iso) {
+  var d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
 function notesSourceLabel(s) { return s === "bot" ? "Bot" : s === "desktop" ? "Laptop" : s === "phone" ? "Phone" : ""; }
 
 // The install links carry the half-hour ticket, because a plain link can't send a header.
@@ -11420,6 +11453,17 @@ function notesInstallHtml(big) {
   return '<div class="notes-install">' + parts.join("") + '</div>';
 }
 
+function notesFolderOptions(cur, withAll) {
+  var opt = function (v, label) { return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + '>' + esc(label) + '</option>'; };
+  var used = {};
+  (notes.list || []).forEach(function (m) { if (m.folder) used[m.folder] = 1; });
+  var names = (notes.folders || []).slice();
+  Object.keys(used).forEach(function (f) { if (names.indexOf(f) < 0) names.push(f); });
+  return (withAll ? opt("", "All folders") : opt("", "Not filed")) +
+    names.map(function (f) { return opt(f, f); }).join("") +
+    (withAll ? opt("@none", "Not filed") : opt("@new", "New folder..."));
+}
+
 function notesRenderHead() {
   var host = $("notesHead");
   if (!host) return;
@@ -11431,13 +11475,142 @@ function notesRenderHead() {
       '<p class="small muted" style="margin:10px 0 0;">On Windows, if it warns about an unknown publisher, choose More info, then Run anyway. On Android, allow installs from your browser when it asks.</p>';
     return;
   }
+  // Rebuilding the head would lose what's half-typed in the Ask box, so it's built once.
+  if (host.getAttribute("data-built") === "1") {
+    var sel = $("notesFolderSel"); if (sel) sel.innerHTML = notesFolderOptions(notes.folder, true);
+    return;
+  }
+  host.setAttribute("data-built", "1");
   host.innerHTML =
+    '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">' +
+      '<input type="text" id="notesAskQ" placeholder="Ask your meetings, e.g. What did we decide about the course launch?" style="flex:1 1 320px;min-width:0;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();notesAsk();}" />' +
+      '<button type="button" class="primary" id="notesAskBtn" style="flex:0 0 auto;width:auto;padding:8px 18px;" onclick="notesAsk()">Ask</button>' +
+    '</div>' +
     '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">' +
-      '<input type="search" id="notesQ" placeholder="Search your meetings" value="' + esc(notes.q) + '" oninput="notesSearch(this.value)" style="max-width:260px;" />' +
+      '<select id="notesFolderSel" onchange="notesSetFolder(this.value)" title="Folder" style="flex:0 0 auto;width:auto;">' + notesFolderOptions(notes.folder, true) + '</select>' +
+      '<input type="search" id="notesQ" placeholder="Search" oninput="notesSearch(this.value)" style="flex:0 1 220px;min-width:0;" />' +
       '<button class="ghost small" style="padding:5px 10px;width:auto;flex:0 0 auto;" onclick="notes.list=null;notesLoadList()" title="Fetch the list again">Refresh</button>' +
       '<span style="flex:1 1 auto;"></span>' +
       '<details class="notes-get"><summary class="small">Get the apps</summary>' + notesInstallHtml(false) + '</details>' +
     '</div>';
+}
+
+// ---- Ask ----
+function notesAsk() {
+  var input = $("notesAskQ");
+  var q = ((input && input.value) || "").trim();
+  if (q.length < 2 || notes.ask.busy) return;
+  var a = notes.ask;
+  a.q = q; a.busy = true; a.text = ""; a.sources = []; a.error = "";
+  notesRenderAsk();
+  var folder = notes.folder && notes.folder !== "@none" ? notes.folder : null;
+  var history = a.history.slice(-6);
+  notesTicket().then(function (t) {
+    return fetch(NOTES_API + "/ask", {
+      method: "POST", cache: "no-store",
+      headers: { authorization: "Bearer " + t, "content-type": "application/json" },
+      body: JSON.stringify({ question: q, folder: folder, history: history })
+    });
+  }).then(function (r) {
+    if (!r.ok) return r.text().then(function (txt) { var j = null; try { j = JSON.parse(txt); } catch (e) {} throw new Error((j && j.error) || ("Notes returned " + r.status + ".")); });
+    // The first line is JSON with the sources; the rest is the answer as it's written.
+    var reader = r.body.getReader(), dec = new TextDecoder(), buf = "", gotSources = false;
+    function pump() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) return;
+        buf += dec.decode(chunk.value, { stream: true });
+        if (!gotSources) {
+          var nl = buf.indexOf("\n");
+          if (nl < 0) return pump();
+          try { a.sources = JSON.parse(buf.slice(0, nl)).sources || []; } catch (e) { a.sources = []; }
+          buf = buf.slice(nl + 1); gotSources = true;
+        }
+        a.text = buf;
+        notesRenderAsk();
+        return pump();
+      });
+    }
+    return pump();
+  }).catch(function (e) {
+    a.error = (e && e.message) || String(e);
+  }).then(function () {
+    a.busy = false;
+    if (a.text && !a.error) a.history = a.history.concat([{ role: "user", content: q }, { role: "assistant", content: a.text }]).slice(-6);
+    notesRenderAsk();
+  });
+}
+function notesAskClear() {
+  notes.ask = { q: "", busy: false, text: "", sources: [], error: "", history: [] };
+  var input = $("notesAskQ"); if (input) input.value = "";
+  notesRenderAsk();
+}
+// Escapes, then the markdown, then turns [2] into a link to that meeting.
+function notesAnswerHtml(text, sources) {
+  var by = {};
+  (sources || []).forEach(function (s) { by[s.n] = s; });
+  return notesMd(text).replace(/\[(\d+)\]/g, function (all, n) {
+    var s = by[n];
+    if (!s) return all;
+    return '<a href="#" class="notes-cite" data-id="' + esc(s.meeting_id) + '" title="' + esc(s.title || "") + '" onclick="event.preventDefault();notesOpen(this.dataset.id)">[' + n + ']</a>';
+  });
+}
+function notesRenderAsk() {
+  var host = $("notesAsk");
+  if (!host) return;
+  var a = notes.ask;
+  if (notes.account === false || (!a.busy && !a.text && !a.error)) { host.innerHTML = ""; host.style.display = "none"; return; }
+  host.style.display = "";
+  var cited = [], seen = {};
+  (a.text.match(/\[(\d+)\]/g) || []).forEach(function (m) {
+    var n = parseInt(m.slice(1), 10);
+    var s = (a.sources || []).filter(function (x) { return x.n === n; })[0];
+    if (s && !seen[n]) { seen[n] = 1; cited.push(s); }
+  });
+  host.innerHTML =
+    '<div class="row" style="gap:8px;align-items:flex-start;">' +
+      '<div style="flex:1;min-width:0;"><div class="small muted" style="margin-bottom:4px;">' + esc(a.q) +
+        (notes.folder && notes.folder !== "@none" ? ' · in ' + esc(notes.folder) : '') + '</div>' +
+      (a.error ? '<p class="small" style="margin:0;color:var(--coral);">' + esc(a.error) + '</p>'
+        : (a.text ? '<div class="notes-body" style="margin-top:0;">' + notesAnswerHtml(a.text, a.sources) + '</div>' : '<p class="small muted" style="margin:0;">Reading your meetings...</p>')) +
+      '</div>' +
+      '<button class="ghost small" style="padding:4px 10px;width:auto;flex:0 0 auto;" onclick="notesAskClear()" title="Clear the answer and start a new conversation">Clear</button>' +
+    '</div>' +
+    (cited.length && !a.busy ? '<div class="small muted" style="margin-top:8px;">From: ' + cited.map(function (s) {
+      return '<a href="#" class="notes-cite" data-id="' + esc(s.meeting_id) + '" onclick="event.preventDefault();notesOpen(this.dataset.id)">[' + s.n + '] ' + esc(s.title || "Meeting") + ', ' + esc(notesDay(s.started_at)) + '</a>';
+    }).join(" · ") + '</div>' : "") +
+    (a.history.length && !a.busy ? '<div class="small muted" style="margin-top:6px;">Ask a follow-up and it keeps this conversation in mind.</div>' : "");
+}
+
+// ---- List: filtered by folder, repeating meetings grouped as a series ----
+function notesFiltered() {
+  var f = notes.folder;
+  return (notes.list || []).filter(function (m) {
+    if (!f) return true;
+    if (f === "@none") return !m.folder;
+    return m.folder === f;
+  });
+}
+function notesGroups(rows) {
+  var groups = [], bySeries = {};
+  rows.forEach(function (m) {
+    var k = m.series ? (m.mine ? "s:" : "x:") + m.series : "m:" + m.id;
+    if (!bySeries[k]) { bySeries[k] = { key: k, items: [] }; groups.push(bySeries[k]); }
+    bySeries[k].items.push(m);
+  });
+  return groups;   // rows arrive newest first, so each group's first item is its latest
+}
+function notesToggleSeries(k) { notes.open[k] = !notes.open[k]; notesRenderList(); }
+
+function notesRowHtml(m, child) {
+  return '<button type="button" class="irpcs-row' + (child ? " notes-child" : "") + (m.id === notes.openId ? " active" : "") + '" data-id="' + esc(m.id) + '" onclick="notesOpen(this.dataset.id)">' +
+    '<div class="lbl">' + (child ? esc(notesWhen(m.started_at)) : '<strong>' + esc(m.title || "Meeting") + '</strong>') + '</div>' +
+    '<div class="meta">' + (child ? "" : '<span>' + esc(notesWhen(m.started_at)) + '</span>') +
+      (notesSourceLabel(m.source) ? '<span class="irpcs-kind">' + esc(notesSourceLabel(m.source)) + '</span>' : '') +
+      (!child && m.folder ? '<span class="notes-folder">' + esc(m.folder) + '</span>' : '') +
+      (m.shared_by ? '<span>from ' + esc(m.shared_by) + '</span>' : '') +
+    '</div>' +
+    (m.snippet ? '<div class="small muted notes-snip">' + esc(String(m.snippet).replace(/\\n/g, " ")).replace(/&lt;&lt;/g, "<mark>").replace(/&gt;&gt;/g, "</mark>") + '</div>' : "") +
+  '</button>';
 }
 
 function notesRenderList() {
@@ -11447,16 +11620,24 @@ function notesRenderList() {
   host.style.display = "";
   if (notes.listLoading && !notes.list) { host.innerHTML = '<p class="small muted" style="padding:10px;">Loading your meetings...</p>'; return; }
   if (notes.listError) { host.innerHTML = '<p class="small" style="padding:10px;color:var(--coral);">' + esc(notes.listError) + '</p>'; return; }
-  var rows = notes.list || [];
-  if (!rows.length) { host.innerHTML = '<p class="small muted" style="padding:10px;">' + (notes.q.trim() ? "No meetings match." : "No notes yet. Record a meeting with Ardent Notes and it lands here.") + '</p>'; return; }
-  host.innerHTML = rows.map(function (m) {
-    var snip = m.snippet ? '<div class="small muted notes-snip">' + esc(String(m.snippet).replace(/\\n/g, " ")).replace(/&lt;&lt;/g, "<mark>").replace(/&gt;&gt;/g, "</mark>") + '</div>' : "";
-    return '<button type="button" class="irpcs-row' + (m.id === notes.openId ? " active" : "") + '" data-id="' + esc(m.id) + '" onclick="notesOpen(this.dataset.id)">' +
-      '<div class="lbl"><strong>' + esc(m.title || "Meeting") + '</strong></div>' +
-      '<div class="meta"><span>' + esc(notesWhen(m.started_at)) + '</span>' +
-        (notesSourceLabel(m.source) ? '<span class="irpcs-kind">' + esc(notesSourceLabel(m.source)) + '</span>' : '') +
-        (m.shared_by ? '<span>from ' + esc(m.shared_by) + '</span>' : '') +
-      '</div>' + snip + '</button>';
+  var rows = notesFiltered();
+  if (!rows.length) {
+    host.innerHTML = '<p class="small muted" style="padding:10px;">' + (notes.q.trim() ? "No meetings match." : notes.folder ? "Nothing in this folder yet." : "No notes yet. Record a meeting with Ardent Notes and it lands here.") + '</p>';
+    return;
+  }
+  // A search shows every hit on its own line; otherwise a series is one line that opens out.
+  if (notes.q.trim()) { host.innerHTML = rows.map(function (m) { return notesRowHtml(m, false); }).join(""); return; }
+  host.innerHTML = notesGroups(rows).map(function (g) {
+    if (g.items.length < 2) return notesRowHtml(g.items[0], false);
+    var latest = g.items[0];
+    var openHere = notes.open[g.key] || g.items.some(function (m) { return m.id === notes.openId; });
+    return '<button type="button" class="irpcs-row notes-series' + (openHere ? " open" : "") + '" data-key="' + esc(g.key) + '" onclick="notesToggleSeries(this.dataset.key)">' +
+        '<div class="lbl"><span class="notes-caret">' + (openHere ? "&#9662;" : "&#9656;") + '</span><strong>' + esc(latest.title || "Meeting") + '</strong></div>' +
+        '<div class="meta"><span>' + g.items.length + ' meetings</span><span>latest ' + esc(notesDay(latest.started_at)) + '</span>' +
+          (latest.folder ? '<span class="notes-folder">' + esc(latest.folder) + '</span>' : '') +
+          (latest.shared_by ? '<span>from ' + esc(latest.shared_by) + '</span>' : '') +
+        '</div></button>' +
+      (openHere ? g.items.map(function (m) { return notesRowHtml(m, true); }).join("") : "");
   }).join("");
 }
 
@@ -11474,6 +11655,32 @@ function notesOpen(id) {
     notes.itemLoading = false;
     notesRenderItem();
     if (window.innerWidth <= 900 && $("notesItem")) $("notesItem").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+// Filing: the owner's choice, for the whole series. The list updates in place.
+function notesFile(v) {
+  var m = notes.item;
+  if (!m || !m.mine || notes.filing) return;
+  if (v === "@new") {
+    var name = (prompt("New folder name") || "").replace(/\s+/g, " ").trim().slice(0, 60);
+    if (!name) { notesRenderItem(); return; }
+    v = name;
+  }
+  var folder = v || null;
+  notes.filing = true;
+  notesApi("/meetings/" + encodeURIComponent(m.id) + "/folder", { body: { folder: folder, series: true } }).then(function (r) {
+    m.folder = folder;
+    (notes.list || []).forEach(function (x) {
+      if (x.id === m.id || (r && r.series && x.mine && m.series && x.series === m.series)) x.folder = folder;
+    });
+    if (folder && (notes.folders || []).indexOf(folder) < 0) notes.folders.push(folder);
+    toast(folder ? (r && r.series ? "Filed the whole series in " + folder + "." : "Filed in " + folder + ".") : "Taken out of its folder.");
+  }).catch(function (e) {
+    toast((e && e.message) || "Couldn't file that.");
+  }).then(function () {
+    notes.filing = false;
+    notesRenderHead(); notesRenderList(); notesRenderItem();
   });
 }
 
@@ -11510,18 +11717,24 @@ function notesRenderItem() {
   var m = notes.item;
   if (!m) { host.innerHTML = ""; return; }
   var mins = m.duration_seconds ? Math.max(1, Math.round(m.duration_seconds / 60)) + " min" : "";
+  var siblings = m.series ? (notes.list || []).filter(function (x) { return x.series === m.series && x.mine === m.mine; }).length : 0;
   var acts = (m.actions || []).map(function (a) {
     var meta = [a.owner, a.due].filter(Boolean).join(", ");
     return '<li class="' + (a.done ? "notes-done" : "") + '"><span class="notes-tick">' + (a.done ? "&#10003;" : "&#9744;") + '</span><span>' +
       notesInline(a.task) + (meta ? ' <span class="muted">· ' + esc(meta) + '</span>' : "") +
       (a.context ? '<span class="small muted" style="display:block;">' + esc(a.context) + '</span>' : "") + '</span></li>';
   }).join("");
+  var filing = m.mine
+    ? '<label class="small muted notes-file">Folder <select onchange="notesFile(this.value)"' + (notes.filing ? " disabled" : "") + '>' + notesFolderOptions(m.folder || "", false) + '</select>' +
+        (siblings > 1 ? ' <span>moves all ' + siblings + ' in this series</span>' : '') + '</label>'
+    : (m.folder ? '<span class="small muted">Folder: ' + esc(m.folder) + '</span>' : '');
   host.innerHTML = '<div class="card notes-card">' +
     '<div class="row" style="gap:10px;align-items:flex-start;">' +
       '<div style="flex:1;min-width:0;"><div class="notes-title">' + esc(m.title || "Meeting") + '</div>' +
       '<p class="small muted" style="margin:0;">' + esc([notesWhen(m.started_at), mins, notesSourceLabel(m.source)].filter(Boolean).join(" · ")) + '</p></div>' +
       '<a class="notes-btn" href="' + esc(m.url) + '" target="_blank" rel="noopener">Open in Ardent Notes</a>' +
     '</div>' +
+    (filing ? '<div style="margin-top:8px;">' + filing + '</div>' : '') +
     '<div class="notes-body">' + (m.summary_md ? notesMd(m.summary_md) : '<p class="muted">No notes were written for this meeting.</p>') + '</div>' +
     (acts ? '<h4 class="notes-h">Actions</h4><ul class="notes-acts">' + acts + '</ul>' : "") +
     (m.mine ? "" : '<p class="small muted" style="margin:12px 0 0;">Shared with you. Ticking actions and rewriting happen in Ardent Notes.</p>') +
@@ -15674,7 +15887,8 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
-  { n: 84, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email, plus Insights and Photos owed. The separate portal is no longer needed for any of it." },
+  { n: 85, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email, plus Insights and Photos owed. The separate portal is no longer needed for any of it." },
+  { n: 84, date: "2026-10-27", who: ["notes"], text: "Notes: ask a question across all your meetings, file them into folders, and see repeating meetings grouped together." },
   { n: 83, date: "2026-10-27", text: "A shorter rail: Mine, Support, Content and Stats each gather a few pages, listed down the side when you open one." },
   { n: 82, date: "2026-10-27", who: ["notes"], text: "Notes on the rail shows your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet." },
   { n: 81, date: "2026-10-25", who: ["manage", "users"], text: "A repeat report that makes a tech issue high priority no longer sends it straight to the developers while the troubleshooting is barely started. It needs the same as a new filing (a few checklist steps done, including logging out and back in or looking as the student), and the issue says what is missing. Three different students reporting it still sends it on." },
