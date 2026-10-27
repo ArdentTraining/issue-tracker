@@ -54,7 +54,7 @@ var SLACK_NOTICES = {
   query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
   query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
   dev_queue_low:     { on: true,  to: 'SLACK_ADMINS' },              // r129: falls back to the main channel until the private admin channel is wired
-  unrouted_digest:   { on: true,  to: 'SLACK_BUSINESS_MGMT' },       // r140 (Edd): Tuesday 09:00, what nobody has picked up -> Business Management
+  unrouted_digest:   { on: true,  to: 'SLACK_BUSINESS_MGMT' },       // r140 (Edd): Tuesday 09:00, what isn't assigned to anyone. r251: sent to Edd as a DM (UNROUTED_DIGEST_DM); this channel is only the fallback if the DM fails
   shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
   // r175 (Edd, 17 Sep): the three blind spots from that morning's triage. The
   // chase list goes where the instructors already live; "we have closed this
@@ -679,6 +679,7 @@ function doPost(e) {
     TOUCHED_IDS_ = {};
     MIRROR_FULL_ = {};
     BLIND_REQ_ = false;   // r244
+    WRITE_REQ_ = false;   // r248: set once the action is known, below
 
     // Public auth actions (no session yet).
     // Self-deploy: gated by its own DEPLOY_KEY (script property), not a user
@@ -725,7 +726,22 @@ function doPost(e) {
     fileMark_('auth');
     if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
     if (action === 'logout') return jsonOut(logout_(body.token));
-    if (!hasPerm_(user, reqPerm_(action))) return jsonOut({ ok: false, error: 'forbidden' });
+    // r248 (FB-0481): read-only access. Everything not on READ_ACTIONS_ is a
+    // write, and while WRITE_REQ_ is set hasPerm_ treats a read-only key as
+    // absent, so every check further in (updateIssue_'s field rules, the
+    // admin-only statuses...) follows the same rule without being touched.
+    WRITE_REQ_ = !READ_ACTIONS_[action];
+    if (!hasPerm_(user, reqPerm_(action))) {
+      // Say which it was. "forbidden" for somebody who can see the screen
+      // reads like a fault; read-only is a decision, and it should say so.
+      if (WRITE_REQ_) {
+        WRITE_REQ_ = false;
+        var couldRead = hasPerm_(user, reqPerm_(action));
+        WRITE_REQ_ = true;
+        if (couldRead) return jsonOut({ ok: false, error: 'read_only', message: 'You have read-only access here, so nothing was changed.' });
+      }
+      return jsonOut({ ok: false, error: 'forbidden' });
+    }
     body._user = user;
     BLIND_REQ_ = studentBlind_(user);   // r244: every answer from here is cleaned for code-only accounts
 
@@ -743,6 +759,11 @@ function doPost(e) {
     // held REPORTS_TICKET_SECRET and a leak there should open Marking and
     // nothing else. Own audience too. Half an hour, like the portal tickets.
     if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET', onlyPerm: true }));
+    // r253: Notes. The back end is Ardent Notes on Vercel (ardent-notes.vercel.app/api/tracker),
+    // so, like Marking, it gets its own key and its own audience: a leak there opens a person's
+    // meeting notes and nothing else of ours. r253.1: behind the 'notes' permission (hand-picked
+    // in Admin); Ardent Notes still only returns what the email in the ticket can already see.
+    if (action === 'notesTicket') return jsonOut(mintPortalTicket_(user, 'notes', 30, { aud: 'notes', secretName: 'NOTES_TICKET_SECRET' }));
     // r202/r203: reads from the Supabase mirror. Twelve hours, because the page
     // keeps it with the saved board so an open does not first wait on Apps
     // Script; it only ever reads the board, the same thing the session can.
@@ -750,6 +771,7 @@ function doPost(e) {
     if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
     if (action === 'instructorGuide') return jsonOut(instructorGuide_(body));
     if (action === 'storeAdmin') return jsonOut(storeAdmin_(body));
+    if (action === 'fileTimings') return jsonOut(fileTimings_());   // r254
     if (action === 'slackHistory') return jsonOut(slackHistory_(body));             // r208.7: read-only, what Slack holds                // r208: phase 2 step 2, practice import and self-test
     if (action === 'slackProbe') return jsonOut(body.test_kind ? slackTestPost_(body.test_kind) : slackProbe_());                          // r207.1: is each Slack route alive, without posting          // r205: the For Instructors doc, live
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
@@ -911,7 +933,9 @@ var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_
 // r246: 'marking' opens the Marking section (the question bank first, then
 // the papers), whose back end is ardent-portal on Vercel. Hand-picked: Edd
 // only to start with (24 Oct), and nobody holds it until an admin ticks it.
-var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery', 'marking'];
+// r253.1: 'notes' opens Notes (meeting notes from Ardent Notes). Hand-picked:
+// Edd only to start with (27 Oct), and nobody holds it until an admin ticks it.
+var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery', 'marking', 'notes'];
 var SESSION_DAYS = 30;
 var HASH_ROUNDS = 2000;
 // Password-reset links expire after this many minutes. The expiry is packed into
@@ -1146,10 +1170,63 @@ function touchSession_(f, token, extend) {
     });
   } catch (e) {}
 }
+// r248 (FB-0481, Edd): hidden / read / write per permission. perms_json keeps
+// its booleans (true = the account can SEE that area, which is what Reports,
+// the tickets and every Edge Function already read), plus "_ro": the keys it
+// may only read. permsOf_ strips "_ro" so nothing downstream ever sees a
+// non-boolean in perms; roOf_ hands it out separately as perms_ro.
+//
+// Only keys whose back end refuses a read-only write can be read-only:
+//   Code.gs        log, manage, dev, course, users, resources
+//   tracker-save   the same keys (it reads the person's record on every save,
+//                  so a change lands at once rather than when a ticket expires)
+// analytics and recovery only ever read, so "on" already means read. irpcs and
+// marking write through their own back ends (irpcs-editor / irpcs-media, and
+// ardent-portal in the marking project), which do not check perms_ro yet, so
+// they stay on/off until they do. perms_ro is in every ticket already, so
+// adding either is a change on that side only, plus its key here.
+var RO_KEYS = ['log', 'manage', 'dev', 'course', 'users', 'resources'];
+// Pure reads. Everything else is a write, so a new action is a write until
+// somebody decides otherwise (the same fail-closed rule as reqPerm_).
+var READ_ACTIONS_ = {};
+['getIssues', 'getIssuesList', 'getIssue', 'bootstrap', 'getInstructors', 'me', 'getAssignees',
+ 'listLiveCases', 'chatwootList', 'chatwootContactUrl', 'peekStudentActivity',
+ 'customsList', 'customsFetch', 'customsPacks', 'customsFind', 'customsMySigner',
+ 'shipReport', 'shipCostHistory', 'shipMonthlyPreview', 'resourcesList',
+ 'chatScanList', 'chatBackSweepState', 'lessonIssueCounts', 'faultIssueMap', 'devMetrics',
+ 'listContentSuggestions', 'listUsers', 'getPlaybook', 'listPlaybookSuggestions', 'listKnownFixFlags',
+ 'getFeedback', 'listVoiceGuides', 'myFeedback', 'instructorGuide', 'slackHistory',
+ // Tickets are reads here: what the ticket opens is checked where it is used,
+ // and perms_ro travels inside it.
+ 'reportsTicket', 'tasksTicket', 'trackerTicket', 'irpcsTicket', 'recoveryTicket', 'markingTicket', 'notesTicket',
+ 'fileTimings'   // r254
+].forEach(function (a) { READ_ACTIONS_[a] = true; });
+var WRITE_REQ_ = false;
+
 function permsOf_(user) {
   var p = {};
   try { p = user.perms_json ? JSON.parse(user.perms_json) : {}; } catch (e) { p = {}; }
+  if (!p || typeof p !== 'object') p = {};
+  delete p._ro;
   return p;
+}
+function roOf_(user) {
+  var raw = {};
+  try { raw = user.perms_json ? JSON.parse(user.perms_json) : {}; } catch (e) { raw = {}; }
+  var ro = (raw && raw._ro && typeof raw._ro === 'object') ? raw._ro : {};
+  var out = {};
+  RO_KEYS.forEach(function (k) { if (raw[k] === true && ro[k] === true) out[k] = true; });
+  return out;
+}
+// Build the stored perms_json from what the admin screen sent: perms (seen)
+// and perms_ro (of those, read only). A read-only tick on a key that is not
+// seen, or that cannot be read-only, is dropped rather than stored.
+function permsJsonFrom_(perms, permsRo) {
+  var out = {}, ro = {};
+  PERM_KEYS.forEach(function (k) { out[k] = !!(perms && perms[k]); });
+  RO_KEYS.forEach(function (k) { if (out[k] && permsRo && permsRo[k] === true) ro[k] = true; });
+  if (Object.keys(ro).length) out._ro = ro;
+  return JSON.stringify(out);
 }
 function hasPerm_(user, req) {
   if (req === 'any') return true;
@@ -1158,6 +1235,8 @@ function hasPerm_(user, req) {
   // rather than open. If a new action 403s, the fix is a case in reqPerm_.
   if (req === 'none') return false;
   var p = permsOf_(user);
+  // r248: on a write, a read-only key counts as not held.
+  if (WRITE_REQ_) { var ro = roOf_(user); for (var rk in ro) if (ro[rk]) p[rk] = false; }
   if (req === 'devcourse') return !!(p.dev || p.course || p.users);
   // 'work' = anyone who actually works issues, so they can tick the checklist
   // wherever it shows (Track or the Developers / Course queues).
@@ -1300,6 +1379,8 @@ function reqPerm_(action) {
     // user's own and the Edge Function scopes every read and write to the email
     // inside the ticket. Nothing here to hold a permission key over.
     case 'tasksTicket': return 'any';
+    // r253.1: hands out a credential for Ardent Notes, so gated here and again where it's minted.
+    case 'notesTicket': return 'notes';
     case 'trackerTicket': return 'any';
     case 'mirrorSyncNow': return 'users';
     // r205: the For Instructors doc carries the shared logins (phone, the
@@ -1308,6 +1389,11 @@ function reqPerm_(action) {
     case 'instructorGuide': return 'manage';
     case 'slackProbe': return 'users';
     case 'storeAdmin': return 'users';
+    // r254 (Edd, 27 Oct): the filing timings on their own. The Claude account
+    // lost 'users' in the r248 security round, and the timings are the one
+    // thing from storeAdmin it still needs: stopwatch marks and tags, no
+    // issue text, no store switches. A read, so analytics Read is enough.
+    case 'fileTimings': return 'analytics';
     case 'slackHistory': return 'users';
     // The IRPCS section. Both of these hand a credential to another system, so
     // both are gated here AND checked again where they are minted - the UI
@@ -1335,7 +1421,7 @@ function reqPerm_(action) {
 function publicUser_(user) {
   // {email, name, perms} is an embedding contract with Reports (r67) - only
   // ever ADD to this shape.
-  return { email: user.email, name: user.name, perms: permsOf_(user), prefs: prefsOf_(user) };
+  return { email: user.email, name: user.name, perms: permsOf_(user), perms_ro: roOf_(user), prefs: prefsOf_(user) };
 }
 function prefsOf_(user) {
   try { var p = JSON.parse(String((user && user.prefs_json) || '') || '{}'); return (p && typeof p === 'object') ? p : {}; }
@@ -1841,13 +1927,12 @@ function adminResetLink_(body) {
 function inviteUser_(body) {
   var email = String(body.email || '').trim().toLowerCase();
   if (!email || email.indexOf('@') < 0) return { ok: false, error: 'Enter a valid email.' };
-  var perms = {};
-  PERM_KEYS.forEach(function (k) { perms[k] = !!(body.perms && body.perms[k]); });
+  var permsJson = permsJsonFrom_(body.perms, body.perms_ro);   // r248
   var token = newInviteToken_();
   var existing = findUserByEmail_(email);
   if (existing) {
     setCell_(existing, 'name', body.name || existing.user.name || '');
-    setCell_(existing, 'perms_json', JSON.stringify(perms));
+    setCell_(existing, 'perms_json', permsJson);
     setCell_(existing, 'status', 'invited');
     setCell_(existing, 'invite_token', token);
     setCell_(existing, 'pass_hash', '');
@@ -1855,7 +1940,7 @@ function inviteUser_(body) {
   } else {
     var u = {
       email: email, name: body.name || '', status: 'invited',
-      perms_json: JSON.stringify(perms), pass_hash: '', pass_salt: '',
+      perms_json: permsJson, pass_hash: '', pass_salt: '',
       invite_token: token, session_token: '', session_expires: '',
       created_at: new Date().toISOString()
     };
@@ -1878,7 +1963,7 @@ function listUsers_() {
     // unopened somewhere.
     var accepted = !!String(values[r][idx['pass_hash']] || '').trim();
     var invitePending = !accepted && !!String(values[r][idx['invite_token']] || '').trim();
-    out.push({ email: u.email, name: u.name, status: u.status, perms: permsOf_(u),
+    out.push({ email: u.email, name: u.name, status: u.status, perms: permsOf_(u), perms_ro: roOf_(u),
                accepted: accepted, invite_pending: invitePending,
                created_at: String(values[r][idx['created_at']] || '') });
   }
@@ -1959,8 +2044,22 @@ function updateUser_(body) {
   var f = findUserByEmail_(body.email);
   if (!f) return { ok: false, error: 'No such user.' };
   if (body.perms) {
-    var perms = {}; PERM_KEYS.forEach(function (k) { perms[k] = !!body.perms[k]; });
-    setCell_(f, 'perms_json', JSON.stringify(perms));
+    var nextJson = permsJsonFrom_(body.perms, body.perms_ro);   // r248
+    // Never leave the tracker with nobody who can change Admin: making the
+    // last full admin read-only (or taking Admin away) would lock everyone
+    // out of this screen.
+    var next = JSON.parse(nextJson);
+    var keepsWrite = next.users === true && !(next._ro && next._ro.users);
+    if (!keepsWrite && String(f.user.status || '') === 'active' && permsOf_(f.user).users === true && !roOf_(f.user).users) {
+      var others = usersTable_(true), ov = others.values, oi = others.idx, n = 0;
+      for (var r = 1; r < ov.length; r++) {
+        var ou = rowToUser_(ov[r], oi);
+        if (!ou.email || String(ou.email).toLowerCase() === String(f.user.email).toLowerCase()) continue;
+        if (String(ou.status || '') === 'active' && permsOf_(ou).users === true && !roOf_(ou).users) n++;
+      }
+      if (!n) return { ok: false, error: 'That would leave nobody who can change Admin. Give someone else full Admin first.' };
+    }
+    setCell_(f, 'perms_json', nextJson);
   }
   if (body.name != null) setCell_(f, 'name', body.name);
   if (body.disable === true) {
@@ -3389,19 +3488,22 @@ function storeDryRun_() {
     fields_differing: fieldsSeen, examples: diffs, list_ms: { sheet: tSheet, store: tStore }, single_reads: sample };
 }
 
+// r254: the filing stopwatch, readable on its own (see reqPerm_). Marks,
+// tags, the after-filing queue's ids and ages, and whether the sweep exists.
+function fileTimings_() {
+  var ft = [], pend = {}, sweep = false;
+  try { ft = JSON.parse(PropertiesService.getScriptProperties().getProperty('FILE_TIMINGS') || '[]'); } catch (e) {}
+  try { pend = JSON.parse(PropertiesService.getScriptProperties().getProperty(FILE_AFTER_KEY_) || '{}'); } catch (e) {}
+  try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'fileAfterSweep') sweep = true; }); } catch (e) {}
+  return { ok: true, timings: ft, after_pending: Object.keys(pend).map(function (k) { return { id: k, age_s: Math.round((Date.now() - pend[k].at) / 1000) }; }), sweep_trigger: sweep };
+}
 function storeAdmin_(data) {
   var what = String((data && data.what) || '');
   // Its last step checks real records are refused while the Sheet is the record,
   // so in Supabase mode it would leave a blank record behind (4 Oct 2026).
   if (what === 'selftest') return storeLive_() ? { ok: false, error: 'not while the store is the record' } : storeSelfTest();
   if (what === 'import') return storePracticeImport();
-  if (what === 'file_timings') {
-    var ft = [], pend = {}, sweep = false;
-    try { ft = JSON.parse(PropertiesService.getScriptProperties().getProperty('FILE_TIMINGS') || '[]'); } catch (e) {}
-    try { pend = JSON.parse(PropertiesService.getScriptProperties().getProperty(FILE_AFTER_KEY_) || '{}'); } catch (e) {}
-    try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'fileAfterSweep') sweep = true; }); } catch (e) {}
-    return { ok: true, timings: ft, after_pending: Object.keys(pend).map(function (k) { return { id: k, age_s: Math.round((Date.now() - pend[k].at) / 1000) }; }), sweep_trigger: sweep };
-  }
+  if (what === 'file_timings') return fileTimings_();
   if (what === 'mode') {
     var m = storeCall_({ op: 'mode' }), log = {};
     try { log = JSON.parse(PropertiesService.getScriptProperties().getProperty('STORE_SHADOW_LOG') || '{}'); } catch (e) {}
@@ -3493,6 +3595,7 @@ function invalidateIssueCache_() {
 // out. Being on this list is the ONLY way to keep the cache through a call,
 // so a new write action is safe by default.
 var READ_ONLY_ACTIONS = {
+  fileTimings: 1,   // r254
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1, getAssignees: 1,
   getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1, chatBackSweepState: 1, lessonIssueCounts: 1,
@@ -3524,6 +3627,7 @@ var READ_ONLY_ACTIONS = {
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, caseTouch: 1,
   recoveryTicket: 1,                    // r243: mints a ticket, no sheet
   markingTicket: 1,                     // r246: same
+  notesTicket: 1,                       // r253: same
   trackerTicket: 1, mirrorSyncNow: 1,   // r202: neither touches a sheet
   instructorGuide: 1,                   // r205: reads a Google Doc
   // nextAction DOES write one cell (its own cached answer), and it still
@@ -3652,6 +3756,7 @@ var BOOT_EXTRAS_ = {
 };
 var BOOT_EXTRAS_KEY_ = 'ait_boot_x1_';
 var PURE_READS_ = {
+  fileTimings: 1,   // r254
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1,
   getAssignees: 1, mirror: 1, chatScanList: 1, listLiveCases: 1, lessonIssueCounts: 1,
@@ -3667,7 +3772,7 @@ var PURE_READS_ = {
   // r201: pure reads that were missing, and each dropped every extra.
   myFeedback: 1, peekStudentActivity: 1, devMetrics: 1, estimateFixSize: 1,
   tasksTicket: 1, irpcsTicket: 1, irpcsLearnerToken: 1, reportsTicket: 1, trackerTicket: 1, mirrorSyncNow: 1,
-  recoveryTicket: 1, markingTicket: 1,
+  recoveryTicket: 1, markingTicket: 1, notesTicket: 1,
   instructorGuide: 1,
   // r227: this one reads a single script property, and the page asked for it
   // three times on every open (once per renderLive). Each ask dropped every
@@ -4672,11 +4777,34 @@ function addReportToIssue_(id, data, report) {
   // including the same conversation imported twice, so counting entries here
   // would still send one student to the developers on a triple-filing even
   // with the score fixed. Three reports means three PEOPLE.
+  //
+  // r250 (FB-0483, Edd): "this shouldn't be with developers yet... we haven't
+  // even got iPad model... The developers would just ask for that." Paul
+  // Devine's second chat bumped his issue to high and this sent it straight on,
+  // with the troubleshooting barely started. A fresh filing has had a gate for
+  // that since FB-0462 (three checklist steps done, and the student logged out
+  // and back in or one of us looked as them); the repeat-report path never got
+  // it. Now high priority needs the same, judged on the issue's checklist and
+  // this report's together. Three different people still route on their own:
+  // that is a real fault whatever one student's checklist says. Fast-track by
+  // an admin still routes, as at filing.
   if (String(rec.category).toLowerCase() === 'tech_issue' &&
-      String(rec.status).toLowerCase() === 'open' &&
-      (rec.report_count >= 3 || String(rec.priority).toLowerCase() === 'high')) {
-    rec.status = 'with_dev';
-    if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
+      String(rec.status).toLowerCase() === 'open') {
+    var cl250 = {}, tried250 = 0;
+    [rec.checklist_json, data.checklist_json].forEach(function (j) {
+      try { var o = j ? JSON.parse(j) : {}; for (var k in o) if (o[k] === 'done') cl250[k] = 'done'; } catch (e) {}
+    });
+    for (var k250 in cl250) tried250++;
+    var basics250 = cl250.logout_login === 'done' || cl250.checked_as_student === 'done';
+    var ft250 = (data.fast_track === true || data.fast_track === 'true') && data._user && hasPerm_(data._user, 'users');
+    var high250 = String(rec.priority).toLowerCase() === 'high';
+    if (rec.report_count >= 3 || ft250 || (high250 && tried250 >= 3 && basics250)) {
+      rec.status = 'with_dev';
+      if (!rec.dev_passed_at) rec.dev_passed_at = new Date().toISOString();
+    } else if (high250 && !/Not passed to the developers yet/.test(String(rec.priority_reason || ''))) {
+      rec.priority_reason = (String(rec.priority_reason || '') +
+        ' [Not passed to the developers yet: the troubleshooting checklist is not far enough on (the device and how it fails, the student logging out and back in or one of us looking as them). Once it is, an admin can pass it on, or fast-track it if it cannot wait.]').trim();
+    }
   }
 
   var stamp = new Date().toISOString().slice(0, 10);
@@ -4951,6 +5079,10 @@ function sameIssue_(data) {
     return { ok: true, match_id: null, why: 'nothing to match on yet' };
   }
   var id = null;
+  // r255: one gen for the key and the reply, so the page can hand it back.
+  var askGen = issueMatchGen_();
+  if (!askGen) { bumpIssueMatchGen_(); askGen = issueMatchGen_(); }   // expired: start one, so there is something to hand back
+  data.split_gen = askGen;
   try { id = aiMatchIssue_(data, category); } catch (e) {
     return { ok: false, error: String(e) };
   }
@@ -4963,9 +5095,15 @@ function sameIssue_(data) {
     list.unshift({ at: Date.now(), who: who, key: aiMatchKey_(data, category), quiet: !!data.quiet, parts: aiMatchParts_(data, category) });
     c.put('ait_match_asks', JSON.stringify(list.slice(0, 30)), 21600);
   } catch (e) {}
-  return { ok: true, match_id: id || null };
+  return { ok: true, match_id: id || null, gen: askGen };
 }
 
+// r255: a split's earlier parts, never a match for a later one.
+function splitExclude_(data) {
+  var out = {};
+  (Array.isArray(data && data.split_exclude) ? data.split_exclude : []).slice(0, 12).forEach(function (x) { out[String(x)] = 1; });
+  return out;
+}
 function aiMatchIssue_(data, category) {
   var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) return null;
@@ -5004,10 +5142,14 @@ function aiMatchIssue_(data, category) {
         if (mine.length) fileTag_('asked_s_ago', Math.round((Date.now() - mine[0].at) / 1000));
       } catch (e) {}
     }
-    if (mhit != null) return mhit === '-' ? null : mhit;
+    if (mhit != null) return (mhit === '-' || splitExclude_(data)[mhit]) ? null : mhit;
   } catch (e) { mcache = null; }
+  if (data.split_gen != null && FILE_T_) fileTag_('split_part', true);
   var found = aiMatchIssueRun_(data, category, isCourse);
-  try { if (mcache) mcache.put(mkey, found || '-', 900); } catch (e) {}
+  // r255: an answer worked out with siblings left out is not stored, because
+  // the key does not carry who was left out.
+  var excl = Object.keys(splitExclude_(data)).length;
+  try { if (mcache && !excl) mcache.put(mkey, found || '-', 900); } catch (e) {}
   return found;
 }
 // r232 (Edd, 11 Oct): the saved answer to "does this match an issue we have?"
@@ -5027,12 +5169,20 @@ function aiMatchParts_(data, category) {
   var h = function (v) { return rowHash_(String(v == null ? '' : v)).slice(0, 8); };
   var raw = String(data.raw_text || '').slice(0, 6000), sum = String(data.summary || '');
   return { category: h(category), lesson: h(String(data.lesson_code || '').trim().toLowerCase()), summary: h(sum),
-    raw: h(raw), device: h(data.device_info), gen: h(issueMatchGen_()), rn: raw.length, sn: sum.length };
+    raw: h(raw), device: h(data.device_info), gen: h(matchGenFor_(data)), rn: raw.length, sn: sum.length };
+}
+// r255 (Edd, 27 Oct): a split's parts are checked against the log as it stood
+// when the page asked about them (split_gen, handed back by sameIssue), so the
+// answers asked for in the background survive the parts' own saves. The format
+// is ours (bumpIssueMatchGen_); anything else falls back to the live one.
+function matchGenFor_(data) {
+  var g = data && data.split_gen != null ? String(data.split_gen) : '';
+  return /^\d{10,16}\.\d{1,7}$/.test(g) ? g : issueMatchGen_();
 }
 function aiMatchKey_(data, category) {
   var text = [String(category || ''), String(data.lesson_code || '').trim().toLowerCase(),
     String(data.summary || ''), String(data.raw_text || '').slice(0, 6000), String(data.device_info || ''),
-    issueMatchGen_()].join('\u0001');
+    matchGenFor_(data)].join('\u0001');
   return 'ait_match_' + rowHash_(text);
 }
 function aiMatchIssueRun_(data, category, isCourse) {
@@ -5046,9 +5196,11 @@ function aiMatchIssueRun_(data, category, isCourse) {
 
   var wantLesson = String(data.lesson_code || '').trim().toLowerCase();
   var candidates = [];
+  var skipIds = splitExclude_(data);   // r255: a split's own earlier parts
   for (var r = 0; r < rows.length; r++) {
     var row = rows[r];
     if (!row.issue_id) continue;
+    if (skipIds[row.issue_id]) continue;
     // A "past" row is imported history from the old spreadsheets and must never
     // be resurrected. Resolved rows ARE offered now (r177, Edd), but only ones
     // closed inside REOPEN_WINDOW_DAYS: see the note by that constant.
@@ -5656,9 +5808,12 @@ function listAssignees_() {
   for (var r = 1; r < values.length; r++) {
     var u = rowToUser_(values[r], idx);
     if (String(u.status).toLowerCase() !== 'active') continue;
-    var p = permsOf_(u);
-    if (!p.course && !p.dev) continue; // only people who can take a fix queue
-    out.push({ name: u.name || u.email, email: u.email, course: !!p.course, dev: !!p.dev });
+    var p = permsOf_(u), ro = roOf_(u);
+    // r248: read-only on a queue means looking, not taking fixes, so they are
+    // not offered in Assigned to for it.
+    var dev = !!p.dev && !ro.dev, course = !!p.course && !ro.course;
+    if (!course && !dev) continue; // only people who can take a fix queue
+    out.push({ name: u.name || u.email, email: u.email, course: course, dev: dev });
   }
   return { ok: true, assignees: out };
 }
@@ -7243,7 +7398,8 @@ function setTicketSecrets_(data) {
   var set = [];
   // r246: 'marking' joins. Its other copy is MARKING_TICKET_SECRET in the
   // ardent-portal Vercel project, not a Supabase function secret.
-  [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET'], ['marking', 'MARKING_TICKET_SECRET']].forEach(function (pair) {
+  // r253: 'notes' too. Its other copy is NOTES_TICKET_SECRET in the ardent-notes Vercel project.
+  [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET'], ['marking', 'MARKING_TICKET_SECRET'], ['notes', 'NOTES_TICKET_SECRET']].forEach(function (pair) {
     var v = data[pair[0]];
     if (v === undefined || v === null || v === '') return;
     v = String(v).trim();
@@ -7256,7 +7412,8 @@ function setTicketSecrets_(data) {
     ok: true, set: set,
     machine_len: (props.getProperty('MACHINE_TICKET_SECRET') || '').length,
     nudge_len: (props.getProperty('TRACKER_NUDGE_SECRET') || '').length,
-    marking_len: (props.getProperty('MARKING_TICKET_SECRET') || '').length
+    marking_len: (props.getProperty('MARKING_TICKET_SECRET') || '').length,
+    notes_len: (props.getProperty('NOTES_TICKET_SECRET') || '').length
   };
 }
 
@@ -8921,7 +9078,7 @@ function unroutedDigest() {
 
   var appUrl = getAppUrl_();
   if (!stuck.length) {
-    slackPost_('unrouted_digest', ':white_check_mark: *Nothing waiting to be picked up.* Every open issue is with somebody.');
+    unroutedSend_(':white_check_mark: *Nothing waiting to be assigned.* Every open issue is with somebody.');
     return;
   }
   // The list is the LAST WEEK's arrivals (Edd, r141: "anything newly unrouted,
@@ -8937,10 +9094,10 @@ function unroutedDigest() {
 
   var lines;
   if (!recent.length) {
-    lines = [':white_check_mark: *Nothing new waiting to be picked up.* Everything reported this week is with somebody.'];
+    lines = [':white_check_mark: *Nothing new waiting to be assigned.* Everything reported this week is with somebody.'];
   } else {
     lines = [':clipboard: *' + recent.length + ' issue' + (recent.length === 1 ? '' : 's') +
-      ' reported this week that nobody has picked up*'];
+      ' reported this week that haven\'t been assigned to anyone*'];
     lines.push('');
     recent.slice(0, 12).forEach(function (i) {
       var days = Math.floor((now - new Date(i.submitted_at)) / day);
@@ -8952,11 +9109,36 @@ function unroutedDigest() {
     lines.push('');
     lines.push('Each one needs passing to the developers or the course team, or closing.');
   }
+  // r251 (Edd): "what are the two older issues?" A count he has to go and
+  // look up is no use, so up to five are named; more than that stays a count.
+  // The old line also claimed they were "mostly course fixes from the old log",
+  // which stopped being true once that backlog was cleared, so it is gone.
   if (older) {
+    var olderRows = stuck.filter(function (i) { return now - new Date(i.submitted_at) >= RECENT_DAYS * day; });
     lines.push('');
-    lines.push('_Also ' + older + ' older open issues nobody has picked up, most of them course fixes carried over from the old log._');
+    lines.push('_Also ' + older + ' older open issue' + (older === 1 ? '' : 's') + ' not assigned to anyone' + (older <= 5 ? ':_' : '._'));
+    if (older <= 5) olderRows.forEach(function (i) {
+      var days = Math.floor((now - new Date(i.submitted_at)) / day);
+      lines.push('• ' + String(i.priority || '?').toUpperCase() + ' (' + days + 'd) ' +
+        String(i.summary || '(no summary)').slice(0, 120) + '  <' + issueLink_(i, appUrl) + '|open>');
+    });
   }
-  slackPost_('unrouted_digest', lines.join('\n'));
+  unroutedSend_(lines.join('\n'));
+}
+
+// r251 (Edd, 27 Oct): the digest comes to Edd as a direct message from the bot
+// rather than into Business Management. A DM notifies like any other DM. If it
+// cannot be delivered (token, lookup, Slack down) it falls back to the channel,
+// because a digest that silently goes nowhere is worse than one in the old place.
+// Script property UNROUTED_DIGEST_DM overrides who gets it.
+function unroutedSend_(text) {
+  if (!slackOn_('unrouted_digest')) return;
+  var to = PropertiesService.getScriptProperties().getProperty('UNROUTED_DIGEST_DM') || EDD_EMAIL;
+  var r = slackDm_(to, text);
+  if (!r.ok) {
+    console.warn('unroutedDigest: DM failed (' + r.why + '), posting to the channel instead');
+    slackPost_('unrouted_digest', text + '\n_(Sent here because the direct message failed: ' + r.why + ')_');
+  }
 }
 
 // One tap of feedback on each AI extraction ("Spot on" / "Needed fixing"),
@@ -11103,7 +11285,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r247 · 2026-10-25';
+var CODE_STAMP = 'r257 · 2026-10-27';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -15144,6 +15326,11 @@ function mintPortalTicket_(user, requiredPerm, minutes, opts) {
     // anyone's admin or developer flags, and a flag it can't see is one it
     // can never come to trust by accident.
     perms: opts.onlyPerm && requiredPerm ? (function () { var o = {}; o[requiredPerm] = true; return o; })() : perms,
+    // r248: the keys this person may only read. Every function that writes on
+    // a ticket refuses a write for a key listed here. Narrowed the same way.
+    perms_ro: opts.onlyPerm && requiredPerm
+      ? (function () { var o = {}; if ((pub.perms_ro || {})[requiredPerm]) o[requiredPerm] = true; return o; })()
+      : (pub.perms_ro || {}),
     // r235: what the ticket is for. A person's ticket is for the portal
     // functions; a machine ticket names the one function that may accept it.
     aud: opts.aud || TICKET_AUD_PORTAL_,
@@ -16701,7 +16888,28 @@ function inboxPayload_(p) {
 // trail says what was done and why. Run as Claude with admin rights for these
 // two ops only; a plain update keeps the filer's ordinary rights.
 var INBOX_STATUS_KEYS_ = { status: 1, priority: 1, severity: 1, request_kind: 1, resolution_note: 1 };
+// r252 (Edd, 27 Oct 2026): Aureus sent their channel's webhook. setSlackChannel_
+// needs the deploy key, which lives on Edd's computer, so the inbox can set this
+// ONE property. It must be a Slack incoming-webhook URL, and it is only saved
+// once a test message has actually landed in their channel.
+function inboxAureusWebhook_(data) {
+  var url = String(data.webhook || '').trim();
+  if (!/^https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+$/.test(url)) {
+    return { ok: false, error: 'that is not a Slack incoming-webhook URL' };
+  }
+  var res;
+  try {
+    res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ text: ':wave: The Ardent bug tracker is connected to this channel. From now on you will see issues handed to the developers, updates we post on them, and our answers to your questions here.' }) });
+  } catch (e) { return { ok: false, error: 'test post failed: ' + String(e).slice(0, 120) }; }
+  var code = res.getResponseCode();
+  if (code !== 200) return { ok: false, error: 'test post answered ' + code + ': ' + String(res.getContentText()).slice(0, 80) + ' (webhook not saved)' };
+  PropertiesService.getScriptProperties().setProperty('SLACK_AUREUS_TECH', url);
+  return { ok: true, issue_id: '' };
+}
+
 function inboxOp_(data) {
+  if (data.op === 'aureus_webhook') return inboxAureusWebhook_(data);
   var admin = { name: INBOX_FILER.name, email: INBOX_FILER.email,
     perms_json: JSON.stringify({ manage: true, users: true }) };
   var r, keepId = data.issue_id;
@@ -16764,7 +16972,7 @@ function claudeInbox() {
     try {
       var data = inboxPayload_(it.payload);
       if (it.kind === 'update' && data.op) {
-        if (!data.issue_id) throw new Error('an update needs payload.issue_id');
+        if (!data.issue_id && data.op !== 'aureus_webhook') throw new Error('an update needs payload.issue_id');
         r = inboxOp_(data);
       } else if (it.kind === 'update') {
         if (!data.issue_id) throw new Error('an update needs payload.issue_id');

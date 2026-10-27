@@ -159,6 +159,7 @@
     border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10;
   }
   .brand { font-weight: 700; letter-spacing: 0.2px; }
+  .brand .brand-app { font-weight: 500; color: var(--muted); }   /* r249: the page's own name leads */
   .brand small { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 12px; }
   .switcher { display: flex; gap: 4px; background: var(--bg); padding: 4px; border-radius: 10px; }
   .switcher button { background: transparent; padding: 7px 14px; color: var(--muted); }
@@ -208,6 +209,30 @@
   .irpcs-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
   /* One dot, one meaning: this item has changes no student has seen yet. */
   .irpcs-pending { color: var(--medium); font-weight: 700; }
+  /* r253: Notes. Reuses the IRPCS split list; these are only the bits it doesn't have. */
+  .notes-install { display: flex; gap: 8px; flex-wrap: wrap; }
+  .notes-btn { display: inline-block; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); text-decoration: none; font-size: 13px; white-space: nowrap; }
+  .notes-btn:hover { border-color: var(--accent); }
+  .notes-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .notes-btn.primary:hover { background: var(--coral); border-color: var(--coral); color: #021231; }
+  .notes-get { flex: 0 0 auto !important; }
+  .notes-get summary { cursor: pointer; color: var(--muted); }
+  .notes-card .row > .notes-btn { flex: 0 0 auto !important; }
+  .notes-title { font-size: 18px; font-weight: 600; line-height: 1.3; margin: 0 0 2px; color: var(--text); }
+  .notes-get[open] .notes-install { margin-top: 8px; }
+  .notes-snip { margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .notes-snip mark { background: rgba(255, 182, 152, 0.45); color: inherit; border-radius: 2px; }
+  .notes-card { line-height: 1.5; }
+  .notes-body { margin-top: 10px; font-size: 14px; }
+  .notes-body p { margin: 6px 0; }
+  .notes-h { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .notes-ul { margin: 2px 0; padding-left: 20px; }
+  .notes-ul li { margin: 2px 0; }
+  .notes-acts { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+  .notes-acts li { display: flex; gap: 8px; margin: 6px 0; }
+  .notes-tick { flex: 0 0 auto; color: var(--muted); }
+  .notes-done > span:last-child { color: var(--muted); text-decoration: line-through; }
+
   .irpcs-edit { min-height: 200px; }
   .irpcs-edit .fld { margin-bottom: 12px; }
   .irpcs-edit label { display: block; margin-bottom: 3px; }
@@ -687,6 +712,21 @@
   .muted { color: var(--muted); }
   .small { font-size: 12px; }
   .permrow { display: flex; flex-wrap: wrap; gap: 4px 0; }
+  /* r248 (FB-0481): Hidden / Read / Write per permission. */
+  .permgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 18px; }
+  .permline { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+  .permname { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seg3 { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+  .seg3-opt { display: inline-flex; align-items: center; padding: 3px 9px; font-size: 12px; color: var(--muted); cursor: pointer; border-left: 1px solid var(--line); user-select: none; }
+  .seg3-opt:first-child { border-left: none; }
+  .seg3-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+  .seg3-opt.on { color: var(--text); background: var(--surface-2); font-weight: 600; }
+  /* The text stays the theme's own ink (peach on white was unreadable); the
+     level shows as a coloured bar under the chosen option. */
+  .seg3-opt.on.lv-read { box-shadow: inset 0 -3px 0 var(--medium); }
+  .seg3-opt.on.lv-write, .seg3-opt.on.lv-on { box-shadow: inset 0 -3px 0 var(--low); }
+  .seg3-opt:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+  #roBar { margin: 10px 16px; padding: 7px 12px; border: 1px solid var(--medium); border-radius: 8px; font-size: 13px; color: var(--text); background: var(--surface); }
   .permrow label { display: inline-flex; align-items: center; margin-right: 14px; }
   .permrow input { width: auto; margin-right: 5px; vertical-align: -1px; }
   .hidden { display: none !important; }
@@ -792,6 +832,9 @@
   }
   .rail-badge.on { display: block; }
   .rail-badge.quiet { background: var(--accent); color: #fff; }
+  /* r256: a page folded into a group, and a group with fewer than two pages. Classes, not
+     style.display, so the lost-view check (which reads style.display) is unaffected. */
+  .rail-item.in-group, .rail-item.rail-group.group-off { display: none !important; }
   .rail-div { height: 1px; background: var(--line); margin: 7px 4px; flex-shrink: 0; }
   /* r147: the bell's panel */
   #bellPanel { position: fixed; z-index: 61; width: min(420px, calc(100vw - 24px)); max-height: 70vh; overflow-y: auto;
@@ -822,6 +865,13 @@
   #newsPanel .news-day + .news-item { border-top: none; }
   #newsPanel .news-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--coral); color: #021231; margin-right: 6px; vertical-align: 1px; }
   #railHelp { margin-top: 0; }
+  /* r247 (FB-0478): What's new and the bell climb to the top of the rail while
+     they have something unread, and go back down once they are empty.
+     railFloat() moves them and marks whichever item now starts the bottom
+     group, so the gap that pushes that group to the foot travels with it. */
+  #rail > .rail-item.floated { margin-top: 0 !important; }
+  #rail > .rail-item.foot-start { margin-top: auto !important; }
+  .rail-float-div { height: 1px; background: var(--line); margin: 4px 10px 6px; }
   .rail-foot { padding-top: 8px; }
   body.shell .rail-foot #userbox { position: relative; display: block; text-align: center; }
   body.shell .rail-foot #userbox > button { width: 100%; padding: 8px 4px; white-space: normal; word-break: break-word; }
@@ -903,6 +953,11 @@
     body.shell.subrail-on #devSeg,
     body.shell.subrail-on .ship-seg { display: none; }
   }
+  /* r247 (FB-0479): RCA lives in the Developers sub-rail on a wide screen, so
+     its own rail button goes. The button stays in the markup and keeps its
+     permission gate (permsChanged_ reads it), and on a phone, where there is
+     no sub-rail, it still folds into the More sheet as before. */
+  #rail > #railRCA { display: none !important; }
   @media (max-width: 760px) {
     body.shell.subrail-on .subrail { display: none; }
     body.shell.subrail-on #shellMain { margin-left: 0; }
@@ -1170,6 +1225,26 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     <span class="ri-word">New</span>
   </button>
+  <!-- r253 (Edd): meeting notes from Ardent Notes, and an install button for
+       anyone who hasn't got it yet. r253.1: its own permission, hand-picked in
+       Admin (Edd only to start). Ardent Notes only ever shows a person their own
+       meetings and ones shared with them. -->
+  <!-- r256 (Edd, 27 Oct): "my rail has far too much on it. It needs some more
+       sub rails". Four groups, each one rail item with its pages in the sub-rail:
+       Mine (Notes, Tasks, Edd), Content (Course fixes, IRPCS, Resources),
+       Support (Shipping, Recovery, Marking) and Stats (Stats, Reports). The real
+       buttons stay in the page (ids, badges and gating untouched); a group hides
+       its members only when the person can open two or more of them, so anyone
+       with a single page in a group keeps that page's own button. -->
+  <button type="button" class="rail-item rail-group" id="railMine" onclick="railGroupGo('railMine')" title="Mine - your notes, tasks and tools">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/><polyline points="15.5 15.5 17.5 17.5 21 14"/></svg>
+    <span class="ri-word">Mine</span>
+    <span class="rail-badge" id="railBadgeMine"></span>
+  </button>
+  <button type="button" class="rail-item" id="railNotes" onclick="railGo('notes')" title="Notes - your meeting notes from Ardent Notes">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><polyline points="15 3 15 7 19 7"/><line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="14" y2="16"/></svg>
+    <span class="ri-word">Notes</span>
+  </button>
   <div class="rail-div" id="railDiv"></div>
   <button type="button" class="rail-item" id="railMore" onclick="railMoreToggle(event)" title="More sections">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
@@ -1181,6 +1256,10 @@
        occasional tools (Edd, 18 Sep); instructors only, i.e. 'log'. -->
   <!-- r188 (Edd): Customs grew into Shipping, with the monthly report and the
        customs invoice as its two sub-rail pages. Same people ('log'). -->
+  <button type="button" class="rail-item rail-group" id="railSupport" onclick="railGroupGo('railSupport')" title="Support - shipping, quiz recovery and marking">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/><line x1="6" y1="6" x2="9.5" y2="9.5"/><line x1="14.5" y1="14.5" x2="18" y2="18"/><line x1="18" y1="6" x2="14.5" y2="9.5"/><line x1="9.5" y1="14.5" x2="6" y2="18"/></svg>
+    <span class="ri-word">Support</span>
+  </button>
   <button type="button" class="rail-item" id="railShipping" onclick="railGo('shipping')" title="Shipping - customs invoices, and the monthly report for admins">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><polyline points="3 7.5 12 12 21 7.5"/><line x1="12" y1="12" x2="12" y2="21"/><line x1="7.5" y1="5.2" x2="16.5" y2="9.8"/></svg>
     <span class="ri-word">Shipping</span>
@@ -1199,13 +1278,9 @@
     <span class="ri-word">Tasks</span>
     <span class="rail-badge" id="railBadgeTasks"></span>
   </button>
-  <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-    <span class="ri-word">Dev</span>
-  </button>
-  <button type="button" class="rail-item" id="railRCA" onclick="railGo('rca')" title="RCA - private AI diagnostic records on promoted issues. Admin and developer eyes only.">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-    <span class="ri-word">RCA</span>
+  <button type="button" class="rail-item rail-group" id="railContent" onclick="railGroupGo('railContent')" title="Content - course fixes, IRPCS and website resources">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><path d="M9 3v7l2-1.5L13 10V3"/></svg>
+    <span class="ri-word">Content</span>
   </button>
   <button type="button" class="rail-item" id="railCourse" onclick="railGo('course')" title="Course fixes">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="15" y2="11"/></svg>
@@ -1236,6 +1311,10 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
     <span class="ri-word">Marking</span>
   </button>
+  <button type="button" class="rail-item rail-group" id="railInsights" onclick="railGroupGo('railInsights')" title="Stats - the numbers, and Reports">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>
+    <span class="ri-word">Stats</span>
+  </button>
   <button type="button" class="rail-item" id="railReports" onclick="railGo('reports')" title="Reports">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><polyline points="7 14 11 9 15 12 20 6"/></svg>
     <span class="ri-word">Reports</span>
@@ -1243,6 +1322,15 @@
   <button type="button" class="rail-item" id="railStats" onclick="railGo('analytics')" title="Analytics">
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>
     <span class="ri-word">Stats</span>
+  </button>
+  <!-- r256: Dev and RCA moved down beside Admin, under the groups. -->
+  <button type="button" class="rail-item" id="railDev" onclick="railGo('dev')" title="Developers">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+    <span class="ri-word">Dev</span>
+  </button>
+  <button type="button" class="rail-item" id="railRCA" onclick="railGo('rca')" title="RCA - private AI diagnostic records on promoted issues. Admin and developer eyes only.">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+    <span class="ri-word">RCA</span>
   </button>
   <button type="button" class="rail-item" id="railUsers" onclick="railGo('users')" title="Admin">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/></svg>
@@ -2183,6 +2271,17 @@
     </div>
   </div>
 </div>
+<!-- r253: Notes. The back end is Ardent Notes on Vercel (/api/tracker), reached
+     with a half-hour notesTicket. Nothing real is in this file. -->
+<div id="notesView" class="wrap hidden">
+  <h2 style="margin:0 0 4px;">Notes</h2>
+  <p class="hint" style="margin:0 0 14px;">Your meeting notes from Ardent Notes, and any a colleague has shared with you.</p>
+  <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="notesHead"></div>
+  <div class="irpcs-split">
+    <div class="irpcs-list" id="notesList"></div>
+    <div id="notesItem"></div>
+  </div>
+</div>
 <div id="resourcesView" class="wrap hidden">
   <div class="rs-head">
     <div>
@@ -2480,27 +2579,11 @@
         <button type="button" onclick="invitePreset('course')">Course dev</button>
       </div>
     </div>
-    <div class="field"><label>Pages they can see</label>
-      <div class="permrow">
-        <label class="small"><input type="checkbox" id="inv_log"> Log</label>
-        <label class="small"><input type="checkbox" id="inv_manage"> Admin</label>
-        <label class="small"><input type="checkbox" id="inv_analytics"> Analytics</label>
-        <label class="small"><input type="checkbox" id="inv_users"> Manage users</label>
-        <!-- r161. These boxes are hand-written, unlike the per-user row lower
-             down which builds itself from PERM_LABELS, and doInvite() reads
-             every key in PERM_LABELS without checking the element is there.
-             So a new permission key that is not also given a box here does not
-             degrade quietly - it throws, and nobody can be invited at all. -->
-        <label class="small"><input type="checkbox" id="inv_irpcs"> IRPCS</label>
-        <label class="small"><input type="checkbox" id="inv_resources"> Resources</label>
-        <label class="small"><input type="checkbox" id="inv_recovery"> Recovery</label>
-        <label class="small"><input type="checkbox" id="inv_marking"> Marking</label>
-      </div>
-      <label style="margin-top:8px;">Fixes they can be given<span class="helphost" data-help="This is who can be picked in Assigned to, not who can see the page. Anyone with Manage users sees both queues anyway, so leave these unticked for an admin who does not actually take fixes."></span></label>
-      <div class="permrow">
-        <label class="small"><input type="checkbox" id="inv_dev"> Developer (tech fixes)</label>
-        <label class="small"><input type="checkbox" id="inv_course"> Course fixes</label>
-      </div>
+    <div class="field"><label>What they can see and change<span class="helphost" data-help="Hidden: not on their rail at all. Read: they can open it and look, but nothing they press there saves. Write: full use. Developers and Course fixes on Write is also who can be picked in Assigned to; on Read they can follow the queue without being given fixes."></span></label>
+      <!-- r248 (FB-0481): built by renderInvitePerms() from PERM_LABELS, the
+           same control as each person's row below, so a new permission key
+           needs no hand-written box here any more (the r161 trap is gone). -->
+      <div id="invPerms"></div>
     </div>
     <button class="primary" onclick="doInvite()">Send invite</button>
     <div id="inviteResult" class="hidden" style="margin-top:10px;">
@@ -2824,6 +2907,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="notes"><td><span class="ui">Notes</span></td><td>Your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet.</td></tr>
     <tr data-perm="marking"><td><span class="ui">Marking</span></td><td>Students' exam papers to mark, with the engine's help, and the question bank it marks against.</td></tr>
     <tr data-perm="recovery"><td><span class="ui">Recovery</span></td><td>A student's quiz answers from before Submit All, for when their submission never arrived.</td></tr>
     <tr data-perm="resources"><td><span class="ui">Resources</span></td><td>The free downloads on the website's resources page: edit them, add new ones, and change their order.</td></tr>
@@ -3118,7 +3202,9 @@
     <tr><td><span class="ui">Log issue</span></td><td>Files the conversation into the tracker. Until it is filed this is the main button. Afterwards it reads <span class="ui">Update the issue</span> and <span class="ui">Draft a reply</span> takes over as the main one.</td></tr>
     <tr><td><span class="ui">Draft a reply</span></td><td>Writes the next message in your own voice and opens it for editing. It goes nowhere on its own. Copy it into Chatwoot and send it from there.</td></tr>
     <tr><td><span class="ui">Check for new reply</span></td><td>Asks Chatwoot whether the student has come back. If they have, it pulls the reply in and re-reads the brief.</td></tr>
+    <tr><td><span class="ui">Open in the form</span></td><td>Takes the case to the log form with the conversation already in and the details pulled out, so you get the troubleshooting checklist and the things to try with the student. If the case has an issue (filed from it, or the student's open one), the form is already set up as an update to it, which is also how you edit that issue from here.</td></tr>
   </table></div>
+  <p>When the student already has an open issue that was filed without this conversation, the case says so under their name, with a link to it. <span class="ui">add an update</span> then goes on that issue rather than into a private Chatwoot note, and <span class="ui">Log issue</span> asks before opening a second one.</p>
   <p>A blue dot on a case means something has happened since you personally last opened it. <span class="ui">Refresh</span> at the top of the list is free and re-reads everything, while <span class="ui">refresh the brief</span> inside a case rewrites the summary and costs a call, which is why they are two separate buttons rather than one.</p>
   <h4>Filing it</h4>
   <p>Two choices, and the words under each change as you pick. Both are about the <em>fault</em>, not about the conversation. <span class="ui">Resolved</span> means sorted with nothing left to do. <span class="ui">Still open</span> means the fault is still there, so it stays open and the student may need telling once it is fixed.</p>
@@ -3169,6 +3255,13 @@
   <p><span class="ui">Hide from website</span> moves the row to a Hidden tab in the sheet, so nothing is ever deleted and <span class="ui">Put back on the website</span> undoes it. Every save is also written to the ResourcesLog tab of the tracker's own sheet, with what each resource looked like before.</p>
 </section>
 
+<section id="man-notes" data-perm="notes" data-title="Meeting notes">
+  <h3>Meeting notes</h3>
+  <p><span class="ui">Notes</span> on the rail shows the notes Ardent Notes has written for your meetings, newest first, along with any a colleague has shared with you. Search finds a meeting by anything said in it. Pick one to read its notes and actions; <span class="ui">Open in Ardent Notes</span> goes to the full meeting, with the transcript, ticking actions and rewriting the notes.</p>
+  <p>If you haven't used Ardent Notes yet, the page offers to install it: the laptop app on Windows, or the phone app on Android. Sign in with your Ardent email. Ardent Notes can also send a bot to a call you can't make.</p>
+  <p>Only you see your meetings here. Nobody else's appear unless they've shared them with you. An admin turns Notes on for each person in Admin.</p>
+</section>
+
 <section id="man-marking" data-perm="marking" data-title="Marking papers">
   <h3>Marking papers</h3>
   <p>When a student submits a mock or final exam, the paper lands in <span class="ui">Marking</span>. The queue opens on the open papers; <span class="ui">Mine</span>, <span class="ui">Unclaimed</span> and <span class="ui">Sent</span> narrow it, and the search finds a student by name or email.</p>
@@ -3189,7 +3282,7 @@
 <section id="man-recovery" data-perm="recovery" data-title="Recovering quiz answers">
   <h3>Recovering quiz answers</h3>
   <p>When a student does a module assessment, the quiz quietly saves everything they've answered every few seconds, and again when they close it. If Submit All then never reaches us, <span class="ui">Recovery</span> on the rail is where we find what they had.</p>
-  <p>Search by the email the student typed into the quiz, by a lesson code, or both. The email is whatever they typed, so it can be misspelt. If nothing comes back, try the lesson code on its own and look for their name. Each result shows when it was last saved, whether the quiz was submitted, and every question they were given with their answer. A tick or cross shows where the quiz can tell right from wrong, which is multiple choice and matching. Typed answers are shown as typed. <span class="ui">Show questions</span> adds the question wording, and <span class="ui">Copy answers</span> puts the lot on the clipboard for an email or a note to the marker.</p>
+  <p>Search by the email the student typed into the quiz, by a lesson code, or both. The email is whatever they typed, so it can be misspelt. If nothing comes back, try the lesson code on its own and look for their name. Each result shows when it was last saved, whether the quiz was submitted, and every question they were given with their answer. A tick or cross shows where the quiz can tell right from wrong, which is multiple choice and matching. Typed answers are shown as typed. The question wording shows under each code (<span class="ui">Hide questions</span> folds it away), and <span class="ui">Copy answers</span> puts the lot on the clipboard for an email or a note to the marker.</p>
   <p>Two things to know. A save is deleted 48 hours after the quiz is submitted, or 14 days after the last save if it never is. And the last box a student typed in before closing may be missing, because the quiz only saves a box once they click away from it.</p>
   <p>Only people an admin has given the Recovery permission can see this, and every search is logged with who did it.</p>
 </section>
@@ -3248,7 +3341,7 @@
 <section id="man-rca" data-perm="users" data-title="RCA records">
   <h3>RCA records</h3>
   <p>Some faults are not a fix, they are an investigation. The assessment images that stopped loading in August took days of reading conversations, lining them up against deploys, and working out which change broke what. RCA is that job, made repeatable.</p>
-  <p>Promoting an issue opens a private diagnostic record on it: a running conversation with an investigator that can read our support data, kept on the issue so anyone can pick it up where the last person stopped. It is on the rail as <span class="ui">RCA</span>, under Dev. For now only admins have it, while it is put through its paces; the developers get it once it has earned its keep.</p>
+  <p>Promoting an issue opens a private diagnostic record on it: a running conversation with an investigator that can read our support data, kept on the issue so anyone can pick it up where the last person stopped. It lives under <span class="ui">Dev</span> on the rail, as <span class="ui">RCA records</span> in the list beside it (on a phone, <span class="ui">RCA</span> under More). For now only admins have it, while it is put through its paces; the developers get it once it has earned its keep.</p>
   <p>The page opens on the cases themselves. <span class="ui">Open investigations</span> is anything still being worked, with a count on the heading, and <span class="ui">Verified</span> is the finished ones below it. So a fault under investigation keeps a presence of its own rather than being a thing somebody remembers to go and look at.</p>
   <p>With nothing on it, it reads <em>Nothing under investigation. Open any issue and press Promote to RCA to start one.</em></p>
   <div class="man-note warn">
@@ -3347,13 +3440,12 @@
   <p>Admin holds three things: the people, the feedback on this app, and the playbook behind the troubleshooting steps. It opens on whichever section you were last in.</p>
   <h4>Adding somebody</h4>
   <p><span class="ui">Invite a person</span> sits at the top of <span class="ui">People</span>. Email, first name, then the permissions, then <span class="ui">Send invite</span>. They get an email headed <span class="ui">Your Bugs invite</span> with a link that sets their password and drops them straight in. If it needs sending by hand, the link is shown on screen after the invite goes.</p>
-  <div class="man-note stop">
-    <strong>The invite form and the People list use different words for the same tick</strong>
-    <p>On the invite form, <span class="ui">Admin</span> is the Track permission, and the one that makes somebody an actual admin is <span class="ui">Manage users</span>. In the People list below, those same two ticks read <span class="ui">Track</span> and <span class="ui">Admin</span>.</p>
-    <p>So ticking <span class="ui">Admin</span> on the invite form does not make an admin. Use the <span class="ui">Quick preset</span> buttons and check the result in the People list, where the labels are the ones to trust.</p>
-  </div>
-  <p>The presets only tick boxes, they save nothing, so pressing one and then adjusting a tick is the normal way to use them. There is no role stored anywhere, just the six permissions.</p>
-  <p>The second group, <span class="ui">Fixes they can be given</span>, is a different kind of thing from the first. It decides who can be picked in Assigned to, not who can see the page. An admin sees both fix queues regardless, so leave these unticked for an admin who does not actually take fixes, or they end up in everyone's assignee dropdown.</p>
+  <h4>Hidden, Read and Write</h4>
+  <p>Each permission has its own control, on the invite form and on each person in the list, with the same names in both. <span class="ui">Hidden</span> leaves it off their rail. <span class="ui">Write</span> is full use. <span class="ui">Read</span> lets them open it and look, with a line across the top saying it is read only, and anything they press that would change something is refused with a message saying why.</p>
+  <p>Read is enforced by the back end, not just hidden on the screen, which is why only some areas offer it. Analytics and Recovery only ever read, so they are Hidden or Read. IRPCS and Marking are Hidden or On for now, because they save through their own systems, which do not know about Read yet.</p>
+  <p>The presets only set the controls, they save nothing, so pressing one and then adjusting is the normal way to use them. There is no role stored anywhere, just the permissions.</p>
+  <p><span class="ui">Developers</span> and <span class="ui">Course fixes</span> also decide who can be picked in Assigned to. On Write they can be given fixes; on Read they can follow the queue without turning up in anyone's assignee dropdown. An admin sees both queues regardless, so leave these Hidden for an admin who does not actually take fixes.</p>
+  <p>The tracker will not save a change that leaves nobody with Admin on Write, so it is not possible to lock everyone out of this screen.</p>
   <h4>Disable, do not delete</h4>
   <p>Disabling clears their sessions and any outstanding invite, and keeps the record intact. Deleting removes the account, and anyone whose name is on logged work would leave those entries pointing at nobody.</p>
   <p>The app blocks the two cases that would actually break something. It refuses to delete the last account that can manage users, and it refuses to delete anyone whose name is on a report, a fix, an assignment, or a question. <span class="ui">Delete</span> is for a mistyped invite or a test account.</p>
@@ -3450,7 +3542,7 @@
     <li data-perm="log">The issue I just logged, <span class="ui">Issues</span> then <span class="ui">All issues</span>, top of the list.</li>
     <li data-perm="log">A student who is in touch right now, <span class="ui">Today</span>, at the top.</li>
     <li data-perm="dev">A fault waiting on me to fix, <span class="ui">Dev</span> then <span class="ui">To do</span>.</li>
-    <li data-perm="users">An investigation somebody has started, <span class="ui">RCA</span> on the rail.</li>
+    <li data-perm="users">An investigation somebody has started, under <span class="ui">Dev</span> then <span class="ui">RCA records</span>.</li>
     <li data-perm="course">A course error waiting to be corrected, <span class="ui">Course</span> then <span class="ui">To do</span>.</li>
     <li data-perm="users">Adding somebody to the team, <span class="ui">Admin</span> then <span class="ui">People</span>.</li>
     <li>Something wrong with this app, the <span class="ui">Feedback</span> pill, bottom right.</li>
@@ -3954,7 +4046,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r242 · 2026-10-24";  // bump this with each round, it lands on every feedback report
+var BUILD = "r255 · 2026-10-27";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -4402,12 +4494,19 @@ function apiGet(action) {
 function apiPost(payload) {
   if (payload && (payload.action === "addIssue" || payload.action === "caseCheckpoint")) {
     payload.defer_after = 1;
-    return apiPostCore_(payload).then(function (res) {
+    return apiPostCore_(payload).then(readOnlyWords_).then(function (res) {
       if (res && res.ok && res.after_id) fileAfterSend_(res.after_id);
       return res;
     });
   }
-  return apiPostCore_(payload);
+  return apiPostCore_(payload).then(readOnlyWords_);
+}
+// r248 (FB-0481): a write refused because the account is read-only there comes
+// back as error "read_only". Every caller shows res.error in a toast, so the
+// sentence goes into error here, once, rather than "Save failed: read_only".
+function readOnlyWords_(res) {
+  if (res && res.error === "read_only") { res.read_only = true; res.error = res.message || "You have read-only access here, so nothing was changed."; }
+  return res;
 }
 function fileAfterSend_(id) {
   var pe = state._pressEl; state._pressEl = null;   // not a button press: no busy spinner on anything
@@ -5491,9 +5590,11 @@ function applyPermGates() {
   var railGate = [["railNew", p.log], ["railShipping", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railIrpcs", p.irpcs], ["railResources", p.resources], ["railRecovery", p.recovery], ["railMarking", p.marking],
+                  ["railNotes", p.notes],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
+  railGroupsApply();   // r256
   // The divider only earns its place if there is something on both sides.
   if ($("railDiv")) $("railDiv").style.display = (p.log || p.dev || p.course || p.analytics || p.users || p.irpcs || p.resources || p.recovery || p.marking) ? "" : "none";
 
@@ -5519,7 +5620,7 @@ function permsKey_(p) {
 var VIEW_RAIL_ = {
   instructor: "railNew", customs: "railShipping", shipreport: "railShipping", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
   edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
-  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", marking: "railMarking", reports: "railReports", analytics: "railStats", users: "railUsers"
+  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", marking: "railMarking", notes: "railNotes", reports: "railReports", analytics: "railStats", users: "railUsers"
 };
 
 // Called when a refresh brings a different permission set than the one the
@@ -5559,6 +5660,7 @@ function applyPerms(user) {
   if (!state.viewAs) state.realUser = user;
   state.user = user;
   state.perms = (user && user.perms) || {};
+  state.permsRo = (user && user.perms_ro) || {};   // r248: the areas this account may only read
   // r171 (Edd: the preferences box "showing up over and over again as I change
   // my 'view as' or device").
   //
@@ -7876,6 +7978,7 @@ function renderLiveDetail() {
   dock.style.display = "";
   var b = c.brief || {};
   var linkedIssue = c.issue_id ? (state.issues || []).filter(function (i) { return i.issue_id === c.issue_id; })[0] : null;
+  var emailIssue = liveEmailMatch(c);   // r249: same student, filed without this conversation
 
   var html = '<div class="card live-brief" style="position:relative;">' +
     '<button class="close" onclick="state.liveSelected=null;hideLiveDetail();markLiveActive();">&times;</button>' +
@@ -7907,7 +8010,9 @@ function renderLiveDetail() {
       ' · <a href="#" onclick="event.preventDefault();liveAddUpdate();" style="color:var(--accent);"' +
         ' title="' + (c.issue_id
           ? 'Adds a line to the issue filed from this conversation - what you tried, what you found.'
-          : 'Nothing is filed yet, so this goes on the Chatwoot conversation as a private note. The student never sees it.') +
+          : emailIssue
+            ? 'Adds a line to ' + esc(c.student_name || 'this student') + '\'s open issue ' + esc(shortId(emailIssue)) + ' - what you tried, what you found.'
+            : 'Nothing is filed yet, so this goes on the Chatwoot conversation as a private note. The student never sees it.') +
         '">add an update</a>' +
       ' · <a href="#" onclick="event.preventDefault();liveRefreshBrief();" style="color:var(--accent);"' +
         ' title="Re-reads the whole conversation and rewrites the summary below. This one costs an AI call, which is why it is not the Refresh at the top.">refresh the brief</a>' +
@@ -7935,6 +8040,17 @@ function renderLiveDetail() {
     var last = (state.liveLastLog || {})[String(c.conversation_id)];
     if (last) html += '<div class="small" style="margin:-4px 0 10px;color:var(--low);">Logged at ' +
       esc(String(last.at.getHours()).padStart(2, "0") + ":" + String(last.at.getMinutes()).padStart(2, "0")) + ': ' + esc(last.text) + '</div>';
+  }
+
+  // r249: the student's open issue, when it was filed without this conversation.
+  if (!c.issue_id && emailIssue) {
+    html += '<div class="small" style="margin-bottom:10px;">' +
+      '<span class="badge chat-badge">already has an open issue</span> ' +
+      '<a href="#" onclick="liveOpenIssue(\'' + esc(emailIssue.issue_id) + '\');return false;" style="color:var(--accent);">' + esc(shortId(emailIssue)) + '</a> ' +
+      statusBadge(emailIssue.status, emailIssue) + ' ' + priBadge(emailIssue.priority) +
+      ' <span class="muted">' + esc(summaryText(emailIssue)) + '</span>' +
+      '<div class="muted" style="margin-top:3px;">Filed for the same email, not from this conversation. Updates from here go on that issue.</div>' +
+    '</div>';
   }
 
   // The background re-read (FB-0238) is visible on the thing it is changing,
@@ -7985,9 +8101,21 @@ function renderLiveDetail() {
       (filed ? 'Adds where this has got to onto the issue already filed from this conversation.'
              : 'Files this conversation into the tracker. You choose whether it is resolved or still open.') +
       '">' + (filed ? 'Update the issue' : 'Log issue') + '</button>';
+  // r249 (FB-0482): the full log form, for editing the issue and for the
+  // checklist and the things to try with the student. With an issue to go on
+  // (this conversation's, or the student's open one) it is set up as an update
+  // to it; with none it is a fresh report with the conversation already in.
+  var formTarget = liveTargetIssueId(c);
+  var formBtn = '<button class="' + (!filed && emailIssue ? 'primary' : 'ghost') + '" onclick="liveOpenInForm()" title="' +
+      (formTarget ? 'Opens the log form with this conversation in it, set up as an update to ' + esc(filed && linkedIssue ? shortId(linkedIssue) : emailIssue ? shortId(emailIssue) : 'the issue') +
+                    '. Use it to edit the issue, and for the checklist and the steps to give the student.'
+                  : 'Opens the log form with this conversation in it and the details pulled out, with the checklist and the steps to give the student.') +
+      '">Open in the form</button>';
+  if (!filed && emailIssue) logBtn = logBtn.replace('class="primary"', 'class="ghost"');
   var draftBtn = '<button class="' + (filed ? 'primary' : 'ghost') + '" onclick="liveDraftReply()" title="Writes the next message to the student in your own voice and opens it for editing. Nothing is sent until you press send.">Draft a reply</button>';
   html += '<div class="row" style="margin-top:14px;flex-wrap:wrap;">' +
-    (filed ? draftBtn + logBtn : logBtn + draftBtn) +
+    (filed ? draftBtn + logBtn : (emailIssue ? formBtn + draftBtn + logBtn : logBtn + draftBtn)) +
+    (filed || !emailIssue ? formBtn : '') +
     '<button class="ghost" onclick="liveCheckReply()" title="Asks Chatwoot whether the student has come back. If they have, it pulls the reply in and re-reads the brief.">Check for new reply</button>' +
     // Edd, 19 Aug 2026: the three filing buttons all did the same job and
     // differed only in the outcome recorded, so they are one button and the
@@ -8013,6 +8141,58 @@ function renderLiveDetail() {
   dock.innerHTML = html;
 }
 function liveOpenIssue(id) { openIssueById(id, false); }
+
+// ===================== r249 (FB-0482, Holly): CASE -> FORM =====================
+// Holly: "Create a button on the page of the second screenshot [the live case]
+// that allows us to be directed to the page of the first screenshot [the log
+// form], so that we can edit the issue and/or see the recommended steps to give
+// to the student."
+//
+// The form is where the extraction, the checklist and the things to try live,
+// so the button takes the case there: the conversation imported, Extract run,
+// and the issue it belongs to already chosen as the one being updated.
+//
+// Which issue that is. Filed from this conversation (c.issue_id) first. Failing
+// that, an open issue for the same student email - the form's own rule
+// (findOpenIssuesByEmail). Paul Devine's first report was filed without its
+// conversation, so the case said "Nothing is filed yet" for an hour while his
+// issue sat open, and "add an update" went into a private Chatwoot note.
+function liveEmailMatch(c) {
+  if (!c || c.issue_id || !c.student_contact) return null;
+  return findOpenIssuesByEmail(c.student_contact)[0] || null;
+}
+function liveTargetIssueId(c) {
+  if (!c) return "";
+  if (c.issue_id) return String(c.issue_id);
+  var m = liveEmailMatch(c);
+  return m ? String(m.issue_id) : "";
+}
+function liveOpenInForm() {
+  var c = liveCaseById(state.liveSelected);
+  if (!c) return;
+  // Never throw away a report somebody is half-way through writing.
+  if (String(getField("rawText") || "").trim() && !window.confirm("There is already something in the log form. Replace it with this conversation?")) return;
+  resetForm();
+  state._formTarget = liveTargetIssueId(c);
+  railGo("instructor");
+  var p = chatwootImport(String(c.conversation_id));
+  if (p && p.then) p.then(function (res) { if (res && res.transcript) runExtract(); });
+}
+// Point the form at the known issue: the same state a manual pick leaves
+// (pickManualLink), so the submit path and the button wording are already right.
+// False if that issue is not in this tab's list, and the normal check runs.
+function applyFormTarget_() {
+  var id = state._formTarget;
+  var hit = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
+  if (!hit) return false;
+  if (state.splitMode) hideSplitSuggestion();
+  state.existingMatches = [hit];
+  state.existingChoice = "update";
+  state.updateTargetId = id;
+  renderExisting();
+  highlightChosen();
+  return true;
+}
 
 // FB-0365. The whole conversation is already on the brief, in a fold at the
 // very bottom of a pane taller than the screen - which is the FB-0334 problem
@@ -8054,13 +8234,17 @@ function liveCheckUpdates() {
 function liveAddUpdate() {
   var c = liveCaseById(state.liveSelected);
   if (!c) return;
-  var note = prompt(c.issue_id
-    ? "Add an update to the issue filed from this conversation.\n\nWhat happened, or what did you find?"
+  // r249: the student's open issue counts, even when it was filed without this
+  // conversation.
+  var target = liveTargetIssueId(c);
+  var note = prompt(target
+    ? (c.issue_id ? "Add an update to the issue filed from this conversation." : "Add an update to " + (c.student_name || "this student") + "'s open issue.") +
+      "\n\nWhat happened, or what did you find?"
     : "Nothing is filed from this conversation yet, so this goes on the Chatwoot conversation as a private note.\n\nWhat happened, or what did you find?");
   note = String(note == null ? "" : note).trim();
   if (!note) return;
-  var call = c.issue_id
-    ? { action: "addUpdate", issue_id: c.issue_id, raw_text: note, keep_status: true,
+  var call = target
+    ? { action: "addUpdate", issue_id: target, raw_text: note, keep_status: true,
         summary: "Update added from the live case", app_url: APP_URL }
     : { action: "caseNote", conversation_id: String(c.conversation_id), text: note,
         user_name: (state.user && state.user.name) || "" };
@@ -8068,8 +8252,8 @@ function liveAddUpdate() {
   apiPost(call).then(function (res) {
     busyHide();
     if (!res || !res.ok) { toast("That didn't save: " + ((res && res.error) || "unknown"), 8000); return; }
-    toast(c.issue_id ? "Added to the issue." : "Noted on the conversation, privately.");
-    if (c.issue_id) loadIssues();
+    toast(target ? "Added to the issue." : "Noted on the conversation, privately.");
+    if (target) loadIssues();
     else loadLiveCases().then(function () { renderLive(); renderLiveDetail(); });
   }).catch(function (e) { busyHide(); toastErr("That note", e); });
 }
@@ -8335,6 +8519,15 @@ function liveCheckpoint(decision) {
 function liveLogIssue() {
   var c = liveCaseById(state.liveSelected);
   if (!c) return;
+  // r249: filing from here would open a SECOND issue for a student who already
+  // has one open (the server links by conversation, not by email). Offer the
+  // form, which adds it to that issue, before going on.
+  var em = liveEmailMatch(c);
+  if (em && window.confirm((c.student_name || "This student") + " already has an open issue (" + shortId(em) + "): " +
+      summaryText(em) + "\n\nAdd this conversation to it instead? OK opens it in the form as an update. Cancel logs it as a separate issue.")) {
+    liveOpenInForm();
+    return;
+  }
   $("liveOutcomeTitle").textContent = c.issue_id ? "Update the issue from this conversation" : "Log this issue";
   $("liveOutcomeNote").value = "";
   state._liveOutcomePre = "";
@@ -8995,6 +9188,8 @@ function setView(v) {
   if (v === "recovery") renderRecovery();
   if ($("markingView")) $("markingView").classList.toggle("hidden", v !== "marking");
   if (v === "marking") renderMarking();
+  if ($("notesView")) $("notesView").classList.toggle("hidden", v !== "notes");
+  if (v === "notes") renderNotes();
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "instructors") renderInstructors();
@@ -9068,18 +9263,68 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railMine", "railSupport", "railContent", "railInsights", "railNotes", "railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
   var phone = window.matchMedia("(max-width: 760px)").matches;
   if (phone) {
     RAIL_MORE_IDS.forEach(function (id) { var el = $(id); if (el && el.parentElement !== sheet) sheet.appendChild(el); });
+    railFloat();
   } else {
     var foot = rail.querySelector(".rail-foot");
     RAIL_MORE_IDS.forEach(function (id) { var el = $(id); if (el && el.parentElement === sheet) rail.insertBefore(el, foot); });
     railMoreClose();
+    railFloat();
   }
+}
+// r247 (FB-0478, Edd): "move what's new and notifications to the top of the
+// rail and then move them to the bottom when there is nothing new in them".
+// Unread means the same thing the badges already say: news not yet opened,
+// and bell items not yet cleared with Got it (bellItems() leaves read ones
+// out). Desktop only: on a phone both live in the More sheet, whose pill
+// already carries their count. A thin line under them keeps them from
+// reading as two more sections.
+function railFloat() {
+  var rail = $("rail");
+  if (!rail) return;
+  var news = $("railNews"), bell = $("railBell"), help = $("railHelp");
+  var div = $("railFloatDiv");
+  if (!div) { div = document.createElement("div"); div.id = "railFloatDiv"; div.className = "rail-float-div"; }
+  var phone = window.matchMedia("(max-width: 760px)").matches;
+  var up = {
+    railNews: !phone && !!state.user && newsUnseen().length > 0,
+    railBell: !phone && !!state.user && bellItems().length > 0
+  };
+  var first = rail.firstElementChild;
+  // Top group, in a fixed order, News then the bell.
+  var anchor = first;
+  ["railNews", "railBell"].forEach(function (id) {
+    var el = $(id);
+    if (!el || el.parentElement !== rail) return;
+    el.classList.toggle("floated", up[id]);
+    if (up[id]) {
+      if (el !== anchor) rail.insertBefore(el, anchor);
+      anchor = el.nextElementSibling;
+    }
+  });
+  if (up.railNews || up.railBell) { if (div.parentElement !== rail || div !== anchor) rail.insertBefore(div, anchor); }
+  else if (div.parentElement) div.parentElement.removeChild(div);
+  // Bottom group goes back just above Help, News first as before.
+  ["railNews", "railBell"].forEach(function (id) {
+    var el = $(id);
+    if (!el || el.parentElement !== rail || up[id] || !help || help.parentElement !== rail) return;
+    rail.insertBefore(el, help);
+  });
+  if (news && news.parentElement === rail && !up.railNews && bell && bell.parentElement === rail && !up.railBell) rail.insertBefore(news, bell);
+  // Whichever of News, bell, Help is now first at the bottom takes the gap.
+  var startSet = false;
+  [news, bell, help].forEach(function (el) {
+    if (!el) return;
+    var isStart = !startSet && el.parentElement === rail && !el.classList.contains("floated");
+    el.classList.toggle("foot-start", isStart);
+    if (isStart) startSet = true;
+  });
 }
 function railMoreToggle(ev) {
   if (ev) ev.stopPropagation();
@@ -9114,6 +9359,7 @@ function railGo(v) {
   if (v === "resources" && !(state.perms || {}).resources) return;  // r187: and the backend checks the same key
   if (v === "recovery" && !(state.perms || {}).recovery) return;    // r243: and so does the Edge Function
   if (v === "marking" && !(state.perms || {}).marking) return;      // r246: and so does ardent-portal
+  if (v === "notes" && !(state.perms || {}).notes) return;          // r253.1: and so does notesTicket
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -9129,12 +9375,18 @@ function updateRail() {
   var v = state.view;
   var onIssues = (v === "actions" || v === "admin");
   var pairs = [["railNew", v === "instructor"], ["railShipping", v === "customs" || v === "shipreport"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
-               ["railDev", v === "dev"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
+               ["railDev", v === "dev" || v === "rca"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
                ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"], ["railRecovery", v === "recovery"], ["railMarking", v === "marking"],
+               ["railNotes", v === "notes"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual" || v === "instructors"],
                ["railRCA", v === "rca"]];
   pairs.forEach(function (p) { var el = $(p[0]); if (el) el.classList.toggle("active", !!p[1]); });
+  RAIL_GROUPS_.forEach(function (g) {
+    var el = $(g.id), page = railGroupPageOf(v);
+    if (el) el.classList.toggle("active", !!page && page.group === g);
+    if (page && page.group === g) state.railGroupLast[g.id] = page.view;
+  });
   // The segment bar belongs to Issues, so it only shows there.
   var wrap = $("issuesSegWrap");
   if (wrap) wrap.classList.toggle("on", v === "admin" && SHELL_ON);
@@ -9144,6 +9396,25 @@ function updateRail() {
   });
   updateRailBadges();
   renderSubRail();
+  renderRoBar();
+}
+// r248 (FB-0481): say so before anyone presses anything. Which permission a
+// screen belongs to, for the ones that can be read-only. The back end refuses
+// the write either way; this is so nobody finds out by losing an edit.
+var VIEW_RO_KEY_ = { live: "log", instructor: "log", customs: "log", admin: "manage", actions: "manage",
+  dev: "dev", course: "course", users: "users", shipreport: "users", resources: "resources" };
+function renderRoBar() {
+  var main = $("shellMain");
+  if (!main) return;
+  var bar = $("roBar");
+  var k = VIEW_RO_KEY_[state.view];
+  var ro = !!(k && (state.permsRo || {})[k] && (state.perms || {})[k]);
+  if (!ro) { if (bar) bar.remove(); return; }
+  if (!bar) { bar = document.createElement("div"); bar.id = "roBar"; bar.setAttribute("role", "note"); }
+  var label = "";
+  PERM_LABELS.forEach(function (x) { if (x.k === k) label = x.label; });
+  bar.textContent = "Read only: you can look around " + (label ? label + " " : "here ") + "but nothing you change here will save. Ask an admin if you need more.";
+  if (bar.parentElement !== main || main.firstElementChild !== bar) main.insertBefore(bar, main.firstElementChild);
 }
 // Two badges, and only two. Chats counts the open conversations. Issues
 // counts the things waiting on somebody, NOT the size of the log - a number
@@ -10967,6 +11238,296 @@ function customsAgain(no, copy) {
   }).catch(function () { $("cu_status").textContent = "That did not work."; });
 }
 
+// ===================== r256: RAIL GROUPS =====================
+// Each group lists its pages in order. `view` is what railGo() takes; `views`
+// are every state.view that counts as that page (Shipping has two); `ok` says
+// whether this person can open it, using exactly the rule railGate uses.
+var RAIL_GROUPS_ = [
+  { id: "railMine", label: "Mine", pages: [
+    { view: "notes", label: "Notes", rail: "railNotes", ok: function (p) { return !!p.notes; } },
+    { view: "tasks", label: "Tasks", rail: "railTasks", ok: function () { return isEddUser(); } },
+    { view: "edd", label: "Edd's tools", rail: "railEdd", ok: function () { return isEddUser(); } }
+  ], badges: ["railBadgeEdd", "railBadgeTasks"] },
+  { id: "railContent", label: "Content", pages: [
+    { view: "course", label: "Course fixes", rail: "railCourse", ok: function (p) { return !!(p.course || p.users); } },
+    { view: "irpcs", label: "IRPCS", rail: "railIrpcs", ok: function (p) { return !!p.irpcs; } },
+    { view: "resources", label: "Resources", rail: "railResources", ok: function (p) { return !!p.resources; } }
+  ] },
+  { id: "railSupport", label: "Support", pages: [
+    { view: "shipping", views: ["customs", "shipreport"], label: "Shipping", rail: "railShipping", ok: function (p) { return !!p.log; } },
+    { view: "recovery", label: "Recovery", rail: "railRecovery", ok: function (p) { return !!p.recovery; } },
+    { view: "marking", label: "Marking", rail: "railMarking", ok: function (p) { return !!p.marking; } }
+  ] },
+  { id: "railInsights", label: "Stats", pages: [
+    { view: "analytics", label: "Stats", rail: "railStats", ok: function (p) { return !!p.analytics; } },
+    { view: "reports", label: "Reports", rail: "railReports", ok: function (p) { return !!p.analytics; } }
+  ] }
+];
+state.railGroupLast = state.railGroupLast || {};
+
+function railGroupPages(g) {
+  var p = state.perms || {};
+  return g.pages.filter(function (x) { return x.ok(p); });
+}
+// The group page a view belongs to, if it is one the person can open.
+function railGroupPageOf(v) {
+  for (var i = 0; i < RAIL_GROUPS_.length; i++) {
+    var g = RAIL_GROUPS_[i];
+    var hit = railGroupPages(g).filter(function (x) { return x.view === v || (x.views || []).indexOf(v) >= 0; })[0];
+    if (hit) return { group: g, view: hit.view, page: hit };
+  }
+  return null;
+}
+// Two or more pages: show the group, fold the members in. One: just that page's
+// own button, as before. None: neither.
+function railGroupsApply() {
+  RAIL_GROUPS_.forEach(function (g) {
+    var pages = railGroupPages(g), grouped = pages.length >= 2;
+    var el = $(g.id);
+    if (el) el.classList.toggle("group-off", !grouped);
+    g.pages.forEach(function (x) { var b = $(x.rail); if (b) b.classList.toggle("in-group", grouped); });
+  });
+}
+// The group button goes back to the page last open in it, or its first page.
+function railGroupGo(id) {
+  var g = RAIL_GROUPS_.filter(function (x) { return x.id === id; })[0];
+  if (!g) return;
+  var pages = railGroupPages(g);
+  if (!pages.length) return;
+  var last = state.railGroupLast[id];
+  var to = pages.filter(function (x) { return x.view === last; })[0] || pages[0];
+  railGo(to.view);
+}
+// A group's badge is the sum of its members' badges (the r60 rule: one source).
+function railGroupBadges() {
+  RAIL_GROUPS_.forEach(function (g) {
+    if (!g.badges) return;
+    var badge = $(g.id === "railMine" ? "railBadgeMine" : ""), n = 0;
+    if (!badge) return;
+    g.badges.forEach(function (bid) {
+      var b = $(bid);
+      if (b && b.classList.contains("on")) n += parseInt(b.textContent, 10) || 0;
+    });
+    badge.textContent = n > 99 ? "99+" : String(n);
+    badge.classList.toggle("on", !!n);
+  });
+}
+
+// ============================ NOTES (r253) ============================
+// Meeting notes from Ardent Notes (our own note-taker: laptop and phone apps,
+// and the bot that joins calls). Read-only here: the list, a search, and each
+// meeting's notes and actions, with a link to open it in Ardent Notes.
+//
+// The back end is Ardent Notes on Vercel (/api/tracker). Auth: notesTicket,
+// signed with NOTES_TICKET_SECRET for aud 'notes'. Ardent Notes maps the email
+// in the ticket to its own account and returns only what that person could see
+// there: their own meetings and ones shared with them. No permission key here,
+// because there is nothing to gate beyond that.
+//
+// PUBLIC REPO: no meeting, note or name appears in this file. Everything real
+// arrives from the API at run time. Notes are rendered by notesMd(), which
+// escapes everything first and only then adds headings, bullets and bold.
+var NOTES_API = "https://ardent-notes.vercel.app/api/tracker";
+var notes = {
+  ticket: "", exp: 0,
+  list: null, account: null, apps: null, listLoading: false, listError: "",
+  q: "", qTimer: 0,
+  openId: "", item: null, itemLoading: false, itemError: ""
+};
+
+function notesTicket(force) {
+  var now = Math.floor(Date.now() / 1000);
+  if (!force && notes.ticket && notes.exp - now > 60) return Promise.resolve(notes.ticket);
+  return apiPost({ action: "notesTicket" }).then(function (r) {
+    if (!r || !r.ok || !r.ticket) {
+      var e = (r && r.error) || "";
+      throw new Error(/NOTES_TICKET_SECRET/.test(e) ? "Notes isn't switched on yet: NOTES_TICKET_SECRET isn't set in the tracker's Script Properties." : (e || "Couldn't get a Notes ticket."));
+    }
+    notes.ticket = r.ticket;
+    notes.exp = r.expires_at || (now + 1500);
+    return notes.ticket;
+  });
+}
+
+// One silent retry on a 401 with a fresh ticket, never more.
+function notesApi(path, query, retried) {
+  return notesTicket(!!retried).then(function (t) {
+    return fetch(NOTES_API + path + (query ? "?" + query : ""), { cache: "no-store", headers: { authorization: "Bearer " + t } });
+  }).then(function (r) {
+    return r.text().then(function (txt) {
+      var j = null;
+      try { j = JSON.parse(txt); } catch (e) {}
+      if (r.status === 401 && !retried) { notes.ticket = ""; notes.exp = 0; return notesApi(path, query, true); }
+      if (!r.ok) throw new Error((j && j.error) || ("Notes returned " + r.status + "."));
+      return j || {};
+    });
+  }, function (e) {
+    if (e && /ticket|Notes/.test(e.message || "")) throw e;
+    throw new Error("Couldn't reach Ardent Notes (" + ((e && e.message) || e) + ").");
+  });
+}
+
+function renderNotes() {
+  if (!(state.perms || {}).notes) return;
+  if (!notes.list && !notes.listLoading && !notes.listError) notesLoadList();
+  notesRenderHead(); notesRenderList(); notesRenderItem();
+}
+
+function notesLoadList() {
+  if (notes.listLoading) return;
+  notes.listLoading = true; notes.listError = "";
+  notesRenderList();
+  var q = notes.q.trim();
+  notesApi("/meetings", q ? "q=" + encodeURIComponent(q) : "").then(function (j) {
+    if (q !== notes.q.trim()) return;   // typed again while this was on its way
+    notes.list = j.meetings || [];
+    notes.account = j.account !== false;
+    notes.apps = j.apps || null;
+  }).catch(function (e) {
+    notes.listError = (e && e.message) || String(e);
+  }).then(function () {
+    notes.listLoading = false;
+    notesRenderHead(); notesRenderList(); notesRenderItem();
+  });
+}
+
+function notesSearch(v) {
+  notes.q = v;
+  clearTimeout(notes.qTimer);
+  notes.qTimer = setTimeout(function () { notes.list = null; notesLoadList(); }, 350);
+}
+
+function notesWhen(iso) {
+  if (!iso) return "";
+  var d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+function notesSourceLabel(s) { return s === "bot" ? "Bot" : s === "desktop" ? "Laptop" : s === "phone" ? "Phone" : ""; }
+
+// The install links carry the half-hour ticket, because a plain link can't send a header.
+function notesInstallHtml(big) {
+  var a = notes.apps || {};
+  var t = encodeURIComponent(notes.ticket || "");
+  var btn = function (href, label, primary) {
+    return '<a class="' + (primary ? "notes-btn primary" : "notes-btn") + '" href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(label) + '</a>';
+  };
+  var parts = [];
+  if (a.windows) parts.push(btn(NOTES_API + "/download/windows?t=" + t, "Install on Windows", big));
+  if (a.android) parts.push(btn(NOTES_API + "/download/android?t=" + t, "Install on Android", false));
+  parts.push(btn(a.web || "https://ardent-notes.vercel.app", "Open Ardent Notes", false));
+  return '<div class="notes-install">' + parts.join("") + '</div>';
+}
+
+function notesRenderHead() {
+  var host = $("notesHead");
+  if (!host) return;
+  if (notes.account === false) {
+    host.innerHTML =
+      '<p style="margin:0 0 6px;"><strong>Get Ardent Notes</strong></p>' +
+      '<p class="small muted" style="margin:0 0 10px;">It writes up your meetings for you: install it on your laptop or phone, or send its bot to a call you can\'t make. Sign in with your Ardent email and your notes appear here.</p>' +
+      notesInstallHtml(true) +
+      '<p class="small muted" style="margin:10px 0 0;">On Windows, if it warns about an unknown publisher, choose More info, then Run anyway. On Android, allow installs from your browser when it asks.</p>';
+    return;
+  }
+  host.innerHTML =
+    '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">' +
+      '<input type="search" id="notesQ" placeholder="Search your meetings" value="' + esc(notes.q) + '" oninput="notesSearch(this.value)" style="max-width:260px;" />' +
+      '<button class="ghost small" style="padding:5px 10px;width:auto;flex:0 0 auto;" onclick="notes.list=null;notesLoadList()" title="Fetch the list again">Refresh</button>' +
+      '<span style="flex:1 1 auto;"></span>' +
+      '<details class="notes-get"><summary class="small">Get the apps</summary>' + notesInstallHtml(false) + '</details>' +
+    '</div>';
+}
+
+function notesRenderList() {
+  var host = $("notesList");
+  if (!host) return;
+  if (notes.account === false) { host.innerHTML = ""; host.style.display = "none"; return; }
+  host.style.display = "";
+  if (notes.listLoading && !notes.list) { host.innerHTML = '<p class="small muted" style="padding:10px;">Loading your meetings...</p>'; return; }
+  if (notes.listError) { host.innerHTML = '<p class="small" style="padding:10px;color:var(--coral);">' + esc(notes.listError) + '</p>'; return; }
+  var rows = notes.list || [];
+  if (!rows.length) { host.innerHTML = '<p class="small muted" style="padding:10px;">' + (notes.q.trim() ? "No meetings match." : "No notes yet. Record a meeting with Ardent Notes and it lands here.") + '</p>'; return; }
+  host.innerHTML = rows.map(function (m) {
+    var snip = m.snippet ? '<div class="small muted notes-snip">' + esc(String(m.snippet).replace(/\\n/g, " ")).replace(/&lt;&lt;/g, "<mark>").replace(/&gt;&gt;/g, "</mark>") + '</div>' : "";
+    return '<button type="button" class="irpcs-row' + (m.id === notes.openId ? " active" : "") + '" data-id="' + esc(m.id) + '" onclick="notesOpen(this.dataset.id)">' +
+      '<div class="lbl"><strong>' + esc(m.title || "Meeting") + '</strong></div>' +
+      '<div class="meta"><span>' + esc(notesWhen(m.started_at)) + '</span>' +
+        (notesSourceLabel(m.source) ? '<span class="irpcs-kind">' + esc(notesSourceLabel(m.source)) + '</span>' : '') +
+        (m.shared_by ? '<span>from ' + esc(m.shared_by) + '</span>' : '') +
+      '</div>' + snip + '</button>';
+  }).join("");
+}
+
+function notesOpen(id) {
+  notes.openId = id; notes.item = null; notes.itemError = ""; notes.itemLoading = true;
+  notesRenderList(); notesRenderItem();
+  notesApi("/meetings/" + encodeURIComponent(id)).then(function (j) {
+    if (notes.openId !== id) return;
+    notes.item = j.meeting || null;
+    if (!notes.item) throw new Error("Notes sent a meeting we couldn't read.");
+  }).catch(function (e) {
+    if (notes.openId === id) notes.itemError = (e && e.message) || String(e);
+  }).then(function () {
+    if (notes.openId !== id) return;
+    notes.itemLoading = false;
+    notesRenderItem();
+    if (window.innerWidth <= 900 && $("notesItem")) $("notesItem").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+// Escape first, then the little markdown the notes use: headings, nested bullets, bold.
+function notesInline(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"); }
+function notesMd(md) {
+  var out = [], depth = 0;
+  var close = function (to) { while (depth > to) { out.push("</ul>"); depth--; } };
+  String(md || "").split("\n").forEach(function (line) {
+    var h = line.match(/^#{1,6}\s+(.*)$/);
+    var b = line.match(/^(\s*)[-*•]\s+(.*)$/);
+    if (h) { close(0); out.push('<h4 class="notes-h">' + notesInline(h[1]) + '</h4>'); return; }
+    if (b) {
+      var lvl = Math.min(3, Math.floor(b[1].replace(/\t/g, "  ").length / 2) + 1);
+      while (depth < lvl) { out.push('<ul class="notes-ul">'); depth++; }
+      close(lvl);
+      out.push("<li>" + notesInline(b[2]) + "</li>");
+      return;
+    }
+    close(0);
+    if (line.trim()) out.push("<p>" + notesInline(line) + "</p>");
+  });
+  close(0);
+  return out.join("");
+}
+
+function notesRenderItem() {
+  var host = $("notesItem");
+  if (!host) return;
+  if (notes.account === false) { host.innerHTML = ""; return; }
+  if (!notes.openId) { host.innerHTML = notes.list && notes.list.length ? '<p class="small muted" style="padding:10px;">Pick a meeting to read its notes.</p>' : ""; return; }
+  if (notes.itemLoading) { host.innerHTML = '<div class="card"><p class="small muted" style="margin:0;">Loading the notes...</p></div>'; return; }
+  if (notes.itemError) { host.innerHTML = '<div class="card"><p class="small" style="margin:0;color:var(--coral);">' + esc(notes.itemError) + '</p></div>'; return; }
+  var m = notes.item;
+  if (!m) { host.innerHTML = ""; return; }
+  var mins = m.duration_seconds ? Math.max(1, Math.round(m.duration_seconds / 60)) + " min" : "";
+  var acts = (m.actions || []).map(function (a) {
+    var meta = [a.owner, a.due].filter(Boolean).join(", ");
+    return '<li class="' + (a.done ? "notes-done" : "") + '"><span class="notes-tick">' + (a.done ? "&#10003;" : "&#9744;") + '</span><span>' +
+      notesInline(a.task) + (meta ? ' <span class="muted">· ' + esc(meta) + '</span>' : "") +
+      (a.context ? '<span class="small muted" style="display:block;">' + esc(a.context) + '</span>' : "") + '</span></li>';
+  }).join("");
+  host.innerHTML = '<div class="card notes-card">' +
+    '<div class="row" style="gap:10px;align-items:flex-start;">' +
+      '<div style="flex:1;min-width:0;"><div class="notes-title">' + esc(m.title || "Meeting") + '</div>' +
+      '<p class="small muted" style="margin:0;">' + esc([notesWhen(m.started_at), mins, notesSourceLabel(m.source)].filter(Boolean).join(" · ")) + '</p></div>' +
+      '<a class="notes-btn" href="' + esc(m.url) + '" target="_blank" rel="noopener">Open in Ardent Notes</a>' +
+    '</div>' +
+    '<div class="notes-body">' + (m.summary_md ? notesMd(m.summary_md) : '<p class="muted">No notes were written for this meeting.</p>') + '</div>' +
+    (acts ? '<h4 class="notes-h">Actions</h4><ul class="notes-acts">' + acts + '</ul>' : "") +
+    (m.mine ? "" : '<p class="small muted" style="margin:12px 0 0;">Shared with you. Ticking actions and rewriting happen in Ardent Notes.</p>') +
+  '</div>';
+}
+
 // ============================ MARKING (r246) ============================
 // Marking moving into the tracker, a screen at a time. First: the Question
 // Bank, where questions are corrected and approved before the engine may mark
@@ -12379,7 +12940,7 @@ function mpNudgeCopy(id) {
 // lookup in the database, so the log does not depend on this page behaving.
 // Nothing here is cached: results live in this variable until the page moves on.
 var RECOVERY_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/recovery";
-var recovery = { ticket: "", exp: 0, loading: false, saves: null, error: "", open: {} };
+var recovery = { ticket: "", exp: 0, loading: false, saves: null, error: "", hidden: {} };  // r247 (FB-0480): questions show by default, so this records the cards someone has collapsed
 
 function recoveryTicket(force) {
   var now = Math.floor(Date.now() / 1000);
@@ -12419,7 +12980,7 @@ function recoveryFind() {
   var reg = ($("recReg").value || "").trim();
   if (!email && !lesson && !reg) { toast("Give an email, a lesson code or an attempt id."); return; }
   if (recovery.loading) return;
-  recovery.loading = true; recovery.error = ""; recovery.saves = null; recovery.open = {};
+  recovery.loading = true; recovery.error = ""; recovery.saves = null; recovery.hidden = {};
   if ($("recFindBtn")) $("recFindBtn").disabled = true;
   renderRecovery();
   var body = { action: "find" };
@@ -12459,7 +13020,7 @@ function recoveryCard(s, i) {
   var sub = s.submitted_at
     ? '<span class="badge rec-sub">Submitted ' + esc(fmtWhen(s.submitted_at)) + '</span>'
     : '<span class="badge rec-unsub">Not submitted</span>';
-  var open = !!recovery.open[i];
+  var open = !recovery.hidden[i];
   var rows = (d.questions || []).map(function (q) {
     var mark = q.correct === true ? '<span title="Right">&#10003;</span>' : (q.correct === false ? '<span title="Wrong or incomplete">&#10007;</span>' : '');
     var ans = q.answered ? q.answer.map(esc).join('<br>') : '<span class="small muted">not answered</span>';
@@ -12484,7 +13045,7 @@ function recoveryCard(s, i) {
   '</div>';
 }
 
-function recoveryToggle(i) { recovery.open[i] = !recovery.open[i]; renderRecovery(); }
+function recoveryToggle(i) { recovery.hidden[i] = !recovery.hidden[i]; renderRecovery(); }
 
 // A fixed date and time for text that leaves the page ("14 minutes ago" means
 // nothing once it is pasted into an email). UK time, as the instructors read it.
@@ -15113,7 +15674,17 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
-  { n: 74, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email, plus Insights and Photos owed. The separate portal is no longer needed for any of it." },
+  { n: 84, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email, plus Insights and Photos owed. The separate portal is no longer needed for any of it." },
+  { n: 83, date: "2026-10-27", text: "A shorter rail: Mine, Support, Content and Stats each gather a few pages, listed down the side when you open one." },
+  { n: 82, date: "2026-10-27", who: ["notes"], text: "Notes on the rail shows your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet." },
+  { n: 81, date: "2026-10-25", who: ["manage", "users"], text: "A repeat report that makes a tech issue high priority no longer sends it straight to the developers while the troubleshooting is barely started. It needs the same as a new filing (a few checklist steps done, including logging out and back in or looking as the student), and the issue says what is missing. Three different students reporting it still sends it on." },
+  { n: 80, date: "2026-10-25", text: "Every page now says what it is at the top (and in the browser tab), for example Today, Log a new issue, or Issues · Board, so you can name the screen in feedback without a screenshot." },
+  { n: 79, date: "2026-10-25", who: ["log"], text: "Live cases: Open in the form takes a case to the log form with the conversation in, the details pulled out, and the checklist and steps for the student. If the student already has an open issue, the case says so, updates go on it, and the form opens as an update to it." },
+  { n: 78, date: "2026-10-25", who: ["log"], text: "When a pasted conversation is split and you keep just one issue from it, the tracker now still asks whether it belongs on the student's open issue." },
+  { n: 77, date: "2026-10-25", who: ["users"], text: "Admin: each permission is now Hidden, Read or Write rather than a tick. Read lets someone open an area and look without being able to change anything, and the tracker refuses any change they try. IRPCS and Marking are on or off for now." },
+  { n: 76, date: "2026-10-25", text: "What's new and Alerts jump to the top of the rail while there is something unread in them, and drop back to the bottom once there is not." },
+  { n: 75, date: "2026-10-25", who: ["users"], text: "RCA has moved under Dev: open Dev and it is RCA records in the list beside it." },
+  { n: 74, date: "2026-10-25", who: ["recovery"], text: "Recovery shows the question wording under each answer straight away. Hide questions folds it away." },
   { n: 73, date: "2026-10-24", who: ["marking"], text: "Marking on the rail: review, correct and approve the question bank behind AI marking, without signing in to the separate portal." },
   { n: 72, date: "2026-10-24", who: ["users"], text: "Sign-in sessions are now stored scrambled, so someone who could read the tracker's database still could not use what they found there to sign in as anyone. Nobody is signed out by the change." },
   { n: 71, date: "2026-10-24", who: ["users"], text: "Security tidy-up: the Slack reply relay has its own key and no keys travel in web addresses any more, the RCA investigator strips emails and phone numbers before anything reaches the AI, and closed RCA records clear their messages and screenshots after 90 days (the findings stay)." },
@@ -15283,13 +15854,18 @@ function updateRailBadges() {
     nw.title = nn ? "What's new (" + nn + " unread)" : "What's new";
     if (nwb) { nwb.textContent = nn > 99 ? "99+" : String(nn); nwb.classList.toggle("on", !!nn); }
   }
+  railFloat();
   // Last on purpose: the More pill just re-reads the badges that were set
   // above, summed for whatever is folded into the sheet (the r60 rule - one
   // source, never a second count).
   var mb = $("railBadgeMore");
   if (mb) {
     var sheet = $("railMoreSheet"), total = 0;
-    if (sheet) sheet.querySelectorAll(".rail-badge.on").forEach(function (b) { total += parseInt(b.textContent, 10) || 0; });
+    railGroupBadges();
+    if (sheet) sheet.querySelectorAll(".rail-badge.on").forEach(function (b) {
+      if (b.closest(".in-group")) return;   // r256: counted once, on its group
+      total += parseInt(b.textContent, 10) || 0;
+    });
     mb.textContent = total > 99 ? "99+" : String(total);
     mb.classList.toggle("on", !!total);
   }
@@ -15365,7 +15941,30 @@ window.addEventListener("resize", sizeReportsFrame);
 // still in the markup and still work, this is a second way in, not a second
 // code path. A count next to an item is optional and comes from the same list
 // the view draws, never from its own sum (the Round 60 rule).
+// r256: a page in a rail group shows the group's pages at the top of its
+// sub-rail, then its own sections (if it has more than one) under its name.
 function subRailSpec() {
+  var own = subRailSpecOwn_();
+  var page = railGroupPageOf(state.view);
+  if (!page) return own;
+  var pages = railGroupPages(page.group);
+  if (pages.length < 2) return own;
+  var items = pages.map(function (x) { return { key: "@grp:" + x.view, label: x.label }; });
+  if (own && own.items && own.items.length > 1) {
+    items = items.concat([{ head: true, label: own.head }], own.items);
+  }
+  return {
+    head: page.group.label,
+    cur: own ? own.cur : null,
+    pageKey: "@grp:" + page.view,
+    items: items,
+    go: function (k) {
+      if (String(k).indexOf("@grp:") === 0) { railGo(k.slice(5)); return; }
+      if (own && own.go) own.go(k);
+    }
+  };
+}
+function subRailSpecOwn_() {
   var v = state.view, p = state.perms || {};
   if (v === "actions" || v === "admin") {
     var items = [];
@@ -15393,9 +15992,17 @@ function subRailSpec() {
             { key: "preview", label: "Preview" }, { key: "results", label: "Results" },
             { key: "models", label: "Models" }]
   };
-  if (v === "dev") return {
-    head: "Developers", cur: state.devFilter, go: setDevFilter,
+  // r247 (FB-0479): RCA sits under Dev, below a heading of its own, for the
+  // people who can open it (admins, as railGo's gate says).
+  if (v === "dev" || v === "rca") return {
+    head: "Developers", cur: v === "rca" ? "@rca" : state.devFilter,
+    go: function (k) {
+      if (k === "@rca") { if (state.view !== "rca") railGo("rca"); return; }
+      if (state.view !== "dev") setView("dev");
+      setDevFilter(k);
+    },
     items: [{ key: "todo", label: "To do" }, { key: "fixed", label: "Fixed" }, { key: "all", label: "All" }]
+      .concat(p.users ? [{ head: true, label: "Diagnosis" }, { key: "@rca", label: "RCA records" }] : [])
   };
   if (v === "course") return {
     head: "Course fixes", cur: state.courseFilter, go: setCourseFilter,
@@ -15427,7 +16034,36 @@ function subRailSpec() {
   }
   return null;
 }
+// r249 (Holly, 25 Oct): "for each webpage to have a title? So we can ID what we
+// mean without screenshots." The header said Bugs on every screen. It now names
+// the section and, where there is one, the page within it, using the sub-rail's
+// own list so the two can never disagree. The browser tab follows suit.
+var VIEW_TITLES_ = {
+  live: "Today", instructor: "Log a new issue", admin: "Issues", actions: "Issues",
+  dev: "Developers", rca: "Developers", course: "Course fixes", users: "Admin", analytics: "Stats",
+  reports: "Reports", irpcs: "IRPCS", resources: "Resources", recovery: "Recovery", marking: "Marking", notes: "Notes",
+  customs: "Shipping", shipreport: "Shipping", edd: "Edd", tasks: "Tasks", manual: "Help", instructors: "Help"
+};
+function pageTitle() {
+  var v = state.view;
+  var t = VIEW_TITLES_[v] || "";
+  if (v === "instructor") t = state.editingId ? "Edit an issue" : (state.updateTargetId ? "Update an issue" : t);
+  var spec = null;
+  try { spec = subRailSpec(); } catch (e) { spec = null; }
+  if (spec && spec.items && spec.items.length > 1 && v !== "manual") {
+    var cur = (spec.items.filter(function (it) { return !it.head && it.key === spec.cur; })[0] || {}).label;
+    if (cur) t = (t ? t + " · " : "") + cur;
+  }
+  return t;
+}
+function renderPageTitle() {
+  var t = pageTitle();
+  var brand = document.querySelector("#shellMain .topbar .brand");
+  if (brand) brand.innerHTML = t ? '<span class="brand-app">Bugs ·</span> ' + esc(t) : "Bugs";
+  try { document.title = t ? t + " · Bugs" : "Bugs"; } catch (e) {}
+}
 function renderSubRail() {
+  renderPageTitle();
   var bar = $("subRail");
   if (!bar) return;
   var spec = SHELL_ON ? subRailSpec() : null;
@@ -16017,10 +16653,12 @@ function chatwootImport(value) {
   if (!v) { $("cwStatus").textContent = "Paste a conversation link or number first."; return; }
   $("cwStatus").innerHTML = '<span class="spinner"></span> fetching the conversation…';
   busyShow("Fetching the conversation…");   // FB-0283: the little inline spinner was easy to miss
-  apiPost({ action: "chatwootImport", conversation: v }).then(function (res) {
+  // r249: returns the promise (resolving to the import, or null) so a caller can
+  // run Extract once it lands.
+  return apiPost({ action: "chatwootImport", conversation: v }).then(function (res) {
     busyHide();
-    if (!res || !res.ok) { $("cwStatus").textContent = "Couldn't fetch it: " + ((res && res.error) || "unknown"); return; }
-    if (!res.transcript) { $("cwStatus").textContent = "That conversation has no messages to import."; return; }
+    if (!res || !res.ok) { $("cwStatus").textContent = "Couldn't fetch it: " + ((res && res.error) || "unknown"); return null; }
+    if (!res.transcript) { $("cwStatus").textContent = "That conversation has no messages to import."; return null; }
     setField("rawText", res.transcript);
     // Remember the conversation so the issue can carry a note back to it.
     state.chatwootConvId = res.conversation_id;
@@ -16056,7 +16694,8 @@ function chatwootImport(value) {
       (res.student_name ? ' from ' + esc(res.student_name) : '') + '.' + imgNote + ' Press Extract when you\'re ready.' +
       (res.link ? ' <a href="' + esc(res.link) + '" target="_blank" style="color:var(--accent);">Open in Chatwoot</a>' : '');
     closeChatwootPicker();
-  }).catch(function (e) { busyHide(); $("cwStatus").textContent = "Import error. See console."; console.error(e); });
+    return res;
+  }).catch(function (e) { busyHide(); $("cwStatus").textContent = "Import error. See console."; console.error(e); return null; });
 }
 // The picker serves two homes now: the log form (default) and the Live cases
 // tab, which passes its own handler for the picked conversation id.
@@ -16511,8 +17150,18 @@ function faultWords(issue) {
 // rather than a second opinion that can disagree with it. One small call, and
 // only when a candidate is already close (see DUP_MAYBE).
 function askDupMatcher() {
+  if (isSplitting()) { askSplitParts_(); return; }   // r255: the parts are what get filed
   var c = dupCandidates();
-  if (c.score >= DUP_SURE) return;
+  if (c.score >= DUP_SURE) {
+    // r255 (Edd, 24 Oct): sure enough to show the cards, but if the answer is
+    // "no, it's new" the submit still asks the server. Ask it now, quietly.
+    try {
+      var fs = collectForm();
+      apiPost({ action: "sameIssue", category: fs.category, summary: fs.summary, raw_text: fs.raw_text,
+        lesson_code: fs.lesson_code, device_info: fs.device_info, quiet: 1, why: "sure_cards" }).catch(function () {});
+    } catch (e) {}
+    return;
+  }
   // r151 (Edd): "this is the second report of the same bug in the last 30
   // mins or so but I haven't been asked to link it." The words were too
   // different for the overlap score, so the matcher was never asked and the
@@ -16823,7 +17472,7 @@ var SUB_DISP = [
 function showSplitSuggestion(subIssues) {
   hideSplitSuggestion();
   if (!Array.isArray(subIssues) || subIssues.length < 2) return; // guard a malformed model value
-  if (state.editingId || state.updateTargetId) return; // only for brand-new reports
+  if (state.editingId || state.updateTargetId || state._formTarget) return; // only for brand-new reports (r249: or one opened from a case with its issue)
   state.subIssuesAll = subIssues.slice();
   // Default: everything gets its own issue, which is what a multi-topic thread
   // usually wants. Anything else is a deliberate choice.
@@ -17033,6 +17682,7 @@ function closeSplitModal() {
     n.classList.remove("hidden");
   }
   buildSubEdits();
+  detectExistingIssue();   // r249: a split kept down to one issue still asks about an open issue
   wizardClosed();
 }
 // Each issue that is going to be logged gets its own editable copy of the
@@ -17054,6 +17704,7 @@ function buildSubEdits() {
   state.subActive = 0;
   loadSubIntoForm(0);
   updateSubmitRow();
+  askSplitParts_();   // r255
 }
 // Splitting and "add as an update to an existing issue" are mutually exclusive:
 // one paste can't both fan out into new issues and fold into one old one. When
@@ -17114,6 +17765,7 @@ function hideSplitSuggestion() {
   state.subDisp = null;
   state.subFold = null;
   state.splitMode = false;
+  state.splitMatchGen = null;   // r255
   hideSubTabs();
   var n = $("splitNote"); if (n) { n.classList.add("hidden"); n.innerHTML = ""; }
 }
@@ -17139,13 +17791,32 @@ function detectExistingIssue() {
   var hadChoice = state.existingChoice, hadTarget = state.updateTargetId;
   hideExisting();
   if (state.editingId) return;
+  // r249 (FB-0482): opened from a live case with its issue already known, so
+  // that issue is the target and there is nothing to ask.
+  if (state._formTarget && applyFormTarget_()) return;
   // If we're about to split this paste into several issues, don't also try to
   // fold it into one existing issue as an update; the two would collide and the
   // update would silently win. The instructor can untick the split to get here.
-  if (isSplitting()) return;
+  //
+  // r249 (Holly, 25 Oct): EXCEPT when the split has come down to one issue.
+  // Paul Devine's third chat was read as two problems, Holly kept one, and the
+  // "already has an open issue" question never came, because a split of one
+  // was treated like a split of several. With one issue left there is nothing
+  // to collide with, so the question is asked - but with nothing pre-selected:
+  // confirming (or picking one) turns the split off and makes this an update,
+  // and Continue on its own leaves it logging as new, as the split said.
+  var splitOne = isSplitting() && (state.subIssues || []).length === 1;
+  if (isSplitting() && !splitOne) return;
   var matches = findOpenIssuesByEmail(getField("f_student_contact"));
   if (!matches.length) return;
   state.existingMatches = matches;
+  if (splitOne) {
+    state.existingChoice = hadChoice === "new" ? "new" : null;
+    state.updateTargetId = null;
+    showExisting(matches);
+    highlightChosen();
+    return;
+  }
   // Restore the decision if it was about one of these same issues. A choice the
   // instructor has already made is not something a background re-scan gets to
   // quietly undo.
@@ -17284,6 +17955,9 @@ function confirmSameIssue() {
   if (!state.updateTargetId && state.existingMatches && state.existingMatches.length) {
     state.updateTargetId = state.existingMatches[0].issue_id;
   }
+  // r249: an update rules out the split (see chooseExisting). Reachable now that
+  // a split of one asks the question.
+  if (state.splitMode) hideSplitSuggestion();
   state.existingChoice = "update";
   closeExistingModal();
   renderExisting();          // the panel now says what will happen, not what to decide
@@ -17308,6 +17982,7 @@ function highlightChosen() {
   $("submitBtn").textContent = state.updateTargetId ? "Add update" : "Submit issue";
   if ($("submitParkedBtn")) $("submitParkedBtn").textContent = state.updateTargetId ? "Update and park" : "Submit and park";
   updateSubmitRow();
+  renderPageTitle();   // r249: "Update an issue" once one is chosen
 }
 function recommendUpdateTarget(matches) {
   var cands = matches.map(function (m) { return { id: m.issue_id, summary: m.summary || "", lesson_code: m.lesson_code || "" }; });
@@ -17661,6 +18336,124 @@ function submitParked() {
   submitIssue();
 }
 
+// r255: one split tab's payload, built in one place so the early duplicate
+// asks (askSplitParts_) send exactly what the submit will send.
+function splitTabPayload_(e, idx, alreadyUploaded, checklistJson, foldNote) {
+        var d = collectForm();
+        d.image_urls = alreadyUploaded;
+        d.action = "addIssue"; d.app_url = APP_URL;
+        // Per-issue fields come from this tab, not from whatever tab happens to
+        // be on screen. Shared fields (student, device, platform) stay as
+        // collectForm read them; the OUTCOME is per-issue now (FB-0256).
+        var subOutcome = String(e.vals.f_outcome || "").trim();
+        d.raw_text = getField("rawText") + (subOutcome
+          ? "\n\n--- Outcome noted by " + (state.selectedInstructor || "instructor") + " ---\n" + subOutcome
+          : "");
+        if (e.vals.f_category) d.category = e.vals.f_category;
+        d.summary = e.vals.f_summary || d.summary;
+        d.priority = String(e.vals.f_priority || "").toLowerCase() || d.priority;
+        d.severity = String(e.vals.f_severity || "").toLowerCase() || d.severity;
+        d.priority_reason = e.vals.f_priority_reason || "";
+        d.issue_type = e.vals.f_issue_type || d.issue_type;
+        d.section = e.vals.f_section || "";
+        d.course = e.vals.f_course || "";
+        d.module = e.vals.f_module || "";
+        d.lesson = e.vals.f_lesson || "";
+        d.lesson_code = e.vals.f_lesson_code || "";
+        d.request_kind = e.requestKind === "improvement" ? "improvement" : "fix";
+        d.student_sorted = !!e.student_sorted;
+        d.media_kind = (d.category === "course_error") ? (e.vals.f_media_kind || "") : "";
+        d.impact = e.requestKind === "improvement" ? (e.vals.f_impact || "") : "";
+        // These three only exist on a shipping issue and the tick only on a
+        // course error, so a tab of a different category must not inherit them
+        // from whichever tab happened to be on screen at submit time.
+        if (d.category === "shipping") {
+          d.courier = getField("f_courier"); d.tracking_number = getField("f_tracking_number"); d.chase_at = getField("f_chase_at");
+        } else { d.courier = ""; d.tracking_number = ""; d.chase_at = ""; }
+        if (d.category !== "course_error") d.double_checked = false;
+        if (checklistJson && (d.category === "tech_issue" || state.formMode === "internal")) d.checklist_json = checklistJson;
+        else d.checklist_json = "";
+        var rfSub = resolutionFields(e.resolution_status, e.resolution_note, e.resolved_at);
+        for (var ks in rfSub) d[ks] = rfSub[ks];
+        // Anything marked "fold in" rides on the first issue, so the detail is
+        // on a record somewhere rather than only in the pasted transcript.
+        if (idx === 0 && foldNote) d.raw_text = (d.raw_text || "") + foldNote;
+        return d;
+}
+// r255: the untouched-split path's payload, same reason as splitTabPayload_.
+function splitSubPayload_(sub, alreadyUploaded, checklistJson) {
+        var d = collectForm();
+        d.image_urls = alreadyUploaded;
+        d.action = "addIssue"; d.app_url = APP_URL;
+        d.summary = sub.summary || d.summary;
+        // Full-fidelity split: each problem keeps its own fields, not the form's.
+        // Internal tasks stay internal; don't move a split issue out of that mode.
+        if (state.formMode !== "internal") {
+          if (sub.issue_type) d.issue_type = sub.issue_type;
+          if (sub.category === "course_error" || sub.category === "tech_issue") d.category = sub.category;
+          if (sub.section != null) d.section = sub.section || "";
+          if (sub.course != null) d.course = sub.course || "";
+          if (sub.module != null) d.module = sub.module || "";
+          if (sub.lesson != null) d.lesson = sub.lesson || "";
+          if (sub.lesson_code != null) d.lesson_code = sub.lesson_code || "";
+          if (sub.request_kind) d.request_kind = sub.request_kind;
+          if (sub.impact != null) d.impact = sub.impact || "";
+          // media_kind only means anything for a course error; a checklist only
+          // for a tech issue. Keep each sub tidy rather than carrying the form's.
+          d.media_kind = (d.category === "course_error") ? (sub.media_kind || "") : "";
+          if (checklistJson && d.category === "tech_issue") d.checklist_json = checklistJson;
+        } else if (checklistJson) {
+          d.checklist_json = checklistJson;
+        }
+        if (sub.priority) d.priority = String(sub.priority).toLowerCase();
+        if (sub.priority_reason) d.priority_reason = sub.priority_reason;
+        if (sub.student_sorted != null) d.student_sorted = (sub.student_sorted === true || sub.student_sorted === "true");
+        var rfSub = resolutionFields(sub.resolution_status, sub.resolution_note, sub.resolved_at);
+        for (var ks in rfSub) d[ks] = rfSub[ks];
+        return d;
+}
+// r255 (Edd, 27 Oct): a split's parts are separate problems by the
+// instructor's own say-so, so a part is never matched against a sibling saved
+// a moment earlier, and the parts are checked against the log as it stood when
+// the split was asked about (splitMatchGen), so the answers asked for in the
+// background are still the ones the submit finds.
+function splitMatchFields_(d, acc) {
+  if (state.splitMatchGen) d.split_gen = state.splitMatchGen;
+  var sib = (acc && acc.ok || []).map(function (r) { return r && r.issue && r.issue.issue_id; }).filter(Boolean);
+  if (sib.length) d.split_exclude = sib;
+}
+// The payloads a split submit would send right now, in order. Mirrors the
+// branch in submitIssue: reviewed tabs when every part has one, else the parts.
+function splitPayloads_() {
+  if (!isSplitting() || state.editingId || state.updateTargetId) return [];
+  var subs = state.subIssues || [];
+  if (state.subEdits && state.subEdits.length === subs.length) {
+    captureActiveSub();
+    var fold = foldedNoteText();
+    return state.subEdits.map(function (e, i) { return splitTabPayload_(e, i, [], null, fold); });
+  }
+  return subs.map(function (sub) { return splitSubPayload_(sub, [], null); });
+}
+// Ask about every part at once, quietly. Debounced: a tab edit fires this.
+var splitAskTimer_ = null;
+function askSplitParts_() {
+  clearTimeout(splitAskTimer_);
+  splitAskTimer_ = setTimeout(function () {
+    var parts;
+    try { parts = splitPayloads_(); } catch (e) { return; }
+    if (!parts.length) return;
+    var stamp = state.splitAskSeq = (state.splitAskSeq || 0) + 1;
+    Promise.all(parts.map(function (d) {
+      return apiPost({ action: "sameIssue", category: d.category, summary: d.summary, raw_text: d.raw_text,
+        lesson_code: d.lesson_code, device_info: d.device_info, quiet: 1, why: "split_part" }).catch(function () { return null; });
+    })).then(function (res) {
+      if (stamp !== state.splitAskSeq) return;   // a newer round of asks is on its way
+      var gens = res.map(function (r) { return r && r.ok ? String(r.gen || "") : ""; });
+      // Only trust it when every part was asked against the same log.
+      state.splitMatchGen = (gens[0] && gens.every(function (g) { return g === gens[0]; })) ? gens[0] : null;
+    });
+  }, 600);
+}
 function submitIssue() {
   if (!state.selectedInstructor) { toast("Pick your name first."); return; }
   var isInternal = state.formMode === "internal";
@@ -17766,45 +18559,8 @@ function submitIssue() {
     request = edits.reduce(function (chain, e, idx) {
       return chain.then(function (acc) {
         if (acc.failed) return acc;
-        var d = collectForm();
-        d.image_urls = alreadyUploaded;
-        d.action = "addIssue"; d.app_url = APP_URL;
-        // Per-issue fields come from this tab, not from whatever tab happens to
-        // be on screen. Shared fields (student, device, platform) stay as
-        // collectForm read them; the OUTCOME is per-issue now (FB-0256).
-        var subOutcome = String(e.vals.f_outcome || "").trim();
-        d.raw_text = getField("rawText") + (subOutcome
-          ? "\n\n--- Outcome noted by " + (state.selectedInstructor || "instructor") + " ---\n" + subOutcome
-          : "");
-        if (e.vals.f_category) d.category = e.vals.f_category;
-        d.summary = e.vals.f_summary || d.summary;
-        d.priority = String(e.vals.f_priority || "").toLowerCase() || d.priority;
-        d.severity = String(e.vals.f_severity || "").toLowerCase() || d.severity;
-        d.priority_reason = e.vals.f_priority_reason || "";
-        d.issue_type = e.vals.f_issue_type || d.issue_type;
-        d.section = e.vals.f_section || "";
-        d.course = e.vals.f_course || "";
-        d.module = e.vals.f_module || "";
-        d.lesson = e.vals.f_lesson || "";
-        d.lesson_code = e.vals.f_lesson_code || "";
-        d.request_kind = e.requestKind === "improvement" ? "improvement" : "fix";
-        d.student_sorted = !!e.student_sorted;
-        d.media_kind = (d.category === "course_error") ? (e.vals.f_media_kind || "") : "";
-        d.impact = e.requestKind === "improvement" ? (e.vals.f_impact || "") : "";
-        // These three only exist on a shipping issue and the tick only on a
-        // course error, so a tab of a different category must not inherit them
-        // from whichever tab happened to be on screen at submit time.
-        if (d.category === "shipping") {
-          d.courier = getField("f_courier"); d.tracking_number = getField("f_tracking_number"); d.chase_at = getField("f_chase_at");
-        } else { d.courier = ""; d.tracking_number = ""; d.chase_at = ""; }
-        if (d.category !== "course_error") d.double_checked = false;
-        if (checklistJson && (d.category === "tech_issue" || state.formMode === "internal")) d.checklist_json = checklistJson;
-        else d.checklist_json = "";
-        var rfSub = resolutionFields(e.resolution_status, e.resolution_note, e.resolved_at);
-        for (var ks in rfSub) d[ks] = rfSub[ks];
-        // Anything marked "fold in" rides on the first issue, so the detail is
-        // on a record somewhere rather than only in the pasted transcript.
-        if (idx === 0 && foldNote) d.raw_text = (d.raw_text || "") + foldNote;
+        var d = splitTabPayload_(e, idx, alreadyUploaded, checklistJson, foldNote);
+        splitMatchFields_(d, acc);   // r255
         return apiPost(d).then(function (r) {
           if (!r || !r.ok) { acc.failed = r || { ok: false, error: "unknown" }; return acc; }
           acc.ok.push(r); return acc;
@@ -17830,34 +18586,8 @@ function submitIssue() {
     request = subIssues.reduce(function (chain, sub) {
       return chain.then(function (acc) {
         if (acc.failed) return acc; // a earlier sub failed; don't log the rest
-        var d = collectForm();
-        d.image_urls = alreadyUploaded;
-        d.action = "addIssue"; d.app_url = APP_URL;
-        d.summary = sub.summary || d.summary;
-        // Full-fidelity split: each problem keeps its own fields, not the form's.
-        // Internal tasks stay internal; don't move a split issue out of that mode.
-        if (state.formMode !== "internal") {
-          if (sub.issue_type) d.issue_type = sub.issue_type;
-          if (sub.category === "course_error" || sub.category === "tech_issue") d.category = sub.category;
-          if (sub.section != null) d.section = sub.section || "";
-          if (sub.course != null) d.course = sub.course || "";
-          if (sub.module != null) d.module = sub.module || "";
-          if (sub.lesson != null) d.lesson = sub.lesson || "";
-          if (sub.lesson_code != null) d.lesson_code = sub.lesson_code || "";
-          if (sub.request_kind) d.request_kind = sub.request_kind;
-          if (sub.impact != null) d.impact = sub.impact || "";
-          // media_kind only means anything for a course error; a checklist only
-          // for a tech issue. Keep each sub tidy rather than carrying the form's.
-          d.media_kind = (d.category === "course_error") ? (sub.media_kind || "") : "";
-          if (checklistJson && d.category === "tech_issue") d.checklist_json = checklistJson;
-        } else if (checklistJson) {
-          d.checklist_json = checklistJson;
-        }
-        if (sub.priority) d.priority = String(sub.priority).toLowerCase();
-        if (sub.priority_reason) d.priority_reason = sub.priority_reason;
-        if (sub.student_sorted != null) d.student_sorted = (sub.student_sorted === true || sub.student_sorted === "true");
-        var rfSub = resolutionFields(sub.resolution_status, sub.resolution_note, sub.resolved_at);
-        for (var ks in rfSub) d[ks] = rfSub[ks];
+        var d = splitSubPayload_(sub, alreadyUploaded, checklistJson);
+        splitMatchFields_(d, acc);   // r255
         return apiPost(d).then(function (r) {
           if (!r || !r.ok) { acc.failed = r || { ok: false, error: "unknown" }; return acc; }
           acc.ok.push(r); return acc;
@@ -18144,8 +18874,9 @@ function restoreDraft() {
     var t = e && e.target;
     // r241: the "what happened" box travels with the pasted text, so it moves
     // the key too (both r238 misses on 20 Oct were raw growing by ~80 chars).
-    if (!t || (t.id !== "f_summary" && t.id !== "f_outcome") || !inForm(e)) return;
+    if (!t || (t.id !== "f_summary" && t.id !== "f_outcome" && !(t.id === "f_lesson_code" && isSplitting())) || !inForm(e)) return;
     if (state.editingId || state.updateTargetId || state.dupTargetId) return;   // no match on those paths
+    if (isSplitting()) { askSplitParts_(); return; }   // r255
     if (!String(getField("rawText") || "").trim()) return;
     try {
       var f = collectForm();
@@ -18161,6 +18892,7 @@ function restoreDraft() {
 function resetForm() {
   clearDraft();   // it has been filed; there is nothing half-written any more
   state.editingId = null;
+  state._formTarget = "";   // r249
   state.attachedImages = [];
   state.checklist = {};
   state.resolution = null;   // so the submit row comes back to full strength
@@ -22018,7 +22750,9 @@ var PERM_LABELS = [
   { k: "recovery", label: "Recovery" },
   // r246: the question bank, then the rest of Marking. Same two-list rule,
   // and its invite box.
-  { k: "marking", label: "Marking" }
+  { k: "marking", label: "Marking" },
+  // r253.1: meeting notes from Ardent Notes. Same two-list rule, and its invite box.
+  { k: "notes", label: "Notes" }
 ];
 
 function invitePreset(kind) {
@@ -22028,18 +22762,21 @@ function invitePreset(kind) {
     dev: { dev: true },
     course: { course: true }
   };
-  var p = presets[kind] || {};
-  PERM_LABELS.forEach(function (x) { var el = $("inv_" + x.k); if (el) el.checked = !!p[x.k]; });
+  renderInvitePerms(presets[kind] || {});
+}
+function renderInvitePerms(p) {
+  var host = $("invPerms");
+  if (host) host.innerHTML = permControlsHtml("invite", p || {}, {});
 }
 function doInvite() {
   var email = $("invEmail").value.trim(), name = $("invName").value.trim();
   if (!email) { toast("Enter an email."); return; }
-  var perms = {}; PERM_LABELS.forEach(function (x) { perms[x.k] = $("inv_" + x.k).checked; });
-  apiPost({ action: "inviteUser", email: email, name: name, perms: perms }).then(function (res) {
+  var lv = collectPermLevels("invite");
+  apiPost({ action: "inviteUser", email: email, name: name, perms: lv.perms, perms_ro: lv.perms_ro }).then(function (res) {
     if (!res || !res.ok) { toast("Invite failed: " + ((res && res.error) || "unknown")); return; }
     toast("Invited " + email + ".");
     $("invEmail").value = ""; $("invName").value = "";
-    PERM_LABELS.forEach(function (x) { var el = $("inv_" + x.k); if (el) el.checked = false; });
+    renderInvitePerms({});
     if (res.invite_url) showInviteLink(res.invite_url);
     renderUsers();
   }).catch(function (e) { toast("Invite error."); console.error(e); });
@@ -22049,6 +22786,7 @@ function showInviteLink(url) {
   $("inviteLink").value = url;
 }
 function renderUsers() {
+  if ($("invPerms") && !$("invPerms").firstChild) renderInvitePerms({});
   setUsersSection(state.usersSection || localGet("ait_users_section") || "feedback");
   apiGet("listUsers").then(function (res) {
     if (!res || !res.ok) { $("usersList").innerHTML = '<p class="muted">Could not load users.</p>'; return; }
@@ -22496,10 +23234,7 @@ function userRowHtml(u) {
         : (u.invite_pending ? '<span class="badge" style="border-color:var(--medium);color:var(--medium);" title="They have an invite but have not set a password yet.">invite not accepted</span>'
         : '<span class="badge" style="border-color:var(--muted);color:var(--muted);" title="No password and no outstanding invite - send one.">no invite sent</span>')) +
     '</div>' +
-    '<div class="permrow">' + PERM_LABELS.map(function (p) {
-      return '<label class="small"><input type="checkbox" data-email="' + esc(u.email) + '" data-perm="' + p.k + '"' +
-        (u.perms && u.perms[p.k] ? " checked" : "") + '> ' + p.label + '</label>';
-    }).join("") + '</div>' +
+    permControlsHtml(u.email, u.perms || {}, u.perms_ro || {}) +
     '<div class="row" style="margin-top:8px;">' +
       '<button class="ghost small" onclick="saveUserPerms(\'' + esc(u.email) + '\')">Save access</button>' +
       '<button class="ghost small" onclick="resendInvite(\'' + esc(u.email) + '\')">Resend invite</button>' +
@@ -22511,14 +23246,63 @@ function userRowHtml(u) {
     '</div>' +
   '</div>';
 }
-function collectPerms(email) {
-  var perms = {};
-  var boxes = document.querySelectorAll('input[data-email="' + email + '"]');
-  Array.prototype.forEach.call(boxes, function (b) { perms[b.getAttribute("data-perm")] = b.checked; });
-  return perms;
+// ===================== r248 (FB-0481): HIDDEN / READ / WRITE =====================
+// Edd: "Instead of tick boxes, can I have toggles for each of these options for
+// 'hidden/read/write' to give more granular controls."
+//
+// Write is what a tick used to mean. Read is enforced by the back end, not
+// just drawn: every action that is not a pure read refuses a read-only key
+// (hasPerm_ in Code.gs, and tracker-save reads the person's record on each
+// fast save). Only the areas whose back end does that offer Read; Analytics
+// and Recovery only ever read, so their "on" is Read; IRPCS and Marking save
+// through their own back ends, which do not check it yet, so they are on/off.
+var PERM_LEVELS_ = { analytics: ["off", "read"], recovery: ["off", "read"], irpcs: ["off", "on"], marking: ["off", "on"], notes: ["off", "on"] };
+var PERM_LEVEL_WORDS_ = { off: "Hidden", read: "Read", write: "Write", on: "On" };
+var PERM_RO_KEYS_ = ["log", "manage", "dev", "course", "users", "resources"];   // RO_KEYS in Code.gs
+function permLevelsFor(k) { return PERM_LEVELS_[k] || ["off", "read", "write"]; }
+function permLevelOf(perms, ro, k) {
+  if (!perms || !perms[k]) return "off";
+  var lv = permLevelsFor(k);
+  if (lv.indexOf("write") < 0) return lv[1];
+  return (ro && ro[k]) ? "read" : "write";
+}
+function permControlsHtml(scope, perms, ro) {
+  return '<div class="permgrid" data-scope="' + esc(scope) + '">' + PERM_LABELS.map(function (x) {
+    var cur = permLevelOf(perms, ro, x.k), nm = "perm|" + scope + "|" + x.k;
+    return '<div class="permline"><span class="permname">' + esc(x.label) + '</span>' +
+      '<span class="seg3" role="radiogroup" aria-label="' + esc(x.label) + '">' +
+      permLevelsFor(x.k).map(function (lv) {
+        return '<label class="seg3-opt lv-' + lv + (lv === cur ? " on" : "") + '">' +
+          '<input type="radio" name="' + esc(nm) + '" value="' + lv + '" data-perm="' + x.k + '"' + (lv === cur ? " checked" : "") +
+          ' onchange="permSegChanged(this)">' + PERM_LEVEL_WORDS_[lv] + '</label>';
+      }).join("") + '</span></div>';
+  }).join("") + '</div>';
+}
+function permSegChanged(el) {
+  var seg = el.closest(".seg3");
+  if (!seg) return;
+  Array.prototype.forEach.call(seg.querySelectorAll(".seg3-opt"), function (l) {
+    l.classList.toggle("on", !!l.querySelector("input").checked);
+  });
+}
+function permGrid_(scope) {
+  var grids = document.querySelectorAll(".permgrid");
+  for (var i = 0; i < grids.length; i++) if (grids[i].getAttribute("data-scope") === scope) return grids[i];
+  return null;
+}
+function collectPermLevels(scope) {
+  var grid = permGrid_(scope), perms = {}, ro = {};
+  PERM_LABELS.forEach(function (x) {
+    var c = grid ? grid.querySelector('input[data-perm="' + x.k + '"]:checked') : null;
+    var lv = c ? c.value : "off";
+    perms[x.k] = lv !== "off";
+    if (lv === "read" && PERM_RO_KEYS_.indexOf(x.k) >= 0) ro[x.k] = true;
+  });
+  return { perms: perms, perms_ro: ro };
 }
 function saveUserPerms(email) {
-  apiPost({ action: "updateUser", email: email, perms: collectPerms(email) }).then(function (res) {
+  var lv = collectPermLevels(email);
+  apiPost({ action: "updateUser", email: email, perms: lv.perms, perms_ro: lv.perms_ro }).then(function (res) {
     if (!res || !res.ok) { toast("Save failed: " + ((res && res.error) || "unknown")); return; }
     toast("Access saved.");
   }).catch(function (e) { toast("Save error."); console.error(e); });
