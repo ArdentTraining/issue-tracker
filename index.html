@@ -11437,7 +11437,7 @@ function notesDay(iso) {
   var d = new Date(iso);
   return isNaN(d) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
-function notesSourceLabel(s) { return s === "bot" ? "Bot" : s === "desktop" ? "Laptop" : s === "phone" ? "Phone" : ""; }
+function notesSourceLabel(s) { return s === "bot" ? "Bot" : s === "desktop" ? "Laptop" : s === "phone" ? "Phone" : s === "granola" ? "Granola" : ""; }
 
 // The install links carry the half-hour ticket, because a plain link can't send a header.
 function notesInstallHtml(big) {
