@@ -771,6 +771,7 @@ function doPost(e) {
     if (action === 'mirrorSyncNow') return jsonOut(mirrorFullSync());                 // r202: admin, reconcile the mirror now
     if (action === 'instructorGuide') return jsonOut(instructorGuide_(body));
     if (action === 'storeAdmin') return jsonOut(storeAdmin_(body));
+    if (action === 'fileTimings') return jsonOut(fileTimings_());   // r254
     if (action === 'slackHistory') return jsonOut(slackHistory_(body));             // r208.7: read-only, what Slack holds                // r208: phase 2 step 2, practice import and self-test
     if (action === 'slackProbe') return jsonOut(body.test_kind ? slackTestPost_(body.test_kind) : slackProbe_());                          // r207.1: is each Slack route alive, without posting          // r205: the For Instructors doc, live
     if (action === 'irpcsTicket') return jsonOut(irpcsTicket_(user));
@@ -1197,7 +1198,8 @@ var READ_ACTIONS_ = {};
  'getFeedback', 'listVoiceGuides', 'myFeedback', 'instructorGuide', 'slackHistory',
  // Tickets are reads here: what the ticket opens is checked where it is used,
  // and perms_ro travels inside it.
- 'reportsTicket', 'tasksTicket', 'trackerTicket', 'irpcsTicket', 'recoveryTicket', 'markingTicket', 'notesTicket'
+ 'reportsTicket', 'tasksTicket', 'trackerTicket', 'irpcsTicket', 'recoveryTicket', 'markingTicket', 'notesTicket',
+ 'fileTimings'   // r254
 ].forEach(function (a) { READ_ACTIONS_[a] = true; });
 var WRITE_REQ_ = false;
 
@@ -1387,6 +1389,11 @@ function reqPerm_(action) {
     case 'instructorGuide': return 'manage';
     case 'slackProbe': return 'users';
     case 'storeAdmin': return 'users';
+    // r254 (Edd, 27 Oct): the filing timings on their own. The Claude account
+    // lost 'users' in the r248 security round, and the timings are the one
+    // thing from storeAdmin it still needs: stopwatch marks and tags, no
+    // issue text, no store switches. A read, so analytics Read is enough.
+    case 'fileTimings': return 'analytics';
     case 'slackHistory': return 'users';
     // The IRPCS section. Both of these hand a credential to another system, so
     // both are gated here AND checked again where they are minted - the UI
@@ -3481,19 +3488,22 @@ function storeDryRun_() {
     fields_differing: fieldsSeen, examples: diffs, list_ms: { sheet: tSheet, store: tStore }, single_reads: sample };
 }
 
+// r254: the filing stopwatch, readable on its own (see reqPerm_). Marks,
+// tags, the after-filing queue's ids and ages, and whether the sweep exists.
+function fileTimings_() {
+  var ft = [], pend = {}, sweep = false;
+  try { ft = JSON.parse(PropertiesService.getScriptProperties().getProperty('FILE_TIMINGS') || '[]'); } catch (e) {}
+  try { pend = JSON.parse(PropertiesService.getScriptProperties().getProperty(FILE_AFTER_KEY_) || '{}'); } catch (e) {}
+  try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'fileAfterSweep') sweep = true; }); } catch (e) {}
+  return { ok: true, timings: ft, after_pending: Object.keys(pend).map(function (k) { return { id: k, age_s: Math.round((Date.now() - pend[k].at) / 1000) }; }), sweep_trigger: sweep };
+}
 function storeAdmin_(data) {
   var what = String((data && data.what) || '');
   // Its last step checks real records are refused while the Sheet is the record,
   // so in Supabase mode it would leave a blank record behind (4 Oct 2026).
   if (what === 'selftest') return storeLive_() ? { ok: false, error: 'not while the store is the record' } : storeSelfTest();
   if (what === 'import') return storePracticeImport();
-  if (what === 'file_timings') {
-    var ft = [], pend = {}, sweep = false;
-    try { ft = JSON.parse(PropertiesService.getScriptProperties().getProperty('FILE_TIMINGS') || '[]'); } catch (e) {}
-    try { pend = JSON.parse(PropertiesService.getScriptProperties().getProperty(FILE_AFTER_KEY_) || '{}'); } catch (e) {}
-    try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'fileAfterSweep') sweep = true; }); } catch (e) {}
-    return { ok: true, timings: ft, after_pending: Object.keys(pend).map(function (k) { return { id: k, age_s: Math.round((Date.now() - pend[k].at) / 1000) }; }), sweep_trigger: sweep };
-  }
+  if (what === 'file_timings') return fileTimings_();
   if (what === 'mode') {
     var m = storeCall_({ op: 'mode' }), log = {};
     try { log = JSON.parse(PropertiesService.getScriptProperties().getProperty('STORE_SHADOW_LOG') || '{}'); } catch (e) {}
@@ -3585,6 +3595,7 @@ function invalidateIssueCache_() {
 // out. Being on this list is the ONLY way to keep the cache through a call,
 // so a new write action is safe by default.
 var READ_ONLY_ACTIONS = {
+  fileTimings: 1,   // r254
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1, getAssignees: 1,
   getInvite: 1, mirror: 1, chatwootList: 1, chatScanList: 1, chatwootContactUrl: 1, chatBackSweepState: 1, lessonIssueCounts: 1,
@@ -3745,6 +3756,7 @@ var BOOT_EXTRAS_ = {
 };
 var BOOT_EXTRAS_KEY_ = 'ait_boot_x1_';
 var PURE_READS_ = {
+  fileTimings: 1,   // r254
   ping: 1, me: 1, bootstrap: 1, getIssues: 1, getIssuesList: 1, getIssue: 1, getInstructors: 1,
   listUsers: 1, getPlaybook: 1, listPlaybookSuggestions: 1, listKnownFixFlags: 1, getFeedback: 1,
   getAssignees: 1, mirror: 1, chatScanList: 1, listLiveCases: 1, lessonIssueCounts: 1,
@@ -11249,7 +11261,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r252 · 2026-10-27';
+var CODE_STAMP = 'r254 · 2026-10-27';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
