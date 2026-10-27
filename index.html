@@ -1223,8 +1223,9 @@
     <span class="ri-word">New</span>
   </button>
   <!-- r253 (Edd): meeting notes from Ardent Notes, and an install button for
-       anyone who hasn't got it yet. Everybody with a login; Ardent Notes only
-       ever shows a person their own meetings and ones shared with them. -->
+       anyone who hasn't got it yet. r253.1: its own permission, hand-picked in
+       Admin (Edd only to start). Ardent Notes only ever shows a person their own
+       meetings and ones shared with them. -->
   <button type="button" class="rail-item" id="railNotes" onclick="railGo('notes')" title="Notes - your meeting notes from Ardent Notes">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><polyline points="15 3 15 7 19 7"/><line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="14" y2="16"/></svg>
     <span class="ri-word">Notes</span>
@@ -2852,6 +2853,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="notes"><td><span class="ui">Notes</span></td><td>Your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet.</td></tr>
     <tr data-perm="marking"><td><span class="ui">Marking</span></td><td>The question bank behind AI marking: correct each question and approve it before the engine marks against it.</td></tr>
     <tr data-perm="recovery"><td><span class="ui">Recovery</span></td><td>A student's quiz answers from before Submit All, for when their submission never arrived.</td></tr>
     <tr data-perm="resources"><td><span class="ui">Resources</span></td><td>The free downloads on the website's resources page: edit them, add new ones, and change their order.</td></tr>
@@ -3199,11 +3201,11 @@
   <p><span class="ui">Hide from website</span> moves the row to a Hidden tab in the sheet, so nothing is ever deleted and <span class="ui">Put back on the website</span> undoes it. Every save is also written to the ResourcesLog tab of the tracker's own sheet, with what each resource looked like before.</p>
 </section>
 
-<section id="man-notes" data-title="Meeting notes">
+<section id="man-notes" data-perm="notes" data-title="Meeting notes">
   <h3>Meeting notes</h3>
   <p><span class="ui">Notes</span> on the rail shows the notes Ardent Notes has written for your meetings, newest first, along with any a colleague has shared with you. Search finds a meeting by anything said in it. Pick one to read its notes and actions; <span class="ui">Open in Ardent Notes</span> goes to the full meeting, with the transcript, ticking actions and rewriting the notes.</p>
   <p>If you haven't used Ardent Notes yet, the page offers to install it: the laptop app on Windows, or the phone app on Android. Sign in with your Ardent email. Ardent Notes can also send a bot to a call you can't make.</p>
-  <p>Only you see your meetings here. Nobody else's appear unless they've shared them with you.</p>
+  <p>Only you see your meetings here. Nobody else's appear unless they've shared them with you. An admin turns Notes on for each person in Admin.</p>
 </section>
 
 <section id="man-marking" data-perm="marking" data-title="The question bank">
@@ -5523,7 +5525,7 @@ function applyPermGates() {
   var railGate = [["railNew", p.log], ["railShipping", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railIrpcs", p.irpcs], ["railResources", p.resources], ["railRecovery", p.recovery], ["railMarking", p.marking],
-                  ["railNotes", true],
+                  ["railNotes", p.notes],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
@@ -9291,6 +9293,7 @@ function railGo(v) {
   if (v === "resources" && !(state.perms || {}).resources) return;  // r187: and the backend checks the same key
   if (v === "recovery" && !(state.perms || {}).recovery) return;    // r243: and so does the Edge Function
   if (v === "marking" && !(state.perms || {}).marking) return;      // r246: and so does ardent-portal
+  if (v === "notes" && !(state.perms || {}).notes) return;          // r253.1: and so does notesTicket
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -11219,6 +11222,7 @@ function notesApi(path, query, retried) {
 }
 
 function renderNotes() {
+  if (!(state.perms || {}).notes) return;
   if (!notes.list && !notes.listLoading && !notes.listError) notesLoadList();
   notesRenderHead(); notesRenderList(); notesRenderItem();
 }
@@ -14578,7 +14582,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
-  { n: 82, date: "2026-10-27", text: "Notes on the rail shows your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet." },
+  { n: 82, date: "2026-10-27", who: ["notes"], text: "Notes on the rail shows your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet." },
   { n: 81, date: "2026-10-25", who: ["manage", "users"], text: "A repeat report that makes a tech issue high priority no longer sends it straight to the developers while the troubleshooting is barely started. It needs the same as a new filing (a few checklist steps done, including logging out and back in or looking as the student), and the issue says what is missing. Three different students reporting it still sends it on." },
   { n: 80, date: "2026-10-25", text: "Every page now says what it is at the top (and in the browser tab), for example Today, Log a new issue, or Issues · Board, so you can name the screen in feedback without a screenshot." },
   { n: 79, date: "2026-10-25", who: ["log"], text: "Live cases: Open in the form takes a case to the log form with the conversation in, the details pulled out, and the checklist and steps for the student. If the student already has an open issue, the case says so, updates go on it, and the form opens as an update to it." },
@@ -21557,7 +21561,9 @@ var PERM_LABELS = [
   { k: "recovery", label: "Recovery" },
   // r246: the question bank, then the rest of Marking. Same two-list rule,
   // and its invite box.
-  { k: "marking", label: "Marking" }
+  { k: "marking", label: "Marking" },
+  // r253.1: meeting notes from Ardent Notes. Same two-list rule, and its invite box.
+  { k: "notes", label: "Notes" }
 ];
 
 function invitePreset(kind) {
@@ -22061,7 +22067,7 @@ function userRowHtml(u) {
 // fast save). Only the areas whose back end does that offer Read; Analytics
 // and Recovery only ever read, so their "on" is Read; IRPCS and Marking save
 // through their own back ends, which do not check it yet, so they are on/off.
-var PERM_LEVELS_ = { analytics: ["off", "read"], recovery: ["off", "read"], irpcs: ["off", "on"], marking: ["off", "on"] };
+var PERM_LEVELS_ = { analytics: ["off", "read"], recovery: ["off", "read"], irpcs: ["off", "on"], marking: ["off", "on"], notes: ["off", "on"] };
 var PERM_LEVEL_WORDS_ = { off: "Hidden", read: "Read", write: "Write", on: "On" };
 var PERM_RO_KEYS_ = ["log", "manage", "dev", "course", "users", "resources"];   // RO_KEYS in Code.gs
 function permLevelsFor(k) { return PERM_LEVELS_[k] || ["off", "read", "write"]; }

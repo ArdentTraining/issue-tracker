@@ -761,9 +761,9 @@ function doPost(e) {
     if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET' }));
     // r253: Notes. The back end is Ardent Notes on Vercel (ardent-notes.vercel.app/api/tracker),
     // so, like Marking, it gets its own key and its own audience: a leak there opens a person's
-    // meeting notes and nothing else of ours. No permission beyond a tracker login, because
-    // Ardent Notes only ever returns the meetings the email inside the ticket can already see.
-    if (action === 'notesTicket') return jsonOut(mintPortalTicket_(user, null, 30, { aud: 'notes', secretName: 'NOTES_TICKET_SECRET' }));
+    // meeting notes and nothing else of ours. r253.1: behind the 'notes' permission (hand-picked
+    // in Admin); Ardent Notes still only returns what the email in the ticket can already see.
+    if (action === 'notesTicket') return jsonOut(mintPortalTicket_(user, 'notes', 30, { aud: 'notes', secretName: 'NOTES_TICKET_SECRET' }));
     // r202/r203: reads from the Supabase mirror. Twelve hours, because the page
     // keeps it with the saved board so an open does not first wait on Apps
     // Script; it only ever reads the board, the same thing the session can.
@@ -932,7 +932,9 @@ var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_
 // r246: 'marking' opens the Marking section (the question bank first, then
 // the papers), whose back end is ardent-portal on Vercel. Hand-picked: Edd
 // only to start with (24 Oct), and nobody holds it until an admin ticks it.
-var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery', 'marking'];
+// r253.1: 'notes' opens Notes (meeting notes from Ardent Notes). Hand-picked:
+// Edd only to start with (27 Oct), and nobody holds it until an admin ticks it.
+var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery', 'marking', 'notes'];
 var SESSION_DAYS = 30;
 var HASH_ROUNDS = 2000;
 // Password-reset links expire after this many minutes. The expiry is packed into
@@ -1375,8 +1377,8 @@ function reqPerm_(action) {
     // user's own and the Edge Function scopes every read and write to the email
     // inside the ticket. Nothing here to hold a permission key over.
     case 'tasksTicket': return 'any';
-    // r253: Notes. Any login; Ardent Notes scopes everything to the email in the ticket.
-    case 'notesTicket': return 'any';
+    // r253.1: hands out a credential for Ardent Notes, so gated here and again where it's minted.
+    case 'notesTicket': return 'notes';
     case 'trackerTicket': return 'any';
     case 'mirrorSyncNow': return 'users';
     // r205: the For Instructors doc carries the shared logins (phone, the
