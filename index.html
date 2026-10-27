@@ -209,6 +209,30 @@
   .irpcs-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
   /* One dot, one meaning: this item has changes no student has seen yet. */
   .irpcs-pending { color: var(--medium); font-weight: 700; }
+  /* r253: Notes. Reuses the IRPCS split list; these are only the bits it doesn't have. */
+  .notes-install { display: flex; gap: 8px; flex-wrap: wrap; }
+  .notes-btn { display: inline-block; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); text-decoration: none; font-size: 13px; white-space: nowrap; }
+  .notes-btn:hover { border-color: var(--accent); }
+  .notes-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .notes-btn.primary:hover { background: var(--coral); border-color: var(--coral); color: #021231; }
+  .notes-get { flex: 0 0 auto !important; }
+  .notes-get summary { cursor: pointer; color: var(--muted); }
+  .notes-card .row > .notes-btn { flex: 0 0 auto !important; }
+  .notes-title { font-size: 18px; font-weight: 600; line-height: 1.3; margin: 0 0 2px; color: var(--text); }
+  .notes-get[open] .notes-install { margin-top: 8px; }
+  .notes-snip { margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .notes-snip mark { background: rgba(255, 182, 152, 0.45); color: inherit; border-radius: 2px; }
+  .notes-card { line-height: 1.5; }
+  .notes-body { margin-top: 10px; font-size: 14px; }
+  .notes-body p { margin: 6px 0; }
+  .notes-h { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .notes-ul { margin: 2px 0; padding-left: 20px; }
+  .notes-ul li { margin: 2px 0; }
+  .notes-acts { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+  .notes-acts li { display: flex; gap: 8px; margin: 6px 0; }
+  .notes-tick { flex: 0 0 auto; color: var(--muted); }
+  .notes-done > span:last-child { color: var(--muted); text-decoration: line-through; }
+
   .irpcs-edit { min-height: 200px; }
   .irpcs-edit .fld { margin-bottom: 12px; }
   .irpcs-edit label { display: block; margin-bottom: 3px; }
@@ -1198,6 +1222,13 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     <span class="ri-word">New</span>
   </button>
+  <!-- r253 (Edd): meeting notes from Ardent Notes, and an install button for
+       anyone who hasn't got it yet. Everybody with a login; Ardent Notes only
+       ever shows a person their own meetings and ones shared with them. -->
+  <button type="button" class="rail-item" id="railNotes" onclick="railGo('notes')" title="Notes - your meeting notes from Ardent Notes">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><polyline points="15 3 15 7 19 7"/><line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="14" y2="16"/></svg>
+    <span class="ri-word">Notes</span>
+  </button>
   <div class="rail-div" id="railDiv"></div>
   <button type="button" class="rail-item" id="railMore" onclick="railMoreToggle(event)" title="More sections">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
@@ -2185,6 +2216,17 @@
     <div id="markingItem"></div>
   </div>
 </div>
+<!-- r253: Notes. The back end is Ardent Notes on Vercel (/api/tracker), reached
+     with a half-hour notesTicket. Nothing real is in this file. -->
+<div id="notesView" class="wrap hidden">
+  <h2 style="margin:0 0 4px;">Notes</h2>
+  <p class="hint" style="margin:0 0 14px;">Your meeting notes from Ardent Notes, and any a colleague has shared with you.</p>
+  <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="notesHead"></div>
+  <div class="irpcs-split">
+    <div class="irpcs-list" id="notesList"></div>
+    <div id="notesItem"></div>
+  </div>
+</div>
 <div id="resourcesView" class="wrap hidden">
   <div class="rs-head">
     <div>
@@ -3155,6 +3197,13 @@
   <p>Changes wait in the bar at the bottom until we press <span class="ui">Save to website</span>, and then they all go at once. A coral dot marks anything not saved yet. If somebody has changed the sheet since the page loaded, the save stops and says so rather than writing over them. Press <span class="ui">Refresh</span> and make the change again.</p>
   <p><span class="ui">Add resource</span> takes a PDF, puts it in the tracker's Website resources folder in Google Drive, makes the thumbnail from its first page, and has a go at the title, description and category. Check those over, as they are a first draft. <span class="ui">Replace</span> on a resource swaps its file or thumbnail the same way.</p>
   <p><span class="ui">Hide from website</span> moves the row to a Hidden tab in the sheet, so nothing is ever deleted and <span class="ui">Put back on the website</span> undoes it. Every save is also written to the ResourcesLog tab of the tracker's own sheet, with what each resource looked like before.</p>
+</section>
+
+<section id="man-notes" data-title="Meeting notes">
+  <h3>Meeting notes</h3>
+  <p><span class="ui">Notes</span> on the rail shows the notes Ardent Notes has written for your meetings, newest first, along with any a colleague has shared with you. Search finds a meeting by anything said in it. Pick one to read its notes and actions; <span class="ui">Open in Ardent Notes</span> goes to the full meeting, with the transcript, ticking actions and rewriting the notes.</p>
+  <p>If you haven't used Ardent Notes yet, the page offers to install it: the laptop app on Windows, or the phone app on Android. Sign in with your Ardent email. Ardent Notes can also send a bot to a call you can't make.</p>
+  <p>Only you see your meetings here. Nobody else's appear unless they've shared them with you.</p>
 </section>
 
 <section id="man-marking" data-perm="marking" data-title="The question bank">
@@ -5474,6 +5523,7 @@ function applyPermGates() {
   var railGate = [["railNew", p.log], ["railShipping", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
                   ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railIrpcs", p.irpcs], ["railResources", p.resources], ["railRecovery", p.recovery], ["railMarking", p.marking],
+                  ["railNotes", true],
                   ["railReports", p.analytics], ["railStats", p.analytics],
                   ["railUsers", p.users]];
   railGate.forEach(function (g) { var el = $(g[0]); if (el) el.style.display = g[1] ? "" : "none"; });
@@ -5502,7 +5552,7 @@ function permsKey_(p) {
 var VIEW_RAIL_ = {
   instructor: "railNew", customs: "railShipping", shipreport: "railShipping", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
   edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
-  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", marking: "railMarking", reports: "railReports", analytics: "railStats", users: "railUsers"
+  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", marking: "railMarking", notes: "railNotes", reports: "railReports", analytics: "railStats", users: "railUsers"
 };
 
 // Called when a refresh brings a different permission set than the one the
@@ -9070,6 +9120,8 @@ function setView(v) {
   if (v === "recovery") renderRecovery();
   if ($("markingView")) $("markingView").classList.toggle("hidden", v !== "marking");
   if (v === "marking") renderMarking();
+  if ($("notesView")) $("notesView").classList.toggle("hidden", v !== "notes");
+  if (v === "notes") renderNotes();
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "instructors") renderInstructors();
@@ -9143,7 +9195,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railNotes", "railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -9256,6 +9308,7 @@ function updateRail() {
   var pairs = [["railNew", v === "instructor"], ["railShipping", v === "customs" || v === "shipreport"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev" || v === "rca"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
                ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"], ["railRecovery", v === "recovery"], ["railMarking", v === "marking"],
+               ["railNotes", v === "notes"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual" || v === "instructors"],
                ["railRCA", v === "rca"]];
@@ -11109,6 +11162,220 @@ function customsAgain(no, copy) {
     $("cu_status").textContent = edit ? "Editing " + no + ". Change what you need, then save." : "Copied from " + no + ". Change what you need, then make the invoice.";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }).catch(function () { $("cu_status").textContent = "That did not work."; });
+}
+
+// ============================ NOTES (r253) ============================
+// Meeting notes from Ardent Notes (our own note-taker: laptop and phone apps,
+// and the bot that joins calls). Read-only here: the list, a search, and each
+// meeting's notes and actions, with a link to open it in Ardent Notes.
+//
+// The back end is Ardent Notes on Vercel (/api/tracker). Auth: notesTicket,
+// signed with NOTES_TICKET_SECRET for aud 'notes'. Ardent Notes maps the email
+// in the ticket to its own account and returns only what that person could see
+// there: their own meetings and ones shared with them. No permission key here,
+// because there is nothing to gate beyond that.
+//
+// PUBLIC REPO: no meeting, note or name appears in this file. Everything real
+// arrives from the API at run time. Notes are rendered by notesMd(), which
+// escapes everything first and only then adds headings, bullets and bold.
+var NOTES_API = "https://ardent-notes.vercel.app/api/tracker";
+var notes = {
+  ticket: "", exp: 0,
+  list: null, account: null, apps: null, listLoading: false, listError: "",
+  q: "", qTimer: 0,
+  openId: "", item: null, itemLoading: false, itemError: ""
+};
+
+function notesTicket(force) {
+  var now = Math.floor(Date.now() / 1000);
+  if (!force && notes.ticket && notes.exp - now > 60) return Promise.resolve(notes.ticket);
+  return apiPost({ action: "notesTicket" }).then(function (r) {
+    if (!r || !r.ok || !r.ticket) {
+      var e = (r && r.error) || "";
+      throw new Error(/NOTES_TICKET_SECRET/.test(e) ? "Notes isn't switched on yet: NOTES_TICKET_SECRET isn't set in the tracker's Script Properties." : (e || "Couldn't get a Notes ticket."));
+    }
+    notes.ticket = r.ticket;
+    notes.exp = r.expires_at || (now + 1500);
+    return notes.ticket;
+  });
+}
+
+// One silent retry on a 401 with a fresh ticket, never more.
+function notesApi(path, query, retried) {
+  return notesTicket(!!retried).then(function (t) {
+    return fetch(NOTES_API + path + (query ? "?" + query : ""), { cache: "no-store", headers: { authorization: "Bearer " + t } });
+  }).then(function (r) {
+    return r.text().then(function (txt) {
+      var j = null;
+      try { j = JSON.parse(txt); } catch (e) {}
+      if (r.status === 401 && !retried) { notes.ticket = ""; notes.exp = 0; return notesApi(path, query, true); }
+      if (!r.ok) throw new Error((j && j.error) || ("Notes returned " + r.status + "."));
+      return j || {};
+    });
+  }, function (e) {
+    if (e && /ticket|Notes/.test(e.message || "")) throw e;
+    throw new Error("Couldn't reach Ardent Notes (" + ((e && e.message) || e) + ").");
+  });
+}
+
+function renderNotes() {
+  if (!notes.list && !notes.listLoading && !notes.listError) notesLoadList();
+  notesRenderHead(); notesRenderList(); notesRenderItem();
+}
+
+function notesLoadList() {
+  if (notes.listLoading) return;
+  notes.listLoading = true; notes.listError = "";
+  notesRenderList();
+  var q = notes.q.trim();
+  notesApi("/meetings", q ? "q=" + encodeURIComponent(q) : "").then(function (j) {
+    if (q !== notes.q.trim()) return;   // typed again while this was on its way
+    notes.list = j.meetings || [];
+    notes.account = j.account !== false;
+    notes.apps = j.apps || null;
+  }).catch(function (e) {
+    notes.listError = (e && e.message) || String(e);
+  }).then(function () {
+    notes.listLoading = false;
+    notesRenderHead(); notesRenderList(); notesRenderItem();
+  });
+}
+
+function notesSearch(v) {
+  notes.q = v;
+  clearTimeout(notes.qTimer);
+  notes.qTimer = setTimeout(function () { notes.list = null; notesLoadList(); }, 350);
+}
+
+function notesWhen(iso) {
+  if (!iso) return "";
+  var d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+function notesSourceLabel(s) { return s === "bot" ? "Bot" : s === "desktop" ? "Laptop" : s === "phone" ? "Phone" : ""; }
+
+// The install links carry the half-hour ticket, because a plain link can't send a header.
+function notesInstallHtml(big) {
+  var a = notes.apps || {};
+  var t = encodeURIComponent(notes.ticket || "");
+  var btn = function (href, label, primary) {
+    return '<a class="' + (primary ? "notes-btn primary" : "notes-btn") + '" href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(label) + '</a>';
+  };
+  var parts = [];
+  if (a.windows) parts.push(btn(NOTES_API + "/download/windows?t=" + t, "Install on Windows", big));
+  if (a.android) parts.push(btn(NOTES_API + "/download/android?t=" + t, "Install on Android", false));
+  parts.push(btn(a.web || "https://ardent-notes.vercel.app", "Open Ardent Notes", false));
+  return '<div class="notes-install">' + parts.join("") + '</div>';
+}
+
+function notesRenderHead() {
+  var host = $("notesHead");
+  if (!host) return;
+  if (notes.account === false) {
+    host.innerHTML =
+      '<p style="margin:0 0 6px;"><strong>Get Ardent Notes</strong></p>' +
+      '<p class="small muted" style="margin:0 0 10px;">It writes up your meetings for you: install it on your laptop or phone, or send its bot to a call you can\'t make. Sign in with your Ardent email and your notes appear here.</p>' +
+      notesInstallHtml(true) +
+      '<p class="small muted" style="margin:10px 0 0;">On Windows, if it warns about an unknown publisher, choose More info, then Run anyway. On Android, allow installs from your browser when it asks.</p>';
+    return;
+  }
+  host.innerHTML =
+    '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">' +
+      '<input type="search" id="notesQ" placeholder="Search your meetings" value="' + esc(notes.q) + '" oninput="notesSearch(this.value)" style="max-width:260px;" />' +
+      '<button class="ghost small" style="padding:5px 10px;width:auto;flex:0 0 auto;" onclick="notes.list=null;notesLoadList()" title="Fetch the list again">Refresh</button>' +
+      '<span style="flex:1 1 auto;"></span>' +
+      '<details class="notes-get"><summary class="small">Get the apps</summary>' + notesInstallHtml(false) + '</details>' +
+    '</div>';
+}
+
+function notesRenderList() {
+  var host = $("notesList");
+  if (!host) return;
+  if (notes.account === false) { host.innerHTML = ""; host.style.display = "none"; return; }
+  host.style.display = "";
+  if (notes.listLoading && !notes.list) { host.innerHTML = '<p class="small muted" style="padding:10px;">Loading your meetings...</p>'; return; }
+  if (notes.listError) { host.innerHTML = '<p class="small" style="padding:10px;color:var(--coral);">' + esc(notes.listError) + '</p>'; return; }
+  var rows = notes.list || [];
+  if (!rows.length) { host.innerHTML = '<p class="small muted" style="padding:10px;">' + (notes.q.trim() ? "No meetings match." : "No notes yet. Record a meeting with Ardent Notes and it lands here.") + '</p>'; return; }
+  host.innerHTML = rows.map(function (m) {
+    var snip = m.snippet ? '<div class="small muted notes-snip">' + esc(String(m.snippet).replace(/\\n/g, " ")).replace(/&lt;&lt;/g, "<mark>").replace(/&gt;&gt;/g, "</mark>") + '</div>' : "";
+    return '<button type="button" class="irpcs-row' + (m.id === notes.openId ? " active" : "") + '" data-id="' + esc(m.id) + '" onclick="notesOpen(this.dataset.id)">' +
+      '<div class="lbl"><strong>' + esc(m.title || "Meeting") + '</strong></div>' +
+      '<div class="meta"><span>' + esc(notesWhen(m.started_at)) + '</span>' +
+        (notesSourceLabel(m.source) ? '<span class="irpcs-kind">' + esc(notesSourceLabel(m.source)) + '</span>' : '') +
+        (m.shared_by ? '<span>from ' + esc(m.shared_by) + '</span>' : '') +
+      '</div>' + snip + '</button>';
+  }).join("");
+}
+
+function notesOpen(id) {
+  notes.openId = id; notes.item = null; notes.itemError = ""; notes.itemLoading = true;
+  notesRenderList(); notesRenderItem();
+  notesApi("/meetings/" + encodeURIComponent(id)).then(function (j) {
+    if (notes.openId !== id) return;
+    notes.item = j.meeting || null;
+    if (!notes.item) throw new Error("Notes sent a meeting we couldn't read.");
+  }).catch(function (e) {
+    if (notes.openId === id) notes.itemError = (e && e.message) || String(e);
+  }).then(function () {
+    if (notes.openId !== id) return;
+    notes.itemLoading = false;
+    notesRenderItem();
+    if (window.innerWidth <= 900 && $("notesItem")) $("notesItem").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+// Escape first, then the little markdown the notes use: headings, nested bullets, bold.
+function notesInline(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"); }
+function notesMd(md) {
+  var out = [], depth = 0;
+  var close = function (to) { while (depth > to) { out.push("</ul>"); depth--; } };
+  String(md || "").split("\n").forEach(function (line) {
+    var h = line.match(/^#{1,6}\s+(.*)$/);
+    var b = line.match(/^(\s*)[-*•]\s+(.*)$/);
+    if (h) { close(0); out.push('<h4 class="notes-h">' + notesInline(h[1]) + '</h4>'); return; }
+    if (b) {
+      var lvl = Math.min(3, Math.floor(b[1].replace(/\t/g, "  ").length / 2) + 1);
+      while (depth < lvl) { out.push('<ul class="notes-ul">'); depth++; }
+      close(lvl);
+      out.push("<li>" + notesInline(b[2]) + "</li>");
+      return;
+    }
+    close(0);
+    if (line.trim()) out.push("<p>" + notesInline(line) + "</p>");
+  });
+  close(0);
+  return out.join("");
+}
+
+function notesRenderItem() {
+  var host = $("notesItem");
+  if (!host) return;
+  if (notes.account === false) { host.innerHTML = ""; return; }
+  if (!notes.openId) { host.innerHTML = notes.list && notes.list.length ? '<p class="small muted" style="padding:10px;">Pick a meeting to read its notes.</p>' : ""; return; }
+  if (notes.itemLoading) { host.innerHTML = '<div class="card"><p class="small muted" style="margin:0;">Loading the notes...</p></div>'; return; }
+  if (notes.itemError) { host.innerHTML = '<div class="card"><p class="small" style="margin:0;color:var(--coral);">' + esc(notes.itemError) + '</p></div>'; return; }
+  var m = notes.item;
+  if (!m) { host.innerHTML = ""; return; }
+  var mins = m.duration_seconds ? Math.max(1, Math.round(m.duration_seconds / 60)) + " min" : "";
+  var acts = (m.actions || []).map(function (a) {
+    var meta = [a.owner, a.due].filter(Boolean).join(", ");
+    return '<li class="' + (a.done ? "notes-done" : "") + '"><span class="notes-tick">' + (a.done ? "&#10003;" : "&#9744;") + '</span><span>' +
+      notesInline(a.task) + (meta ? ' <span class="muted">· ' + esc(meta) + '</span>' : "") +
+      (a.context ? '<span class="small muted" style="display:block;">' + esc(a.context) + '</span>' : "") + '</span></li>';
+  }).join("");
+  host.innerHTML = '<div class="card notes-card">' +
+    '<div class="row" style="gap:10px;align-items:flex-start;">' +
+      '<div style="flex:1;min-width:0;"><div class="notes-title">' + esc(m.title || "Meeting") + '</div>' +
+      '<p class="small muted" style="margin:0;">' + esc([notesWhen(m.started_at), mins, notesSourceLabel(m.source)].filter(Boolean).join(" · ")) + '</p></div>' +
+      '<a class="notes-btn" href="' + esc(m.url) + '" target="_blank" rel="noopener">Open in Ardent Notes</a>' +
+    '</div>' +
+    '<div class="notes-body">' + (m.summary_md ? notesMd(m.summary_md) : '<p class="muted">No notes were written for this meeting.</p>') + '</div>' +
+    (acts ? '<h4 class="notes-h">Actions</h4><ul class="notes-acts">' + acts + '</ul>' : "") +
+    (m.mine ? "" : '<p class="small muted" style="margin:12px 0 0;">Shared with you. Ticking actions and rewriting happen in Ardent Notes.</p>') +
+  '</div>';
 }
 
 // ============================ MARKING (r246) ============================
@@ -14311,6 +14578,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 82, date: "2026-10-27", text: "Notes on the rail shows your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet." },
   { n: 81, date: "2026-10-25", who: ["manage", "users"], text: "A repeat report that makes a tech issue high priority no longer sends it straight to the developers while the troubleshooting is barely started. It needs the same as a new filing (a few checklist steps done, including logging out and back in or looking as the student), and the issue says what is missing. Three different students reporting it still sends it on." },
   { n: 80, date: "2026-10-25", text: "Every page now says what it is at the top (and in the browser tab), for example Today, Log a new issue, or Issues · Board, so you can name the screen in feedback without a screenshot." },
   { n: 79, date: "2026-10-25", who: ["log"], text: "Live cases: Open in the form takes a case to the log form with the conversation in, the details pulled out, and the checklist and steps for the student. If the student already has an open issue, the case says so, updates go on it, and the form opens as an update to it." },
@@ -14648,7 +14916,7 @@ function subRailSpec() {
 var VIEW_TITLES_ = {
   live: "Today", instructor: "Log a new issue", admin: "Issues", actions: "Issues",
   dev: "Developers", rca: "Developers", course: "Course fixes", users: "Admin", analytics: "Stats",
-  reports: "Reports", irpcs: "IRPCS", resources: "Resources", recovery: "Recovery", marking: "Marking",
+  reports: "Reports", irpcs: "IRPCS", resources: "Resources", recovery: "Recovery", marking: "Marking", notes: "Notes",
   customs: "Shipping", shipreport: "Shipping", edd: "Edd", tasks: "Tasks", manual: "Help", instructors: "Help"
 };
 function pageTitle() {
