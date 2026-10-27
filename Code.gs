@@ -758,7 +758,7 @@ function doPost(e) {
     // so it gets a key of its own rather than the people key: Vercel has never
     // held REPORTS_TICKET_SECRET and a leak there should open Marking and
     // nothing else. Own audience too. Half an hour, like the portal tickets.
-    if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET' }));
+    if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET', onlyPerm: true }));
     // r253: Notes. The back end is Ardent Notes on Vercel (ardent-notes.vercel.app/api/tracker),
     // so, like Marking, it gets its own key and its own audience: a leak there opens a person's
     // meeting notes and nothing else of ours. r253.1: behind the 'notes' permission (hand-picked
@@ -11285,7 +11285,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r255 · 2026-10-27';
+var CODE_STAMP = 'r258 · 2026-10-27';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -15321,11 +15321,16 @@ function mintPortalTicket_(user, requiredPerm, minutes, opts) {
     name: pub.name || null,
     // The whole permission set travels, not just the one being checked. It
     // costs nothing and it means adding a second view with a different
-    // permission later needs no change on this side.
-    perms: perms,
+    // permission later needs no change on this side. Except where the caller
+    // asks for only its own (Marking, 25 Oct): that service has no use for
+    // anyone's admin or developer flags, and a flag it can't see is one it
+    // can never come to trust by accident.
+    perms: opts.onlyPerm && requiredPerm ? (function () { var o = {}; o[requiredPerm] = true; return o; })() : perms,
     // r248: the keys this person may only read. Every function that writes on
-    // a ticket refuses a write for a key listed here.
-    perms_ro: pub.perms_ro || {},
+    // a ticket refuses a write for a key listed here. Narrowed the same way.
+    perms_ro: opts.onlyPerm && requiredPerm
+      ? (function () { var o = {}; if ((pub.perms_ro || {})[requiredPerm]) o[requiredPerm] = true; return o; })()
+      : (pub.perms_ro || {}),
     // r235: what the ticket is for. A person's ticket is for the portal
     // functions; a machine ticket names the one function that may accept it.
     aud: opts.aud || TICKET_AUD_PORTAL_,
