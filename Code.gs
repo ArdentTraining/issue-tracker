@@ -54,7 +54,7 @@ var SLACK_NOTICES = {
   query_raised:      { on: true,  to: 'SLACK_IMPROVEMENTS_FIXES' },  // r119 (FB-0294/0295): questions live where the fixes are discussed
   query_answered:    { on: true,  to: 'SLACK_AUREUS_TECH' },
   dev_queue_low:     { on: true,  to: 'SLACK_ADMINS' },              // r129: falls back to the main channel until the private admin channel is wired
-  unrouted_digest:   { on: true,  to: 'SLACK_BUSINESS_MGMT' },       // r140 (Edd): Tuesday 09:00, what nobody has picked up -> Business Management
+  unrouted_digest:   { on: true,  to: 'SLACK_BUSINESS_MGMT' },       // r140 (Edd): Tuesday 09:00, what isn't assigned to anyone. r251: sent to Edd as a DM (UNROUTED_DIGEST_DM); this channel is only the fallback if the DM fails
   shared_workaround: { on: true,  to: 'SLACK_INSTRUCTING_UPDATES' },
   // r175 (Edd, 17 Sep): the three blind spots from that morning's triage. The
   // chase list goes where the instructors already live; "we have closed this
@@ -9030,7 +9030,7 @@ function unroutedDigest() {
 
   var appUrl = getAppUrl_();
   if (!stuck.length) {
-    slackPost_('unrouted_digest', ':white_check_mark: *Nothing waiting to be picked up.* Every open issue is with somebody.');
+    unroutedSend_(':white_check_mark: *Nothing waiting to be assigned.* Every open issue is with somebody.');
     return;
   }
   // The list is the LAST WEEK's arrivals (Edd, r141: "anything newly unrouted,
@@ -9046,10 +9046,10 @@ function unroutedDigest() {
 
   var lines;
   if (!recent.length) {
-    lines = [':white_check_mark: *Nothing new waiting to be picked up.* Everything reported this week is with somebody.'];
+    lines = [':white_check_mark: *Nothing new waiting to be assigned.* Everything reported this week is with somebody.'];
   } else {
     lines = [':clipboard: *' + recent.length + ' issue' + (recent.length === 1 ? '' : 's') +
-      ' reported this week that nobody has picked up*'];
+      ' reported this week that haven\'t been assigned to anyone*'];
     lines.push('');
     recent.slice(0, 12).forEach(function (i) {
       var days = Math.floor((now - new Date(i.submitted_at)) / day);
@@ -9061,11 +9061,36 @@ function unroutedDigest() {
     lines.push('');
     lines.push('Each one needs passing to the developers or the course team, or closing.');
   }
+  // r251 (Edd): "what are the two older issues?" A count he has to go and
+  // look up is no use, so up to five are named; more than that stays a count.
+  // The old line also claimed they were "mostly course fixes from the old log",
+  // which stopped being true once that backlog was cleared, so it is gone.
   if (older) {
+    var olderRows = stuck.filter(function (i) { return now - new Date(i.submitted_at) >= RECENT_DAYS * day; });
     lines.push('');
-    lines.push('_Also ' + older + ' older open issues nobody has picked up, most of them course fixes carried over from the old log._');
+    lines.push('_Also ' + older + ' older open issue' + (older === 1 ? '' : 's') + ' not assigned to anyone' + (older <= 5 ? ':_' : '._'));
+    if (older <= 5) olderRows.forEach(function (i) {
+      var days = Math.floor((now - new Date(i.submitted_at)) / day);
+      lines.push('• ' + String(i.priority || '?').toUpperCase() + ' (' + days + 'd) ' +
+        String(i.summary || '(no summary)').slice(0, 120) + '  <' + issueLink_(i, appUrl) + '|open>');
+    });
   }
-  slackPost_('unrouted_digest', lines.join('\n'));
+  unroutedSend_(lines.join('\n'));
+}
+
+// r251 (Edd, 27 Oct): the digest comes to Edd as a direct message from the bot
+// rather than into Business Management. A DM notifies like any other DM. If it
+// cannot be delivered (token, lookup, Slack down) it falls back to the channel,
+// because a digest that silently goes nowhere is worse than one in the old place.
+// Script property UNROUTED_DIGEST_DM overrides who gets it.
+function unroutedSend_(text) {
+  if (!slackOn_('unrouted_digest')) return;
+  var to = PropertiesService.getScriptProperties().getProperty('UNROUTED_DIGEST_DM') || EDD_EMAIL;
+  var r = slackDm_(to, text);
+  if (!r.ok) {
+    console.warn('unroutedDigest: DM failed (' + r.why + '), posting to the channel instead');
+    slackPost_('unrouted_digest', text + '\n_(Sent here because the direct message failed: ' + r.why + ')_');
+  }
 }
 
 // One tap of feedback on each AI extraction ("Spot on" / "Needed fixing"),
@@ -11212,7 +11237,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r246 · 2026-10-24';
+var CODE_STAMP = 'r251 · 2026-10-27';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
