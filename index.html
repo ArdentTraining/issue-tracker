@@ -3983,7 +3983,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r250 · 2026-10-25";  // bump this with each round, it lands on every feedback report
+var BUILD = "r255 · 2026-10-27";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -16029,8 +16029,18 @@ function faultWords(issue) {
 // rather than a second opinion that can disagree with it. One small call, and
 // only when a candidate is already close (see DUP_MAYBE).
 function askDupMatcher() {
+  if (isSplitting()) { askSplitParts_(); return; }   // r255: the parts are what get filed
   var c = dupCandidates();
-  if (c.score >= DUP_SURE) return;
+  if (c.score >= DUP_SURE) {
+    // r255 (Edd, 24 Oct): sure enough to show the cards, but if the answer is
+    // "no, it's new" the submit still asks the server. Ask it now, quietly.
+    try {
+      var fs = collectForm();
+      apiPost({ action: "sameIssue", category: fs.category, summary: fs.summary, raw_text: fs.raw_text,
+        lesson_code: fs.lesson_code, device_info: fs.device_info, quiet: 1, why: "sure_cards" }).catch(function () {});
+    } catch (e) {}
+    return;
+  }
   // r151 (Edd): "this is the second report of the same bug in the last 30
   // mins or so but I haven't been asked to link it." The words were too
   // different for the overlap score, so the matcher was never asked and the
@@ -16573,6 +16583,7 @@ function buildSubEdits() {
   state.subActive = 0;
   loadSubIntoForm(0);
   updateSubmitRow();
+  askSplitParts_();   // r255
 }
 // Splitting and "add as an update to an existing issue" are mutually exclusive:
 // one paste can't both fan out into new issues and fold into one old one. When
@@ -16633,6 +16644,7 @@ function hideSplitSuggestion() {
   state.subDisp = null;
   state.subFold = null;
   state.splitMode = false;
+  state.splitMatchGen = null;   // r255
   hideSubTabs();
   var n = $("splitNote"); if (n) { n.classList.add("hidden"); n.innerHTML = ""; }
 }
@@ -17203,6 +17215,124 @@ function submitParked() {
   submitIssue();
 }
 
+// r255: one split tab's payload, built in one place so the early duplicate
+// asks (askSplitParts_) send exactly what the submit will send.
+function splitTabPayload_(e, idx, alreadyUploaded, checklistJson, foldNote) {
+        var d = collectForm();
+        d.image_urls = alreadyUploaded;
+        d.action = "addIssue"; d.app_url = APP_URL;
+        // Per-issue fields come from this tab, not from whatever tab happens to
+        // be on screen. Shared fields (student, device, platform) stay as
+        // collectForm read them; the OUTCOME is per-issue now (FB-0256).
+        var subOutcome = String(e.vals.f_outcome || "").trim();
+        d.raw_text = getField("rawText") + (subOutcome
+          ? "\n\n--- Outcome noted by " + (state.selectedInstructor || "instructor") + " ---\n" + subOutcome
+          : "");
+        if (e.vals.f_category) d.category = e.vals.f_category;
+        d.summary = e.vals.f_summary || d.summary;
+        d.priority = String(e.vals.f_priority || "").toLowerCase() || d.priority;
+        d.severity = String(e.vals.f_severity || "").toLowerCase() || d.severity;
+        d.priority_reason = e.vals.f_priority_reason || "";
+        d.issue_type = e.vals.f_issue_type || d.issue_type;
+        d.section = e.vals.f_section || "";
+        d.course = e.vals.f_course || "";
+        d.module = e.vals.f_module || "";
+        d.lesson = e.vals.f_lesson || "";
+        d.lesson_code = e.vals.f_lesson_code || "";
+        d.request_kind = e.requestKind === "improvement" ? "improvement" : "fix";
+        d.student_sorted = !!e.student_sorted;
+        d.media_kind = (d.category === "course_error") ? (e.vals.f_media_kind || "") : "";
+        d.impact = e.requestKind === "improvement" ? (e.vals.f_impact || "") : "";
+        // These three only exist on a shipping issue and the tick only on a
+        // course error, so a tab of a different category must not inherit them
+        // from whichever tab happened to be on screen at submit time.
+        if (d.category === "shipping") {
+          d.courier = getField("f_courier"); d.tracking_number = getField("f_tracking_number"); d.chase_at = getField("f_chase_at");
+        } else { d.courier = ""; d.tracking_number = ""; d.chase_at = ""; }
+        if (d.category !== "course_error") d.double_checked = false;
+        if (checklistJson && (d.category === "tech_issue" || state.formMode === "internal")) d.checklist_json = checklistJson;
+        else d.checklist_json = "";
+        var rfSub = resolutionFields(e.resolution_status, e.resolution_note, e.resolved_at);
+        for (var ks in rfSub) d[ks] = rfSub[ks];
+        // Anything marked "fold in" rides on the first issue, so the detail is
+        // on a record somewhere rather than only in the pasted transcript.
+        if (idx === 0 && foldNote) d.raw_text = (d.raw_text || "") + foldNote;
+        return d;
+}
+// r255: the untouched-split path's payload, same reason as splitTabPayload_.
+function splitSubPayload_(sub, alreadyUploaded, checklistJson) {
+        var d = collectForm();
+        d.image_urls = alreadyUploaded;
+        d.action = "addIssue"; d.app_url = APP_URL;
+        d.summary = sub.summary || d.summary;
+        // Full-fidelity split: each problem keeps its own fields, not the form's.
+        // Internal tasks stay internal; don't move a split issue out of that mode.
+        if (state.formMode !== "internal") {
+          if (sub.issue_type) d.issue_type = sub.issue_type;
+          if (sub.category === "course_error" || sub.category === "tech_issue") d.category = sub.category;
+          if (sub.section != null) d.section = sub.section || "";
+          if (sub.course != null) d.course = sub.course || "";
+          if (sub.module != null) d.module = sub.module || "";
+          if (sub.lesson != null) d.lesson = sub.lesson || "";
+          if (sub.lesson_code != null) d.lesson_code = sub.lesson_code || "";
+          if (sub.request_kind) d.request_kind = sub.request_kind;
+          if (sub.impact != null) d.impact = sub.impact || "";
+          // media_kind only means anything for a course error; a checklist only
+          // for a tech issue. Keep each sub tidy rather than carrying the form's.
+          d.media_kind = (d.category === "course_error") ? (sub.media_kind || "") : "";
+          if (checklistJson && d.category === "tech_issue") d.checklist_json = checklistJson;
+        } else if (checklistJson) {
+          d.checklist_json = checklistJson;
+        }
+        if (sub.priority) d.priority = String(sub.priority).toLowerCase();
+        if (sub.priority_reason) d.priority_reason = sub.priority_reason;
+        if (sub.student_sorted != null) d.student_sorted = (sub.student_sorted === true || sub.student_sorted === "true");
+        var rfSub = resolutionFields(sub.resolution_status, sub.resolution_note, sub.resolved_at);
+        for (var ks in rfSub) d[ks] = rfSub[ks];
+        return d;
+}
+// r255 (Edd, 27 Oct): a split's parts are separate problems by the
+// instructor's own say-so, so a part is never matched against a sibling saved
+// a moment earlier, and the parts are checked against the log as it stood when
+// the split was asked about (splitMatchGen), so the answers asked for in the
+// background are still the ones the submit finds.
+function splitMatchFields_(d, acc) {
+  if (state.splitMatchGen) d.split_gen = state.splitMatchGen;
+  var sib = (acc && acc.ok || []).map(function (r) { return r && r.issue && r.issue.issue_id; }).filter(Boolean);
+  if (sib.length) d.split_exclude = sib;
+}
+// The payloads a split submit would send right now, in order. Mirrors the
+// branch in submitIssue: reviewed tabs when every part has one, else the parts.
+function splitPayloads_() {
+  if (!isSplitting() || state.editingId || state.updateTargetId) return [];
+  var subs = state.subIssues || [];
+  if (state.subEdits && state.subEdits.length === subs.length) {
+    captureActiveSub();
+    var fold = foldedNoteText();
+    return state.subEdits.map(function (e, i) { return splitTabPayload_(e, i, [], null, fold); });
+  }
+  return subs.map(function (sub) { return splitSubPayload_(sub, [], null); });
+}
+// Ask about every part at once, quietly. Debounced: a tab edit fires this.
+var splitAskTimer_ = null;
+function askSplitParts_() {
+  clearTimeout(splitAskTimer_);
+  splitAskTimer_ = setTimeout(function () {
+    var parts;
+    try { parts = splitPayloads_(); } catch (e) { return; }
+    if (!parts.length) return;
+    var stamp = state.splitAskSeq = (state.splitAskSeq || 0) + 1;
+    Promise.all(parts.map(function (d) {
+      return apiPost({ action: "sameIssue", category: d.category, summary: d.summary, raw_text: d.raw_text,
+        lesson_code: d.lesson_code, device_info: d.device_info, quiet: 1, why: "split_part" }).catch(function () { return null; });
+    })).then(function (res) {
+      if (stamp !== state.splitAskSeq) return;   // a newer round of asks is on its way
+      var gens = res.map(function (r) { return r && r.ok ? String(r.gen || "") : ""; });
+      // Only trust it when every part was asked against the same log.
+      state.splitMatchGen = (gens[0] && gens.every(function (g) { return g === gens[0]; })) ? gens[0] : null;
+    });
+  }, 600);
+}
 function submitIssue() {
   if (!state.selectedInstructor) { toast("Pick your name first."); return; }
   var isInternal = state.formMode === "internal";
@@ -17308,45 +17438,8 @@ function submitIssue() {
     request = edits.reduce(function (chain, e, idx) {
       return chain.then(function (acc) {
         if (acc.failed) return acc;
-        var d = collectForm();
-        d.image_urls = alreadyUploaded;
-        d.action = "addIssue"; d.app_url = APP_URL;
-        // Per-issue fields come from this tab, not from whatever tab happens to
-        // be on screen. Shared fields (student, device, platform) stay as
-        // collectForm read them; the OUTCOME is per-issue now (FB-0256).
-        var subOutcome = String(e.vals.f_outcome || "").trim();
-        d.raw_text = getField("rawText") + (subOutcome
-          ? "\n\n--- Outcome noted by " + (state.selectedInstructor || "instructor") + " ---\n" + subOutcome
-          : "");
-        if (e.vals.f_category) d.category = e.vals.f_category;
-        d.summary = e.vals.f_summary || d.summary;
-        d.priority = String(e.vals.f_priority || "").toLowerCase() || d.priority;
-        d.severity = String(e.vals.f_severity || "").toLowerCase() || d.severity;
-        d.priority_reason = e.vals.f_priority_reason || "";
-        d.issue_type = e.vals.f_issue_type || d.issue_type;
-        d.section = e.vals.f_section || "";
-        d.course = e.vals.f_course || "";
-        d.module = e.vals.f_module || "";
-        d.lesson = e.vals.f_lesson || "";
-        d.lesson_code = e.vals.f_lesson_code || "";
-        d.request_kind = e.requestKind === "improvement" ? "improvement" : "fix";
-        d.student_sorted = !!e.student_sorted;
-        d.media_kind = (d.category === "course_error") ? (e.vals.f_media_kind || "") : "";
-        d.impact = e.requestKind === "improvement" ? (e.vals.f_impact || "") : "";
-        // These three only exist on a shipping issue and the tick only on a
-        // course error, so a tab of a different category must not inherit them
-        // from whichever tab happened to be on screen at submit time.
-        if (d.category === "shipping") {
-          d.courier = getField("f_courier"); d.tracking_number = getField("f_tracking_number"); d.chase_at = getField("f_chase_at");
-        } else { d.courier = ""; d.tracking_number = ""; d.chase_at = ""; }
-        if (d.category !== "course_error") d.double_checked = false;
-        if (checklistJson && (d.category === "tech_issue" || state.formMode === "internal")) d.checklist_json = checklistJson;
-        else d.checklist_json = "";
-        var rfSub = resolutionFields(e.resolution_status, e.resolution_note, e.resolved_at);
-        for (var ks in rfSub) d[ks] = rfSub[ks];
-        // Anything marked "fold in" rides on the first issue, so the detail is
-        // on a record somewhere rather than only in the pasted transcript.
-        if (idx === 0 && foldNote) d.raw_text = (d.raw_text || "") + foldNote;
+        var d = splitTabPayload_(e, idx, alreadyUploaded, checklistJson, foldNote);
+        splitMatchFields_(d, acc);   // r255
         return apiPost(d).then(function (r) {
           if (!r || !r.ok) { acc.failed = r || { ok: false, error: "unknown" }; return acc; }
           acc.ok.push(r); return acc;
@@ -17372,34 +17465,8 @@ function submitIssue() {
     request = subIssues.reduce(function (chain, sub) {
       return chain.then(function (acc) {
         if (acc.failed) return acc; // a earlier sub failed; don't log the rest
-        var d = collectForm();
-        d.image_urls = alreadyUploaded;
-        d.action = "addIssue"; d.app_url = APP_URL;
-        d.summary = sub.summary || d.summary;
-        // Full-fidelity split: each problem keeps its own fields, not the form's.
-        // Internal tasks stay internal; don't move a split issue out of that mode.
-        if (state.formMode !== "internal") {
-          if (sub.issue_type) d.issue_type = sub.issue_type;
-          if (sub.category === "course_error" || sub.category === "tech_issue") d.category = sub.category;
-          if (sub.section != null) d.section = sub.section || "";
-          if (sub.course != null) d.course = sub.course || "";
-          if (sub.module != null) d.module = sub.module || "";
-          if (sub.lesson != null) d.lesson = sub.lesson || "";
-          if (sub.lesson_code != null) d.lesson_code = sub.lesson_code || "";
-          if (sub.request_kind) d.request_kind = sub.request_kind;
-          if (sub.impact != null) d.impact = sub.impact || "";
-          // media_kind only means anything for a course error; a checklist only
-          // for a tech issue. Keep each sub tidy rather than carrying the form's.
-          d.media_kind = (d.category === "course_error") ? (sub.media_kind || "") : "";
-          if (checklistJson && d.category === "tech_issue") d.checklist_json = checklistJson;
-        } else if (checklistJson) {
-          d.checklist_json = checklistJson;
-        }
-        if (sub.priority) d.priority = String(sub.priority).toLowerCase();
-        if (sub.priority_reason) d.priority_reason = sub.priority_reason;
-        if (sub.student_sorted != null) d.student_sorted = (sub.student_sorted === true || sub.student_sorted === "true");
-        var rfSub = resolutionFields(sub.resolution_status, sub.resolution_note, sub.resolved_at);
-        for (var ks in rfSub) d[ks] = rfSub[ks];
+        var d = splitSubPayload_(sub, alreadyUploaded, checklistJson);
+        splitMatchFields_(d, acc);   // r255
         return apiPost(d).then(function (r) {
           if (!r || !r.ok) { acc.failed = r || { ok: false, error: "unknown" }; return acc; }
           acc.ok.push(r); return acc;
@@ -17686,8 +17753,9 @@ function restoreDraft() {
     var t = e && e.target;
     // r241: the "what happened" box travels with the pasted text, so it moves
     // the key too (both r238 misses on 20 Oct were raw growing by ~80 chars).
-    if (!t || (t.id !== "f_summary" && t.id !== "f_outcome") || !inForm(e)) return;
+    if (!t || (t.id !== "f_summary" && t.id !== "f_outcome" && !(t.id === "f_lesson_code" && isSplitting())) || !inForm(e)) return;
     if (state.editingId || state.updateTargetId || state.dupTargetId) return;   // no match on those paths
+    if (isSplitting()) { askSplitParts_(); return; }   // r255
     if (!String(getField("rawText") || "").trim()) return;
     try {
       var f = collectForm();

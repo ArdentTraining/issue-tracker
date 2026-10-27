@@ -5079,6 +5079,10 @@ function sameIssue_(data) {
     return { ok: true, match_id: null, why: 'nothing to match on yet' };
   }
   var id = null;
+  // r255: one gen for the key and the reply, so the page can hand it back.
+  var askGen = issueMatchGen_();
+  if (!askGen) { bumpIssueMatchGen_(); askGen = issueMatchGen_(); }   // expired: start one, so there is something to hand back
+  data.split_gen = askGen;
   try { id = aiMatchIssue_(data, category); } catch (e) {
     return { ok: false, error: String(e) };
   }
@@ -5091,9 +5095,15 @@ function sameIssue_(data) {
     list.unshift({ at: Date.now(), who: who, key: aiMatchKey_(data, category), quiet: !!data.quiet, parts: aiMatchParts_(data, category) });
     c.put('ait_match_asks', JSON.stringify(list.slice(0, 30)), 21600);
   } catch (e) {}
-  return { ok: true, match_id: id || null };
+  return { ok: true, match_id: id || null, gen: askGen };
 }
 
+// r255: a split's earlier parts, never a match for a later one.
+function splitExclude_(data) {
+  var out = {};
+  (Array.isArray(data && data.split_exclude) ? data.split_exclude : []).slice(0, 12).forEach(function (x) { out[String(x)] = 1; });
+  return out;
+}
 function aiMatchIssue_(data, category) {
   var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) return null;
@@ -5132,10 +5142,14 @@ function aiMatchIssue_(data, category) {
         if (mine.length) fileTag_('asked_s_ago', Math.round((Date.now() - mine[0].at) / 1000));
       } catch (e) {}
     }
-    if (mhit != null) return mhit === '-' ? null : mhit;
+    if (mhit != null) return (mhit === '-' || splitExclude_(data)[mhit]) ? null : mhit;
   } catch (e) { mcache = null; }
+  if (data.split_gen != null && FILE_T_) fileTag_('split_part', true);
   var found = aiMatchIssueRun_(data, category, isCourse);
-  try { if (mcache) mcache.put(mkey, found || '-', 900); } catch (e) {}
+  // r255: an answer worked out with siblings left out is not stored, because
+  // the key does not carry who was left out.
+  var excl = Object.keys(splitExclude_(data)).length;
+  try { if (mcache && !excl) mcache.put(mkey, found || '-', 900); } catch (e) {}
   return found;
 }
 // r232 (Edd, 11 Oct): the saved answer to "does this match an issue we have?"
@@ -5155,12 +5169,20 @@ function aiMatchParts_(data, category) {
   var h = function (v) { return rowHash_(String(v == null ? '' : v)).slice(0, 8); };
   var raw = String(data.raw_text || '').slice(0, 6000), sum = String(data.summary || '');
   return { category: h(category), lesson: h(String(data.lesson_code || '').trim().toLowerCase()), summary: h(sum),
-    raw: h(raw), device: h(data.device_info), gen: h(issueMatchGen_()), rn: raw.length, sn: sum.length };
+    raw: h(raw), device: h(data.device_info), gen: h(matchGenFor_(data)), rn: raw.length, sn: sum.length };
+}
+// r255 (Edd, 27 Oct): a split's parts are checked against the log as it stood
+// when the page asked about them (split_gen, handed back by sameIssue), so the
+// answers asked for in the background survive the parts' own saves. The format
+// is ours (bumpIssueMatchGen_); anything else falls back to the live one.
+function matchGenFor_(data) {
+  var g = data && data.split_gen != null ? String(data.split_gen) : '';
+  return /^\d{10,16}\.\d{1,7}$/.test(g) ? g : issueMatchGen_();
 }
 function aiMatchKey_(data, category) {
   var text = [String(category || ''), String(data.lesson_code || '').trim().toLowerCase(),
     String(data.summary || ''), String(data.raw_text || '').slice(0, 6000), String(data.device_info || ''),
-    issueMatchGen_()].join('\u0001');
+    matchGenFor_(data)].join('\u0001');
   return 'ait_match_' + rowHash_(text);
 }
 function aiMatchIssueRun_(data, category, isCourse) {
@@ -5174,9 +5196,11 @@ function aiMatchIssueRun_(data, category, isCourse) {
 
   var wantLesson = String(data.lesson_code || '').trim().toLowerCase();
   var candidates = [];
+  var skipIds = splitExclude_(data);   // r255: a split's own earlier parts
   for (var r = 0; r < rows.length; r++) {
     var row = rows[r];
     if (!row.issue_id) continue;
+    if (skipIds[row.issue_id]) continue;
     // A "past" row is imported history from the old spreadsheets and must never
     // be resurrected. Resolved rows ARE offered now (r177, Edd), but only ones
     // closed inside REOPEN_WINDOW_DAYS: see the note by that constant.
@@ -11261,7 +11285,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r254 · 2026-10-27';
+var CODE_STAMP = 'r255 · 2026-10-27';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
