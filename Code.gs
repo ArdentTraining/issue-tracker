@@ -11237,7 +11237,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r251 · 2026-10-27';
+var CODE_STAMP = 'r252 · 2026-10-27';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -16835,7 +16835,28 @@ function inboxPayload_(p) {
 // trail says what was done and why. Run as Claude with admin rights for these
 // two ops only; a plain update keeps the filer's ordinary rights.
 var INBOX_STATUS_KEYS_ = { status: 1, priority: 1, severity: 1, request_kind: 1, resolution_note: 1 };
+// r252 (Edd, 27 Oct 2026): Aureus sent their channel's webhook. setSlackChannel_
+// needs the deploy key, which lives on Edd's computer, so the inbox can set this
+// ONE property. It must be a Slack incoming-webhook URL, and it is only saved
+// once a test message has actually landed in their channel.
+function inboxAureusWebhook_(data) {
+  var url = String(data.webhook || '').trim();
+  if (!/^https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+$/.test(url)) {
+    return { ok: false, error: 'that is not a Slack incoming-webhook URL' };
+  }
+  var res;
+  try {
+    res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ text: ':wave: The Ardent bug tracker is connected to this channel. From now on you will see issues handed to the developers, updates we post on them, and our answers to your questions here.' }) });
+  } catch (e) { return { ok: false, error: 'test post failed: ' + String(e).slice(0, 120) }; }
+  var code = res.getResponseCode();
+  if (code !== 200) return { ok: false, error: 'test post answered ' + code + ': ' + String(res.getContentText()).slice(0, 80) + ' (webhook not saved)' };
+  PropertiesService.getScriptProperties().setProperty('SLACK_AUREUS_TECH', url);
+  return { ok: true, issue_id: '' };
+}
+
 function inboxOp_(data) {
+  if (data.op === 'aureus_webhook') return inboxAureusWebhook_(data);
   var admin = { name: INBOX_FILER.name, email: INBOX_FILER.email,
     perms_json: JSON.stringify({ manage: true, users: true }) };
   var r, keepId = data.issue_id;
@@ -16898,7 +16919,7 @@ function claudeInbox() {
     try {
       var data = inboxPayload_(it.payload);
       if (it.kind === 'update' && data.op) {
-        if (!data.issue_id) throw new Error('an update needs payload.issue_id');
+        if (!data.issue_id && data.op !== 'aureus_webhook') throw new Error('an update needs payload.issue_id');
         r = inboxOp_(data);
       } else if (it.kind === 'update') {
         if (!data.issue_id) throw new Error('an update needs payload.issue_id');
