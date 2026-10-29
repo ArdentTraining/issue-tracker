@@ -12746,12 +12746,12 @@ function mpWrite() {
   // paper" notes come from it.
   function finish(kind, text) {
     mpMsg("ok", (kind === "ok" ? text + " " : "") + "Now working out the patterns across the whole paper, about a minute...");
-    var synthFailed = false;
-    mpApi({ body: { op: "synthesis", submission_id: mp.openId } }).then(function (r) { if (r && r.ok === false) synthFailed = true; }, function () { synthFailed = true; }).then(function () {
+    var synthFailed = false, synthWhy = "";
+    mpApi({ body: { op: "synthesis", submission_id: mp.openId } }).then(function (r) { if (r && r.ok === false) { synthFailed = true; synthWhy = r.error || ""; } }, function (e) { synthFailed = true; synthWhy = (e && e.message) || String(e); }).then(function () {
       mp.writing = false;
       // The answers are written either way; the covering email draft and the
       // notes across the paper come from this pass, so say when it didn't run.
-      mpMsg(synthFailed ? "bad" : kind, text + (synthFailed ? "\nThe pass across the whole paper didn't finish, so the covering email draft and the patterns may be missing. Use Work out the patterns on the paper to try it again." : ""));
+      mpMsg(synthFailed ? "bad" : kind, text + (synthFailed ? "\nThe pass across the whole paper didn't finish" + (synthWhy ? " (" + synthWhy + ")" : "") + ", so the covering email draft and the patterns may be missing or out of date. Use Work out the patterns on the paper to try it again." : ""));
       mpOpen(mp.openId, true);
     });
   }
@@ -12795,11 +12795,14 @@ function mpReviewHtml(p) {
   if (!p.mine) html += '<p class="small muted">Claimed by ' + esc(p.instructor_name || "someone else") + '. You can read it; only they can change it.</p>';
   if (c.unwritten > 0 && !p.finalised) html += '<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><strong>' + mpN(c.unwritten) + '</strong> flagged answer' + (c.unwritten === 1 ? " has" : "s have") + ' no feedback yet <span class="small muted">&middot; about ' + Math.max(1, Math.round(c.unwritten * 1.6)) + 'p</span>' +
     '<button type="button" class="primary" style="margin-left:auto;width:auto;" onclick="mpWrite()"' + (readOnly || mp.writing ? " disabled" : "") + '>' + (mp.writing ? "Writing..." : "Write it now") + '</button></div>';
-  if (!p.synthesis && !p.finalised && c.unwritten === 0 && p.mine) html += '<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;"><span>The patterns across the whole paper haven\'t been worked out, so the covering email draft has less to go on.</span>' +
+  // Also when the patterns predate the latest writing: they came from an
+  // earlier marking and don't cover what was just written (29 Oct).
+  var synthStale = !!(p.synthesis && p.synthesis.stale);
+  if ((!p.synthesis || synthStale) && !p.finalised && c.unwritten === 0 && p.mine) html += '<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;"><span>' + (synthStale ? "The patterns below are from an earlier marking of this paper, before today's feedback was written." : "The patterns across the whole paper haven\'t been worked out, so the covering email draft has less to go on.") + '</span>' +
     '<button type="button" class="ghost" style="margin-left:auto;width:auto;" onclick="mpSynth()"' + (mp.busy || mp.writing ? " disabled" : "") + '>Work out the patterns</button></div>';
   html += mpPhotosHtml(p, readOnly);
   if (p.synthesis) {
-    html += '<div class="card" style="margin-top:10px;"><h4 style="margin:0 0 6px;">Across the whole paper</h4>' + (p.synthesis.overall_summary ? '<p style="white-space:pre-wrap;">' + esc(p.synthesis.overall_summary) + '</p>' : '') +
+    html += '<div class="card" style="margin-top:10px;"><h4 style="margin:0 0 6px;">Across the whole paper' + (p.synthesis.stale ? ' <span class="badge" style="background:rgba(255,214,102,.45);">from an earlier marking</span>' : '') + '</h4>' + (p.synthesis.overall_summary ? '<p style="white-space:pre-wrap;">' + esc(p.synthesis.overall_summary) + '</p>' : '') +
       (p.synthesis.patterns.length ? '<ul style="padding-left:18px;">' + p.synthesis.patterns.map(function (pt) {
         return '<li style="margin-bottom:6px;"><span class="badge" style="' + (pt.kind === "secure" ? "background:rgba(46,125,50,.14);" : pt.kind === "slip" ? "background:rgba(255,214,102,.45);" : "background:rgba(239,83,80,.18);") + '">' + (pt.kind === "secure" ? "solid" : pt.kind === "slip" ? "a slip" : "a gap") + '</span> <strong>' + esc(pt.topic) + '</strong> <span class="small muted">' + esc(pt.question_codes.join(", ")) + '</span><div style="white-space:pre-wrap;">' + esc(pt.note) + '</div></li>';
       }).join("") + '</ul>' : '') + '</div>';
