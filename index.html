@@ -2283,6 +2283,7 @@
   <div id="markingQuestions" class="hidden">
     <p class="hint" style="margin:0 0 14px;">The question bank: correct each question and approve it, so the engine can mark against it.</p>
     <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="markingHead"></div>
+    <div id="markingSugs"></div>
     <div class="irpcs-split">
       <div class="irpcs-list" id="markingList"></div>
       <div id="markingItem"></div>
@@ -4093,7 +4094,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r262 · 2026-10-29";  // bump this with each round, it lands on every feedback report
+var BUILD = "r263 · 2026-10-29";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11804,7 +11805,10 @@ var marking = {
   categories: [], photoOptions: [], grandfathered: [],
   f: { exam: "", state: "todo", category: "", q: "" },
   openId: "", item: null, itemLoading: false, itemError: "",
-  start: null, busy: false, msg: null
+  start: null, busy: false, msg: null,
+  // What marking has suggested for the guides (29 Oct): from what
+  // instructors wrote on finalised papers.
+  sugs: null, sugsLoading: false, sugsError: "", sugsOpen: false, sugBusy: ""
 };
 
 function markingTicket(force) {
@@ -11864,6 +11868,7 @@ function renderMarking() {
   if (tab === "photos") { renderPhotosOwed(); return; }
   if (!marking.list && !marking.listLoading && !marking.listError) markingLoadList();
   markingRenderHead();
+  if (!marking.sugs && !marking.sugsLoading && !marking.sugsError) mgLoad(); else mgRender();
   markingRenderList();
   // Showing the tab again must not rebuild the form over what's been typed
   // in it: the rebuild reads from the stored item and the dirty check would
@@ -11896,6 +11901,66 @@ function markingLoadList(force) {
     markingRenderHead(); markingRenderList();
     if (!marking.openId) { var first = markingFiltered().filter(function (q) { return !q.reviewed; })[0] || markingFiltered()[0]; if (first) markingOpen(first.question_id); }
   });
+}
+
+// ------------------------------------------------ suggestions from marking
+function mgLoad() {
+  marking.sugsLoading = true; marking.sugsError = "";
+  mgRender();
+  markingApi("/questions", { query: "op=suggestions" }).then(function (j) {
+    marking.sugs = (j && Array.isArray(j.suggestions)) ? j.suggestions : [];
+  }).catch(function (e) { marking.sugsError = (e && e.message) || String(e); })
+    .then(function () { marking.sugsLoading = false; mgRender(); });
+}
+var MG_KIND = { new_block: "New house feedback", fix_block: "Fix a house block", marker_note: "Note for the marker" };
+function mgRender() {
+  var host = $("markingSugs"); if (!host) return;
+  var list = marking.sugs || [];
+  if (marking.sugsError) { host.innerHTML = '<p class="small" style="color:var(--coral);">Couldn\'t load the suggestions from marking: ' + esc(marking.sugsError) + '</p>'; return; }
+  if (!list.length) { host.innerHTML = ""; return; }
+  var head = '<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;border-left:4px solid var(--accent);">' +
+    '<span><strong>' + list.length + '</strong> suggestion' + (list.length === 1 ? "" : "s") + ' for the marking guide, from what instructors wrote on finished papers.</span>' +
+    '<button type="button" class="' + (marking.sugsOpen ? "ghost" : "primary") + ' small" style="margin-left:auto;width:auto;" onclick="marking.sugsOpen=!marking.sugsOpen;mgRender()">' + (marking.sugsOpen ? "Hide them" : "Look through them") + '</button></div>';
+  if (!marking.sugsOpen) { host.innerHTML = head; return; }
+  host.innerHTML = head + list.map(mgCard).join("");
+}
+function mgCard(g) {
+  var ev = g.evidence || {}, id = esc(g.suggestion_id), busy = marking.sugBusy === g.suggestion_id;
+  var field = function (k, label, rows) {
+    return '<label class="small muted" style="display:block;margin-top:6px;">' + label + '</label><textarea id="mg-' + k + '-' + id + '" rows="' + rows + '" style="width:100%;">' + esc(g[k] || "") + '</textarea>';
+  };
+  var fields = g.kind === "marker_note" ? field("note", "Add to the marking requirements", 2)
+    : field("condition", g.kind === "fix_block" ? "Condition (block " + ((g.block_index || 0) + 1) + ")" : "Condition: what the instructor checks for", 1) + field("feedback", "Feedback sent to the student", 4);
+  var was = g.kind === "fix_block" && ev.block ? '<p class="small muted" style="margin:6px 0 0;">Now: <em>' + esc(ev.block.condition || "") + '</em>: ' + esc(String(ev.block.feedback || "").slice(0, 400)) + '</p>' : '';
+  return '<div class="card" style="margin-bottom:10px;" id="mgCard-' + id + '">' +
+    '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;"><strong>' + esc(g.question_code) + '</strong><span class="badge">' + esc(MG_KIND[g.kind] || g.kind) + '</span>' +
+      '<span class="small muted">' + esc(g.exam_id) + (g.instructor_name ? ' &middot; from ' + esc(g.instructor_name) + "'s marking" : '') + '</span>' +
+      (g.question_id ? '<a href="#" class="small" style="margin-left:auto;" data-q="' + esc(g.question_id) + '" onclick="markingOpen(this.dataset.q);return false;">Open the question</a>' : '') + '</div>' +
+    (g.why ? '<p class="small" style="margin:6px 0 0;">' + esc(g.why) + '</p>' : '') + was + fields +
+    '<details style="margin-top:8px;"><summary class="small">Where it came from</summary>' +
+      '<p class="small" style="white-space:pre-wrap;margin:6px 0;"><strong>Student\'s answer:</strong> ' + esc(ev.student_answer || "(none)") + '</p>' +
+      '<p class="small" style="white-space:pre-wrap;margin:6px 0;"><strong>Engine</strong> (' + esc(ev.engine_grade || "no grade") + '): ' + esc(ev.engine_feedback || "(nothing written)") + '</p>' +
+      '<p class="small" style="white-space:pre-wrap;margin:6px 0;"><strong>Instructor</strong> (' + esc(ev.instructor_grade || "no grade") + '): ' + esc(ev.instructor_feedback || "") + '</p></details>' +
+    (g.question_approved ? '<p class="small" style="margin:6px 0 0;">This question is approved, so it has to be un-approved before its guide can change.</p>' : '') +
+    '<div style="display:flex;gap:8px;margin-top:8px;"><button type="button" class="primary small" style="width:auto;" data-id="' + id + '" onclick="mgDecide(this.dataset.id, \'accept\')"' + (busy || g.question_approved ? " disabled" : "") + '>' + (busy ? "Saving..." : "Add to the guide") + '</button>' +
+      '<button type="button" class="ghost small" style="width:auto;" data-id="' + id + '" onclick="mgDecide(this.dataset.id, \'dismiss\')"' + (busy ? " disabled" : "") + '>Not needed</button>' +
+      '<span class="small" id="mgMsg-' + id + '" style="align-self:center;color:var(--coral);"></span></div></div>';
+}
+function mgDecide(id, decision) {
+  if (marking.sugBusy) return;
+  var g = (marking.sugs || []).filter(function (x) { return x.suggestion_id === id; })[0]; if (!g) return;
+  var body = { op: "suggestion", suggestion_id: id, decision: decision };
+  ["condition", "feedback", "note"].forEach(function (k) { var el = $("mg-" + k + "-" + id); if (el) body[k] = el.value; });
+  marking.sugBusy = id; mgRender();
+  markingApi("/questions", { body: body }).then(function (r) {
+    marking.sugBusy = "";
+    if (!r || !r.ok) { mgRender(); var m = $("mgMsg-" + id); if (m) m.textContent = (r && r.error) || "That didn't go through."; return; }
+    marking.sugs = marking.sugs.filter(function (x) { return x.suggestion_id !== id; });
+    toast(decision === "accept" ? g.question_code + ": added to the guide." : "Left out.");
+    mgRender();
+    // The open question shows the new block straight away.
+    if (decision === "accept" && marking.openId && marking.openId === g.question_id && !markingDirty()) markingOpen(g.question_id, true);
+  }).catch(function (e) { marking.sugBusy = ""; mgRender(); var m = $("mgMsg-" + id); if (m) m.textContent = (e && e.message) || String(e); });
 }
 
 function markingInExam() {
@@ -16116,6 +16181,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 89, date: "2026-10-29", who: ["marking"], text: "Marking learns from you. When a paper is finalised, what you changed (a grade you moved, feedback you wrote yourself) is read back, and anything worth reusing comes up on the Questions tab as a suggestion: a new house feedback block for a mistake that will come up again, a fix to a block that didn't fit, or a note for the marker. Edit it, add it to the guide, or leave it out. Nothing changes the guide until someone says so." },
   { n: 88, date: "2026-10-29", who: ["marking"], text: "Marking: an answer folds the moment you grade it and saves in the background. And once you press Write, you're taken back to the papers while the feedback is written; the paper shows its progress there and goes green when it's ready to check. Keep the tracker open until it's done." },
   { n: 87, date: "2026-10-29", who: ["marking"], text: "Marking, from your feedback on the first real paper: clearer grade colours; the student's answer beside the expected one, right parts green and wrong parts red; answers fold away once graded (and iSpring's all-right ones start folded); the still-to-grade button takes you to the next one; Save rather than Looks right once you've edited; pictures in your own feedback; two readiness calls; only the answers you wrote feedback on in the PDF; and a way back once it's sent." },
   { n: 86, date: "2026-10-29", who: ["users"], text: "Admin > Marking model: see which model writes the marking feedback, switch it, and try a model over your own hand-graded answers first to see how often it agrees with you and what it costs." },
