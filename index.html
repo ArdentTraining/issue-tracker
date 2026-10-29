@@ -12621,7 +12621,10 @@ function mpTriageCard(a, i) {
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">' +
       MP_GRADES.map(function (g) { return '<button type="button" class="small" style="width:auto;padding:4px 10px;' + mpGradeStyle(g) + (l.grade === g ? "outline:2px solid var(--text);" : "opacity:.75;") + '" data-a="' + esc(a.answer_id) + '" data-g="' + g + '" onclick="mpTriGrade(this.dataset.a, this.dataset.g)"' + (mp.paper.mine && !mp.writing ? "" : " disabled") + '>' + g + '</button>'; }).join("") +
       '<label class="small" style="display:flex;align-items:center;gap:5px;white-space:nowrap;width:auto;margin:0;"><input type="checkbox" style="width:auto;margin:0;" data-a="' + esc(a.answer_id) + '" onchange="mpTriToggle(this.dataset.a)"' + (l.needsFeedback ? " checked" : "") + (mp.paper.mine && !mp.writing ? "" : " disabled") + '> Needs written feedback</label>' +
-      (l.saved ? '<span class="small" style="color:#2e7d32;">saved</span>' : l.grade ? '<span class="small muted">saving...</span>' : '') +
+      // "saving..." only while a save is on the wire. A grade with nothing in
+      // flight is one the page picked up but never sent: a paper graded in
+      // the portal before the blind pass existed (Edd, 29 Oct).
+      (l.saved ? '<span class="small" style="color:#2e7d32;">saved</span>' : l.grade ? (mpTriInFlight[a.answer_id] ? '<span class="small muted">saving...</span>' : '<span class="small" style="color:var(--coral);">not saved: press the grade to keep it</span>') : '') +
       (l.error ? '<span class="small" style="color:var(--coral);">' + esc(l.error) + '</span>' : '') +
     '</div></li>';
 }
@@ -12643,9 +12646,9 @@ function mpRedrawCard(answerId) {
 function mpTriCommit(answerId, next) {
   if (mp.writing) return;
   mp.tri[answerId] = next;
+  // Send first, so the card is drawn knowing a save is on the way.
+  if (next.grade) mpTriSend(answerId);
   mpRedrawCard(answerId);
-  if (!next.grade) return;
-  mpTriSend(answerId);
 }
 // One save per answer on the wire at a time. Two quick changes (a grade, then
 // f) used to go as two requests the server could apply in either order, so
