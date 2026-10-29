@@ -2219,6 +2219,9 @@
     #markingView .rec-table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
     #markingView .rec-table th, #markingView .rec-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
     #markingView .rec-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    #usersView .mm-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    #usersView .mm-table th, #usersView .mm-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+    #usersView .mm-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
     #recoveryView .rec-sub { background: rgba(94,114,235,0.12); }
     #recoveryView .rec-unsub { background: rgba(254,193,149,0.35); }
     #recoveryView .rec-err { color: var(--coral); }
@@ -2572,6 +2575,7 @@
       <button type="button" id="us_people" onclick="setUsersSection('people')">People</button>
       <button type="button" id="us_feedback" onclick="setUsersSection('feedback')">Feedback</button>
       <button type="button" id="us_playbook" onclick="setUsersSection('playbook')">Playbook</button>
+      <button type="button" id="us_marking" class="hidden" onclick="setUsersSection('marking')">Marking</button>
     </div>
   </div>
 
@@ -2615,6 +2619,24 @@
   <!-- The "Spotted in chat" section is gone from Admin (Edd, FB-0182/0183):
        the same list lives in Actions, so this was a duplicate. The admin-only
        Scan now control moved into the Actions scan block. -->
+
+  <!-- Marking model (Edd, 29 Oct 2026): which model marks the papers, and a
+       trial over the hand-graded benchmark to see how a model agrees with us
+       before switching. Shown to someone with both Marking and Admin. -->
+  <div id="usec_marking" class="hidden">
+    <div class="card">
+      <h2>Marking model</h2>
+      <p class="hint" style="margin-top:0;">The model that writes feedback on students' papers. A change applies to the next paper written, within half a minute. Try a model below first to see how often it agrees with your own grades.</p>
+      <div id="mmCurrent"><p class="small muted">Loading...</p></div>
+    </div>
+    <div class="card">
+      <h2>Try a model</h2>
+      <p class="hint" style="margin-top:0;">Marks your hand-graded benchmark answers with the model and compares its grade with yours. Only the written answers: the chartwork photos aren't on the server. It spends real money, shown as it goes, and takes a few minutes. Keep this page open while it runs.</p>
+      <div id="mmTry"></div>
+      <div id="mmTrials" style="margin-top:12px;"></div>
+      <div id="mmDetail" style="margin-top:12px;"></div>
+    </div>
+  </div>
 
   <div id="usec_playbook" class="hidden">
   <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">Suggested playbook updates</h3>
@@ -3446,6 +3468,13 @@
     <strong>Ask needs more than analytics</strong>
     The <span class="ui">Ask about our issues</span> box on Stats needs the Track permission as well, so on this account it comes back with <em>forbidden</em>. On the list to fix.
   </div>
+</section>
+
+<section id="man-marking-model" data-perm="marking" data-title="The marking model">
+  <h3>The marking model</h3>
+  <p>Which model writes the feedback on students' papers is chosen under <span class="ui">Admin</span> then <span class="ui">Marking model</span>, for someone who is both an admin and on Marking. Pick one and press <span class="ui">Use this model</span>; the next paper written uses it.</p>
+  <p>Before switching, <span class="ui">Try a model</span>. It marks the hand-graded benchmark answers with that model and shows how often its grade matches ours (the same band, within one band, and two or more bands out), which way it leans, and what it cost per answer. Every trial is kept, so two models sit side by side. <span class="ui">Answers</span> on a trial lists where it disagreed, worst first.</p>
+  <p>The same model can come out several points differently on two runs, so compare like with like and run a close call twice.</p>
 </section>
 
 <section id="man-admin" data-perm="users" data-title="Running the tracker">
@@ -15890,6 +15919,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 86, date: "2026-10-29", who: ["users"], text: "Admin > Marking model: see which model writes the marking feedback, switch it, and try a model over your own hand-graded answers first to see how often it agrees with you and what it costs." },
   { n: 85, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email, plus Insights and Photos owed. The separate portal is no longer needed for any of it." },
   { n: 84, date: "2026-10-27", who: ["notes"], text: "Notes: ask a question across all your meetings, file them into folders, and see repeating meetings grouped together." },
   { n: 83, date: "2026-10-27", text: "A shorter rail: Mine, Support, Content and Stats each gather a few pages, listed down the side when you open one." },
@@ -16197,6 +16227,7 @@ function subRailSpecOwn_() {
   if (v === "users") return {
     head: "Admin", cur: state.usersSection, go: setUsersSection,
     items: [{ key: "people", label: "People" }, { key: "feedback", label: "Feedback" }, { key: "playbook", label: "Playbook" }]
+      .concat((state.perms || {}).marking ? [{ key: "marking", label: "Marking model" }] : [])
   };
   // r188: the two Shipping pages.
   if (v === "shipreport" || v === "customs") return {
@@ -23021,6 +23052,10 @@ function renderUsers() {
 // last-used section is remembered.
 function setUsersSection(s) {
   var sections = ["people", "feedback", "playbook"];
+  // The Marking tab needs the Marking permission as well as Admin.
+  var canMarking = !!((state.perms || {}).marking);
+  if ($("us_marking")) $("us_marking").classList.toggle("hidden", !canMarking);
+  if (canMarking) sections.push("marking");
   if (s === "invite") s = "people"; // invite now lives at the top of People
   if (s === "chatscan") s = "feedback"; // section removed (FB-0182), old saved prefs land here
   if (sections.indexOf(s) < 0) s = "feedback";
@@ -23032,6 +23067,123 @@ function setUsersSection(s) {
   });
   renderSubRail();
   if (s === "playbook") autoGrowEditor($("playbookText"));
+  if (s === "marking") mmLoad();
+}
+
+// ============================ MARKING MODEL (r261) ============================
+// Admin > Marking: which model writes the feedback, and trials of a model over
+// the hand-graded benchmark. Talks to ardent-portal's /api/tracker/model with
+// the Marking ticket, which only carries marking_admin for an admin.
+var mm = { state: null, err: "", running: null, detail: null, busy: false };
+
+function mmLoad() {
+  mm.err = "";
+  return markingApi("/model", { query: "op=state" }).then(function (j) {
+    mm.state = j;
+  }).catch(function (e) { mm.err = (e && e.message) || String(e); }).then(mmRender);
+}
+function mmUsd(n, dp) { return n == null || !isFinite(Number(n)) ? "-" : "$" + Number(n).toFixed(dp == null ? 2 : dp); }
+function mmPct(n) { return n == null ? "-" : mpN(n) + "%"; }
+function mmModelLabel(id) {
+  var m = ((mm.state && mm.state.models) || []).filter(function (x) { return x.id === id; })[0];
+  return m ? m.label : id;
+}
+function mmOptions(selected) {
+  return ((mm.state && mm.state.models) || []).map(function (m) {
+    return '<option value="' + esc(m.id) + '"' + (m.id === selected ? " selected" : "") + '>' + esc(m.label) + ' (' + mmUsd(m.price.input, 2) + ' in, ' + mmUsd(m.price.output, 2) + ' out per million tokens)</option>';
+  }).join("");
+}
+function mmRender() {
+  var cur = $("mmCurrent"), tryHost = $("mmTry"), list = $("mmTrials");
+  if (!cur) return;
+  if (mm.err) { cur.innerHTML = '<p style="color:var(--coral);">' + esc(mm.err) + '</p>'; tryHost.innerHTML = ""; list.innerHTML = ""; return; }
+  var st = mm.state; if (!st) return;
+  var c = st.current || {};
+  var where = c.source === "admin" ? "chosen here" + (c.updated_by ? " by " + esc(c.updated_by) : "") + (c.updated_at ? ", " + esc(fmtDate(c.updated_at)) : "")
+    : c.source === "environment" ? "from the server's MARKING_MODEL setting" : "the default";
+  var note = ((st.models || []).filter(function (m) { return m.id === c.model; })[0] || {}).note || "";
+  cur.innerHTML = '<p style="margin:0 0 8px;">Marking uses <strong>' + esc(mmModelLabel(c.model)) + '</strong> <span class="small muted">(' + where + ')</span>' + (note ? '<br><span class="small muted">' + esc(note) + '</span>' : '') + '</p>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><select id="mmPick" style="width:auto;max-width:100%;">' + mmOptions(c.model) + '</select>' +
+    '<button type="button" class="primary" style="width:auto;" onclick="mmSet()"' + (mm.busy ? " disabled" : "") + '>Use this model</button></div>' +
+    '<p class="small muted" style="margin-bottom:0;">Prices are US dollars per million tokens. A paper\'s feedback is usually a few thousand tokens per answer written.</p>';
+  var n = st.benchmark_answers || 0;
+  tryHost.innerHTML = mm.running
+    ? '<p class="small"><strong>Running ' + esc(mmModelLabel(mm.running.model)) + ':</strong> ' + mpN(mm.running.summary.done) + ' of ' + mpN(mm.running.summary.total) + ' answers, ' + mmUsd(mm.running.summary.cost_usd, 3) + ' so far. <a href="#" onclick="mm.stop=true;return false;">Stop after this batch</a></p>'
+    : '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><select id="mmTryModel" style="width:auto;max-width:100%;">' + mmOptions(c.model) + '</select>' +
+      '<select id="mmTryCount" style="width:auto;"><option value="20">20 answers (a quick look)</option><option value="0" selected>All ' + mpN(n) + ' answers</option></select>' +
+      '<button type="button" class="primary" style="width:auto;" onclick="mmStart()"' + (mm.busy || !n ? " disabled" : "") + '>Run the trial</button></div>' +
+      (n ? "" : '<p class="small" style="color:var(--coral);">The benchmark isn\'t on the server, so there\'s nothing to try.</p>');
+  var trials = st.trials || [];
+  list.innerHTML = trials.length ? '<div class="man-scroll"><table class="rec-table mm-table"><tr><th>When</th><th>Model</th><th>Answers</th><th title="Same band as your grade">Same band</th><th title="Within one band of your grade">Within one</th><th title="Two or more bands from your grade">Two bands out</th><th title="Positive: grades higher than you on average">Leans</th><th>Per answer</th><th>Total</th><th>Seconds each</th><th></th></tr>' +
+    trials.map(function (t) {
+      var s = t.summary || {};
+      var lean = s.mean_shift == null ? "-" : s.mean_shift > 0.05 ? "+" + s.mean_shift + " (generous)" : s.mean_shift < -0.05 ? s.mean_shift + " (harsh)" : "level";
+      return '<tr><td>' + esc(fmtDate(t.started_at)) + (t.started_by ? '<br><span class="small muted">' + esc(t.started_by.split("@")[0]) + '</span>' : '') + '</td><td>' + esc(t.label) + '</td>' +
+        '<td>' + mpN(s.done) + ' of ' + mpN(s.total) + (s.failed ? '<br><span class="small" style="color:var(--coral);">' + mpN(s.failed) + ' failed</span>' : '') + (t.finished_at ? '' : '<br><span class="small muted">unfinished</span>') + '</td>' +
+        '<td><strong>' + mmPct(s.exact_rate) + '</strong></td><td>' + mmPct(s.within_one_rate) + '</td><td>' + mpN(s.serious) + '</td><td>' + esc(lean) + '</td>' +
+        '<td>' + mmUsd(s.cost_per_answer_usd, 4) + '</td><td>' + mmUsd(s.cost_usd, 3) + '</td><td>' + (s.mean_seconds == null ? "-" : mpN(s.mean_seconds)) + '</td>' +
+        '<td><a href="#" data-t="' + esc(t.trial_id) + '" onclick="mmDetail(this.dataset.t);return false;">Answers</a>' + (!t.finished_at && !mm.running ? ' &middot; <a href="#" data-t="' + esc(t.trial_id) + '" onclick="mmResume(this.dataset.t);return false;">Carry on</a>' : '') + '</td></tr>';
+    }).join("") + '</table></div><p class="small muted">The same model run twice can differ by several points: the engine changed band on about a third of answers between two identical runs in August. Compare like with like, and run a close call twice.</p>'
+    : '<p class="small muted">No trials yet.</p>';
+}
+function mmSet() {
+  var pick = $("mmPick"); if (!pick || mm.busy) return;
+  var model = pick.value, cur = mm.state && mm.state.current && mm.state.current.model;
+  if (model === cur) { toast("Marking already uses " + mmModelLabel(model) + "."); return; }
+  if (!confirm("Switch marking to " + mmModelLabel(model) + "? Every paper written from now on uses it.")) return;
+  mm.busy = true; mmRender();
+  markingApi("/model", { body: { op: "set", model: model } }).then(function (r) {
+    mm.busy = false;
+    if (!r || !r.ok) { toast((r && r.error) || "That didn't save."); mmRender(); return; }
+    toast("Marking now uses " + mmModelLabel(model) + ".");
+    mm.state.current = r.current; mmRender();
+  }).catch(function (e) { mm.busy = false; toast((e && e.message) || String(e)); mmRender(); });
+}
+function mmStart() {
+  if (mm.busy || mm.running) return;
+  var model = $("mmTryModel").value, limit = Number($("mmTryCount").value) || 0;
+  mm.busy = true; mm.stop = false; mmRender();
+  markingApi("/model", { body: { op: "start", model: model, limit: limit || undefined } }).then(function (r) {
+    mm.busy = false;
+    if (!r || !r.ok) { toast((r && r.error) || "The trial didn't start."); mmRender(); return; }
+    mmRun(r.trial);
+  }).catch(function (e) { mm.busy = false; toast((e && e.message) || String(e)); mmRender(); });
+}
+function mmResume(id) {
+  var t = ((mm.state && mm.state.trials) || []).filter(function (x) { return x.trial_id === id; })[0];
+  if (t && !mm.running) { mm.stop = false; mmRun(t); }
+}
+// A batch at a time until it's done, the page is left, or Stop is pressed.
+function mmRun(trial) {
+  mm.running = trial; mmRender();
+  function next() {
+    if (mm.stop || state.view !== "users") { mm.running = null; mmLoad(); return; }
+    markingApi("/model", { body: { op: "step", trial_id: trial.trial_id } }).then(function (r) {
+      if (!r || !r.ok) { mm.running = null; toast((r && r.error) || "The trial stopped."); mmLoad(); return; }
+      mm.running = r.trial; mmRender();
+      if (r.trial.finished_at) { mm.running = null; toast(mmModelLabel(r.trial.model) + ": " + mmPct(r.trial.summary.exact_rate) + " same band as you."); mmLoad(); return; }
+      next();
+    }).catch(function (e) { mm.running = null; toast((e && e.message) || String(e)); mmLoad(); });
+  }
+  next();
+}
+// Where a trial disagreed with the hand grades, worst first.
+function mmDetail(id) {
+  var host = $("mmDetail"); if (!host) return;
+  host.innerHTML = '<p class="small muted">Loading...</p>';
+  markingApi("/model", { query: "op=trial&id=" + encodeURIComponent(id) }).then(function (j) {
+    var rank = { Strong: 3, Good: 2, Fair: 1, Poor: 0 };
+    var rows = (j.results || []).slice().sort(function (a, b) {
+      var da = a.ai ? Math.abs(rank[a.ai] - rank[a.human]) : 9, db = b.ai ? Math.abs(rank[b.ai] - rank[b.human]) : 9;
+      return db - da;
+    });
+    host.innerHTML = '<h3 style="margin:0 0 6px;">' + esc(j.trial.label) + ', ' + esc(fmtDate(j.trial.started_at)) + ' <a href="#" class="small" onclick="$(\'mmDetail\').innerHTML=\'\';return false;">close</a></h3>' +
+      '<div class="man-scroll"><table class="rec-table mm-table"><tr><th>Question</th><th>You</th><th>Engine</th><th>Confidence</th><th>Seconds</th><th></th></tr>' +
+      rows.map(function (r) {
+        var off = r.ai ? Math.abs(rank[r.ai] - rank[r.human]) : null;
+        return '<tr><td>' + esc(r.question_code) + '</td><td>' + esc(r.human) + '</td><td' + (off >= 2 ? ' style="color:var(--coral);font-weight:600;"' : '') + '>' + esc(r.ai || "-") + '</td><td>' + (r.confidence == null ? "-" : mpN(Math.round(r.confidence * 100)) + "%") + '</td><td>' + mpN(Math.round(r.ms / 100) / 10) + '</td><td class="small" style="white-space:normal;">' + (r.error ? '<span style="color:var(--coral);">' + esc(r.error) + '</span>' : '') + '</td></tr>';
+      }).join("") + '</table></div>';
+  }).catch(function (e) { host.innerHTML = '<p style="color:var(--coral);">' + esc((e && e.message) || String(e)) + '</p>'; });
 }
 
 // ---- "Spotted in chat": the nightly scan's suggestions, awaiting a verdict --
