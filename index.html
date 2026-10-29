@@ -13721,6 +13721,9 @@ function irpcsLoadList(force) {
   if (host && !irpcs.items.length) host.innerHTML = '<p class="hint" style="padding:12px;">Fetching the content...</p>';
   return irpcsApi({ query: { op: "list" } }).then(function (j) {
     irpcs.items = j.items || [];
+    // r260: an archived item is never published (publish_all skips it), so an
+    // edit to one is not "waiting". Counting it left the total stuck forever.
+    irpcs.items.forEach(function (it) { if (it.archived) it.pending = false; });
     irpcs.loaded = true;
   }).catch(function (e) {
     irpcs.error = String((e && e.message) || e);
