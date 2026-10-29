@@ -4093,7 +4093,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r255 · 2026-10-27";  // bump this with each round, it lands on every feedback report
+var BUILD = "r262 · 2026-10-29";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -12280,13 +12280,21 @@ var mp = {
   // the paper
   openId: "", paper: null, paperLoading: false, paperError: "", msg: null, busy: false,
   // triage: per answer { grade, needsFeedback, override, tickedByHand, saved, error }
-  tri: {}, triOpen: {}, focus: 0, keysOn: true, showKeys: false, writing: false,
+  tri: {}, triOpen: {}, focus: 0, keysOn: true, showKeys: false,
+  // Feedback being written, per paper, so it carries on while the instructor
+  // goes back to the queue (FB-0506): { name, total, done, phase }. And the
+  // ones that have finished since, for a green "ready" on the queue.
+  jobs: {}, jobsDone: {},
   // review: per answer { grade, feedback, open, saved, error }
   rev: {},
   fin: { readiness: "", rya: "", summary: "" },
   send: { message: null, revisionChecked: false, state: "" },
   student: null
 };
+// The open paper is "writing" while it has a job running. Everything that
+// held the page during writing still reads mp.writing.
+Object.defineProperty(mp, "writing", { get: function () { return !!(mp.openId && mp.jobs[mp.openId]); }, set: function () {} });
+function mpJobsRunning() { return Object.keys(mp.jobs).length > 0; }
 var MP_GRADES = ["Strong", "Good", "Fair", "Poor"];
 var MP_PHOTO_KIND = { route_plot: "route plot", ep_plot: "EP plot", tidal_curve: "tidal curve", cts_plot: "course to steer plot" };
 // Two calls since 29 Oct (Edd, FB-0498). "not yet" is still shown on a paper
@@ -12393,16 +12401,30 @@ function renderQueue() {
         (p.answers ? '<span class="small muted">' + mpN(p.answers) + ' answer' + (p.answers === 1 ? "" : "s") + (p.flagged ? ' &middot; ' + mpN(p.flagged) + ' with feedback' : '') + '</span>' : '') +
         (p.instructor_name ? '<span class="small muted">&middot; ' + esc(p.instructor_name) + (p.mine ? ' (you)' : '') + '</span>' : '') +
       '</div>' +
-      '<div class="small" style="flex:0 0 auto;color:var(--accent);">' + esc(p.go) + ' &rarr;</div>' +
+      mpJobBadge(p.submission_id) +
+      '<div class="small" style="flex:0 0 auto;color:var(--accent);">' + esc(mp.jobsDone[p.submission_id] && mp.jobsDone[p.submission_id].kind === "ok" ? "Check the feedback" : p.go) + ' &rarr;</div>' +
     '</button>';
   }).join("") + '</div>';
   host.innerHTML = head + body;
+}
+
+// Writing in the background, on the queue row (FB-0506).
+function mpJobBadge(id) {
+  var j = mp.jobs[id], d = mp.jobsDone[id];
+  if (j) {
+    var pct = j.phase === "patterns" ? 100 : j.total ? Math.round((j.done / j.total) * 100) : 0;
+    return '<div style="flex:1 1 160px;min-width:140px;"><div class="small">' + (j.phase === "patterns" ? "Working out the patterns..." : "Writing " + mpN(j.done) + " of " + mpN(j.total)) + '</div>' +
+      '<div style="height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden;margin-top:3px;"><div style="height:100%;width:' + pct + '%;background:var(--accent);transition:width .4s;"></div></div></div>';
+  }
+  if (d) return '<span class="badge" style="' + (d.kind === "ok" ? "background:#2e7d32;color:#fff;" : "background:rgba(239,83,80,.18);") + '">' + (d.kind === "ok" ? "Written, ready to check" : "Writing hit a problem: open it") + '</span>';
+  return "";
 }
 
 // ---------------------------------------------------------------- the paper
 function mpOpen(id, keep) {
   if (mp.busy || mp.writing) return Promise.resolve();
   mp.openId = id; mp.student = null;
+  if (!keep) delete mp.jobsDone[id];
   if (!keep) { mp.paper = null; mp.msg = null; mp.tri = {}; mp.triOpen = {}; mp.rev = {}; mp.fin = { readiness: "", rya: "", summary: "" }; mp.send = { message: null, revisionChecked: false, state: "" }; }
   mp.paperError = ""; mp.paperLoading = true;
   // With `keep` the paper is already on screen and the instructor may be
@@ -12483,12 +12505,12 @@ function mpReopenHeld(id, keep) {
 // not yet saved: ask first.
 window.addEventListener("beforeunload", function (e) {
   var unsaved = false;
-  try { unsaved = mp.writing || mpAnyUnsaved() || (marking.item && markingDirty()); } catch (err) {}
+  try { unsaved = mpJobsRunning() || mpAnyUnsaved() || (marking.item && markingDirty()); } catch (err) {}
   if (unsaved) { e.preventDefault(); e.returnValue = "There's marking work that isn't saved."; return e.returnValue; }
 });
 
 function mpBack() {
-  if (mp.writing) { toast("Feedback is still being written. Wait for it to finish."); return; }
+  if (mp.writing) toast("Still writing in the background. Its progress shows in the queue; keep the tracker open until it's done.");
   if (mp.paper && mp.paper.screen === "review" && mpAnyUnsaved() && !confirm("There are unsaved changes on this paper. Leave it?")) return;
   mp.openId = ""; mp.paper = null; mp.student = null;
   mpLoadQueue(true);
@@ -12691,7 +12713,9 @@ function mpTriageCard(a, i) {
   // Open until graded, then folded away; an answer iSpring has entirely right
   // starts folded with a tick (FB-0491, FB-0493). Either can be opened by hand,
   // and stays as it was set.
-  var open = mp.triOpen[a.answer_id] !== undefined ? mp.triOpen[a.answer_id] : !(l.saved || (allRight && !a.expects_photo));
+  // Folds as soon as a grade is pressed, not when the save comes back (FB-0504):
+  // the save carries on underneath, and a failed one opens the card again.
+  var open = mp.triOpen[a.answer_id] !== undefined ? mp.triOpen[a.answer_id] : !(l.saved || (l.grade && mpTriInFlight[a.answer_id]) || (allRight && !a.expects_photo));
   var status = (l.saved ? '<span class="small" style="color:#2e7d32;">saved</span>' : l.grade ? (mpTriInFlight[a.answer_id] ? '<span class="small muted">saving...</span>' : '<span class="small" style="color:var(--coral);">not saved: press the grade to keep it</span>') : '') +
     (l.error ? '<span class="small" style="color:var(--coral);">' + esc(l.error) + '</span>' : '');
   var controls = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;' + (open ? "margin-top:8px;" : "") + '">' +
@@ -12715,7 +12739,7 @@ function mpTriOpenToggle(id) {
   var p = mp.paper; if (!p) return;
   var a = p.answers.filter(function (x) { return x.answer_id === id; })[0]; if (!a) return;
   var l = mp.tri[id] || {};
-  var now = mp.triOpen[id] !== undefined ? mp.triOpen[id] : !(l.saved || (mpIsAllCorrect(mpViews(a, l.override)) && !a.expects_photo));
+  var now = mp.triOpen[id] !== undefined ? mp.triOpen[id] : !(l.saved || (l.grade && mpTriInFlight[id]) || (mpIsAllCorrect(mpViews(a, l.override)) && !a.expects_photo));
   mp.triOpen[id] = !now;
   mpRedrawCard(id);
 }
@@ -12769,6 +12793,8 @@ function mpTriSend(answerId) {
     var cur = mp.tri[answerId]; if (!cur) return;
     if (again) { mpTriSend(answerId); return; }
     cur.saved = ok; cur.error = ok ? null : error;
+    // A failed save opens the card again, so the error is seen.
+    if (!ok) mp.triOpen[answerId] = true;
     mpRedrawCard(answerId);
   }
   mpApi({ body: { op: "triage", submission_id: paper, answer_id: answerId, grade: l.grade, needs_feedback: !!l.needsFeedback, part_override: l.override } })
@@ -12777,6 +12803,7 @@ function mpTriSend(answerId) {
 function mpTriGrade(answerId, g) {
   var l = mp.tri[answerId]; if (!l) return;
   var implies = g === "Fair" || g === "Poor";
+  delete mp.triOpen[answerId];
   mpTriCommit(answerId, Object.assign({}, l, { grade: g, needsFeedback: (l.saved || l.grade || l.tickedByHand) ? l.needsFeedback : implies, saved: false }));
 }
 function mpTriToggle(answerId) {
@@ -12836,40 +12863,62 @@ document.addEventListener("keydown", function (e) {
 // reloads onto the review screen.
 function mpWrite() {
   if (mp.writing || mp.busy) return;
-  var p = mp.paper, flagged = 0;
+  var p = mp.paper, flagged = 0, id = mp.openId;
   p.answers.forEach(function (a) { var l = mp.tri[a.answer_id]; if (l && l.saved && l.needsFeedback) flagged++; });
   if (p.screen === "review") flagged = p.counts.unwritten;
-  mp.writing = true; mpMsg("ok", flagged ? "Writing... 0 of " + flagged : "Opening the paper...");
+  var job = mp.jobs[id] = { name: p.learner_name || p.learner_email || "this paper", total: flagged, done: 0, phase: "writing" };
+  delete mp.jobsDone[id];
+  // Said on the paper when it's open, and on the queue row either way.
+  function say(kind, text) { if (mp.openId === id) mpMsg(kind, text); if (!mp.openId) renderQueue(); }
+  say("ok", flagged ? "Writing... 0 of " + flagged : "Opening the paper...");
   renderPaper();
+  // Back to the queue straight away, so nobody sits watching it (FB-0506).
+  // It carries on here, in this tab.
+  if (flagged) setTimeout(function () {
+    if (mp.openId !== id || !mp.jobs[id]) return;
+    mp.openId = ""; mp.paper = null; mp.student = null; mp.msg = null;
+    toast("Writing " + job.name + "'s feedback in the background. It goes green in the queue when it's ready; keep the tracker open.");
+    mpLoadQueue(true); renderPapers();
+  }, 600);
   var guard = 0;
   // The whole-paper pass runs after the marking and takes about a minute
-  // (it writes a long structured reply). It is waited for, with a line
-  // saying so, because the covering email draft and the "across the whole
-  // paper" notes come from it.
+  // (it writes a long structured reply). The covering email draft and the
+  // "across the whole paper" notes come from it.
+  function end(kind, text) {
+    delete mp.jobs[id];
+    mp.jobsDone[id] = { kind: kind, text: text, name: job.name };
+    if (mp.openId === id) { mpMsg(kind, text); mpOpen(id, true); }
+    else {
+      toast(kind === "ok" ? job.name + "'s feedback is written and ready to check." : job.name + ": " + text.split("\n")[0]);
+      if (!mp.openId && !mp.student) mpLoadQueue(true);
+    }
+  }
   function finish(kind, text) {
-    mpMsg("ok", (kind === "ok" ? text + " " : "") + "Now working out the patterns across the whole paper, about a minute...");
+    job.phase = "patterns";
+    say("ok", (kind === "ok" ? text + " " : "") + "Now working out the patterns across the whole paper, about a minute...");
     var synthFailed = false, synthWhy = "";
-    mpApi({ body: { op: "synthesis", submission_id: mp.openId } }).then(function (r) { if (r && r.ok === false) { synthFailed = true; synthWhy = r.error || ""; } }, function (e) { synthFailed = true; synthWhy = (e && e.message) || String(e); }).then(function () {
-      mp.writing = false;
+    mpApi({ body: { op: "synthesis", submission_id: id } }).then(function (r) { if (r && r.ok === false) { synthFailed = true; synthWhy = r.error || ""; } }, function (e) { synthFailed = true; synthWhy = (e && e.message) || String(e); }).then(function () {
       // The answers are written either way; the covering email draft and the
       // notes across the paper come from this pass, so say when it didn't run.
-      mpMsg(synthFailed ? "bad" : kind, text + (synthFailed ? "\nThe pass across the whole paper didn't finish" + (synthWhy ? " (" + synthWhy + ")" : "") + ", so the covering email draft and the patterns may be missing or out of date. Use Work out the patterns on the paper to try it again." : ""));
-      mpOpen(mp.openId, true);
+      end(synthFailed ? "bad" : kind, text + (synthFailed ? "\nThe pass across the whole paper didn't finish" + (synthWhy ? " (" + synthWhy + ")" : "") + ", so the covering email draft and the patterns may be missing or out of date. Use Work out the patterns on the paper to try it again." : ""));
     });
   }
+  function stop(text) { end("bad", text); if (mp.openId === id) renderPaper(); }
   function loop() {
-    if (guard++ >= 40) { mp.writing = false; mpMsg("bad", "Stopped after forty batches. Open the paper and press Write it now to carry on."); mpOpen(mp.openId, true); return; }
-    mpApi({ body: { op: "write", submission_id: mp.openId, batch: 8 } }).then(function (r) {
-      if (!r.ok) { mp.writing = false; mpMsg("bad", r.error || "The writing stopped."); renderPaper(); return; }
+    if (guard++ >= 40) { stop("Stopped after forty batches. Open the paper and press Write it now to carry on."); return; }
+    mpApi({ body: { op: "write", submission_id: id, batch: 8 } }).then(function (r) {
+      if (!r.ok) { stop(r.error || "The writing stopped."); return; }
       if (!r.remaining) {
+        job.done = flagged;
         if (r.failed && r.failed.length) finish("bad", mpFailures(r.failed));
         else finish("ok", flagged ? "Written. Now check it." : "Nothing needed writing on this one.");
         return;
       }
       if (r.marked === 0) { finish("bad", r.failed && r.failed.length ? mpFailures(r.failed) : "Nothing more could be written."); return; }
-      mpMsg("ok", "Writing... " + (flagged - r.remaining) + " of " + flagged);
+      job.done = Math.max(0, Math.min(flagged, flagged - r.remaining));
+      say("ok", "Writing... " + job.done + " of " + flagged);
       loop();
-    }).catch(function (e) { mp.writing = false; mpMsg("bad", (e && e.message) || String(e)); renderPaper(); });
+    }).catch(function (e) { stop((e && e.message) || String(e)); });
   }
   loop();
 }
@@ -16067,6 +16116,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 88, date: "2026-10-29", who: ["marking"], text: "Marking: an answer folds the moment you grade it and saves in the background. And once you press Write, you're taken back to the papers while the feedback is written; the paper shows its progress there and goes green when it's ready to check. Keep the tracker open until it's done." },
   { n: 87, date: "2026-10-29", who: ["marking"], text: "Marking, from your feedback on the first real paper: clearer grade colours; the student's answer beside the expected one, right parts green and wrong parts red; answers fold away once graded (and iSpring's all-right ones start folded); the still-to-grade button takes you to the next one; Save rather than Looks right once you've edited; pictures in your own feedback; two readiness calls; only the answers you wrote feedback on in the PDF; and a way back once it's sent." },
   { n: 86, date: "2026-10-29", who: ["users"], text: "Admin > Marking model: see which model writes the marking feedback, switch it, and try a model over your own hand-graded answers first to see how often it agrees with you and what it costs." },
   { n: 85, date: "2026-10-25", who: ["marking"], text: "Marking papers from the tracker: the queue, blind grading, the engine's feedback to check, finalising, the PDF and the covering email, plus Insights and Photos owed. The separate portal is no longer needed for any of it." },
