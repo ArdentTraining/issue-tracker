@@ -759,7 +759,7 @@ function doPost(e) {
     // so it gets a key of its own rather than the people key: Vercel has never
     // held REPORTS_TICKET_SECRET and a leak there should open Marking and
     // nothing else. Own audience too. Half an hour, like the portal tickets.
-    if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET', onlyPerm: true }));
+    if (action === 'markingTicket') return jsonOut(mintPortalTicket_(user, 'marking', 30, { aud: 'marking', secretName: 'MARKING_TICKET_SECRET', onlyPerm: true, adminFlag: 'marking_admin' }));
     // r253: Notes. The back end is Ardent Notes on Vercel (ardent-notes.vercel.app/api/tracker),
     // so, like Marking, it gets its own key and its own audience: a leak there opens a person's
     // meeting notes and nothing else of ours. r253.1: behind the 'notes' permission (hand-picked
@@ -11286,7 +11286,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r259 · 2026-10-28';
+var CODE_STAMP = 'r261 · 2026-10-29';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -15326,7 +15326,14 @@ function mintPortalTicket_(user, requiredPerm, minutes, opts) {
     // asks for only its own (Marking, 25 Oct): that service has no use for
     // anyone's admin or developer flags, and a flag it can't see is one it
     // can never come to trust by accident.
-    perms: opts.onlyPerm && requiredPerm ? (function () { var o = {}; o[requiredPerm] = true; return o; })() : perms,
+    perms: opts.onlyPerm && requiredPerm ? (function () {
+      var o = {}; o[requiredPerm] = true;
+      // r261: an admin (Users on Write) also gets the caller's admin flag, so
+      // Marking can let them change the model and run trials, and nobody
+      // else (Edd, 29 Oct).
+      if (opts.adminFlag && perms.users === true && !(pub.perms_ro || {}).users) o[opts.adminFlag] = true;
+      return o;
+    })() : perms,
     // r248: the keys this person may only read. Every function that writes on
     // a ticket refuses a write for a key listed here. Narrowed the same way.
     perms_ro: opts.onlyPerm && requiredPerm
