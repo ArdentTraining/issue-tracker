@@ -723,8 +723,10 @@ function doPost(e) {
     // signed out. The page retries those; this line is how we can tell.
     if (!body.token) sessionLog_('no token in request', '', '', 'POST, ' + ((e && e.postData && e.postData.contents) ? String(e.postData.contents).length : 0) + ' bytes of body', action || '(none)');
     fileMark_('pre_auth');
+    AUTH_T_ = []; AUTH_T_.t0 = Date.now();   // r262
     var user = userForToken_(body.token, action);
     fileMark_('auth');
+    authNoteSave_(action, Date.now() - AUTH_T_.t0); AUTH_T_ = null;
     if (!user) return jsonOut({ ok: false, error: 'unauthorized', why: UNAUTH_WHY_ || 'unknown' });
     if (action === 'logout') return jsonOut(logout_(body.token));
     // r248 (FB-0481): read-only access. Everything not on READ_ACTIONS_ is a
@@ -982,8 +984,10 @@ function usersTable_(fresh) {
   }
   var rows = null, c = CacheService.getScriptCache();
   if (!fresh) { try { var hit = c.get(USERS_CACHE_KEY_); if (hit) rows = JSON.parse(hit); } catch (e) { rows = null; } }
+  authNote_(rows ? 'users_hit' : (fresh ? 'users_fresh' : 'users_miss'));   // r262: measuring
   if (!rows) {
     rows = JSON.parse(JSON.stringify(storeTableList_('users')));
+    authNote_('users_read');
     try { var txt = JSON.stringify(rows); if (txt.length < 90000) c.put(USERS_CACHE_KEY_, txt, 60); } catch (e) {}
   }
   var head = USER_HEADERS.slice(), ix = {};
@@ -1070,7 +1074,7 @@ function userForToken_(token, action) {
   var f = findUserBySession_(token);
   if (!f) { UNAUTH_WHY_ = 'token not found on any account'; sessionLog_('refused', '', token, UNAUTH_WHY_, action); return null; }
   if (String(f.user.status).toLowerCase() !== 'active') { UNAUTH_WHY_ = 'account disabled'; sessionLog_('refused', f.user.email, token, UNAUTH_WHY_, action); return null; }
-  if (f.plain) migrateSession_(f, token);   // r245: a pre-r245 session, stored as its hash from now on
+  if (f.plain) { migrateSession_(f, token); authNote_('migrated'); }   // r245: a pre-r245 session, stored as its hash from now on
   if (f.legacy) {
     // Legacy single-token row: expiry lives in the column, as it always did.
     // Deliberately NOT slid. The Claude service account is one of these and its
@@ -1085,9 +1089,26 @@ function userForToken_(token, action) {
     // using (see startSession_). And slide the expiry as before.
     var nearEnd = Number(f.entry.e) - Date.now() < SESSION_REFRESH_DAYS * 24 * 3600 * 1000;
     var stale = !isFinite(Number(f.entry.u)) || Date.now() - Number(f.entry.u) > SESSION_USED_EVERY_MS;
-    if (nearEnd || stale) touchSession_(f, token, nearEnd);
+    if (nearEnd || stale) { authNote_('touch_start'); touchSession_(f, token, nearEnd); authNote_(nearEnd ? 'touch_extend' : 'touch_daily'); }
   }
   return f.user;
+}
+// r262 (Edd, 30 Oct): the sign-in check is 1-2s on most saves, ~0.1s on some
+// and 5s once. Measuring only: what the check did and when, kept for the
+// filing stopwatch (FILE_T_) and, for any request whose check took more than
+// 300ms (and one in ten of the rest), a short rolling list in the cache.
+var AUTH_T_ = null;
+function authNote_(what) { if (AUTH_T_) AUTH_T_.push([what, Date.now() - AUTH_T_.t0]); }
+function authNoteSave_(action, ms) {
+  try {
+    var steps = AUTH_T_ || [];
+    if (FILE_T_) fileTag_('auth_steps', steps.map(function (x) { return x[0] + '@' + x[1]; }).join(' '));
+    if (ms < 300 && Math.random() > 0.1) return;
+    var c = CacheService.getScriptCache(), list = [];
+    try { list = JSON.parse(c.get('ait_auth_log') || '[]'); } catch (e) { list = []; }
+    list.unshift({ at: new Date().toISOString(), a: String(action || '').slice(0, 30), ms: ms, s: steps.map(function (x) { return x[0] + '@' + x[1]; }).join(' ') });
+    c.put('ait_auth_log', JSON.stringify(list.slice(0, 80)), 21600);
+  } catch (e) {}
 }
 
 // r206 (Edd, 30 Sep 2026: "why did it get logged out?"). The reason went back
@@ -3496,7 +3517,9 @@ function fileTimings_() {
   try { ft = JSON.parse(PropertiesService.getScriptProperties().getProperty('FILE_TIMINGS') || '[]'); } catch (e) {}
   try { pend = JSON.parse(PropertiesService.getScriptProperties().getProperty(FILE_AFTER_KEY_) || '{}'); } catch (e) {}
   try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'fileAfterSweep') sweep = true; }); } catch (e) {}
-  return { ok: true, timings: ft, after_pending: Object.keys(pend).map(function (k) { return { id: k, age_s: Math.round((Date.now() - pend[k].at) / 1000) }; }), sweep_trigger: sweep };
+  var authLog = [];
+  try { authLog = JSON.parse(CacheService.getScriptCache().get('ait_auth_log') || '[]'); } catch (e) {}
+  return { ok: true, auth_log: authLog, timings: ft, after_pending: Object.keys(pend).map(function (k) { return { id: k, age_s: Math.round((Date.now() - pend[k].at) / 1000) }; }), sweep_trigger: sweep };
 }
 function storeAdmin_(data) {
   var what = String((data && data.what) || '');
@@ -11286,7 +11309,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r261 · 2026-10-29';
+var CODE_STAMP = 'r262 · 2026-10-30';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
