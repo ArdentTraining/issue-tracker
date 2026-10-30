@@ -4094,7 +4094,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r264 · 2026-10-29";  // bump this with each round, it lands on every feedback report
+var BUILD = "r265 · 2026-10-30";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11934,6 +11934,7 @@ function mgCard(g) {
   var was = g.kind === "fix_block" && ev.block ? '<p class="small muted" style="margin:6px 0 0;">Now: <em>' + esc(ev.block.condition || "") + '</em>: ' + esc(String(ev.block.feedback || "").slice(0, 400)) + '</p>' : '';
   return '<div class="card" style="margin-bottom:10px;" id="mgCard-' + id + '">' +
     '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;"><strong>' + esc(g.question_code) + '</strong><span class="badge">' + esc(MG_KIND[g.kind] || g.kind) + '</span>' +
+      (g.for_instructor_name ? '<span class="badge" style="background:rgba(30,111,217,.15);">For ' + esc(g.for_instructor_name) + "'s guide only</span>" : '') +
       '<span class="small muted">' + esc(g.exam_id) + (g.instructor_name ? ' &middot; from ' + esc(g.instructor_name) + "'s marking" : '') + '</span>' +
       (g.question_id ? '<a href="#" class="small" style="margin-left:auto;" data-q="' + esc(g.question_id) + '" onclick="markingOpen(this.dataset.q);return false;">Open the question</a>' : '') + '</div>' +
     (g.why ? '<p class="small" style="margin:6px 0 0;">' + esc(g.why) + '</p>' : '') + was + fields +
@@ -11944,21 +11945,28 @@ function mgCard(g) {
       (g.source ? '<p class="small muted" style="margin:6px 0;">From marking before the tool: Chatwoot ' + esc(String(g.source).replace(/^chatwoot:/, "conversation ")) + (ev.students > 1 ? ', ' + ev.students + ' students' : '') + '</p>' : '') +
       '<p class="small" style="white-space:pre-wrap;margin:6px 0;"><strong>Instructor</strong> (' + esc(ev.instructor_grade || "no grade") + '): ' + esc(ev.instructor_feedback || "") + '</p></details>' +
     (g.question_approved ? '<p class="small" style="margin:6px 0 0;">This question is approved, so it has to be un-approved before its guide can change.</p>' : '') +
-    '<div style="display:flex;gap:8px;margin-top:8px;"><button type="button" class="primary small" style="width:auto;" data-id="' + id + '" onclick="mgDecide(this.dataset.id, \'accept\')"' + (busy || g.question_approved ? " disabled" : "") + '>' + (busy ? "Saving..." : "Add to the guide") + '</button>' +
+    (g.own_versions && g.own_versions.length ? '<p class="small muted" style="margin:6px 0 0;">' + esc(g.own_versions.join(", ")) + (g.own_versions.length === 1 ? " has" : " have") + ' their own version of this block, so this won\'t change theirs.</p>' : '') +
+    '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">' +
+      (g.can_keep_for_others
+        // A change to the wording of a shared block: for everyone, or just
+        // the owner, with everyone else keeping the old words (Edd, 30 Oct).
+        ? '<button type="button" class="primary small" style="width:auto;" data-id="' + id + '" onclick="mgDecide(this.dataset.id, \'accept\', \'everyone\')"' + (busy || g.question_approved ? " disabled" : "") + '>' + (busy ? "Saving..." : "Change it for everyone") + '</button>' +
+          '<button type="button" class="ghost small" style="width:auto;" data-id="' + id + '" onclick="mgDecide(this.dataset.id, \'accept\', \'just_me\')"' + (busy || g.question_approved ? " disabled" : "") + ' title="The other instructors keep the wording as it is now">Just for me</button>'
+        : '<button type="button" class="primary small" style="width:auto;" data-id="' + id + '" onclick="mgDecide(this.dataset.id, \'accept\')"' + (busy || g.question_approved ? " disabled" : "") + '>' + (busy ? "Saving..." : g.for_instructor_name ? "Add to " + esc(g.for_instructor_name) + "'s guide" : "Add to the guide") + '</button>') +
       '<button type="button" class="ghost small" style="width:auto;" data-id="' + id + '" onclick="mgDecide(this.dataset.id, \'dismiss\')"' + (busy ? " disabled" : "") + '>Not needed</button>' +
       '<span class="small" id="mgMsg-' + id + '" style="align-self:center;color:var(--coral);"></span></div></div>';
 }
-function mgDecide(id, decision) {
+function mgDecide(id, decision, scope) {
   if (marking.sugBusy) return;
   var g = (marking.sugs || []).filter(function (x) { return x.suggestion_id === id; })[0]; if (!g) return;
-  var body = { op: "suggestion", suggestion_id: id, decision: decision };
+  var body = { op: "suggestion", suggestion_id: id, decision: decision, scope: scope || "everyone" };
   ["condition", "feedback", "note"].forEach(function (k) { var el = $("mg-" + k + "-" + id); if (el) body[k] = el.value; });
   marking.sugBusy = id; mgRender();
   markingApi("/questions", { body: body }).then(function (r) {
     marking.sugBusy = "";
     if (!r || !r.ok) { mgRender(); var m = $("mgMsg-" + id); if (m) m.textContent = (r && r.error) || "That didn't go through."; return; }
     marking.sugs = marking.sugs.filter(function (x) { return x.suggestion_id !== id; });
-    toast(decision === "accept" ? g.question_code + ": added to the guide." : "Left out.");
+    toast(decision === "accept" ? g.question_code + (r.kept_for ? ": changed for you; " + (r.kept_for === 1 ? "the other instructor keeps" : "the other " + r.kept_for + " instructors keep") + " the old wording." : g.for_instructor_name ? ": added to " + g.for_instructor_name + "'s guide." : ": added to the guide.") : "Left out.");
     mgRender();
     // The open question shows the new block straight away.
     if (decision === "accept" && marking.openId && marking.openId === g.question_id && !markingDirty()) markingOpen(g.question_id, true);
@@ -16183,6 +16191,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 90, date: "2026-10-30", who: ["marking"], text: "Marking: each instructor now has their own guide, built as differences from Edd's. When a fix changes the wording of a house block, you can change it for everyone or just for you (the others keep the old words). Suggestions that only apply to one instructor say so, and go into their guide only." },
   { n: 89, date: "2026-10-29", who: ["marking"], text: "Marking learns from you. When a paper is finalised, what you changed (a grade you moved, feedback you wrote yourself) is read back, and anything worth reusing comes up on the Questions tab as a suggestion: a new house feedback block for a mistake that will come up again, a fix to a block that didn't fit, or a note for the marker. Edit it, add it to the guide, or leave it out. Nothing changes the guide until someone says so." },
   { n: 88, date: "2026-10-29", who: ["marking"], text: "Marking: an answer folds the moment you grade it and saves in the background. And once you press Write, you're taken back to the papers while the feedback is written; the paper shows its progress there and goes green when it's ready to check. Keep the tracker open until it's done." },
   { n: 87, date: "2026-10-29", who: ["marking"], text: "Marking, from your feedback on the first real paper: clearer grade colours; the student's answer beside the expected one, right parts green and wrong parts red; answers fold away once graded (and iSpring's all-right ones start folded); the still-to-grade button takes you to the next one; Save rather than Looks right once you've edited; pictures in your own feedback; two readiness calls; only the answers you wrote feedback on in the PDF; and a way back once it's sent." },
