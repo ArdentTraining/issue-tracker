@@ -171,6 +171,9 @@
 
   /* Full-width app (Edd, 21 Jul): no artificial cap, just breathing room. */
   .wrap { max-width: none; margin: 0 auto; padding: 20px 28px; }
+  /* r268: Crew fills the page, edge to edge, with no wrap padding. */
+  #crewHolder iframe { display: block; width: 100%; height: 70vh; border: 0; background: var(--bg); }
+  body.crew-on { overflow: hidden; }   /* the frame scrolls itself; the page doesn't */
   /* Breathing room at the edges on big monitors (Edd, FB-0157). */
   @media (min-width: 1600px) { .wrap { padding: 20px 56px; } }
 
@@ -1295,10 +1298,11 @@
     <span class="ri-word">Tasks</span>
     <span class="rail-badge" id="railBadgeTasks"></span>
   </button>
-  <!-- Crew (31 Oct): the team chat, now on Google Cloud Run. Edd only until the
-       team moves over from Slack, through the same isEddUser() gate as Tasks.
-       Opens in its own tab: Crew is a separate app with its own sign-in. -->
-  <button type="button" class="rail-item" id="railCrew" onclick="railOpenCrew()" title="Crew - the team chat (opens in a new tab)">
+  <!-- Crew (31 Oct): the team chat, on Google Cloud Run. r268: shown inside
+       the tracker rather than in a new tab, behind its own 'crew' permission
+       (hand-picked in Admin, Edd only to start). Crew still does its own
+       sign-in; it only lets this site frame it (FRAME_ANCESTORS on Crew). -->
+  <button type="button" class="rail-item" id="railCrew" onclick="railGo('crew')" title="Crew - the team chat">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/><line x1="8.5" y1="10.5" x2="15.5" y2="10.5"/><line x1="8.5" y1="13.5" x2="13" y2="13.5"/></svg>
     <span class="ri-word">Crew</span>
   </button>
@@ -2306,6 +2310,14 @@
 </div>
 <!-- r253: Notes. The back end is Ardent Notes on Vercel (/api/tracker), reached
      with a half-hour notesTicket. Nothing real is in this file. -->
+<!-- r268: Crew, shown in place. The frame is made the first time the page is
+     opened and then kept, so switching away and back doesn't reload the chat
+     or drop its connection. crewSize() fits it between the header and the
+     bottom of the window (or the bottom bar on a phone). -->
+<div id="crewView" class="hidden">
+  <div id="crewHolder"></div>
+</div>
+
 <div id="notesView" class="wrap hidden">
   <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-start;margin:0 0 14px;">
     <div style="flex:1 1 320px;min-width:0;">
@@ -2965,6 +2977,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
+    <tr data-perm="crew"><td><span class="ui">Crew</span></td><td>The team chat, inside the tracker. It has its own sign-in the first time.</td></tr>
     <tr data-perm="notes"><td><span class="ui">Notes</span></td><td>Your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet.</td></tr>
     <tr data-perm="marking"><td><span class="ui">Marking</span></td><td>Students' exam papers to mark, with the engine's help, and the question bank it marks against.</td></tr>
     <tr data-perm="recovery"><td><span class="ui">Recovery</span></td><td>A student's quiz answers from before Submit All, for when their submission never arrived.</td></tr>
@@ -5655,7 +5668,7 @@ function applyPermGates() {
   // were, one line each, so nothing can drift apart.
   applyShell();
   var railGate = [["railNew", p.log], ["railShipping", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
-                  ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railCrew", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
+                  ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railCrew", p.crew], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railIrpcs", p.irpcs], ["railResources", p.resources], ["railRecovery", p.recovery], ["railMarking", p.marking],
                   ["railNotes", p.notes],
                   ["railReports", p.analytics], ["railStats", p.analytics],
@@ -5687,7 +5700,7 @@ function permsKey_(p) {
 var VIEW_RAIL_ = {
   instructor: "railNew", customs: "railShipping", shipreport: "railShipping", live: "railIssues", admin: "railAllIssues", actions: "railAllIssues",
   edd: "railEdd", tasks: "railTasks", dev: "railDev", rca: "railRCA", course: "railCourse",
-  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", marking: "railMarking", notes: "railNotes", reports: "railReports", analytics: "railStats", users: "railUsers"
+  irpcs: "railIrpcs", resources: "railResources", recovery: "railRecovery", marking: "railMarking", notes: "railNotes", crew: "railCrew", reports: "railReports", analytics: "railStats", users: "railUsers"
 };
 
 // Called when a refresh brings a different permission set than the one the
@@ -9257,6 +9270,9 @@ function setView(v) {
   if (v === "marking") renderMarking();
   if ($("notesView")) $("notesView").classList.toggle("hidden", v !== "notes");
   if (v === "notes") renderNotes();
+  if ($("crewView")) $("crewView").classList.toggle("hidden", v !== "crew");
+  document.body.classList.toggle("crew-on", v === "crew");
+  if (v === "crew") renderCrew();
   if (v === "reports") mountReports();
   if (v === "manual") renderManual();
   if (v === "instructors") renderInstructors();
@@ -9427,6 +9443,7 @@ function railGo(v) {
   if (v === "recovery" && !(state.perms || {}).recovery) return;    // r243: and so does the Edge Function
   if (v === "marking" && !(state.perms || {}).marking) return;      // r246: and so does ardent-portal
   if (v === "notes" && !(state.perms || {}).notes) return;          // r253.1: and so does notesTicket
+  if (v === "crew" && !(state.perms || {}).crew) return;            // r268: Crew still asks for its own sign-in
   if (v === "issues") {
     var seg = currentIssuesSeg();
     var p = state.perms || {};
@@ -9444,7 +9461,7 @@ function updateRail() {
   var pairs = [["railNew", v === "instructor"], ["railShipping", v === "customs" || v === "shipreport"], ["railIssues", v === "live"], ["railAllIssues", v === "admin"],
                ["railDev", v === "dev" || v === "rca"], ["railEdd", v === "edd"], ["railTasks", v === "tasks"], ["railCourse", v === "course"],
                ["railIrpcs", v === "irpcs"], ["railResources", v === "resources"], ["railRecovery", v === "recovery"], ["railMarking", v === "marking"],
-               ["railNotes", v === "notes"],
+               ["railNotes", v === "notes"], ["railCrew", v === "crew"],
                ["railStats", v === "analytics"], ["railUsers", v === "users"],
                ["railReports", v === "reports"], ["railHelp", v === "manual" || v === "instructors"],
                ["railRCA", v === "rca"]];
@@ -14059,10 +14076,40 @@ var IRPCS_MEDIA_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/irp
 // Crew, the team chat, on Cloud Run (crew-app's CLOUD-RUN.md). The address
 // stays the same from the test copy through to live, so this is set once.
 var CREW_URL = "https://crew-pnxhfcjn5q-nw.a.run.app";
-function railOpenCrew() {
-  var w = window.open(CREW_URL, "_blank", "noopener");
-  if (w) w.opener = null;
+// r268: Crew in place. One frame for the life of the page: made on the first
+// visit, hidden (not removed) when you go elsewhere, so the chat keeps its
+// connection and its place. Crew allows only this site to frame it.
+function renderCrew() {
+  if (!(state.perms || {}).crew) return;
+  var holder = $("crewHolder");
+  if (!holder) return;
+  if (!$("crewFrame")) {
+    var f = document.createElement("iframe");
+    f.id = "crewFrame";
+    f.title = "Crew";
+    f.src = CREW_URL;
+    // Copy buttons, full-screen pictures and notification sounds inside Crew.
+    f.setAttribute("allow", "clipboard-write; fullscreen; autoplay");
+    f.setAttribute("referrerpolicy", "no-referrer");
+    holder.appendChild(f);
+  }
+  crewSize();
 }
+// Fill from the frame's top to the bottom of the window, less the bottom bar
+// the rail becomes on a phone.
+function crewSize() {
+  var f = $("crewFrame");
+  if (!f || state.view !== "crew") return;
+  var top = f.getBoundingClientRect().top;
+  var bottom = 0;
+  var rail = $("rail");
+  if (rail) {
+    var r = rail.getBoundingClientRect();
+    if (r.top > 0 && r.bottom >= window.innerHeight - 1) bottom = window.innerHeight - r.top;
+  }
+  f.style.height = Math.max(320, Math.floor(window.innerHeight - top - bottom)) + "px";
+}
+window.addEventListener("resize", function () { crewSize(); });
 var IRPCS_APP_URL = "https://irpcs.ehewett.workers.dev";
 
 var irpcs = {
@@ -16355,6 +16402,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 91, date: "2026-10-31", who: ["crew"], text: "Crew, the team chat, opens inside the tracker from the rail instead of in a new tab. Sign in once the first time; Sign in with Google opens a small window." },
   { n: 90, date: "2026-10-30", who: ["marking"], text: "Marking: each instructor now has their own guide, built as differences from Edd's. When a fix changes the wording of a house block, you can change it for everyone or just for you (the others keep the old words). Suggestions that only apply to one instructor say so, and go into their guide only." },
   { n: 89, date: "2026-10-29", who: ["marking"], text: "Marking learns from you. When a paper is finalised, what you changed (a grade you moved, feedback you wrote yourself) is read back, and anything worth reusing comes up on the Questions tab as a suggestion: a new house feedback block for a mistake that will come up again, a fix to a block that didn't fit, or a note for the marker. Edit it, add it to the guide, or leave it out. Nothing changes the guide until someone says so." },
   { n: 88, date: "2026-10-29", who: ["marking"], text: "Marking: an answer folds the moment you grade it and saves in the background. And once you press Write, you're taken back to the papers while the feedback is written; the paper shows its progress there and goes green when it's ready to check. Keep the tracker open until it's done." },
@@ -16729,7 +16777,7 @@ function subRailSpecOwn_() {
 var VIEW_TITLES_ = {
   live: "Today", instructor: "Log a new issue", admin: "Issues", actions: "Issues",
   dev: "Developers", rca: "Developers", course: "Course fixes", users: "Admin", analytics: "Stats",
-  reports: "Reports", irpcs: "IRPCS", resources: "Resources", recovery: "Recovery", marking: "Marking", notes: "Notes",
+  reports: "Reports", irpcs: "IRPCS", resources: "Resources", recovery: "Recovery", marking: "Marking", notes: "Notes", crew: "Crew",
   customs: "Shipping", shipreport: "Shipping", edd: "Edd", tasks: "Tasks", manual: "Help", instructors: "Help"
 };
 function pageTitle() {
@@ -23440,7 +23488,10 @@ var PERM_LABELS = [
   // and its invite box.
   { k: "marking", label: "Marking" },
   // r253.1: meeting notes from Ardent Notes. Same two-list rule, and its invite box.
-  { k: "notes", label: "Notes" }
+  { k: "notes", label: "Notes" },
+  // r268: Crew, the team chat, shown inside the tracker. Same two-list rule,
+  // and its invite box.
+  { k: "crew", label: "Crew" }
 ];
 
 function invitePreset(kind) {
@@ -24065,7 +24116,7 @@ function userRowHtml(u) {
 // fast save). Only the areas whose back end does that offer Read; Analytics
 // and Recovery only ever read, so their "on" is Read; IRPCS and Marking save
 // through their own back ends, which do not check it yet, so they are on/off.
-var PERM_LEVELS_ = { analytics: ["off", "read"], recovery: ["off", "read"], irpcs: ["off", "on"], marking: ["off", "on"], notes: ["off", "on"] };
+var PERM_LEVELS_ = { analytics: ["off", "read"], recovery: ["off", "read"], irpcs: ["off", "on"], marking: ["off", "on"], notes: ["off", "on"], crew: ["off", "on"] };
 var PERM_LEVEL_WORDS_ = { off: "Hidden", read: "Read", write: "Write", on: "On" };
 var PERM_RO_KEYS_ = ["log", "manage", "dev", "course", "users", "resources"];   // RO_KEYS in Code.gs
 function permLevelsFor(k) { return PERM_LEVELS_[k] || ["off", "read", "write"]; }

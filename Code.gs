@@ -938,7 +938,10 @@ var USER_HEADERS = ['email', 'name', 'status', 'perms_json', 'pass_hash', 'pass_
 // only to start with (24 Oct), and nobody holds it until an admin ticks it.
 // r253.1: 'notes' opens Notes (meeting notes from Ardent Notes). Hand-picked:
 // Edd only to start with (27 Oct), and nobody holds it until an admin ticks it.
-var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery', 'marking', 'notes'];
+// r268: 'crew' shows Crew, the team chat, inside the tracker. Hand-picked: Edd
+// only to start with (31 Oct), and nobody holds it until an admin ticks it.
+// Nothing here checks it: Crew does its own sign-in.
+var PERM_KEYS = ['log', 'manage', 'analytics', 'dev', 'course', 'users', 'irpcs', 'resources', 'recovery', 'marking', 'notes', 'crew'];
 var SESSION_DAYS = 30;
 var HASH_ROUNDS = 2000;
 // Password-reset links expire after this many minutes. The expiry is packed into
