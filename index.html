@@ -1295,6 +1295,13 @@
     <span class="ri-word">Tasks</span>
     <span class="rail-badge" id="railBadgeTasks"></span>
   </button>
+  <!-- Crew (31 Oct): the team chat, now on Google Cloud Run. Edd only until the
+       team moves over from Slack, through the same isEddUser() gate as Tasks.
+       Opens in its own tab: Crew is a separate app with its own sign-in. -->
+  <button type="button" class="rail-item" id="railCrew" onclick="railOpenCrew()" title="Crew - the team chat (opens in a new tab)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/><line x1="8.5" y1="10.5" x2="15.5" y2="10.5"/><line x1="8.5" y1="13.5" x2="13" y2="13.5"/></svg>
+    <span class="ri-word">Crew</span>
+  </button>
   <button type="button" class="rail-item rail-group" id="railContent" onclick="railGroupGo('railContent')" title="Content - course fixes, IRPCS and website resources">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><path d="M9 3v7l2-1.5L13 10V3"/></svg>
     <span class="ri-word">Content</span>
@@ -5648,7 +5655,7 @@ function applyPermGates() {
   // were, one line each, so nothing can drift apart.
   applyShell();
   var railGate = [["railNew", p.log], ["railShipping", p.log], ["railIssues", p.log || p.manage], ["railAllIssues", p.manage || p.users],
-                  ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
+                  ["railEdd", isEddUser()], ["railTasks", isEddUser()], ["railCrew", isEddUser()], ["railDev", p.dev || p.users], ["railRCA", p.users], ["railCourse", p.course || p.users],
                   ["railIrpcs", p.irpcs], ["railResources", p.resources], ["railRecovery", p.recovery], ["railMarking", p.marking],
                   ["railNotes", p.notes],
                   ["railReports", p.analytics], ["railStats", p.analytics],
@@ -9323,7 +9330,7 @@ function setIssuesSeg(seg) {
 // The rail's Issues button lands wherever you were last, and on "Waiting on
 // me" the first time - that is the number the badge is counting.
 // FB-0322/0323: which rail items fold into the More sheet on a phone.
-var RAIL_MORE_IDS = ["railMine", "railSupport", "railContent", "railInsights", "railNotes", "railShipping", "railEdd", "railTasks", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
+var RAIL_MORE_IDS = ["railMine", "railSupport", "railContent", "railInsights", "railNotes", "railShipping", "railEdd", "railTasks", "railCrew", "railDev", "railRCA", "railCourse", "railIrpcs", "railResources", "railRecovery", "railMarking", "railReports", "railStats", "railUsers", "railNews", "railBell", "railHelp"];
 function railMoreApply() {
   var sheet = $("railMoreSheet"), rail = $("rail");
   if (!sheet || !rail) return;
@@ -14049,6 +14056,13 @@ function tasksDelete(id) {
 //      nobody would think to look for.
 var IRPCS_EDITOR_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/irpcs-editor";
 var IRPCS_MEDIA_URL = "https://mlzhofhiqcnmfrtamelb.supabase.co/functions/v1/irpcs-media";
+// Crew, the team chat, on Cloud Run (crew-app's CLOUD-RUN.md). The address
+// stays the same from the test copy through to live, so this is set once.
+var CREW_URL = "https://crew-pnxhfcjn5q-nw.a.run.app";
+function railOpenCrew() {
+  var w = window.open(CREW_URL, "_blank", "noopener");
+  if (w) w.opener = null;
+}
 var IRPCS_APP_URL = "https://irpcs.ehewett.workers.dev";
 
 var irpcs = {
