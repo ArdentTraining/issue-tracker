@@ -11309,7 +11309,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r267 · 2026-10-31';
+var CODE_STAMP = 'r267.1 · 2026-10-31';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -16929,6 +16929,9 @@ var INBOX_STATUS_KEYS_ = { status: 1, priority: 1, severity: 1, request_kind: 1,
 ['assignee', 'fix_size', 'media_kind', 'lesson', 'lesson_code', 'course', 'module',
  'category', 'notified_students'].forEach(function (k) { INBOX_STATUS_KEYS_[k] = 1; });
 var INBOX_CATEGORIES_ = { course_error: 1, tech_issue: 1, shipping: 1 };
+// r267.1 (Edd, 31 Oct: "I do want the summary edits too"). summary in a row is
+// the note that lands on the trail, so a corrected summary travels as
+// new_summary and is written to the issue's summary field.
 // op 'batch': up to INBOX_BATCH_OPS ops in one row, run in order, so a triage
 // of a few hundred issues is a handful of rows rather than hours of 5-a-run.
 // Each op is a 'status' or 'link' op as above. The row succeeds only if every
@@ -16969,7 +16972,10 @@ function inboxOp_(data) {
       var clearable = (k === 'assignee' || k === 'fix_size');
       if (data.hasOwnProperty(k) && data[k] != null && (data[k] !== '' || clearable)) { upd[k] = data[k]; any = true; }
     });
-    if (!any) return { ok: false, error: "op 'status' needs at least one of: " + Object.keys(INBOX_STATUS_KEYS_).join(', ') };
+    if (data.new_summary != null && String(data.new_summary).trim()) {
+      upd.summary = String(data.new_summary).trim().slice(0, 1000); any = true;
+    }
+    if (!any) return { ok: false, error: "op 'status' needs at least one of: " + Object.keys(INBOX_STATUS_KEYS_).join(', ') + ', new_summary' };
     if (upd.hasOwnProperty('notified_students') && upd.notified_students !== 'not_needed') {
       return { ok: false, error: "notified_students can only be set to 'not_needed' from the inbox" };
     }
