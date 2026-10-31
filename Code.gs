@@ -11309,7 +11309,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r262 · 2026-10-30';
+var CODE_STAMP = 'r267 · 2026-10-31';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -16919,6 +16919,22 @@ function inboxPayload_(p) {
 // trail says what was done and why. Run as Claude with admin rights for these
 // two ops only; a plain update keeps the filer's ordinary rights.
 var INBOX_STATUS_KEYS_ = { status: 1, priority: 1, severity: 1, request_kind: 1, resolution_note: 1 };
+// r267 (Edd, 31 Oct 2026: sorting the course fixes backlog with Stu). Bulk
+// triage needs who has it, how big it is and what it needs, as well as the
+// status. Same op, same rights; still nothing outside this list:
+//   assignee, fix_size, media_kind, lesson, lesson_code, course, module,
+//   category (moving a platform item out of course fixes), and
+//   notified_students (only 'not_needed', so a bulk close never fills the
+//   tell-the-students lane or sends #instructing-daily a pile of asks).
+['assignee', 'fix_size', 'media_kind', 'lesson', 'lesson_code', 'course', 'module',
+ 'category', 'notified_students'].forEach(function (k) { INBOX_STATUS_KEYS_[k] = 1; });
+var INBOX_CATEGORIES_ = { course_error: 1, tech_issue: 1, shipping: 1 };
+// op 'batch': up to INBOX_BATCH_OPS ops in one row, run in order, so a triage
+// of a few hundred issues is a handful of rows rather than hours of 5-a-run.
+// Each op is a 'status' or 'link' op as above. The row succeeds only if every
+// op did; the per-op results come back either way, and a re-run is safe
+// (status ops set values, a link whose source has already gone just fails).
+var INBOX_BATCH_OPS = 20;
 // r252 (Edd, 27 Oct 2026): Aureus sent their channel's webhook. setSlackChannel_
 // needs the deploy key, which lives on Edd's computer, so the inbox can set this
 // ONE property. It must be a Slack incoming-webhook URL, and it is only saved
@@ -16944,13 +16960,25 @@ function inboxOp_(data) {
   var admin = { name: INBOX_FILER.name, email: INBOX_FILER.email,
     perms_json: JSON.stringify({ manage: true, users: true }) };
   var r, keepId = data.issue_id;
+  if (data.op === 'batch') return inboxBatch_(data);
   if (data.op === 'status') {
     var upd = { issue_id: data.issue_id, _user: admin };
     var any = false;
     Object.keys(INBOX_STATUS_KEYS_).forEach(function (k) {
-      if (data.hasOwnProperty(k) && data[k] !== '' && data[k] != null) { upd[k] = data[k]; any = true; }
+      // assignee and fix_size may be cleared on purpose, so '' counts for them.
+      var clearable = (k === 'assignee' || k === 'fix_size');
+      if (data.hasOwnProperty(k) && data[k] != null && (data[k] !== '' || clearable)) { upd[k] = data[k]; any = true; }
     });
     if (!any) return { ok: false, error: "op 'status' needs at least one of: " + Object.keys(INBOX_STATUS_KEYS_).join(', ') };
+    if (upd.hasOwnProperty('notified_students') && upd.notified_students !== 'not_needed') {
+      return { ok: false, error: "notified_students can only be set to 'not_needed' from the inbox" };
+    }
+    if (upd.hasOwnProperty('category') && !INBOX_CATEGORIES_[upd.category]) {
+      return { ok: false, error: 'category must be course_error, tech_issue or shipping' };
+    }
+    if (upd.hasOwnProperty('fix_size') && ['', 'small', 'medium', 'large'].indexOf(String(upd.fix_size)) < 0) {
+      return { ok: false, error: 'fix_size must be small, medium, large or blank' };
+    }
     r = updateIssue_(upd);
   } else if (data.op === 'link') {
     if (!data.source_id) return { ok: false, error: "op 'link' needs source_id (the issue that is merged in and goes)" };
@@ -16973,6 +17001,28 @@ function inboxOp_(data) {
     } catch (e) {}
   }
   return { ok: true, issue_id: keepId, reopened: !!r.reopened };
+}
+
+function inboxBatch_(data) {
+  var ops = Array.isArray(data.ops) ? data.ops : [];
+  if (!ops.length) return { ok: false, error: "op 'batch' needs ops: [ {op, issue_id, ...}, ... ]" };
+  if (ops.length > INBOX_BATCH_OPS) return { ok: false, error: 'at most ' + INBOX_BATCH_OPS + ' ops in one batch' };
+  var results = [], failed = 0;
+  ops.forEach(function (o, n) {
+    var one;
+    try {
+      var d = inboxPayload_(o || {});
+      d.app_url = data.app_url;
+      if (d.op !== 'status' && d.op !== 'link') one = { ok: false, error: "only 'status' and 'link' ops can be batched" };
+      else if (!d.issue_id) one = { ok: false, error: 'needs issue_id' };
+      else one = inboxOp_(d);
+    } catch (e) { one = { ok: false, error: String(e && e.message || e) }; }
+    if (!one || !one.ok) failed++;
+    results.push({ n: n, op: o && o.op, issue_id: o && o.issue_id, ok: !!(one && one.ok), error: one && !one.ok ? String(one.error || '').slice(0, 160) : undefined });
+  });
+  return failed
+    ? { ok: false, error: failed + ' of ' + ops.length + ' ops failed: ' + JSON.stringify(results.filter(function (x) { return !x.ok; })).slice(0, 1500) }
+    : { ok: true, issue_id: '', batch: results.length };
 }
 
 function claudeInbox() {
