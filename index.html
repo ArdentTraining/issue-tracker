@@ -238,6 +238,13 @@
   .irpcs-row.notes-child { padding-left: 27px; background: var(--bg); }
   .irpcs-row.notes-child .lbl { font-size: 12px; }
   .notes-folder { font-size: 10px; border-radius: 999px; padding: 0 7px; background: var(--surface-2); color: var(--text); }
+  .notes-edit { margin-top: 10px; }
+  .notes-chg { color: var(--accent); cursor: pointer; border-bottom: 1px dotted currentColor; }
+  .notes-chg sub { font-size: 10px; margin-left: 1px; font-weight: 600; }
+  .notes-chg:hover, .notes-chg:focus { color: var(--coral); outline: none; }
+  .notes-was { display: inline-block; margin: 0 4px; padding: 0 8px; border-radius: 999px; font-size: 12px; background: var(--surface-2); color: var(--muted); }
+  .notes-was q { color: var(--text); }
+  .notes-edit textarea { width: 100%; min-height: 240px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 10px 12px; resize: vertical; box-sizing: border-box; }
   .notes-file select { width: auto; display: inline-block; padding: 3px 8px; font-size: 12px; margin-left: 4px; }
   .notes-cite { color: var(--accent); text-decoration: none; font-weight: 600; }
   .notes-cite:hover { text-decoration: underline; }
@@ -2293,8 +2300,13 @@
 <!-- r253: Notes. The back end is Ardent Notes on Vercel (/api/tracker), reached
      with a half-hour notesTicket. Nothing real is in this file. -->
 <div id="notesView" class="wrap hidden">
-  <h2 style="margin:0 0 4px;">Notes</h2>
-  <p class="hint" style="margin:0 0 14px;">Your meeting notes from Ardent Notes, and any a colleague has shared with you. Ask a question across all of them, or file them into folders.</p>
+  <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-start;margin:0 0 14px;">
+    <div style="flex:1 1 320px;min-width:0;">
+      <h2 style="margin:0 0 4px;">Notes</h2>
+      <p class="hint" style="margin:0;">Your meeting notes from Ardent Notes, and any a colleague has shared with you. Ask a question across all of them, or file them into folders.</p>
+    </div>
+    <div id="notesApps" style="flex:0 0 auto;"></div>
+  </div>
   <div class="card" style="padding:10px 12px;margin-bottom:12px;" id="notesHead"></div>
   <div class="card notes-answer" style="padding:12px 14px;margin-bottom:12px;display:none;" id="notesAsk"></div>
   <div class="irpcs-split">
@@ -4094,7 +4106,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r265 · 2026-10-30";  // bump this with each round, it lands on every feedback report
+var BUILD = "r266 · 2026-10-31";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11389,6 +11401,7 @@ var notes = {
   list: null, account: null, apps: null, folders: [], listLoading: false, listError: "",
   q: "", qTimer: 0, folder: "", open: {},
   openId: "", item: null, itemLoading: false, itemError: "", filing: false,
+  editing: false, editSaving: false,
   ask: { q: "", busy: false, text: "", sources: [], error: "", history: [] }
 };
 
@@ -11483,9 +11496,48 @@ function notesInstallHtml(big) {
   };
   var parts = [];
   if (a.windows) parts.push(btn(NOTES_API + "/download/windows?t=" + t, "Install on Windows", big));
+  if (a.mac) parts.push(btn(NOTES_API + "/download/mac?t=" + t, "Install on Mac", false));
   if (a.android) parts.push(btn(NOTES_API + "/download/android?t=" + t, "Install on Android", false));
   parts.push(btn(a.web || "https://ardent-notes.vercel.app", "Open Ardent Notes", false));
   return '<div class="notes-install">' + parts.join("") + '</div>';
+}
+
+// Start local meeting (Edd, 29 Oct): hands over to the laptop app with an
+// ardent-notes://record link, and the app asks before it records. A browser
+// can't tell whether anything answered the link, so if this page still has
+// focus a moment later, the app probably isn't installed (or is too old to
+// know the link) and the install buttons are offered instead.
+function notesIsComputer() {
+  var ua = navigator.userAgent || "";
+  if (/Android|iPhone|iPad|iPod/i.test(ua)) return false;
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return false;   // an iPad asking for the desktop site
+  return /Windows|Macintosh/.test(ua);
+}
+function notesStartLocal() {
+  var left = false;
+  var onBlur = function () { left = true; };
+  window.addEventListener("blur", onBlur);
+  document.addEventListener("visibilitychange", onBlur);
+  location.href = "ardent-notes://record";
+  setTimeout(function () {
+    window.removeEventListener("blur", onBlur);
+    document.removeEventListener("visibilitychange", onBlur);
+    if (left || !document.hasFocus()) {
+      toast("Over to the laptop app: confirm there and it starts recording. Stop it from the tray.");
+      return;
+    }
+    notesNoApp();
+  }, 1800);
+}
+function notesNoApp() {
+  var host = $("notesApps");
+  if (!host || $("notesNoApp")) return;
+  var d = document.createElement("div");
+  d.id = "notesNoApp";
+  d.className = "small muted";
+  d.style.cssText = "margin-top:8px;max-width:340px;text-align:right;";
+  d.textContent = "Nothing opened? Local meetings need the latest laptop app. Install or update it above, sign in, then try again.";
+  host.appendChild(d);
 }
 
 function notesFolderOptions(cur, withAll) {
@@ -11502,6 +11554,12 @@ function notesFolderOptions(cur, withAll) {
 function notesRenderHead() {
   var host = $("notesHead");
   if (!host) return;
+  // The install buttons sit beside the subtitle, above Ask and Search. Redrawn
+  // each time so they pick up the ticket and the published builds once loaded.
+  var apps = $("notesApps");
+  if (apps) apps.innerHTML = notes.account !== true ? "" :
+    (notesIsComputer() ? '<div class="notes-install" style="margin-bottom:8px;justify-content:flex-end;"><button type="button" class="notes-btn primary" onclick="notesStartLocal()" title="Record a meeting on this computer\'s microphone, for one with no Meet, Teams or Zoom link. Uses the laptop app.">Start local meeting</button></div>' : '') +
+    notesInstallHtml(false);
   if (notes.account === false) {
     host.innerHTML =
       '<p style="margin:0 0 6px;"><strong>Get Ardent Notes</strong></p>' +
@@ -11525,8 +11583,7 @@ function notesRenderHead() {
       '<select id="notesFolderSel" onchange="notesSetFolder(this.value)" title="Folder" style="flex:0 0 auto;width:auto;">' + notesFolderOptions(notes.folder, true) + '</select>' +
       '<input type="search" id="notesQ" placeholder="Search" oninput="notesSearch(this.value)" style="flex:0 1 220px;min-width:0;" />' +
       '<button class="ghost small" style="padding:5px 10px;width:auto;flex:0 0 auto;" onclick="notes.list=null;notesLoadList()" title="Fetch the list again">Refresh</button>' +
-      '<span style="flex:1 1 auto;"></span>' +
-      '<details class="notes-get"><summary class="small">Get the apps</summary>' + notesInstallHtml(false) + '</details>' +
+
     '</div>';
 }
 
@@ -11677,7 +11734,8 @@ function notesRenderList() {
 }
 
 function notesOpen(id) {
-  notes.openId = id; notes.item = null; notes.itemError = ""; notes.itemLoading = true;
+  if (notes.editing && !notesLeaveEdit()) return;
+  notes.openId = id; notes.item = null; notes.itemError = ""; notes.itemLoading = true; notes.editing = false;
   notesRenderList(); notesRenderItem();
   notesApi("/meetings/" + encodeURIComponent(id)).then(function (j) {
     if (notes.openId !== id) return;
@@ -11719,8 +11777,86 @@ function notesFile(v) {
   });
 }
 
+// Correcting the notes by hand (Edd, 31 Oct: "we should be able to edit notes
+// here... so if something isn't quite right (a name for example) we can
+// correct it. I guess those corrections should be logged too."). Owner only,
+// checked in Ardent Notes, which keeps every correction (who, when, before and
+// after) and hands the latest one to any later rewrite so a fixed name stays
+// fixed. The save carries the notes' updated_at, so a rewrite that landed
+// while you were typing is never overwritten.
+function notesEditStart() {
+  var m = notes.item;
+  if (!m || !m.can_edit) return;
+  notes.editing = true;
+  notesRenderItem();
+  var ta = $("notesEditText");
+  if (ta) { ta.value = m.summary_md || ""; ta.focus(); notesEditGrow(ta); }
+}
+function notesEditGrow(ta) { ta.style.height = "auto"; ta.style.height = Math.min(Math.max(ta.scrollHeight + 4, 240), window.innerHeight * 0.7) + "px"; }
+function notesEditDirty() {
+  var ta = $("notesEditText");
+  return !!(notes.editing && ta && notes.item && ta.value !== (notes.item.summary_md || ""));
+}
+// True when it's fine to move away from the editor.
+function notesLeaveEdit() {
+  if (notesEditDirty() && !confirm("Drop your unsaved changes to these notes?")) return false;
+  notes.editing = false;
+  return true;
+}
+function notesEditCancel() { if (notesLeaveEdit()) notesRenderItem(); }
+function notesEditSave() {
+  var m = notes.item, ta = $("notesEditText");
+  if (!m || !ta || notes.editSaving) return;
+  var text = ta.value;
+  if (!text.trim()) { toast("The notes can't be empty."); return; }
+  if (text === (m.summary_md || "")) { notes.editing = false; notesRenderItem(); return; }
+  notes.editSaving = true;
+  var btn = $("notesEditSaveBtn"); if (btn) { btn.disabled = true; btn.textContent = "Saving..."; }
+  var id = m.id;
+  notesApi("/meetings/" + encodeURIComponent(id) + "/notes", { body: { summary_md: text, base_updated_at: m.notes_updated_at || null } }).then(function (r) {
+    if (!notes.item || notes.item.id !== id) return;
+    notes.item.summary_md = text.replace(/\s+$/, "");
+    notes.item.notes_updated_at = (r && r.updated_at) || notes.item.notes_updated_at;
+    notes.editing = false;
+    toast("Saved. Your change is marked in the notes, and any rewrite will keep it.");
+    // Fetch it again for the marks (the numbered changes), drawn by Ardent Notes.
+    return notesApi("/meetings/" + encodeURIComponent(id)).then(function (j) {
+      if (j && j.meeting && notes.item && notes.item.id === id && !notes.editing) notes.item = j.meeting;
+    }, function () {});
+  }).catch(function (e) {
+    toast((e && e.message) || "Couldn't save the notes.");
+  }).then(function () {
+    notes.editSaving = false;
+    if (notes.editing) { var b = $("notesEditSaveBtn"); if (b) { b.disabled = false; b.textContent = "Save"; } }
+    else notesRenderItem();
+  });
+}
+
 // Escape first, then the little markdown the notes use: headings, nested bullets, bold.
 function notesInline(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"); }
+// Hand changes come marked by Ardent Notes with private-use characters
+// (\uE000 n \uE002 words \uE001 n \uE003), which survive notesMd's escaping
+// untouched and are swapped for a coloured span with a small number here.
+// Clicking one shows what it replaced, who changed it and when, in place.
+function notesMarked(md) {
+  return notesMd(md)
+    .replace(/\uE000(\d+)\uE002/g, '<span class="notes-chg" data-n="$1" role="button" tabindex="0" onclick="notesShowChange(this)" onkeydown="if(event.key===\'Enter\')notesShowChange(this)" title="Changed by hand. Click to see what it said before.">')
+    .replace(/\uE001(\d+)\uE003/g, '<sub>$1</sub></span>')
+    .replace(/[\uE000-\uE003]/g, "");
+}
+function notesShowChange(el) {
+  var nx = el.nextSibling;
+  if (nx && nx.classList && nx.classList.contains("notes-was")) { nx.remove(); return; }
+  var n = Number(el.getAttribute("data-n"));
+  var c = ((notes.item && notes.item.changes) || []).filter(function (x) { return x.n === n; })[0];
+  if (!c) return;
+  var was = document.createElement("span");
+  was.className = "notes-was";
+  var before = String(c.before || "").trim();
+  was.innerHTML = (before ? 'Was <q>' + esc(before) + '</q>' : 'Added') + ' · ' + esc(c.by || "Someone") + (c.at ? ', ' + esc(notesWhen(c.at)) : '');
+  el.parentNode.insertBefore(was, el.nextSibling);
+}
+
 function notesMd(md) {
   var out = [], depth = 0;
   var close = function (to) { while (depth > to) { out.push("</ul>"); depth--; } };
@@ -11763,16 +11899,30 @@ function notesRenderItem() {
     ? '<label class="small muted notes-file">Folder <select onchange="notesFile(this.value)"' + (notes.filing ? " disabled" : "") + '>' + notesFolderOptions(m.folder || "", false) + '</select>' +
         (siblings > 1 ? ' <span>moves all ' + siblings + ' in this series</span>' : '') + '</label>'
     : (m.folder ? '<span class="small muted">Folder: ' + esc(m.folder) + '</span>' : '');
+  var ed = m.edits && m.edits.count ? m.edits : null;
+  var edited = ed ? '<p class="small muted" style="margin:8px 0 0;">Corrected by hand' +
+    (ed.count > 1 ? ' (' + ed.count + ' times)' : '') + (ed.last_at ? ', last on ' + esc(notesWhen(ed.last_at)) : '') + '.</p>' : '';
+  var body = notes.editing
+    ? '<div class="notes-edit">' +
+        '<p class="small muted" style="margin:0 0 6px;">Fix names, spellings or anything else that isn\'t right. Headings start with #, bullets with -, bold is **like this**.</p>' +
+        '<textarea id="notesEditText" spellcheck="true" oninput="notesEditGrow(this)" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\'Enter\'){event.preventDefault();notesEditSave();}"></textarea>' +
+        '<div class="row" style="gap:8px;margin-top:8px;justify-content:flex-end;">' +
+          '<button type="button" class="ghost small" style="flex:0 0 auto;width:auto;padding:6px 14px;" onclick="notesEditCancel()">Cancel</button>' +
+          '<button type="button" class="primary small" id="notesEditSaveBtn" style="flex:0 0 auto;width:auto;padding:6px 18px;" onclick="notesEditSave()">Save</button>' +
+        '</div></div>'
+    : '<div class="notes-body">' + (m.marked_md ? notesMarked(m.marked_md) : m.summary_md ? notesMd(m.summary_md) : '<p class="muted">No notes were written for this meeting.</p>') + '</div>';
   host.innerHTML = '<div class="card notes-card">' +
     '<div class="row" style="gap:10px;align-items:flex-start;">' +
       '<div style="flex:1;min-width:0;"><div class="notes-title">' + esc(m.title || "Meeting") + '</div>' +
       '<p class="small muted" style="margin:0;">' + esc([notesWhen(m.started_at), mins, notesSourceLabel(m.source)].filter(Boolean).join(" · ")) + '</p></div>' +
+      (m.can_edit && !notes.editing && m.summary_md ? '<button type="button" class="notes-btn" onclick="notesEditStart()" title="Correct the notes by hand. Each change is marked and logged, so anyone can see what it said before.">Edit notes</button>' : '') +
       '<a class="notes-btn" href="' + esc(m.url) + '" target="_blank" rel="noopener">Open in Ardent Notes</a>' +
     '</div>' +
     (filing ? '<div style="margin-top:8px;">' + filing + '</div>' : '') +
-    '<div class="notes-body">' + (m.summary_md ? notesMd(m.summary_md) : '<p class="muted">No notes were written for this meeting.</p>') + '</div>' +
+    edited + body +
+    (m.marked_md && !notes.editing ? '<p class="small muted" style="margin:6px 0 0;">Words in <span class="notes-chg" style="cursor:default;">this colour<sub>1</sub></span> were changed by hand. Click one to see what it said before.</p>' : '') +
     (acts ? '<h4 class="notes-h">Actions</h4><ul class="notes-acts">' + acts + '</ul>' : "") +
-    (m.mine ? "" : '<p class="small muted" style="margin:12px 0 0;">Shared with you. Ticking actions and rewriting happen in Ardent Notes.</p>') +
+    (m.mine ? "" : '<p class="small muted" style="margin:12px 0 0;">Shared with you. ' + (m.can_edit ? 'You were invited, so you can correct the notes here. ' : '') + 'Ticking actions and rewriting happen in Ardent Notes.</p>') +
   '</div>';
 }
 
