@@ -2977,7 +2977,7 @@
     <tr data-perm="log"><td><span class="ui">Today</span></td><td>The live page: open conversations pulled in from Chatwoot with a written brief on each, and underneath them everything waiting on an instructor. One badge covering both, because both are today's work.</td></tr>
     <tr data-perm="manage"><td><span class="ui">Issues</span></td><td>The whole log: <span class="ui">All issues</span> as a searchable list, and the <span class="ui">Board</span> as columns.</td></tr>
     <tr data-perm="log"><td><span class="ui">New</span></td><td>Log a report. No badge, because it is never waiting on us.</td></tr>
-    <tr data-perm="crew"><td><span class="ui">Crew</span></td><td>The team chat, inside the tracker. It has its own sign-in the first time.</td></tr>
+    <tr data-perm="crew"><td><span class="ui">Crew</span></td><td>The team chat, inside the tracker, signed in with your tracker login. You need a Crew account with the same email.</td></tr>
     <tr data-perm="notes"><td><span class="ui">Notes</span></td><td>Your meeting notes from Ardent Notes, with a search, and an install button if you haven't got it yet.</td></tr>
     <tr data-perm="marking"><td><span class="ui">Marking</span></td><td>Students' exam papers to mark, with the engine's help, and the question bank it marks against.</td></tr>
     <tr data-perm="recovery"><td><span class="ui">Recovery</span></td><td>A student's quiz answers from before Submit All, for when their submission never arrived.</td></tr>
@@ -14110,6 +14110,25 @@ function crewSize() {
   f.style.height = Math.max(320, Math.floor(window.innerHeight - top - bottom)) + "px";
 }
 window.addEventListener("resize", function () { crewSize(); });
+// r269: Crew signs in with the tracker's login. When the frame loads it asks
+// (crew-want-ticket); we fetch a two-minute crewTicket from the back end and
+// hand it over, to Crew's origin only and only to our own frame. Crew swaps it
+// for a session, so nobody signs in twice. No answer is sent without the Crew
+// permission, and Crew then shows its own sign-in as before.
+var CREW_ORIGIN = (function () { try { return new URL(CREW_URL).origin; } catch (e) { return ""; } })();
+window.addEventListener("message", function (e) {
+  var f = $("crewFrame");
+  if (!f || e.source !== f.contentWindow || e.origin !== CREW_ORIGIN) return;
+  if (!e.data || e.data.type !== "crew-want-ticket") return;
+  if (!(state.perms || {}).crew) return;
+  apiPost({ action: "crewTicket" }).then(function (r) {
+    if (!r || !r.ok || !r.ticket) {
+      if (r && /CREW_TICKET_SECRET/.test(r.error || "")) console.warn("Crew sign-in: CREW_TICKET_SECRET isn't set in Script Properties");
+      return;
+    }
+    if (f.contentWindow) f.contentWindow.postMessage({ type: "crew-ticket", ticket: r.ticket }, CREW_ORIGIN);
+  }).catch(function () {});
+});
 var IRPCS_APP_URL = "https://irpcs.ehewett.workers.dev";
 
 var irpcs = {
@@ -16402,6 +16421,7 @@ function feedbackSeen(id, status) {
 // ones that were only about the tracker's insides went, and the numbers they
 // had are simply left out rather than reused.
 var WHATS_NEW = [
+  { n: 92, date: "2026-10-31", who: ["crew"], text: "Crew inside the tracker signs you in with your tracker login, so there's no second sign-in." },
   { n: 91, date: "2026-10-31", who: ["crew"], text: "Crew, the team chat, opens inside the tracker from the rail instead of in a new tab. Sign in once the first time; Sign in with Google opens a small window." },
   { n: 90, date: "2026-10-30", who: ["marking"], text: "Marking: each instructor now has their own guide, built as differences from Edd's. When a fix changes the wording of a house block, you can change it for everyone or just for you (the others keep the old words). Suggestions that only apply to one instructor say so, and go into their guide only." },
   { n: 89, date: "2026-10-29", who: ["marking"], text: "Marking learns from you. When a paper is finalised, what you changed (a grade you moved, feedback you wrote yourself) is read back, and anything worth reusing comes up on the Questions tab as a suggestion: a new house feedback block for a mistake that will come up again, a fix to a block that didn't fit, or a note for the marker. Edit it, add it to the guide, or leave it out. Nothing changes the guide until someone says so." },

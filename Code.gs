@@ -767,6 +767,11 @@ function doPost(e) {
     // meeting notes and nothing else of ours. r253.1: behind the 'notes' permission (hand-picked
     // in Admin); Ardent Notes still only returns what the email in the ticket can already see.
     if (action === 'notesTicket') return jsonOut(mintPortalTicket_(user, 'notes', 30, { aud: 'notes', secretName: 'NOTES_TICKET_SECRET' }));
+    // r269: Crew inside the tracker signs in with this login. Its own key (Crew holds the
+    // same value as TRACKER_TICKET_SECRET on Cloud Run) and audience, two minutes, single use
+    // on Crew's side, and only the 'crew' flag travels. Crew still requires an existing,
+    // active Crew account for the email; a ticket never creates one.
+    if (action === 'crewTicket') return jsonOut(mintPortalTicket_(user, 'crew', 2, { aud: 'crew', secretName: 'CREW_TICKET_SECRET', onlyPerm: true }));
     // r202/r203: reads from the Supabase mirror. Twelve hours, because the page
     // keeps it with the saved board so an open does not first wait on Apps
     // Script; it only ever reads the board, the same thing the session can.
@@ -1406,6 +1411,8 @@ function reqPerm_(action) {
     case 'tasksTicket': return 'any';
     // r253.1: hands out a credential for Ardent Notes, so gated here and again where it's minted.
     case 'notesTicket': return 'notes';
+    // r269: hands out a Crew sign-in, so gated here and again where it's minted.
+    case 'crewTicket': return 'crew';
     case 'trackerTicket': return 'any';
     case 'mirrorSyncNow': return 'users';
     // r205: the For Instructors doc carries the shared logins (phone, the
@@ -7426,7 +7433,8 @@ function setTicketSecrets_(data) {
   // r246: 'marking' joins. Its other copy is MARKING_TICKET_SECRET in the
   // ardent-portal Vercel project, not a Supabase function secret.
   // r253: 'notes' too. Its other copy is NOTES_TICKET_SECRET in the ardent-notes Vercel project.
-  [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET'], ['marking', 'MARKING_TICKET_SECRET'], ['notes', 'NOTES_TICKET_SECRET']].forEach(function (pair) {
+  // r269: 'crew' too. Its other copy is TRACKER_TICKET_SECRET on Crew's Cloud Run service.
+  [['machine', 'MACHINE_TICKET_SECRET'], ['nudge', 'TRACKER_NUDGE_SECRET'], ['marking', 'MARKING_TICKET_SECRET'], ['notes', 'NOTES_TICKET_SECRET'], ['crew', 'CREW_TICKET_SECRET']].forEach(function (pair) {
     var v = data[pair[0]];
     if (v === undefined || v === null || v === '') return;
     v = String(v).trim();
@@ -7440,7 +7448,8 @@ function setTicketSecrets_(data) {
     machine_len: (props.getProperty('MACHINE_TICKET_SECRET') || '').length,
     nudge_len: (props.getProperty('TRACKER_NUDGE_SECRET') || '').length,
     marking_len: (props.getProperty('MARKING_TICKET_SECRET') || '').length,
-    notes_len: (props.getProperty('NOTES_TICKET_SECRET') || '').length
+    notes_len: (props.getProperty('NOTES_TICKET_SECRET') || '').length,
+    crew_len: (props.getProperty('CREW_TICKET_SECRET') || '').length
   };
 }
 
