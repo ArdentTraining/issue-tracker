@@ -6292,7 +6292,7 @@ function devTargetSweep() {
   var lines = ['*' + q.past_target + (q.past_target === 1 ? ' issue has' : ' issues have') + ' been open past the target time*',
     '_Targets: high ' + T.high + 'd, medium ' + T.medium + 'd, low ' + T.low + 'd. Time spent waiting on an answer from Ardent is not counted._', ''];
   q.oldest.forEach(function (o) {
-    lines.push('• *' + o.over_by_days + 'd over* (' + o.priority + ', target ' + o.target_days + 'd) — ' +
+    lines.push('• *' + o.over_by_days + 'd over* (' + o.priority + ', target ' + o.target_days + 'd): ' +
       o.summary + '  `' + o.short + '`' +
       (String(o.fix_size) === 'ask' ? '  _(we asked you to size this one)_' :
         o.size_estimated ? '  _(' + o.fix_size + ' is our estimate - change it if it is wrong)_' : ''));
@@ -6301,7 +6301,7 @@ function devTargetSweep() {
   if (m.blocked_on_us.open_now) {
     lines.push('');
     lines.push('_' + m.blocked_on_us.open_now + ' of the queue ' + (m.blocked_on_us.open_now === 1 ? 'is' : 'are') +
-      ' waiting on an answer from us — those clocks are paused._');
+      ' waiting on an answer from us, so those clocks are paused._');
   }
   lines.push('');
   lines.push(getAppUrl_());
@@ -11008,7 +11008,7 @@ function extractionStaticPrompt_() {
     '- lesson: the FULL slide/question code exactly as written when one appears in the text (e.g. "EN.06.03.09" or "DS.10.19.09.2.M", one long string, not broken down), otherwise the lesson title if known, or null',
     '- lesson_code: lesson code string (e.g. DS.09.04) or null',
     '- issue_type: one of ["bug", "content_error", "student_confusion", "access_problem", "other"]. For a SHIPPING category report use one of ["not_arrived", "damaged", "wrong_item", "not_dispatched", "customs", "returned", "wrong_address", "other"] instead.',
-      '- severity: how badly this hits ONE person, ignoring how many people have hit it. "severe" = it stops them continuing the course or buying one: they cannot log in, cannot open a lesson, cannot sit an exam, cannot pay, or an error would make them fail an assessment. "moderate" = it gets in the way but they can carry on, with a workaround or by skipping past it. "low" = an annoyance, a cosmetic fault, or a typo that misleads nobody. Judge the FAULT, not how upset the message sounds, and judge it as the thread ENDS: if the student is already through (a workaround worked, or they were sorted by hand), nobody is stopped any more, so a tech fault is "moderate" at most.',
+      '- severity: how badly this hits ONE person, ignoring how many people have hit it. "severe" = it stops them continuing the course or buying one: they cannot log in, cannot open a lesson, cannot sit an exam, cannot pay, or an error would make them fail an assessment. "moderate" = it gets in the way but they can carry on, with a workaround or by skipping past it. "low" = an annoyance, a cosmetic fault, or a typo that misleads nobody. Judge the FAULT, not how upset the message sounds, and judge it as the thread ENDS: if the student is already through (a workaround worked, or they were sorted by hand), nobody is stopped any more, so a tech fault is "moderate" at most. One exception that is always "severe" (FB-0513, Edd: "No videos playing - that is a major broken lesson and needs urgent fixing"): a lesson whose video, animation or narration is missing or will not play for the student. Skipping past it is not a workaround, because the lesson has not been taught, so this is "severe" even when the student carried on.',
       '- category: use "friction" when NOTHING is broken but the design cost the student money or time - they paid without spotting a discount code box, missed a deadline because a date was buried, bought the wrong thing because two options read the same. A friction report has a working system and an avoidable loss. If something actually failed, it is not friction.',
       '- request_kind: "improvement" if the report is asking for a NEW feature, an enhancement, or an "it would be nice if" change rather than reporting something broken or wrong (this applies to both course content and the platform, for example "could we add a glossary" or "the player should remember playback speed"); otherwise "fix" for a bug, an error, or something not working or incorrect as it stands. When in doubt, choose "fix". Most reports are "fix".',
     '- media_kind: for a course_error only, what the fix will need doing, as a comma-separated list of every one that applies, in this order: "text" if on-screen text, a diagram, an image or quiz wording changes; "video_edit" if an existing video or animation needs cutting, trimming or re-editing; "refilm" if footage has to be filmed again; "audio" if a voiceover has to be recorded or re-recorded; "new_slide" if a slide (or speech bubble slide) has to be added. A slide whose wording and voiceover both change is "text,audio". If it is a video problem and you cannot tell whether an edit or a refilm will do, give "video_edit,refilm". Return null for tech_issue, or when none can be told.',

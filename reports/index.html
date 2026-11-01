@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reports — Ardent Training</title>
+<title>Reports · Ardent Training</title>
 
 <!--
   Ardent Reports, Courses dashboard.
@@ -357,7 +357,7 @@
 
 <div id="app" style="display:none">
 <header>
-  <h1>Courses — lesson telemetry</h1>
+  <h1>Courses: lesson telemetry</h1>
   <p class="sub">Live from the Ardent learning-record store. Ardent Training internal.</p>
   <div class="bar">
     <button onclick="loadAll()">Refresh</button>
@@ -501,29 +501,11 @@
   </div>
 
   <div id="studentView" style="display:none">
+    <!-- FB-0517/0518 (1 Nov 2026): one line, not an essay. -->
     <div class="locked-panel">
-      <h3>Per-student reporting is parked, by decision</h3>
-      <p>Everything on this page is real. This view is the one thing the data cannot answer, and it is
-         showing you exactly why rather than dressing visit counts up as student counts.</p>
-      <p class="why" id="lockReason"></p>
-      <div class="askbox">
-        <b>What reviving it would take</b>
-        <span id="lockUnlocks"></span>
-      </div>
-      <div class="askbox">
-        <b>A deliberate second reason</b>
-        Even a browser-level identifier (a random id stored on the device, no name attached) is
-        personal data under UK GDPR, so it would need a privacy-policy change, a lawful basis and a
-        retention period. That was considered on 12 August 2026 and parked on purpose. See
-        <code>PRIVACY.md</code>. What is on this page needs none of that: no names, no accounts, no
-        persistent identifiers, no IP addresses.
-      </div>
-      <div class="askbox">
-        <b>Signing in changed who can read this, not what is collected</b>
-        This page now sits behind your tracker account. That governs who may look at the aggregates.
-        It adds no identity to the store and does not make any of this data personal: the lessons
-        still report anonymously and cannot be tied to a student, including by us.
-      </div>
+      <h3>Per-student reporting</h3>
+      <p class="why" id="lockReason">Waiting on Aureus's code to pass the student's login ID through to the lessons.</p>
+      <span id="lockUnlocks" hidden></span>
     </div>
   </div>
 
@@ -666,7 +648,7 @@ async function fetchData(){
     ticket = await getTicket(true);
     r = await fetch(ENDPOINT, { headers: { Authorization: 'Bearer ' + ticket } });
   }
-  if(!r.ok) throw new Error('Reporting endpoint returned ' + r.status + ' — ' + (await r.text()).slice(0,160));
+  if(!r.ok) throw new Error('Reporting endpoint returned ' + r.status + ': ' + (await r.text()).slice(0,160));
   return r.json();
 }
 
@@ -725,7 +707,7 @@ function toggleTheme(){
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function fmt(sec){
-  if(sec===null||sec===undefined) return '—';
+  if(sec===null||sec===undefined) return '-';
   sec=Math.round(sec);
   if(sec<60) return sec+'s';
   const m=Math.floor(sec/60), s=sec%60;
@@ -753,14 +735,18 @@ function applyPayload(j, stale){
   showApp();
   DATA = { stats:j.stats, dropoff:j.dropoff, health:j.health, identity:j.identity, live:j.live || null, activity:j.activity || null, usage:j.usage || null, questions:j.questions || null, faults:j.faults || null };
   renderLive();
-  document.getElementById('lockReason').textContent = j.identity.reason;
-  document.getElementById('lockUnlocks').textContent = j.identity.unlocks;
+  document.getElementById('lockReason').textContent = 'Waiting on Aureus\'s code to pass the student\'s login ID through to the lessons.';
+  
   const courses=[...new Set(j.stats.map(s=>s.course_code))].sort();
   const sel=document.getElementById('courseFilter');
   if(sel.options.length!==courses.length+1){
     sel.innerHTML='<option value="">All courses</option>'+courses.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
   }
-  document.getElementById('stamp').textContent = stale ? ('showing figures from ' + stale + ', refreshing…') : ('updated ' + new Date().toLocaleTimeString('en-GB'));
+  /* r270: the figures are worked out every 15 minutes on the server, so say
+     when, rather than when this page last asked. */
+  const snapAt = j.snapshot_at ? new Date(j.snapshot_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
+  document.getElementById('stamp').textContent = stale ? ('showing figures from ' + stale + ', refreshing…')
+    : (snapAt ? ('figures as of ' + snapAt + ', updated every 15 minutes') : ('updated ' + new Date().toLocaleTimeString('en-GB')));
   render();
 }
 /* FB-0401 (Edd): "There should be a 'log it' or 'open case' button next to
@@ -815,7 +801,15 @@ async function logFault(sig, btn){
 }
 
 let PAINTED_FROM_CACHE = false;
+/* r270: one load at a time. A slow endpoint used to have the 60 s poll stack
+   a second, third and fourth call on top of the first, which made it slower. */
+let LOAD_BUSY = false;
 async function loadAll(){
+  if(LOAD_BUSY) return;
+  LOAD_BUSY = true;
+  try{ await loadAllInner(); } finally { LOAD_BUSY = false; }
+}
+async function loadAllInner(){
   document.getElementById('error').innerHTML='';
   if(!PAINTED_FROM_CACHE){
     PAINTED_FROM_CACHE = true;
@@ -1024,7 +1018,7 @@ function renderCards(){
     ['Lessons reporting',stats.length,'of '+DATA.health.length+' registered'],
     ['Lesson visits',totalSessions,totalBounces+' bounced under 30s'],
     ['Typical lesson',fmt(typical),'median across lessons'],
-    ['Longest lesson',longest?fmt(longest.median_active_seconds):'—',longest?longest.lesson_id:'']
+    ['Longest lesson',longest?fmt(longest.median_active_seconds):'-',longest?longest.lesson_id:'']
   ].map(c=>'<div class="card"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+'</div><div class="n">'+c[2]+'</div></div>').join('');
 }
 
@@ -1377,7 +1371,7 @@ function renderAttention(){
         const where = r.lessons.length === 1 ? r.lessons[0]
                     : r.lessons.length ? (r.lessons.length + ' lessons: ' + r.lessons.slice(0,3).join(', ') +
                                           (r.lessons.length > 3 ? '…' : ''))
-                    : '—';
+                    : '-';
         return '<tr><td class="lesson">' + esc(r.what) +
                '<small><span class="pill ' + (cls[r.cls] || 'idle') + '">' +
                esc(label[r.cls] || r.cls) + '</span></small></td>' +
@@ -1403,7 +1397,7 @@ function renderAttention(){
         if(Number(l.small_text_elements)) bits.push(l.small_text_elements + ' too small');
         return '<tr><td class="lesson">' + esc(l.question) + '<small>' + esc(l.lesson_id) + '</small></td>' +
                '<td>' + (Number(l.visits_seen) || 0) + '</td>' +
-               '<td>' + esc(bits.join(', ') || '—') +
+               '<td>' + esc(bits.join(', ') || '-') +
                (l.example ? '<small>' + esc(l.example) + '</small>' : '') + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
@@ -1651,7 +1645,7 @@ function renderCourseMap(){
         if(r.fault) cls.push('fault'); else if(r.layout) cls.push('layout');
         if(MAP_SEL === r.id) cls.push('on');
         h += '<button class="' + cls.join(' ') + '" data-id="' + esc(r.id) + '" ' +
-             'title="' + esc(r.id + (r.silent ? ' — no telemetry' : ' — ' + r.visits + ' visits')) + '" ' +
+             'title="' + esc(r.id + (r.silent ? ', no telemetry' : ', ' + r.visits + ' visits')) + '" ' +
              'aria-label="' + esc(r.id) + '"></button>';
       });
       h += '</div></div>';
@@ -1691,10 +1685,10 @@ function renderMapSide(rows){
   const slides = (DATA.dropoff || []).filter(d => d.lesson_id === r.id).length;
   const qs = ((DATA.questions && DATA.questions.difficulty) || []).filter(x => x.lesson_id === r.id).length;
   const started = Math.max(0, (r.visits || 0) - (r.bounced || 0));
-  const mins = r.median ? (r.median / 60).toFixed(1) + ' min' : '—';
+  const mins = r.median ? (r.median / 60).toFixed(1) + ' min' : '-';
   let h = '<div style="font-family:var(--mono,monospace);font-size:15px;margin-bottom:2px">' + esc(r.id) + '</div>' +
           '<p class="hint" style="margin:0 0 10px">' +
-          esc((r.title || '').replace(/^[A-Z]{2,4}\.\d{2}(\.\d{2})?\s*-\s*/, '') || '—') + '</p>';
+          esc((r.title || '').replace(/^[A-Z]{2,4}\.\d{2}(\.\d{2})?\s*-\s*/, '') || '-') + '</p>';
   if(r.silent){
     h += '<p class="hint" style="margin:0">Registered but has never reported. Either it has not been ' +
          'uploaded yet, or it went up without the telemetry stub.</p>';
@@ -1797,7 +1791,7 @@ function renderActivity(){
       if (r.bank_holiday_ew) tags.push('Bank hol: ' + r.bank_holiday_ew); else if (r.bank_holiday_sct) tags.push('Scot bank hol');
       if (r.school_hol_eng) tags.push('Eng school ' + String(r.school_hol_eng).replace(/_/g,' '));
       if (r.school_hol_sct && !r.school_hol_eng) tags.push('Scot school ' + String(r.school_hol_sct).replace(/_/g,' '));
-      const wx = r.tmax_c == null ? '—' : r.tmax_c + '°C · ' + r.rain_mm + 'mm · ' + r.sunshine_h + 'h sun';
+      const wx = r.tmax_c == null ? '-' : r.tmax_c + '°C · ' + r.rain_mm + 'mm · ' + r.sunshine_h + 'h sun';
       const wk = r.weekday === 0 || r.weekday === 6;
       return '<tr' + (wk ? ' style="opacity:.85"' : '') + '><td>' + esc(String(d.day)) + ' <span style="color:var(--muted)">' + DAYN[r.weekday] + '</span></td><td>' + d.sessions + '</td>' +
         '<td><div class="barwrap"><div style="height:8px;background:var(--accent);width:' + Math.round(100 * d.sessions / dmax) + '%"></div></div></td>' +
@@ -1810,7 +1804,7 @@ function renderActivity(){
     const ks = [...new Set(rows.map(r => r[key]))].sort().reverse();
     return '<table><thead><tr><th>' + (key === 'week_start' ? 'Week starting' : 'Month') + '</th>' + courses.map(c => '<th>' + esc(c) + '</th>').join('') + '<th>All</th><th>Days</th></tr></thead><tbody>' +
       ks.map(k => { const rs = rows.filter(r => r[key] === k); const tot = rs.reduce((x,r) => x + Number(r.sessions), 0); const dd = Math.max(...rs.map(r => Number(r.days_with_data)));
-        return '<tr><td>' + esc(String(k)) + '</td>' + courses.map(c => { const r = rs.find(x => x.course === c); return '<td>' + (r ? Number(r.sessions) : '—') + '</td>'; }).join('') + '<td><b>' + tot + '</b></td><td style="color:var(--muted)">' + dd + '</td></tr>'; }).join('') + '</tbody></table>';
+        return '<tr><td>' + esc(String(k)) + '</td>' + courses.map(c => { const r = rs.find(x => x.course === c); return '<td>' + (r ? Number(r.sessions) : '-') + '</td>'; }).join('') + '<td><b>' + tot + '</b></td><td style="color:var(--muted)">' + dd + '</td></tr>'; }).join('') + '</tbody></table>';
   };
 
   /* 4. A first read on the correlations, honest about how little there is. */
@@ -1864,11 +1858,11 @@ function renderUsage(){
   }).join('');
   /* Panes */
   let panes = '<table><thead><tr><th>Role</th><th>Where</th><th>Panes opened</th><th>Dead ends</th><th>Typical time open</th></tr></thead><tbody>' +
-    u.panes.map(r => '<tr><td>' + esc(ROLE_LABEL[r.role] || r.role) + '</td><td style="color:var(--muted)">' + esc(r.view || '') + '</td><td>' + r.opened + '</td><td>' + r.dead_ends + (r.opened ? ' <span style="color:var(--muted)">(' + Math.round(100 * r.dead_ends / r.opened) + '%)</span>' : '') + '</td><td>' + (r.avg_open_seconds == null ? '—' : r.avg_open_seconds + 's') + '</td></tr>').join('') + '</tbody></table>';
+    u.panes.map(r => '<tr><td>' + esc(ROLE_LABEL[r.role] || r.role) + '</td><td style="color:var(--muted)">' + esc(r.view || '') + '</td><td>' + r.opened + '</td><td>' + r.dead_ends + (r.opened ? ' <span style="color:var(--muted)">(' + Math.round(100 * r.dead_ends / r.opened) + '%)</span>' : '') + '</td><td>' + (r.avg_open_seconds == null ? '-' : r.avg_open_seconds + 's') + '</td></tr>').join('') + '</tbody></table>';
   /* Daily */
   const days = [...new Set(u.daily.map(r => r.day))].sort().reverse().slice(0, 21);
   let daily = '<table><thead><tr><th>Day</th>' + roles.map(r => '<th>' + esc(ROLE_LABEL[r] || r) + '</th>').join('') + '<th>Logged</th></tr></thead><tbody>' +
-    days.map(d => { const rs = u.daily.filter(r => r.day === d); return '<tr><td>' + esc(d) + '</td>' + roles.map(role => { const r = rs.find(x => x.role === role); return '<td>' + (r ? r.tabs + ' <span style="color:var(--muted)">/ ' + r.clicks + '</span>' : '—') + '</td>'; }).join('') + '<td>' + rs.reduce((a,r) => a + Number(r.logged), 0) + '</td></tr>'; }).join('') + '</tbody></table><p class="hint">Sessions / presses per role per day, and issues logged.</p>';
+    days.map(d => { const rs = u.daily.filter(r => r.day === d); return '<tr><td>' + esc(d) + '</td>' + roles.map(role => { const r = rs.find(x => x.role === role); return '<td>' + (r ? r.tabs + ' <span style="color:var(--muted)">/ ' + r.clicks + '</span>' : '-') + '</td>'; }).join('') + '<td>' + rs.reduce((a,r) => a + Number(r.logged), 0) + '</td></tr>'; }).join('') + '</tbody></table><p class="hint">Sessions / presses per role per day, and issues logged.</p>';
   host.innerHTML = '<h3 style="margin:6px 0 8px">Pages</h3>' + pages + '<h3 style="margin:18px 0 4px">Controls</h3>' + controls +
     '<h3 style="margin:18px 0 8px">Issue panes</h3>' + panes + '<h3 style="margin:18px 0 8px">Day by day</h3>' + daily;
 }

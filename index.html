@@ -1466,7 +1466,7 @@
 
       <div class="field">
         <label>Logging as</label>
-        <div id="instructorName" style="padding:9px 0;">—</div>
+        <div id="instructorName" style="padding:9px 0;">-</div>
       </div>
 
       <div class="field" id="field_mode">
@@ -1624,7 +1624,7 @@
           <div class="field">
             <label>Course</label>
             <select id="f_course">
-              <option value="">—</option>
+              <option value="">-</option>
               <option>Essential Navigation</option>
               <option>Day Skipper</option>
               <option>Yachtmaster</option>
@@ -1661,7 +1661,7 @@
         <div class="field" id="field_section">
           <label>Part of the platform</label>
           <select id="f_section" onchange="onSectionChange()">
-            <option value="">—</option>
+            <option value="">-</option>
             <option value="website">Website</option>
             <option value="instructor_portal">Instructor portal</option>
             <option value="partner_portal">Partner portal</option>
@@ -1695,7 +1695,7 @@
         <div class="field" id="field_impact">
           <label>Impact of this improvement</label>
           <select id="f_impact">
-            <option value="">—</option>
+            <option value="">-</option>
             <option value="low">Low</option>
             <option value="medium">Medium</option>
             <option value="high">High</option>
@@ -3474,7 +3474,7 @@
   <h4>What each fix needs</h4>
   <p>Every course fix says what it will take, ticking as many as apply: <span class="ui">Text edit</span>, <span class="ui">Video edit</span>, <span class="ui">Refilm</span>, <span class="ui">Audio recording</span> and <span class="ui">New slide</span>. They show on the card, <span class="ui">Filter</span> has each one under <span class="ui">Needs</span>, and <span class="ui">Sort: what it needs</span> puts the quick text edits first and the refilms last, so a recording or filming session can be planned around everything that needs it.</p>
   <p data-perm="course">Inside a card, anyone on the Course tab can change the <span class="ui">Needs</span> ticks on the spot.</p>
-  <p data-perm="manage">With Manage, <span class="ui">Filed against</span> can be changed there too. Type the corrected code into <span class="ui">Filed against</span> and press <span class="ui">Save</span>, and the course and module follow it. Priority stays an ask from here, unless you hold Manage users.</p>
+  <p data-perm="manage">With Manage, the <span class="ui">Lesson or question code</span> can be changed there too. Type the corrected code in and press <span class="ui">Save</span>, and the course and module follow it. Priority stays an ask from here, unless you hold Manage users.</p>
   <h4>Check the priorities</h4>
   <p>This one reads the whole open queue and comes back with a list of suggested changes, each with a reason and a before-and-after, and applies none of them until we press <span class="ui">Apply</span> on that row. It takes about a minute.</p>
   <p>If the run fails it says so in a panel that stays on screen rather than a toast that slides away, because a message nobody managed to read leaves "the button does not work" as the only thing left.</p>
@@ -4846,7 +4846,7 @@ function fmtDuration(ms) {
 }
 function priBadge(p) {
   p = (p || "").toLowerCase();
-  var label = p ? p.charAt(0).toUpperCase() + p.slice(1) : "—";
+  var label = p ? p.charAt(0).toUpperCase() + p.slice(1) : "-";
   return '<span class="badge pri pri-' + (p || "low") + '">' + label + "</span>";
 }
 // "parked" is known about and deliberately not being worked on - the "let's
@@ -5354,7 +5354,7 @@ function courseFixEditHtml(issue) {
     '<div id="cfxNeeds" style="display:flex;flex-wrap:wrap;gap:4px 14px;">' + needsTicksHtml(needsOf(issue), "courseSetNeeds('" + id + "')") + '</div>' +
     hint +
     (canEditCourseLesson()
-      ? '<label for="cfxLesson" class="muted">Filed against</label>' +
+      ? '<label for="cfxLesson" class="muted">Lesson or question code</label>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="cfxLesson" value="' + esc(ref) + '" placeholder="e.g. DS.12.12.22" style="width:14em;" onkeydown="if(event.key===\'Enter\')courseSetLesson(\'' + id + '\')">' +
         '<button class="ghost small" style="padding:4px 10px;" onclick="courseSetLesson(\'' + id + '\')">Save</button></div>'
       : '') +
@@ -5383,7 +5383,7 @@ function courseSetLesson(id) {
   };
   optimistic(id, fields, Object.assign({ action: "updateIssue", issue_id: id }, fields),
     { failMsg: "That didn't save", noRefresh: true, done: function () {
-      toast("Filed against " + fields.lesson_code + " now.");
+      toast("Code changed to " + fields.lesson + ".");
       var cur = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
       if (cur && typeof openDevDetail === "function") openDevDetail(id);
     } });
@@ -9096,14 +9096,52 @@ function runDeepLinkMerge() {
   }).catch(function (e) { busyHide(); window.alert("Could not link these reports: " + e); });
 }
 
+// r270 (FB-0512, Edd: "a spinning wheel type thing (or other novel animation
+// of a dinosaur scouring through filing cabinets in a messy office?)").
+function deepLoaderShow() {
+  var el = $("deepLoader");
+  if (el) el.classList.add("show");
+}
+function deepLoaderHide() {
+  var el = $("deepLoader");
+  if (el) el.classList.remove("show");
+}
 function openDeepLinkedIssue() {
   runDeepLinkMerge();
   if (state._deepLinkDone) return;
   var id = new URLSearchParams(location.search).get("issue");
   if (!id) { state._deepLinkDone = true; return; }
   var issue = (state.issues || []).filter(function (i) { return i.issue_id === id; })[0];
-  if (!issue) return; // issues may not all be in yet; try again on next load
+  if (!issue) {
+    // FB-0512 / FB-0484 (r270): the link used to wait until the whole board
+    // had loaded with this issue in it (10 s or more, longer for one logged
+    // since the saved copy), with the normal board on screen meanwhile, so it
+    // looked like the wrong page. Now it asks for this one issue straight away
+    // and says what it is doing while it does.
+    if (!state.user) return;
+    deepLoaderShow();
+    if (state._deepFetching) return;
+    state._deepFetching = true;
+    apiPost({ action: "getIssue", issue_id: id }).then(function (res) {
+      state._deepFetching = false;
+      if (state._deepLinkDone) return;     // the board got there first
+      if (!res || !res.ok || !res.issue) {
+        state._deepLinkDone = true;
+        deepLoaderHide();
+        toast("Couldn't find that issue. It may have been merged into another one, or deleted.");
+        return;
+      }
+      var got = res.issue;
+      if (!(state.issues || []).some(function (i) { return i.issue_id === id; })) {
+        state.issues = (state.issues || []).concat([got]);
+        state.issuesRaw = (state.issuesRaw || []).concat([got]);
+      }
+      openDeepLinkedIssue();
+    }).catch(function () { state._deepFetching = false; });
+    return;
+  }
   state._deepLinkDone = true;
+  deepLoaderHide();
   var p = state.perms || {};
   if (p.manage || p.users) { setView("admin"); openIssueById(id, false); }
   else if (p.dev || p.course) { setView(p.dev ? "dev" : "course"); openDevDetail(id); }
@@ -20544,7 +20582,7 @@ function openDetail(issue) {
   html += '<h3>Affected students' + (studentArr.length ? ' (' + studentArr.length + ')' : '') + '</h3>';
   if (studentArr.length) {
     html += '<div class="students">' + studentArr.map(function (s) {
-      return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") +
+      return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "-") +
         (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\', \'' + esc(s.cwId || "") + '\')">Chatwoot</button>' : '') +
         '</span></div>';
     }).join("") + '</div>' +
@@ -20574,7 +20612,7 @@ function openDetail(issue) {
   html += '<h3>Last update' + (lastRep && lastRep.date ? ' - ' + fmtDate(lastRep.date) : '') + '</h3><div class="small" style="margin-bottom:4px;">' +
     (lastRep
       ? esc(lastRep.summary || String(lastRep.raw_text || '').slice(0, 140) || 'Entry') +
-        ' <span class="muted">(' + esc(lastRep.instructor_name || '—') + ')</span>'
+        ' <span class="muted">(' + esc(lastRep.instructor_name || '-') + ')</span>'
       : '<span class="muted">Nothing since it was logged ' + fmtDate(issue.submitted_at) + '.</span>') + '</div>';
   // When the next action is any kind of message to the student, offer the
   // draft there and then (Edd, FB-0161). Written in the instructor's own
@@ -20609,7 +20647,7 @@ function openDetail(issue) {
     (catOf(issue) === "shipping" && (state.perms || {}).log ? '<div class="k">Customs</div><div><button class="ghost small" onclick="openCustomsFromIssue(\'' + esc(issue.issue_id) + '\')">Customs invoice</button></div>' : "") +
     (catOf(issue) === "shipping" && issue.chase_at ? kv("Chase on", String(issue.chase_at).slice(0, 10)) : "") +
     kv("Affects", audienceOf(issue) === "internal" ? "Us (internal)" : "Students") +
-    (audienceOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "—") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
+    (audienceOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "-") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
     kv("Priority reason", issue.priority_reason) +
   '</div>';
 
@@ -21025,7 +21063,7 @@ function markActiveCard() {
   Array.prototype.forEach.call(document.querySelectorAll('.issue-card[data-id="' + state.detailId + '"], .action-card[data-id="' + state.detailId + '"], .act-row[data-id="' + state.detailId + '"]'), function (el) { el.classList.add("active"); });
 }
 
-function kv(k, v) { return '<div class="k">' + esc(k) + '</div><div>' + (v ? esc(v) : "—") + '</div>'; }
+function kv(k, v) { return '<div class="k">' + esc(k) + '</div><div>' + (v ? esc(v) : "-") + '</div>'; }
 // The controls follow the dropdown, not the status the pane opened with
 // (Edd, FB-0212), and the one text box changes job with it (FB-0211).
 // Called once on render and on every change of the status select.
@@ -22780,7 +22818,7 @@ function openDevDetail(id) {
     ? (issue.dev_fixed_at
         ? fmtDuration(new Date(issue.dev_fixed_at) - new Date(startedAt))
         : fmtDuration(Date.now() - new Date(startedAt)) + " so far")
-    : "—";
+    : "-";
 
   // A short scannable title up top; the full summary sits further down (below
   // the affected students), per Edd's 18 Jul feedback.
@@ -22889,7 +22927,7 @@ function openDevDetail(id) {
   if (devStudentArr.length) {
     html += '<h3>Affected students' + (catOf(issue) === "tech_issue" ? ' (test accounts)' : '') + '</h3>' +
       '<div class="students">' + devStudentArr.map(function (s) {
-        return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "—") +
+        return '<div class="s"><span>' + esc(s.name) + '</span><span class="muted">' + esc(s.contact || "-") +
         (s.contact && String(s.contact).indexOf("@") > 0 ? ' <button class="ghost small" style="padding:1px 8px;font-size:11px;margin-left:6px;" onclick="openInChatwoot(\'' + esc(s.contact) + '\', \'' + esc(s.cwId || "") + '\')">Chatwoot</button>' : '') +
         '</span></div>';
       }).join("") + '</div>' +
@@ -25321,6 +25359,39 @@ function printManual() {
       <button class="ghost small" style="padding:4px 10px;" id="draftSentBtn">I've sent it - mark as waiting on the student</button>
       <span class="small muted" style="margin-left:6px;">Flips this from Scanned to Waiting in Actions.</span>
     </div>
+  </div>
+</div>
+<style>
+  /* r270: the deep-link loader (FB-0512). */
+  #deepLoader { position: fixed; inset: 0; z-index: 9000; display: none; align-items: center; justify-content: center;
+    background: rgba(15,27,45,.86); }
+  #deepLoader.show { display: flex; }
+  #deepLoader .dl-box { text-align: center; color: var(--text, #E8EDF2); }
+  #deepLoader .dl-office { position: relative; width: 220px; height: 120px; margin: 0 auto 14px; }
+  #deepLoader .dl-cab { position: absolute; bottom: 0; width: 46px; height: 92px; border: 2px solid #8aa0b8; border-radius: 4px; background: #1A2B40; }
+  #deepLoader .dl-cab.a { left: 14px; } #deepLoader .dl-cab.b { right: 14px; }
+  #deepLoader .dl-cab i { display: block; height: 26px; margin: 4px; border: 1px solid #8aa0b8; border-radius: 2px; }
+  #deepLoader .dl-cab.a i:nth-child(2) { animation: dlDrawer 1.2s ease-in-out infinite; }
+  #deepLoader .dl-cab.b i:nth-child(1) { animation: dlDrawer 1.2s ease-in-out .6s infinite; }
+  #deepLoader .dl-dino { position: absolute; bottom: 0; left: 50%; font-size: 52px; line-height: 1; transform: translateX(-50%);
+    animation: dlRummage 2.4s ease-in-out infinite; }
+  #deepLoader .dl-paper { position: absolute; bottom: 60px; left: 50%; font-size: 18px; opacity: 0; animation: dlFly 1.6s ease-out infinite; }
+  #deepLoader .dl-paper.p2 { animation-delay: .5s; } #deepLoader .dl-paper.p3 { animation-delay: 1s; }
+  @keyframes dlDrawer { 0%,100% { transform: translateX(0); } 50% { transform: translateX(14px); } }
+  @keyframes dlRummage { 0%,100% { transform: translateX(-130%) scaleX(-1); } 45%,55% { transform: translateX(30%) scaleX(1); } }
+  @keyframes dlFly { 0% { opacity: 1; transform: translate(0,0) rotate(0); } 100% { opacity: 0; transform: translate(var(--dx,40px),-70px) rotate(220deg); } }
+  #deepLoader .dl-paper.p2 { --dx: -50px; } #deepLoader .dl-paper.p3 { --dx: 10px; }
+  @media (prefers-reduced-motion: reduce) { #deepLoader * { animation: none !important; } }
+</style>
+<div id="deepLoader" role="status" aria-live="polite">
+  <div class="dl-box">
+    <div class="dl-office" aria-hidden="true">
+      <div class="dl-cab a"><i></i><i></i><i></i></div>
+      <div class="dl-cab b"><i></i><i></i><i></i></div>
+      <span class="dl-dino">🦖</span>
+      <span class="dl-paper">📄</span><span class="dl-paper p2">📄</span><span class="dl-paper p3">📄</span>
+    </div>
+    <div>Digging out that issue…</div>
   </div>
 </div>
 </body>
