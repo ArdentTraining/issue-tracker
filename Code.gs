@@ -68,6 +68,10 @@ var SLACK_NOTICES = {
   // than posting a score. Same channel as the answers to their questions.
   // r234 (Edd, 17 Oct 2026): "ditch this from them and us." Off everywhere.
   dev_targets:       { on: false, to: 'SLACK_AUREUS_TECH' },
+  // r271 (Edd, 1 Nov 2026): the batched clip request. A DM to each presenter,
+  // sent only when someone on the course team presses Request clips; `to` is
+  // unused because it never posts to a channel.
+  clip_request:      { on: true,  to: '' },
   // Off for good (Edd, 19 Aug 2026). All five still exist in the tracker.
   feedback:          { on: false, to: '' },
   weekly_digest:     { on: false, to: '' },
@@ -556,7 +560,26 @@ var HEADERS = [
   // scoreboard subtracts it before reporting a time to fix. Blank or 0 means
   // they were never blocked on us, which is the usual case.
   // APPENDED, never inserted - the column order here IS the sheet order.
-  'dev_blocked_ms'             // BF cumulative ms an issue spent waiting on an answer from Ardent
+  'dev_blocked_ms',            // BF cumulative ms an issue spent waiting on an answer from Ardent
+  // r271 (Edd, 1 Nov 2026): course fixes that are a nice idea rather than a
+  // fault. Not parked, because parked means "leave it alone unless it comes
+  // up again"; these stay live but out of the backlog count, under their own
+  // filter on the Course page.
+  // APPENDED, never inserted - the column order here IS the sheet order.
+  'dream_world',               // BG true = wish-list item, kept out of the course backlog
+  // r271 (Edd): FT and YM (and sometimes DS) share the exact same slide or
+  // video, so one fix is a fix on both. lesson / lesson_code stay the primary
+  // code; any further codes ride here as a comma list, written the same way
+  // as `lesson` (full slide or question code where known).
+  'also_lessons',              // BH e.g. "YM.03.08.04, DS.07.08"
+  // r271 (Edd): video and voiceover fixes need someone in front of the
+  // camera before Lauren can edit. The presenter is named on the fix, and
+  // their clips go to them in one batch so Charly sets the camera up once.
+  'presenter',                 // BI instructor name, as on the Instructors list
+  'clip_status',               // BJ '' | needed | requested | sent
+  'clip_note',                 // BK what to record, in a line
+  'clip_link',                 // BL where the recorded clip is
+  'clip_requested_at'          // BM ISO time the batch request went out
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -806,6 +829,7 @@ function doPost(e) {
     if (action === 'addUpdate') return jsonOut(addUpdate_(body));
     if (action === 'splitIssue') return jsonOut(splitIssue_(body));
     if (action === 'linkIssues') return jsonOut(linkIssues_(body));
+    if (action === 'requestClips') return jsonOut(requestClips_(body));   // r271
     if (action === 'deleteIssue') return jsonOut(deleteIssue_(body));
     if (action === 'passToDev') return jsonOut(passToDev_(body));
     if (action === 'markDevFixed') return jsonOut(markDevFixed_(body));
@@ -1360,6 +1384,8 @@ function reqPerm_(action) {
     // anyone who works a fix queue. Fetching a Chatwoot update sits with the
     // other update paths.
     case 'bulkAssign': case 'courseReview': return 'work';
+    // r271: narrowed to the course team inside requestClips_.
+    case 'requestClips': return 'work';
     // FB-0344 (Aman): the dev drawer's "Check for updates" calls this, and a
     // dev-only account has no 'log', so it 403'd. Read-only pull of newer
     // messages onto an issue the caller can already see: queue tier.
@@ -5600,12 +5626,31 @@ function updateIssue_(data) {
     var allowedKeys = { fix_size: 1 };
     // r213: what a course fix needs - anyone with the Course tab (Edd).
     if (hasPerm_(data._user, 'course')) allowedKeys.media_kind = 1;
+    // r271: the course team runs the wish-list tick and the clip workflow
+    // themselves (Lauren asks, the presenter marks it sent).
+    if (hasPerm_(data._user, 'course')) {
+      ['dream_world', 'presenter', 'clip_status', 'clip_note', 'clip_link'].forEach(function (k) { allowedKeys[k] = 1; });
+    }
     var blocked = HEADERS.filter(function (k) {
       return data.hasOwnProperty(k) && !allowedKeys[k] && k !== 'issue_id';
     });
     if (blocked.length) return { ok: false, error: 'Only the fix size can be edited from this queue. Ask an admin for a priority change.' };
   }
   if (data.hasOwnProperty('media_kind')) data.media_kind = normNeeds_(data.media_kind);
+  // r271: the clip fields hold a small closed set, so a typo cannot strand an
+  // item in a state no list shows.
+  if (data.hasOwnProperty('clip_status')) {
+    var cs = String(data.clip_status || '').toLowerCase().trim();
+    if (cs && !CLIP_STATUSES_[cs]) return { ok: false, error: 'Clip status must be needed, requested or sent.' };
+    data.clip_status = cs;
+  }
+  if (data.hasOwnProperty('dream_world')) data.dream_world = (data.dream_world === true || String(data.dream_world) === 'true') ? 'true' : '';
+  if (data.hasOwnProperty('also_lessons')) data.also_lessons = normLessonList_(data.also_lessons);
+  if (data.hasOwnProperty('clip_note')) data.clip_note = String(data.clip_note || '').trim().slice(0, 500);
+  if (data.hasOwnProperty('clip_link')) {
+    data.clip_link = String(data.clip_link || '').trim();
+    if (data.clip_link && !/^https?:\/\//i.test(data.clip_link)) return { ok: false, error: 'The clip link needs to be a web address (https://...).' };
+  }
 
   // Moving something INTO the dev queue by hand (including a kanban drag) is
   // the same admin call as passToDev, so hold it to the same permission.
@@ -8956,6 +9001,7 @@ function ensureTriggers_() {
   var haveShipTag = false, haveShipMonthly = false;   // r188
   var haveAutoSize = false;   // r219
   var haveFileAfter = false;  // r222
+  var haveParked = false;     // r271
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -8977,6 +9023,7 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'shipMonthlyPost') haveShipMonthly = true;
     if (t.getHandlerFunction() === 'autoSizeQueue') haveAutoSize = true;
     if (t.getHandlerFunction() === 'fileAfterSweep') haveFileAfter = true;
+    if (t.getHandlerFunction() === 'parkedAutoClose') haveParked = true;
   });
   // r175: 08:00, so the chase list is sitting there when the day starts rather
   // than arriving on top of whatever else the morning brings.
@@ -9003,6 +9050,9 @@ function ensureTriggers_() {
   if (!haveAutoSize) ScriptApp.newTrigger('autoSizeQueue').timeBased().everyDays(1).atHour(7).create();
   if (!haveWaiting) ScriptApp.newTrigger('waitingOnStudentSweep').timeBased().everyDays(1).atHour(8).create();
   if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
+  // r271 (Edd): parked a year with no new report closes itself. 05:30-ish,
+  // before the morning jobs read the board.
+  if (!haveParked) ScriptApp.newTrigger('parkedAutoClose').timeBased().everyDays(1).atHour(5).nearMinute(30).create();
   if (!haveEnrich) ScriptApp.newTrigger('enrichContacts').timeBased().everyDays(1).atHour(19).create();   // r152: end of the working day
   if (!haveMonthly) {
     ScriptApp.newTrigger('monthlyChecklistReview').timeBased().onMonthDay(1).atHour(9).create();
@@ -9257,7 +9307,7 @@ function migrateAudience() {
 
 // Run setup() remotely (DEPLOY_KEY gated), so schema/trigger changes shipped
 // via deployBackend don't need anyone in the editor either.
-var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, tellPostWatch: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1, storeShadowCompare: 1, autoSizeQueue: 1 };
+var RUNNABLE_JOBS_ = { tellStudentsSweep: 1, tellPostWatch: 1, prebriefOpenChats: 1, unroutedDigest: 1, weeklyDigest: 1, autoResolveTbc: 1, chaseShipping: 1, studentToldSweep: 1, backfillConversationIds: 1, enrichContacts: 1, waitingOnStudentSweep: 1, claudeInbox: 1, shipTagNightly: 1, mirrorFullSync: 1, storePracticeImport: 1, storeSelfTest: 1, storeShadowCompare: 1, autoSizeQueue: 1, parkedAutoClose: 1, parkedAutoCloseDryRun: 1 };
 
 // r152 (Edd, 6 Sep 2026): "a number of reports are getting filed without the
 // user email address. we need to get this whenever possible. if it isn't in
@@ -11321,7 +11371,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r267.1 · 2026-10-31';
+var CODE_STAMP = 'r271 · 2026-11-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -13549,6 +13599,182 @@ function autoResolveTbc() {
   });
   Logger.log('autoResolveTbc: resolved ' + resolved + ' TBC issue(s).');
   return resolved;
+}
+
+// ---- r271: course fixes (Edd, 1 Nov 2026) -----------------------------------
+
+var CLIP_STATUSES_ = { needed: 1, requested: 1, sent: 1 };
+var PARKED_AUTO_CLOSE_DAYS = 365;   // Edd: "parked for more than 12 months, it gets resolved"
+var PARKED_AUTO_CLOSE_NOTE = 'Parked for 12 months with no further reports, so closed automatically.';
+var CLIP_BATCH_MAX = 40;            // one DM; Slack is happy with far more, a presenter is not
+
+// One code, tidied the way the drawer writes `lesson`: prefix, dot, digits.
+function normLessonCode_(s) {
+  var m = String(s || '').toUpperCase().match(/\b(EN|DS|YM|FT)[\s.]*?(\d{1,2})((?:[\s.]+\d{1,3}){0,3})/);
+  if (!m) return '';
+  var pad = function (n) { n = parseInt(n, 10); return (n < 10 ? '0' : '') + n; };
+  var rest = String(m[3] || '').trim().split(/[\s.]+/).filter(String).map(pad);
+  return [m[1], pad(m[2])].concat(rest).join('.');
+}
+// A comma (or space, slash, semicolon) list of codes, de-duplicated, in order.
+function normLessonList_(v) {
+  var out = [], seen = {};
+  String(v == null ? '' : v).split(/[,;\/\n]+/).forEach(function (part) {
+    var c = normLessonCode_(part);
+    if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+  });
+  return out.join(', ');
+}
+// The module.lesson part of a code (DS.09.04.12 -> DS.09.04), which is what
+// lesson_code holds and what the lesson filters compare.
+function lessonOfCode_(c) { return String(c || '').split('.').slice(0, 3).join('.'); }
+// Every lesson an issue is filed against: the primary, then the extras.
+function lessonCodesOf_(i) {
+  var out = [], seen = {};
+  [String(i.lesson_code || '')].concat(String(i.also_lessons || '').split(',')).forEach(function (c) {
+    c = lessonOfCode_(normLessonCode_(c) || String(c).trim());
+    if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+  });
+  return out;
+}
+
+// The last time anybody reported this: the newest report date on the issue,
+// falling back to when it was first logged.
+function lastReportedMs_(i) {
+  var best = 0;
+  try {
+    var reps = i.reports_json ? JSON.parse(String(i.reports_json)) : [];
+    (Array.isArray(reps) ? reps : []).forEach(function (rp) {
+      var t = new Date(rp && rp.date).getTime();
+      if (!isNaN(t) && t > best) best = t;
+    });
+  } catch (e) {}
+  if (!best) {
+    var s = new Date(i.submitted_at).getTime();
+    if (!isNaN(s)) best = s;
+  }
+  return best;
+}
+
+// Daily. A parked issue was left "unless more people report it"; a year of
+// nobody reporting it is the answer, so it closes itself, with a note saying
+// why. Every category. Nobody is told: parked work never promised the student
+// anything, so notified_students is set to not_needed and the tell-the-student
+// sweep leaves it alone. A fresh report on a parked issue already wakes it
+// (addReportToIssue_), which restarts this clock.
+function parkedAutoClose(data) {
+  var dry = !!(data && data.dry_run);
+  var cutoff = Date.now() - PARKED_AUTO_CLOSE_DAYS * 24 * 3600 * 1000;
+  var due = [];
+  getIssues_().issues.forEach(function (i) {
+    if (String(i.status || '').toLowerCase() !== 'parked') return;
+    var last = lastReportedMs_(i);
+    if (!last || last > cutoff) return;
+    due.push({ id: String(i.issue_id), last: new Date(last).toISOString().slice(0, 10), note: String(i.resolution_note || '') });
+  });
+  var closed = 0;
+  if (!dry) {
+    due.forEach(function (d) {
+      var now = new Date().toISOString();
+      var note = d.note ? (d.note + '\n\n' + PARKED_AUTO_CLOSE_NOTE) : PARKED_AUTO_CLOSE_NOTE;
+      if (setIssueFields_(d.id, { status: 'resolved', resolved_at: now, updated_at: now,
+          resolution_note: note, notified_students: 'not_needed' })) closed++;
+    });
+  }
+  Logger.log('parkedAutoClose: ' + due.length + ' due, ' + closed + ' closed' + (dry ? ' (dry run)' : ''));
+  return { ok: true, due: due.length, closed: closed, dry_run: dry, items: due.slice(0, 50) };
+}
+
+// runJob calls a job with no arguments, so the look-before-you-leap version
+// has its own name.
+function parkedAutoCloseDryRun() { return parkedAutoClose({ dry_run: true }); }
+
+// Who a presenter name belongs to, for the DM. The Instructors list first
+// (that is where the presenters are), then anyone who can take a fix queue.
+function presenterEmail_(name) {
+  var want = String(name || '').trim().toLowerCase();
+  if (!want) return '';
+  var hit = '';
+  try {
+    (getInstructors_().instructors || []).forEach(function (u) {
+      if (!hit && String(u.name || '').trim().toLowerCase() === want) hit = u.email;
+    });
+    if (!hit) (listAssignees_().assignees || []).forEach(function (u) {
+      if (!hit && String(u.name || '').trim().toLowerCase() === want) hit = u.email;
+    });
+  } catch (e) {}
+  return hit;
+}
+
+// The clips waiting on a presenter. `needed` is not asked yet; `requested`
+// has been asked and is still outstanding.
+function clipQueue_(presenter, includeRequested) {
+  var want = String(presenter || '').trim().toLowerCase();
+  return getIssues_().issues.filter(function (i) {
+    if (catOf_(i) !== 'course_error') return false;
+    var st = String(i.status || '').toLowerCase();
+    if (st !== 'open' && st !== 'with_dev') return false;
+    if (String(i.dream_world) === 'true') return false;   // a wish-list idea is not a recording session
+    var cs = String(i.clip_status || '').toLowerCase();
+    if (!(cs === 'needed' || (includeRequested && cs === 'requested'))) return false;
+    var p = String(i.presenter || '').trim();
+    if (!p) return false;
+    return !want || p.toLowerCase() === want;
+  });
+}
+
+// The batch request (Edd: "Charly would benefit in being given a batch rather
+// than one clip at a time. So she only sets the camera up once"). One Slack DM
+// per presenter listing every clip waiting on them, then each of those moves
+// needed -> requested. `presenter` narrows it to one person; `resend` includes
+// clips already requested (a reminder); `dry_run` says what would go without
+// sending anything.
+function requestClips_(body) {
+  body = body || {};
+  if (body._user && !(hasPerm_(body._user, 'course') || hasPerm_(body._user, 'manage') || hasPerm_(body._user, 'users'))) {
+    return { ok: false, error: 'Requesting clips is for the course team.' };
+  }
+  if (!slackOn_('clip_request')) return { ok: false, error: 'Clip requests are switched off (SLACK_NOTICES.clip_request).' };
+  var dry = !!body.dry_run, resend = !!body.resend;
+  var pool = clipQueue_(body.presenter, resend);
+  var by = {}, nameOf = {};
+  pool.forEach(function (i) {
+    var p = String(i.presenter).trim(), k = p.toLowerCase();
+    if (!nameOf[k]) nameOf[k] = p;
+    (by[k] = by[k] || []).push(i);
+  });
+  var appUrl = getAppUrl_(), out = [];
+  Object.keys(by).sort().forEach(function (k) {
+    var p = nameOf[k];
+    var list = by[k].sort(function (a, b) { return String(a.lesson || a.lesson_code).localeCompare(String(b.lesson || b.lesson_code)); });
+    var shown = list.slice(0, CLIP_BATCH_MAX);
+    var asker = body._user ? String(body._user.name || body._user.email || '') : '';
+    var lines = [':clapper: *' + list.length + ' clip' + (list.length === 1 ? '' : 's') + ' to record for course fixes*' +
+      (asker ? ' (from ' + asker + ')' : ''), ''];
+    shown.forEach(function (i, n) {
+      var codes = [String(i.lesson || i.lesson_code || '').trim()].concat(String(i.also_lessons || '').split(',').map(function (s) { return s.trim(); }))
+        .filter(String).join(', ');
+      lines.push((n + 1) + '. *' + (codes || 'No lesson code') + '*  ' + String(i.summary || '(no summary)').slice(0, 140) +
+        '  <' + issueLink_(i, appUrl) + '|open>');
+      if (String(i.clip_note || '').trim()) lines.push('    Record: ' + String(i.clip_note).trim().slice(0, 300));
+    });
+    if (list.length > shown.length) lines.push('…and ' + (list.length - shown.length) + ' more on the Course page.');
+    lines.push('');
+    lines.push('When a clip is recorded, open it in the tracker and mark it sent with a link to the file, so it goes to Lauren for the edit.');
+    var email = presenterEmail_(p);
+    var sent = { ok: false, why: dry ? 'dry run' : 'no email for ' + p };
+    if (!dry && email) sent = slackDm_(email, lines.join('\n'));
+    if (sent.ok) {
+      var now = new Date().toISOString();
+      shown.forEach(function (i) {
+        if (String(i.clip_status).toLowerCase() === 'needed') setIssueFields_(i.issue_id, { clip_status: 'requested', clip_requested_at: now });
+        else setIssueFields_(i.issue_id, { clip_requested_at: now });
+      });
+    }
+    out.push({ presenter: p, email: email, clips: list.length, sent: !!sent.ok, why: sent.ok ? '' : sent.why,
+      preview: dry ? lines.join('\n') : undefined });
+  });
+  return { ok: true, dry_run: dry, presenters: out, total: pool.length };
 }
 
 // Run this once from the editor to schedule autoResolveTbc to run every day.
@@ -16940,6 +17166,9 @@ var INBOX_STATUS_KEYS_ = { status: 1, priority: 1, severity: 1, request_kind: 1,
 //   tell-the-students lane or sends #instructing-daily a pile of asks).
 ['assignee', 'fix_size', 'media_kind', 'lesson', 'lesson_code', 'course', 'module',
  'category', 'notified_students'].forEach(function (k) { INBOX_STATUS_KEYS_[k] = 1; });
+// r271: the course-fix fields, so the backlog backfill (dream world ticks,
+// second lesson codes, presenters) goes through the same op.
+['dream_world', 'also_lessons', 'presenter', 'clip_status', 'clip_note'].forEach(function (k) { INBOX_STATUS_KEYS_[k] = 1; });
 var INBOX_CATEGORIES_ = { course_error: 1, tech_issue: 1, shipping: 1 };
 // r267.1 (Edd, 31 Oct: "I do want the summary edits too"). summary in a row is
 // the note that lands on the trail, so a corrected summary travels as

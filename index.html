@@ -4323,7 +4323,7 @@ var state = {
   devType: "all",             // all | <issue_type values present in the queue>
   devSize: "all",             // all | small | medium | large | unsized
   devSearch: "",              // developers view: free-text search, same fields as Track (Edd, FB-0205)
-  courseFilter: "todo",       // course fixes view: todo / fixed / all
+  courseFilter: "todo",       // course fixes view: todo / fixed / all / clips / dream
   // Bulk assign (Edd, FB-0224): a list of conditions rather than one kind, so
   // "all Day Skipper knowledge checks" can be said in one go. Each row is
   // { join: "and" | "or", field: <key in COURSE_BULK_FIELDS>, value: "" }, an
@@ -5349,7 +5349,8 @@ function canEditCourseFix() { return !!(state.perms && (state.perms.manage || st
 function canEditCourseLesson() { return !!(state.perms && state.perms.manage); }
 function courseFixEditHtml(issue) {
   var id = esc(issue.issue_id);
-  var ref = String(issue.lesson || issue.lesson_code || "");
+  // r271: the primary code, then any the same slide or video is shared with.
+  var ref = [String(issue.lesson || issue.lesson_code || "")].concat(alsoLessonsOf(issue)).filter(String).join(", ");
   var was = String(issue.media_kind || "").toLowerCase();
   var hint = (!needsOf(issue).length && (was === "rework" || was === "other"))
     ? '<div class="small muted" style="grid-column:2;">Was marked ' + (was === "rework" ? "Rework" : "Other") + '. Tick what it actually needs.</div>' : "";
@@ -5358,21 +5359,135 @@ function courseFixEditHtml(issue) {
     '<div id="cfxNeeds" style="display:flex;flex-wrap:wrap;gap:4px 14px;">' + needsTicksHtml(needsOf(issue), "courseSetNeeds('" + id + "')") + '</div>' +
     hint +
     (canEditCourseLesson()
-      ? '<label for="cfxLesson" class="muted">Lesson or question code</label>' +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="cfxLesson" value="' + esc(ref) + '" placeholder="e.g. DS.12.12.22" style="width:14em;" onkeydown="if(event.key===\'Enter\')courseSetLesson(\'' + id + '\')">' +
-        '<button class="ghost small" style="padding:4px 10px;" onclick="courseSetLesson(\'' + id + '\')">Save</button></div>'
+      ? '<label for="cfxLesson" class="muted">Lesson or question codes</label>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="cfxLesson" value="' + esc(ref) + '" placeholder="e.g. FT.05.08.04, YM.03.08.04" style="width:20em;" onkeydown="if(event.key===\'Enter\')courseSetLesson(\'' + id + '\')">' +
+        '<button class="ghost small" style="padding:4px 10px;" onclick="courseSetLesson(\'' + id + '\')">Save</button></div>' +
+        '<div class="small muted" style="grid-column:2;margin-top:-2px;">Shared slide or video? Add each code, separated by commas. The first is the main one.</div>'
       : '') +
+    // r271 (Edd): a wish-list idea stays live but out of the backlog.
+    '<span class="muted">Dream world</span>' +
+    '<label style="display:inline-flex;align-items:center;gap:6px;font-weight:normal;cursor:pointer;">' +
+      '<input type="checkbox" id="cfxDream" style="width:auto;margin:0;flex:none;"' + (isDreamWorld(issue) ? " checked" : "") +
+      ' onchange="courseSetDream(\'' + id + '\')"> A nice idea rather than a fault. Kept out of the backlog.</label>' +
+    courseClipHtml(issue) +
   '</div>';
 }
+// r271 (Edd): video and voiceover fixes need a presenter to record before
+// Lauren can edit, and the presenter is asked in a batch. Ticking Video edit,
+// Refilm or Audio shows this block; so does a clip already in play.
+function clipWanted(issue) {
+  var n = needsOf(issue);
+  return !!clipStatusOf(issue) || !!String(issue.presenter || "").trim() ||
+    n.indexOf("refilm") >= 0 || n.indexOf("audio") >= 0 || n.indexOf("video_edit") >= 0;
+}
+function presenterOptionsHtml(cur) {
+  var names = (state.instructors || []).map(function (u) { return typeof u === "string" ? u : u.name; }).filter(String);
+  if (cur && names.indexOf(cur) < 0) names.push(cur);
+  return '<option value="">Nobody yet</option>' + names.map(function (n) {
+    return '<option value="' + esc(n) + '"' + (n === cur ? " selected" : "") + '>' + esc(n) + '</option>';
+  }).join("");
+}
+function courseClipHtml(issue) {
+  if (!clipWanted(issue)) return "";
+  var id = esc(issue.issue_id), cs = clipStatusOf(issue), pres = String(issue.presenter || "").trim();
+  var stOpts = [["", "No clip needed"], ["needed", "Needed, not asked yet"], ["requested", "Requested"], ["sent", "Sent"]];
+  return '<span class="muted">Presenter</span>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' +
+      '<select id="cfxPresenter" style="width:auto;" onchange="courseSetClip(\'' + id + '\', \'presenter\')">' + presenterOptionsHtml(pres) + '</select>' +
+      '<select id="cfxClipStatus" style="width:auto;" onchange="courseSetClip(\'' + id + '\', \'clip_status\')">' +
+        stOpts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === cs ? " selected" : "") + '>' + esc(o[1]) + '</option>'; }).join("") +
+      '</select>' +
+      (cs === "requested" && issue.clip_requested_at ? '<span class="small muted">asked ' + esc(fmtDate(issue.clip_requested_at)) + '</span>' : '') +
+    '</div>' +
+    '<label for="cfxClipNote" class="muted">What to record</label>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="cfxClipNote" value="' + esc(issue.clip_note || "") + '" placeholder="e.g. Re-say the second sentence: 2.5 knots, not 25" style="flex:1;min-width:14em;" onkeydown="if(event.key===\'Enter\')courseSetClip(\'' + id + '\', \'clip_note\')">' +
+      '<button class="ghost small" style="padding:4px 10px;" onclick="courseSetClip(\'' + id + '\', \'clip_note\')">Save</button></div>' +
+    '<label for="cfxClipLink" class="muted">Recorded clip</label>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"><input id="cfxClipLink" value="' + esc(issue.clip_link || "") + '" placeholder="Link to the file (Drive, Dropbox...)" style="flex:1;min-width:14em;">' +
+      '<button class="ghost small" style="padding:4px 10px;" onclick="courseClipSent(\'' + id + '\')">' + (cs === "sent" ? "Update link" : "Mark sent") + '</button>' +
+      (cs === "sent" && /^https?:\/\//i.test(String(issue.clip_link || "")) ? '<a class="small" href="' + esc(issue.clip_link) + '" target="_blank" rel="noopener">Open clip</a>' : '') +
+    '</div>' +
+    (cs === "sent" ? '<div class="small" style="grid-column:2;color:var(--low);">Recorded and ready for the edit.</div>' : '');
+}
+function courseSetDream(id) {
+  var on = !!(($("cfxDream") || {}).checked), v = on ? "true" : "";
+  optimistic(id, { dream_world: v }, { action: "updateIssue", issue_id: id, dream_world: v },
+    { failMsg: "That didn't save", noRefresh: true, done: function () {
+      toast(on ? "Moved to Dream world. It no longer counts towards the backlog." : "Back in the backlog.");
+      if (state.view === "course") renderCourse();
+    } });
+}
+function courseSetClip(id, field) {
+  var el = { presenter: "cfxPresenter", clip_status: "cfxClipStatus", clip_note: "cfxClipNote" }[field];
+  var v = String(($(el) || {}).value || "").trim(), f = {};
+  f[field] = v;
+  // Naming a presenter on a fix with no clip yet means a clip is needed.
+  var cur = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0] || {};
+  if (field === "presenter" && v && !clipStatusOf(cur)) f.clip_status = "needed";
+  optimistic(id, f, Object.assign({ action: "updateIssue", issue_id: id }, f),
+    { failMsg: "That didn't save", noRefresh: true, done: function () {
+      toast(field === "presenter" ? (v ? "Presenter: " + v + "." : "No presenter.") :
+            field === "clip_status" ? (v ? CLIP_LABEL[v] + "." : "No clip needed.") : "Saved.");
+      if (typeof openDevDetail === "function" && state.detailId === id) openDevDetail(id);
+      if (state.view === "course") renderCourse();
+    } });
+}
+function courseClipSent(id) {
+  var link = String(($("cfxClipLink") || {}).value || "").trim();
+  if (!/^https?:\/\//i.test(link)) { toast("Paste the link to the recorded clip first (https://...)."); return; }
+  var f = { clip_link: link, clip_status: "sent" };
+  optimistic(id, f, Object.assign({ action: "updateIssue", issue_id: id }, f),
+    { failMsg: "That didn't save", noRefresh: true, done: function () {
+      toast("Clip sent. It shows as ready for the edit.");
+      if (typeof openDevDetail === "function" && state.detailId === id) openDevDetail(id);
+      if (state.view === "course") renderCourse();
+    } });
+}
+// The batch ask: one Slack DM per presenter listing every clip waiting on
+// them. A dry run first, so the confirm says exactly who gets what.
+function courseRequestClips() {
+  busyShow("Working out who has clips waiting...");
+  apiPost({ action: "requestClips", dry_run: true }).then(function (res) {
+    busyHide();
+    if (!res || !res.ok) { toast((res && res.error) || "Couldn't check the clips."); return; }
+    var ps = (res.presenters || []).filter(function (p) { return p.clips; });
+    if (!ps.length) { toast("No clips waiting to be asked for. Name a presenter on a fix and set the clip to Needed."); return; }
+    var noEmail = ps.filter(function (p) { return !p.email; }).map(function (p) { return p.presenter; });
+    var msg = "Send a Slack message to " + ps.map(function (p) { return p.presenter + " (" + p.clips + " clip" + (p.clips === 1 ? "" : "s") + ")"; }).join(", ") + "?" +
+      (noEmail.length ? "\n\nNo email on file for " + noEmail.join(", ") + ", so they will be skipped." : "");
+    if (!confirm(msg)) return;
+    busyShow("Sending the clip requests...");
+    return apiPost({ action: "requestClips" }).then(function (r2) {
+      busyHide();
+      if (!r2 || !r2.ok) { toast((r2 && r2.error) || "The request didn't go."); return; }
+      var ok = (r2.presenters || []).filter(function (p) { return p.sent; });
+      var bad = (r2.presenters || []).filter(function (p) { return !p.sent; });
+      var badWords = bad.map(function (p) { return p.presenter + " (" + p.why + ")"; }).join(", ");
+      toast(ok.length ? "Asked " + ok.map(function (p) { return p.presenter; }).join(", ") + "." + (bad.length ? " Not sent to " + badWords + "." : "")
+                      : "Nothing sent: " + badWords + ".");
+      loadIssues();
+    });
+  }).catch(function (e) { busyHide(); toastErr("That", e); });
+}
+
 function courseSetNeeds(id) {
   var v = needsFromTicks($("cfxNeeds"));
   optimistic(id, { media_kind: v }, { action: "updateIssue", issue_id: id, media_kind: v },
-    { failMsg: "That didn't save", noRefresh: true, done: function () { toast(v ? "Saved: " + mediaLabel(v) + "." : "Saved: nothing ticked."); } });
+    { failMsg: "That didn't save", noRefresh: true, done: function () {
+      toast(v ? "Saved: " + mediaLabel(v) + "." : "Saved: nothing ticked.");
+      // r271: ticking a recording need brings up the presenter and clip block.
+      var cur = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
+      if (cur && state.detailId === id && !!$("cfxPresenter") !== clipWanted(cur) && typeof openDevDetail === "function") openDevDetail(id);
+    } });
 }
 function isTrue(v) { return v === true || v === "true" || v === "TRUE"; }
 
 function courseSetLesson(id) {
-  var raw = String(($("cfxLesson") || {}).value || "").trim();
+  var all = String(($("cfxLesson") || {}).value || "").split(/[,;\/\n]+/).map(function (x) { return x.trim(); }).filter(String);
+  var raw = all[0] || "";
+  var extras = all.slice(1).map(function (x) { return x.toUpperCase().replace(/^(EN|DS|YM|FT)\s*(\d)/, "$1.$2"); });
+  var bad = extras.filter(function (x) { return !/^(EN|DS|YM|FT)[\s.]*\d/i.test(x); });
+  if (bad.length) { toast("\u201c" + bad[0] + "\u201d isn't a code like YM.03.08.04."); return; }
   var m = raw.match(/\b(EN|DS|YM|FT)[\s.]*?(\d{1,2})(?:[\s.]+(\d{1,3}))?/i);
   if (!m) { toast("That needs a code like DS.12.12.22."); return; }
   var pfx = m[1].toUpperCase(), mod = parseInt(m[2], 10), les = m[3] ? parseInt(m[3], 10) : null;
@@ -5383,11 +5498,13 @@ function courseSetLesson(id) {
     course: COURSE_NAMES[pfx] || "",
     // The saved module wins over the one worked out from the code, so it has
     // to move with the code or the drawer goes on showing the old one.
-    module: (MODULE_TITLES[pfx] || {})[mod] || ""
+    module: (MODULE_TITLES[pfx] || {})[mod] || "",
+    // r271: the codes this slide or video is shared with.
+    also_lessons: extras.join(", ")
   };
   optimistic(id, fields, Object.assign({ action: "updateIssue", issue_id: id }, fields),
     { failMsg: "That didn't save", noRefresh: true, done: function () {
-      toast("Code changed to " + fields.lesson + ".");
+      toast("Code changed to " + [fields.lesson].concat(extras).join(", ") + ".");
       var cur = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
       if (cur && typeof openDevDetail === "function") openDevDetail(id);
     } });
@@ -16870,7 +16987,9 @@ function subRailSpecOwn_() {
   };
   if (v === "course") return {
     head: "Course fixes", cur: state.courseFilter, go: setCourseFilter,
-    items: [{ key: "todo", label: "To do" }, { key: "fixed", label: "Fixed / done" }, { key: "all", label: "All" }]
+    items: [{ key: "todo", label: "To do" }, { key: "fixed", label: "Fixed / done" }, { key: "all", label: "All" },
+      // r271 (Edd): the wish list, and the clip run for the presenters.
+      { key: "clips", label: "Clips" }, { key: "dream", label: "Dream world" }]
   };
   // The manual's contents. It is a section list, which is what this bar
   // already is everywhere else, so it goes in here rather than the manual
@@ -17825,7 +17944,7 @@ function searchHay(i) {
     trail += " " + (rp.student_name || "") + " " + (rp.student_contact || "") +
              " " + (rp.instructor_name || "") + " " + (rp.summary || "") + " " + (rp.raw_text || "");
   });
-  var hay = ((i.lesson_code || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
+  var hay = ((i.lesson_code || "") + " " + (i.also_lessons || "") + " " + (i.summary || "") + " " + (i.student_name || "") +
           " " + (i.lesson || "") + " " + (i.module || "") + " " + (i.device_info || "") +
           " " + (i.resolution_note || "") + " " + (i.student_contact || "") +
           " " + (i.instructor_name || "") + " " + (i.assignee || "") +
@@ -20594,8 +20713,14 @@ function openDetail(issue) {
   // dropdown and not saved. Both tests have to pass, so the saved status is
   // recorded here and read by onStatusChange.
   state._detailStatus = String(issue.status || "open").toLowerCase();
-  var sameLesson = issue.lesson_code
-    ? state.issues.filter(function (i) { return i.lesson_code === issue.lesson_code; })
+  // r271: any shared lesson counts, so a fix filed on FT and YM batches
+  // with the issues on either.
+  var myLessons = lessonCodesOf(issue);
+  var sameLesson = myLessons.length
+    ? state.issues.filter(function (i) {
+        if (i.issue_id === issue.issue_id) return true;
+        return lessonCodesOf(i).some(function (c) { return myLessons.indexOf(c) >= 0; });
+      })
     : [issue];
   var otherOpen = sameLesson.filter(function (i) { return i.issue_id !== issue.issue_id && isOpen(i); });
 
@@ -20642,9 +20767,11 @@ function openDetail(issue) {
 
   if (otherOpen.length) {
     html += '<div class="batch"><strong>' + otherOpen.length + ' other open issue' +
-      (otherOpen.length > 1 ? 's' : '') + ' on this lesson (' + esc(issue.lesson_code) + ')</strong>' +
+      (otherOpen.length > 1 ? 's' : '') + ' on ' + (myLessons.length > 1 ? 'these lessons' : 'this lesson') + ' (' + esc(myLessons.join(", ")) + ')</strong>' +
       '<div class="small" style="margin:4px 0 8px;">Fix them together.</div>' +
-      '<button class="ghost small" style="padding:4px 10px;" onclick="viewAllOnLesson(\'' + esc(issue.lesson_code) + '\')">View all on this lesson</button></div>';
+      myLessons.map(function (c) {
+        return '<button class="ghost small" style="padding:4px 10px;margin-right:6px;" onclick="viewAllOnLesson(\'' + esc(c) + '\')">View all on ' + (myLessons.length > 1 ? esc(c) : 'this lesson') + '</button>';
+      }).join("") + '</div>';
   }
 
   // Affected students up top for quick reference.
@@ -22206,6 +22333,31 @@ function courseIsTodo(status) {
   var s = (status || "").toLowerCase();
   return s === "open" || s === "with_dev";
 }
+// r271 (Edd, 1 Nov 2026): wish-list ideas. Not parked (they stay live), but
+// not part of the backlog either, so every count and the To do view leave
+// them out and they have a view of their own.
+function isDreamWorld(i) { return isTrue(i && i.dream_world); }
+function courseTodo(i) { return courseIsTodo(i.status) && !isDreamWorld(i); }
+// r271: every lesson a fix is filed against. lesson_code is the primary; FT
+// and YM share slides, so further codes ride in also_lessons. Compared at the
+// module.lesson level, the same as lesson_code.
+function lessonCodesOf(i) {
+  var out = [], seen = {};
+  [String(i.lesson_code || "")].concat(String(i.also_lessons || "").split(",")).forEach(function (c) {
+    var m = String(c).toUpperCase().match(/\b(EN|DS|YM|FT)[\s.]*?(\d{1,2})(?:[\s.]+(\d{1,3}))?/);
+    if (!m) return;
+    var pad = function (n) { n = parseInt(n, 10); return (n < 10 ? "0" : "") + n; };
+    var k = m[1] + "." + pad(m[2]) + (m[3] ? "." + pad(m[3]) : "");
+    if (!seen[k]) { seen[k] = 1; out.push(k); }
+  });
+  return out;
+}
+function alsoLessonsOf(i) {
+  return String(i.also_lessons || "").split(",").map(function (c) { return c.trim(); }).filter(String);
+}
+// The clip a fix is waiting on, in words, for the card and the drawer.
+var CLIP_LABEL = { needed: "Clip needed", requested: "Clip requested", sent: "Clip sent" };
+function clipStatusOf(i) { var c = String((i && i.clip_status) || "").toLowerCase(); return CLIP_LABEL[c] ? c : ""; }
 
 // The course a fix belongs to, for grouping and filtering. Uses the stored
 // course when there is one; otherwise infers it from a real lesson/slide code
@@ -22240,12 +22392,18 @@ function courseCardHtml(i) {
   // way it applies to a single-category queue.
   var extra = [];
   if (part) extra.push(part);
+  // r271: a clip in play, with whose camera it is waiting on, and the wish list.
+  var cs = clipStatusOf(i);
+  if (cs) extra.push(CLIP_LABEL[cs] + (i.presenter ? " (" + String(i.presenter).trim() + ")" : ""));
+  if (isDreamWorld(i)) extra.push("Dream world");
+  var also = alsoLessonsOf(i);
   return '<div class="issue-card" data-id="' + esc(i.issue_id) + '" onclick="openDevDetail(\'' + esc(i.issue_id) + '\')">' +
     '<div class="top">' +
       priBadge(i.priority) +
       (reps > 1 ? '<span class="badge type-badge">×' + reps + ' reports</span>' : '') +
       (done ? statusBadge(i.status, i) : "") +
       (ref ? '<span class="code">' + esc(ref) + '</span>' : '') +
+      also.map(function (c) { return ' <span class="code" title="Same slide or video, so the fix applies here too">+ ' + esc(c) + '</span>'; }).join("") +
     '</div>' +
     (lessonLine ? '<div class="small muted" style="margin-bottom:2px;">' + esc(lessonLine) + '</div>' : '') +
     '<div class="sum"><strong>' + esc(cardTitle(i)) + '</strong></div>' +
@@ -22277,7 +22435,7 @@ function renderCourse() {
   // Stats. "To do" is what still needs doing; "Fixed / done" is everything
   // completed (marked fixed and awaiting verify, plus fully resolved).
   var isDone = function (s) { s = (s || "").toLowerCase(); return s === "dev_fixed" || s === "resolved"; };
-  $("courseStatQueue").textContent = pool.filter(function (i) { return courseIsTodo(i.status); }).length;
+  $("courseStatQueue").textContent = pool.filter(courseTodo).length;
   $("courseStatFixed").textContent = pool.filter(function (i) { return isDone(i.status); }).length;
   var durations = pool.filter(function (i) { return i.dev_passed_at && i.dev_fixed_at; })
     .map(function (i) { return new Date(i.dev_fixed_at) - new Date(i.dev_passed_at); })
@@ -22288,8 +22446,11 @@ function renderCourse() {
   // Status view first (To do / Fixed / All), then the dropdown filters narrow it.
   var statusPool = pool.filter(function (i) {
     var s = (i.status || "").toLowerCase();
-    if (state.courseFilter === "todo") return courseIsTodo(s);
+    if (state.courseFilter === "todo") return courseTodo(i);
     if (state.courseFilter === "fixed") return isDone(s);
+    if (state.courseFilter === "dream") return courseIsTodo(s) && isDreamWorld(i);
+    // r271: the clip run. Everything with a clip in play, still to do.
+    if (state.courseFilter === "clips") return courseTodo(i) && !!clipStatusOf(i);
     return true;
   });
 
@@ -22301,7 +22462,7 @@ function renderCourse() {
     if (state.courseKind !== "all" && kindOf(i) !== state.courseKind) return false;
     if (state.courseCourse !== "all" && (courseOf(i)) !== state.courseCourse) return false;
     if (state.courseModule !== "all" && (dispModule(i) || "") !== state.courseModule) return false;
-    if (state.courseLesson !== "all" && String(i.lesson_code || "") !== state.courseLesson) return false;
+    if (state.courseLesson !== "all" && lessonCodesOf(i).indexOf(state.courseLesson) < 0) return false;
     if (state.courseType !== "all" && refType(i) !== state.courseType) return false;
     if (state.coursePart === "none") { if (needsOf(i).length) return false; }
     else if (state.coursePart !== "all" && needsOf(i).indexOf(state.coursePart) === -1) return false;
@@ -22350,10 +22511,26 @@ function renderCourse() {
     });
   }
 
-  $("courseList").innerHTML = list.length
+  // r271: the clip run. Who is waiting on whom, and one button that asks
+  // every presenter for all of theirs at once.
+  var clipBar = "";
+  if (state.courseFilter === "clips") {
+    var waiting = {};
+    list.forEach(function (i) { if (clipStatusOf(i) === "needed" && String(i.presenter || "").trim()) { var p = String(i.presenter).trim(); waiting[p] = (waiting[p] || 0) + 1; } });
+    var noPres = list.filter(function (i) { return clipStatusOf(i) === "needed" && !String(i.presenter || "").trim(); }).length;
+    var wk = Object.keys(waiting).sort();
+    clipBar = '<div class="batch" style="margin:4px 0 12px;"><strong>' +
+      (wk.length ? wk.map(function (p) { return esc(p) + ": " + waiting[p] + " to ask for"; }).join(" &middot; ") : "No clips waiting to be asked for") + '</strong>' +
+      (noPres ? '<div class="small" style="margin-top:4px;">' + noPres + ' need' + (noPres === 1 ? 's' : '') + ' a presenter named first.</div>' : '') +
+      '<div class="small" style="margin:4px 0 8px;">Sends each presenter one Slack message listing all their clips, so the camera is set up once.</div>' +
+      (canEditCourseFix() ? '<button class="ghost small" style="padding:4px 10px;"' + (wk.length ? '' : ' disabled') + ' onclick="courseRequestClips()">Request clips</button>' : '') +
+    '</div>';
+  }
+  $("courseList").innerHTML = clipBar + (list.length
     ? '<div class="small muted" style="margin:4px 0 10px;">' + list.length + ' fix' + (list.length === 1 ? "" : "es") + ' shown</div>' +
       list.map(courseCardHtml).join("")
-    : '<p class="muted">Nothing here.</p>';
+    : '<p class="muted">' + (state.courseFilter === "dream" ? "Nothing in Dream world. Tick it on a fix to move it here." :
+        state.courseFilter === "clips" ? "No clips in play. Tick Video edit, Refilm or Audio on a fix and name a presenter." : "Nothing here.") + '</p>');
   renderCourseTools();
   renderCourseReview();
   // Confusion -> content-tweak suggestions (Round 45): fetched once per
@@ -22456,7 +22633,7 @@ function courseBulkMatches(issue, conds) {
 // the write itself.
 function courseBulkTargets(conds) {
   conds = conds || state.courseBulkConds || [];
-  return courseQueueAll().filter(function (i) { return courseIsTodo(i.status); })
+  return courseQueueAll().filter(courseTodo)
     .filter(function (i) { return courseBulkMatches(i, conds); });
 }
 
@@ -22645,7 +22822,9 @@ function renderCourseFilters(statusPool) {
   var forModules = statusPool.filter(function (i) { return state.courseCourse === "all" || (courseOf(i)) === state.courseCourse; });
   var modules = courseUniq(forModules, function (i) { return dispModule(i) || ""; });
   var forLessons = forModules.filter(function (i) { return state.courseModule === "all" || (dispModule(i) || "") === state.courseModule; });
-  var lessons = courseUniq(forLessons, function (i) { return String(i.lesson_code || ""); });
+  var lessonSeen = {};
+  forLessons.forEach(function (i) { lessonCodesOf(i).forEach(function (c) { lessonSeen[c] = 1; }); });
+  var lessons = Object.keys(lessonSeen).sort();
   var assignees = courseUniq(statusPool, function (i) { return String(i.assignee || "").trim(); });
 
   if (state.courseCourse !== "all" && courses.indexOf(state.courseCourse) < 0) state.courseCourse = "all";
@@ -22912,6 +23091,8 @@ function openDevDetail(id) {
       kv("Course", dispCourse(issue)) +
       kv("Module", dispModule(issue)) +
       kv("Lesson", dispLesson(issue)) +
+      (alsoLessonsOf(issue).length ? kv("Also on", alsoLessonsOf(issue).join(", ")) : "") +
+      (catOf(issue) === "course_error" && !canEditCourseFix() && clipStatusOf(issue) ? kv("Clip", CLIP_LABEL[clipStatusOf(issue)] + (issue.presenter ? " (" + issue.presenter + ")" : "")) : "") +
     '</div>' +
     (catOf(issue) === "course_error" && canEditCourseFix() ? courseFixEditHtml(issue) : "");
 
