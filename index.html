@@ -965,6 +965,9 @@
   .subrail-item.active { background: var(--surface-2); color: var(--text); font-weight: 600; }
   .subrail-item .sn { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--muted); }
   .subrail-item.active .sn { color: var(--text); }
+  /* FB-0486: a page's own sections, tucked under it in a rail group. */
+  .subrail-item.sub { padding-left: 26px; font-size: 13px; }
+  .subrail-head.sub { padding-left: 26px; }
   /* The sub-rail replaces the pill strip rather than doubling it up. */
   @media (min-width: 761px) {
     body.shell.subrail-on #issuesSegWrap.on,
@@ -16742,10 +16745,18 @@ function subRailSpec() {
   if (!page) return own;
   var pages = railGroupPages(page.group);
   if (pages.length < 2) return own;
-  var items = pages.map(function (x) { return { key: "@grp:" + x.view, label: x.label }; });
-  if (own && own.items && own.items.length > 1) {
-    items = items.concat([{ head: true, label: own.head }], own.items);
-  }
+  // FB-0486 (Edd): "customs invoice and report should load under shipping
+  // slightly indented. Not below the rest of the menu." The open page's own
+  // sections now sit straight under it, indented, rather than after the
+  // group's other pages under a heading of their own. A heading inside the
+  // page's own list (Developers' "Diagnosis") stays, indented with them.
+  var items = [];
+  pages.forEach(function (x) {
+    items.push({ key: "@grp:" + x.view, label: x.label });
+    if (x.view === page.view && own && own.items && own.items.length > 1) {
+      own.items.forEach(function (it) { items.push(Object.assign({}, it, { sub: true })); });
+    }
+  });
   return {
     head: page.group.label,
     cur: own ? own.cur : null,
@@ -16873,9 +16884,9 @@ function renderSubRail() {
   state._subRailGo = spec.go;
   bar.innerHTML = '<div class="subrail-head">' + esc(spec.head) + '</div>' +
     spec.items.map(function (it) {
-      if (it.head) return '<div class="subrail-head" style="margin-top:14px;">' + esc(it.label) + '</div>';
+      if (it.head) return '<div class="subrail-head' + (it.sub ? ' sub' : '') + '" style="margin-top:14px;">' + esc(it.label) + '</div>';
       var on = it.key === spec.cur || (spec.pageKey && it.key === spec.pageKey);
-      return '<button type="button" class="subrail-item' + (on ? " active" : "") + '" data-key="' + esc(it.key) + '" ' +
+      return '<button type="button" class="subrail-item' + (it.sub ? " sub" : "") + (on ? " active" : "") + '" data-key="' + esc(it.key) + '" ' +
         'onclick="subRailGo(\'' + esc(it.key) + '\')">' + esc(it.label) +
         (it.n ? '<span class="sn">' + (it.n > 99 ? "99+" : it.n) + '</span>' : '') + '</button>';
     }).join("");
@@ -25363,10 +25374,10 @@ function printManual() {
 </div>
 <style>
   /* r270: the deep-link loader (FB-0512). */
-  #deepLoader { position: fixed; inset: 0; z-index: 9000; display: none; align-items: center; justify-content: center;
+  #deepLoader { position: fixed; inset: 0; z-index: 10050; display: none; align-items: center; justify-content: center;
     background: rgba(15,27,45,.86); }
   #deepLoader.show { display: flex; }
-  #deepLoader .dl-box { text-align: center; color: var(--text, #E8EDF2); }
+  #deepLoader .dl-box { text-align: center; color: #E8EDF2; font-size: 15px; }
   #deepLoader .dl-office { position: relative; width: 220px; height: 120px; margin: 0 auto 14px; }
   #deepLoader .dl-cab { position: absolute; bottom: 0; width: 46px; height: 92px; border: 2px solid #8aa0b8; border-radius: 4px; background: #1A2B40; }
   #deepLoader .dl-cab.a { left: 14px; } #deepLoader .dl-cab.b { right: 14px; }
