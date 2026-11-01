@@ -11420,8 +11420,17 @@ function railGroupBadges() {
 // arrives from the API at run time. Notes and answers are rendered by notesMd(),
 // which escapes everything first and only then adds headings, bullets and bold.
 var NOTES_API = "https://ardent-notes.vercel.app/api/tracker";
+// r270 (security sweep, 1 Nov 2026): the ticket proves someone is logged in
+// to the tracker as this email, and tracker admins can create accounts with
+// any email, so Ardent Notes also asks for a key only the real person can make
+// (Ardent Notes, Settings, "Bug tracker access"). Kept per browser, sent as
+// x-notes-key. A 403 with needs_key means "ask for it", not "ticket expired".
+var NOTES_KEY_STORE = "ait_notes_key";
+function notesKey() { return (localGet(NOTES_KEY_STORE) || "").trim(); }
+function notesSetKey(v) { v = (v || "").trim(); if (v) localSet(NOTES_KEY_STORE, v); else { try { localStorage.removeItem(NOTES_KEY_STORE); } catch (e) {} } }
+
 var notes = {
-  ticket: "", exp: 0,
+  ticket: "", exp: 0, needsKey: false,
   list: null, account: null, apps: null, folders: [], listLoading: false, listError: "",
   q: "", qTimer: 0, folder: "", open: {},
   openId: "", item: null, itemLoading: false, itemError: "", filing: false,
@@ -11451,6 +11460,7 @@ function notesApi(path, opts, retried) {
   opts = opts || {};
   return notesTicket(!!retried).then(function (t) {
     var init = { method: opts.body ? "POST" : "GET", cache: "no-store", headers: { authorization: "Bearer " + t } };
+    var k = notesKey(); if (k) init.headers["x-notes-key"] = k;
     if (opts.body) { init.headers["content-type"] = "application/json"; init.body = JSON.stringify(opts.body); }
     return fetch(NOTES_API + path + (opts.query ? "?" + opts.query : ""), init);
   }).then(function (r) {
@@ -11458,6 +11468,8 @@ function notesApi(path, opts, retried) {
       var j = null;
       try { j = JSON.parse(txt); } catch (e) {}
       if (r.status === 401 && !retried && !(j && /different NOTES_TICKET_SECRET|doesn't have NOTES/.test(j.error || ""))) { notes.ticket = ""; notes.exp = 0; return notesApi(path, opts, true); }
+      if (r.status === 403 && j && j.needs_key) { notes.needsKey = true; var ke = new Error(j.error || "Ardent Notes needs your access key."); ke.needsKey = true; throw ke; }
+      notes.needsKey = false;
       if (!r.ok) throw new Error((j && j.error) || ("Notes returned " + r.status + "."));
       return j || {};
     });
@@ -11573,6 +11585,27 @@ function notesFolderOptions(cur, withAll) {
   return (withAll ? opt("", "All folders") : opt("", "Not filed")) +
     names.map(function (f) { return opt(f, f); }).join("") +
     (withAll ? opt("@none", "Not filed") : opt("@new", "New folder..."));
+}
+
+// The key never leaves this browser except as the x-notes-key header to Ardent Notes.
+function notesKeyPromptHtml(msg) {
+  var had = !!notesKey();
+  return '<div style="padding:10px;">' +
+    '<p style="margin:0 0 6px;"><strong>' + (had ? 'Ardent Notes didn\'t accept your key' : 'Connect Ardent Notes') + '</strong></p>' +
+    '<p class="small muted" style="margin:0 0 10px;">' + esc(msg || "") + '</p>' +
+    '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">' +
+      '<input type="password" id="notesKeyIn" placeholder="nk_…" autocomplete="off" spellcheck="false" style="flex:1 1 260px;min-width:0;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();notesSaveKey();}" />' +
+      '<button type="button" class="primary" style="flex:0 0 auto;width:auto;padding:8px 18px;" onclick="notesSaveKey()">Connect</button>' +
+      '<a class="small" href="https://ardent-notes.vercel.app/settings" target="_blank" rel="noopener">Open Ardent Notes settings</a>' +
+    '</div></div>';
+}
+function notesSaveKey() {
+  var el = $("notesKeyIn");
+  var v = ((el && el.value) || "").trim();
+  if (!/^nk_[A-Za-z0-9_-]{40,}$/.test(v)) { if (el) { el.style.borderColor = "var(--coral)"; el.focus(); } return; }
+  notesSetKey(v);
+  notes.needsKey = false; notes.listError = ""; notes.list = null;
+  notesLoadList();
 }
 
 function notesRenderHead() {
@@ -11735,6 +11768,7 @@ function notesRenderList() {
   if (notes.account === false) { host.innerHTML = ""; host.style.display = "none"; return; }
   host.style.display = "";
   if (notes.listLoading && !notes.list) { host.innerHTML = '<p class="small muted" style="padding:10px;">Loading your meetings...</p>'; return; }
+  if (notes.listError && notes.needsKey) { host.innerHTML = notesKeyPromptHtml(notes.listError); return; }
   if (notes.listError) { host.innerHTML = '<p class="small" style="padding:10px;color:var(--coral);">' + esc(notes.listError) + '</p>'; return; }
   var rows = notesFiltered();
   if (!rows.length) {
