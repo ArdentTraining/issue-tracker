@@ -3340,6 +3340,7 @@
   <p>When a student submits a mock or final exam, the paper lands in <span class="ui">Marking</span>. The queue opens on the open papers; <span class="ui">Mine</span>, <span class="ui">Unclaimed</span> and <span class="ui">Sent</span> narrow it, and the search finds a student by name or email.</p>
   <p><span class="ui">Claim</span> a paper and you grade it first, blind: every answer gets Strong, Good, Fair or Poor, and a tick says whether it needs written feedback. Nothing from the engine is on that screen, on purpose, so your grade is your own. Green and red are the quiz's own marking, and <span class="ui">mark right</span> or <span class="ui">mark wrong</span> corrects it where it compared text rather than meaning. The keys 1 to 4, f, j, k and Enter work down the paper without the mouse.</p>
   <p>Then <span class="ui">Write feedback</span>: the engine writes for the ticked answers only, a few at a time, and the paper opens for you to check. Read each one, edit the words, move the grade if you must (that is recorded as moved after reading), and press <span class="ui">Looks right</span>. Make the readiness call (or on a Final, the RYA grade), then <span class="ui">Finalise</span>. From then on the paper's answers are calibration for the next student on the same questions, so they can't change.</p>
+  <p>Pictures can sit inside the feedback. Each one under the box has a number, and <span class="ui">Put it here</span> drops a <span class="ui">[picture 2]</span> line where the cursor is, which is where that picture goes in the PDF. A picture pasted straight into the box lands where it was pasted. Any picture without a line still goes under the feedback.</p>
   <p>Finally download the PDF, copy the covering email into Chatwoot with the PDF attached, and press <span class="ui">I've sent the email and the PDF</span>. <span class="ui">Not sent after all</span> undoes a misclick. Only the instructor who claimed a paper can change it.</p>
   <p><span class="ui">Insights</span> shows how often the engine's grade agrees with yours (blind grades only), how long students wait, and which questions iSpring marks too strictly. <span class="ui">Photos owed</span> lists the open papers still waiting on chartwork photos, with a nudge drafted in the instructor's name to paste into Chatwoot.</p>
 </section>
@@ -13017,6 +13018,8 @@ function mpTriageCard(a, i) {
     '</div>';
   var body = !open ? "" :
     '<p style="white-space:pre-wrap;margin:6px 0 8px;font-weight:600;">' + esc(a.question_text) + '</p>' +
+    // FB-0489 (r270): the picture the student answered from.
+    mkImages(a.question_images, "Picture for " + a.question_code) +
     mpCompareHtml(a, views, canAct) +
     (a.expects_photo && !hasPhoto ? '<p class="small muted">No photo placed for this one yet. The plot is most of the answer.</p>' : '');
   return '<li id="mpCard' + i + '" tabindex="-1" data-i="' + i + '" onmousedown="mp.focus=Number(this.dataset.i);mpOutline()" class="card" style="margin-bottom:' + (open ? "10px" : "6px") + ';' + (open ? "" : "padding-top:8px;padding-bottom:8px;") + (i === mp.focus ? "box-shadow:0 0 0 2px var(--accent);" : "") + '">' +
@@ -13273,6 +13276,7 @@ function mpReviewCard(a, readOnly) {
   var body = "";
   if (l.open) {
     body = '<p style="white-space:pre-wrap;margin:8px 0 8px;font-weight:600;">' + esc(a.question_text) + '</p>' +
+      mkImages(a.question_images, "Picture for " + a.question_code) +
       mpCompareHtml(a, views, !readOnly) +
       (a.expects_photo && a.has_engine_feedback && hasPhoto && !readOnly ? '<p class="small muted">If this feedback was written before the photo was placed, the engine didn\'t see the plot. <a href="#" data-a="' + esc(a.answer_id) + '" onclick="mpRewrite(this.dataset.a);return false;">Write it again with the photo</a></p>' : '') +
       '<h5 style="margin:8px 0 2px;">Your grade, from triage</h5><div style="display:flex;gap:6px;flex-wrap:wrap;">' +
@@ -13282,9 +13286,8 @@ function mpReviewCard(a, readOnly) {
       '<h5 style="margin:8px 0 2px;">Feedback to the student ' + (a.feedback_source === "house" ? '<span class="badge" style="background:rgba(46,125,50,.14);">Ardent\'s own wording</span>' : a.feedback_source === "generated" ? '<span class="badge">written by the engine</span>' : '') + '</h5>' +
       (a.cross_note ? '<div class="small" style="background:var(--surface-2);padding:6px 8px;border-radius:6px;margin-bottom:6px;"><strong>From the rest of the paper.</strong> ' + esc(a.cross_note) + ' <a href="#" data-a="' + esc(a.answer_id) + '" onclick="mpRevAddNote(this.dataset.a);return false;">Add it to the feedback</a></div>' : '') +
       (!a.has_engine_feedback && !l.saved ? '<p class="small muted">The engine hasn\'t written anything for this one. Write it here, or approve the question in the question bank and press Write it now.</p>' : '') +
-      '<textarea id="mpFb-' + esc(a.answer_id) + '" rows="5" style="width:100%;" aria-label="Feedback for ' + esc(a.question_code) + '" placeholder="Leave it empty if there is nothing worth saying. Paste a picture here to add it." data-a="' + esc(a.answer_id) + '" oninput="mpRevType(this.dataset.a, this.value)" onpaste="mpPicPaste(event, this.dataset.a)"' + (readOnly ? " disabled" : "") + '>' + esc(l.feedback) + '</textarea>' +
-      mpMyPicsHtml(a, readOnly) +
-      (a.feedback_images.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;">' + a.feedback_images.map(function (u) { return '<a href="' + mpUrl(u, true) + '" target="_blank" rel="noreferrer"><img src="' + mpUrl(u, true) + '" alt="Diagram that goes with this feedback" referrerpolicy="no-referrer" style="max-width:220px;max-height:160px;border:1px solid var(--line);border-radius:6px;background:#fff;" /></a>'; }).join("") + '</div><p class="small muted">These diagrams go into the PDF with the feedback.</p>' : '') +
+      '<textarea id="mpFb-' + esc(a.answer_id) + '" rows="' + (/\[picture \d+\]/i.test(l.feedback || "") ? 9 : 5) + '" style="width:100%;" aria-label="Feedback for ' + esc(a.question_code) + '" placeholder="Leave it empty if there is nothing worth saying. Paste a picture here to put it at that spot." data-a="' + esc(a.answer_id) + '" oninput="mpRevType(this.dataset.a, this.value)" onpaste="mpPicPaste(event, this.dataset.a)" onkeyup="mpFbCaret(this)" onclick="mpFbCaret(this)"' + (readOnly ? " disabled" : "") + '>' + esc(l.feedback) + '</textarea>' +
+      mpFeedbackPicsHtml(a, l, readOnly) +
       (l.error ? '<p class="small" style="color:var(--coral);">' + esc(l.error) + '</p>' : '') +
       '<div style="margin-top:8px;"><button type="button" class="' + (l.saved ? "ghost" : "primary") + '" style="width:auto;" data-a="' + esc(a.answer_id) + '" onclick="mpRevSave(this.dataset.a)"' + (readOnly || l.pending || !l.grade || (!a.has_engine_feedback && !(l.feedback || "").trim()) ? " disabled" : "") + '>' +
         // "Looks right" only while the engine's words are untouched; once
@@ -13307,6 +13310,52 @@ function mpRedrawReviewCard(answerId) {
 // Paste one into the box or pick a file. Shrunk in the browser to 1600px JPEG
 // (or kept as a small PNG) before it goes, and drawn into the PDF under the
 // feedback.
+// FB-0507 (r270): pictures inside the text. A line "[picture N]" in the
+// feedback puts picture N there in the PDF. The numbers run over the
+// diagrams that came with Ardent's own wording first, then the ones added by
+// hand, the same order the PDF uses. "Put it here" drops the line in at the
+// cursor, and a picture pasted into the box lands where it was pasted.
+// Pictures no line points at still go under the feedback, as before.
+var mpCaret = {};
+function mpFbCaret(el) { if (el && el.dataset) mpCaret[el.dataset.a] = el.selectionStart; }
+function mpFeedbackPicList(a) {
+  return (a.feedback_images || []).map(function (u) { return { url: u, mine: false }; })
+    .concat((a.my_images || []).map(function (p) { return { url: p.url, ref: p.ref, mine: true }; }));
+}
+function mpFeedbackPicsHtml(a, l, readOnly) {
+  var pics = mpFeedbackPicList(a);
+  var placed = {};
+  String(l.feedback || "").replace(/\[picture\s+(\d{1,2})\]/gi, function (_, n) { placed[Number(n)] = 1; return ""; });
+  var busy = mp.picBusy && mp.picBusy[a.answer_id];
+  return '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin:6px 0;">' +
+    pics.map(function (p, i) {
+      var n = i + 1;
+      return '<div style="display:flex;flex-direction:column;gap:2px;align-items:flex-start;">' +
+        '<span class="small"><strong>Picture ' + n + '</strong>' + (placed[n] ? ' <span class="muted">placed</span>' : '') + '</span>' +
+        '<a href="' + mpUrl(p.url, true) + '" target="_blank" rel="noreferrer"><img src="' + mpUrl(p.url, true) + '" alt="' + (p.mine ? "Your picture" : "Diagram") + ' for this feedback" referrerpolicy="no-referrer" style="max-width:200px;max-height:140px;border:1px solid var(--line);border-radius:6px;background:#fff;" /></a>' +
+        (readOnly ? '' : '<span class="small">' +
+          (placed[n] ? '' : '<a href="#" data-a="' + esc(a.answer_id) + '" data-n="' + n + '" onclick="mpPicPlace(this.dataset.a, Number(this.dataset.n));return false;">Put it here</a>') +
+          (p.mine ? (placed[n] ? '' : ' &middot; ') + '<a href="#" data-a="' + esc(a.answer_id) + '" data-r="' + esc(p.ref) + '" onclick="mpPicRemove(this.dataset.a, this.dataset.r);return false;">Remove</a>' : '') +
+        '</span>') + '</div>';
+    }).join("") +
+    (readOnly ? '' : '<label class="ghost small" style="display:inline-flex;align-items:center;gap:6px;width:auto;margin:0;padding:4px 10px;border:1px solid var(--line);border-radius:999px;cursor:pointer;">' + (busy ? "Adding..." : "Add a picture") +
+      '<input type="file" accept="image/png,image/jpeg,image/*" style="display:none;" data-a="' + esc(a.answer_id) + '" onchange="mpPicAdd(this.dataset.a, this.files && this.files[0]);this.value=\'\';"></label>') +
+    '</div>' +
+    (pics.length ? '<p class="small muted" style="margin-top:0;">"Put it here" puts the picture where the cursor is in the feedback. Any not placed go under the feedback in the PDF.</p>' : '');
+}
+// Insert "[picture n]" on its own line at the remembered cursor, or the end.
+function mpPicPlace(id, n) {
+  var l = mp.rev[id]; if (!l) return;
+  var box = $("mpFb-" + id);
+  var text = box ? box.value : (l.feedback || "");
+  var at = mpCaret[id] != null ? Math.min(mpCaret[id], text.length) : text.length;
+  var before = text.slice(0, at), after = text.slice(at);
+  var line = "[picture " + n + "]";
+  var ins = (before && !/\n$/.test(before) ? "\n" : "") + line + (after && !/^\n/.test(after) ? "\n" : "");
+  l.feedback = before + ins + after; l.dirty = true;
+  mpCaret[id] = (before + ins).length;
+  mpRedrawReviewCard(id);
+}
 function mpMyPicsHtml(a, readOnly) {
   var pics = a.my_images || [];
   var busy = mp.picBusy && mp.picBusy[a.answer_id];
@@ -13348,11 +13397,21 @@ function mpPicAdd(id, file) {
   }).then(function (r) {
     mp.picBusy[id] = false;
     if (!r || !r.ok) { toast((r && r.error) || "That picture didn't save."); mpRedrawReviewCard(id); return; }
-    toast("Picture added. It goes into the PDF with this feedback.");
+    // FB-0507: it lands where the cursor was, as the last picture in the list.
+    var a0 = (mp.paper && mp.paper.answers || []).filter(function (x) { return x.answer_id === id; })[0];
+    var l0 = mp.rev[id];
+    if (a0 && l0 && mpCaret[id] != null) {
+      var n0 = (a0.feedback_images || []).length + (a0.my_images || []).length + 1;
+      var t0 = l0.feedback || "", at0 = Math.min(mpCaret[id], t0.length);
+      l0.feedback = t0.slice(0, at0) + (at0 && t0[at0 - 1] !== "\n" ? "\n" : "") + "[picture " + n0 + "]\n" + t0.slice(at0);
+      l0.dirty = true;
+      toast("Picture added where you pasted it. Save to keep it there.");
+    } else toast("Picture added. It goes into the PDF with this feedback.");
     mpOpen(mp.openId, true);
   }).catch(function (e) { mp.picBusy[id] = false; toast((e && e.message) || String(e)); mpRedrawReviewCard(id); });
 }
 function mpPicPaste(e, id) {
+  if (e.target) mpFbCaret(e.target);
   var items = (e.clipboardData && e.clipboardData.items) || [];
   for (var k = 0; k < items.length; k++) {
     if (items[k].kind === "file" && /^image\//.test(items[k].type)) { e.preventDefault(); mpPicAdd(id, items[k].getAsFile()); return; }
