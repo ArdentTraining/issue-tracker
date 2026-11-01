@@ -742,11 +742,11 @@ function applyPayload(j, stale){
   if(sel.options.length!==courses.length+1){
     sel.innerHTML='<option value="">All courses</option>'+courses.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
   }
-  /* r270: the figures are worked out every 15 minutes on the server, so say
+  /* r270: the figures are worked out hourly on the server, so say
      when, rather than when this page last asked. */
   const snapAt = j.snapshot_at ? new Date(j.snapshot_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
   document.getElementById('stamp').textContent = stale ? ('showing figures from ' + stale + ', refreshing…')
-    : (snapAt ? ('figures as of ' + snapAt + ', updated every 15 minutes') : ('updated ' + new Date().toLocaleTimeString('en-GB')));
+    : (snapAt ? ('figures as of ' + snapAt + ', worked out hourly') : ('updated ' + new Date().toLocaleTimeString('en-GB')));
   render();
 }
 /* FB-0401 (Edd): "There should be a 'log it' or 'open case' button next to
