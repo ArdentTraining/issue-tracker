@@ -68,7 +68,7 @@ var SLACK_NOTICES = {
   // than posting a score. Same channel as the answers to their questions.
   // r234 (Edd, 17 Oct 2026): "ditch this from them and us." Off everywhere.
   dev_targets:       { on: false, to: 'SLACK_AUREUS_TECH' },
-  // r269 (Edd, 1 Nov 2026): the batched clip request. A DM to each presenter,
+  // r271 (Edd, 1 Nov 2026): the batched clip request. A DM to each presenter,
   // sent only when someone on the course team presses Request clips; `to` is
   // unused because it never posts to a channel.
   clip_request:      { on: true,  to: '' },
@@ -561,18 +561,18 @@ var HEADERS = [
   // they were never blocked on us, which is the usual case.
   // APPENDED, never inserted - the column order here IS the sheet order.
   'dev_blocked_ms',            // BF cumulative ms an issue spent waiting on an answer from Ardent
-  // r269 (Edd, 1 Nov 2026): course fixes that are a nice idea rather than a
+  // r271 (Edd, 1 Nov 2026): course fixes that are a nice idea rather than a
   // fault. Not parked, because parked means "leave it alone unless it comes
   // up again"; these stay live but out of the backlog count, under their own
   // filter on the Course page.
   // APPENDED, never inserted - the column order here IS the sheet order.
   'dream_world',               // BG true = wish-list item, kept out of the course backlog
-  // r269 (Edd): FT and YM (and sometimes DS) share the exact same slide or
+  // r271 (Edd): FT and YM (and sometimes DS) share the exact same slide or
   // video, so one fix is a fix on both. lesson / lesson_code stay the primary
   // code; any further codes ride here as a comma list, written the same way
   // as `lesson` (full slide or question code where known).
   'also_lessons',              // BH e.g. "YM.03.08.04, DS.07.08"
-  // r269 (Edd): video and voiceover fixes need someone in front of the
+  // r271 (Edd): video and voiceover fixes need someone in front of the
   // camera before Lauren can edit. The presenter is named on the fix, and
   // their clips go to them in one batch so Charly sets the camera up once.
   'presenter',                 // BI instructor name, as on the Instructors list
@@ -829,7 +829,7 @@ function doPost(e) {
     if (action === 'addUpdate') return jsonOut(addUpdate_(body));
     if (action === 'splitIssue') return jsonOut(splitIssue_(body));
     if (action === 'linkIssues') return jsonOut(linkIssues_(body));
-    if (action === 'requestClips') return jsonOut(requestClips_(body));   // r269
+    if (action === 'requestClips') return jsonOut(requestClips_(body));   // r271
     if (action === 'deleteIssue') return jsonOut(deleteIssue_(body));
     if (action === 'passToDev') return jsonOut(passToDev_(body));
     if (action === 'markDevFixed') return jsonOut(markDevFixed_(body));
@@ -1384,7 +1384,7 @@ function reqPerm_(action) {
     // anyone who works a fix queue. Fetching a Chatwoot update sits with the
     // other update paths.
     case 'bulkAssign': case 'courseReview': return 'work';
-    // r269: narrowed to the course team inside requestClips_.
+    // r271: narrowed to the course team inside requestClips_.
     case 'requestClips': return 'work';
     // FB-0344 (Aman): the dev drawer's "Check for updates" calls this, and a
     // dev-only account has no 'log', so it 403'd. Read-only pull of newer
@@ -5626,7 +5626,7 @@ function updateIssue_(data) {
     var allowedKeys = { fix_size: 1 };
     // r213: what a course fix needs - anyone with the Course tab (Edd).
     if (hasPerm_(data._user, 'course')) allowedKeys.media_kind = 1;
-    // r269: the course team runs the wish-list tick and the clip workflow
+    // r271: the course team runs the wish-list tick and the clip workflow
     // themselves (Lauren asks, the presenter marks it sent).
     if (hasPerm_(data._user, 'course')) {
       ['dream_world', 'presenter', 'clip_status', 'clip_note', 'clip_link'].forEach(function (k) { allowedKeys[k] = 1; });
@@ -5637,7 +5637,7 @@ function updateIssue_(data) {
     if (blocked.length) return { ok: false, error: 'Only the fix size can be edited from this queue. Ask an admin for a priority change.' };
   }
   if (data.hasOwnProperty('media_kind')) data.media_kind = normNeeds_(data.media_kind);
-  // r269: the clip fields hold a small closed set, so a typo cannot strand an
+  // r271: the clip fields hold a small closed set, so a typo cannot strand an
   // item in a state no list shows.
   if (data.hasOwnProperty('clip_status')) {
     var cs = String(data.clip_status || '').toLowerCase().trim();
@@ -9001,7 +9001,7 @@ function ensureTriggers_() {
   var haveShipTag = false, haveShipMonthly = false;   // r188
   var haveAutoSize = false;   // r219
   var haveFileAfter = false;  // r222
-  var haveParked = false;     // r269
+  var haveParked = false;     // r271
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sendRecheckReminders') ScriptApp.deleteTrigger(t);
     if (t.getHandlerFunction() === 'monthlyChecklistReview') haveMonthly = true;
@@ -9050,7 +9050,7 @@ function ensureTriggers_() {
   if (!haveAutoSize) ScriptApp.newTrigger('autoSizeQueue').timeBased().everyDays(1).atHour(7).create();
   if (!haveWaiting) ScriptApp.newTrigger('waitingOnStudentSweep').timeBased().everyDays(1).atHour(8).create();
   if (!haveTold) ScriptApp.newTrigger('studentToldSweep').timeBased().everyDays(1).atHour(6).create();
-  // r269 (Edd): parked a year with no new report closes itself. 05:30-ish,
+  // r271 (Edd): parked a year with no new report closes itself. 05:30-ish,
   // before the morning jobs read the board.
   if (!haveParked) ScriptApp.newTrigger('parkedAutoClose').timeBased().everyDays(1).atHour(5).nearMinute(30).create();
   if (!haveEnrich) ScriptApp.newTrigger('enrichContacts').timeBased().everyDays(1).atHour(19).create();   // r152: end of the working day
@@ -11371,7 +11371,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r269 · 2026-11-01';
+var CODE_STAMP = 'r271 · 2026-11-01';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -13601,7 +13601,7 @@ function autoResolveTbc() {
   return resolved;
 }
 
-// ---- r269: course fixes (Edd, 1 Nov 2026) -----------------------------------
+// ---- r271: course fixes (Edd, 1 Nov 2026) -----------------------------------
 
 var CLIP_STATUSES_ = { needed: 1, requested: 1, sent: 1 };
 var PARKED_AUTO_CLOSE_DAYS = 365;   // Edd: "parked for more than 12 months, it gets resolved"
@@ -17166,7 +17166,7 @@ var INBOX_STATUS_KEYS_ = { status: 1, priority: 1, severity: 1, request_kind: 1,
 //   tell-the-students lane or sends #instructing-daily a pile of asks).
 ['assignee', 'fix_size', 'media_kind', 'lesson', 'lesson_code', 'course', 'module',
  'category', 'notified_students'].forEach(function (k) { INBOX_STATUS_KEYS_[k] = 1; });
-// r269: the course-fix fields, so the backlog backfill (dream world ticks,
+// r271: the course-fix fields, so the backlog backfill (dream world ticks,
 // second lesson codes, presenters) goes through the same op.
 ['dream_world', 'also_lessons', 'presenter', 'clip_status', 'clip_note'].forEach(function (k) { INBOX_STATUS_KEYS_[k] = 1; });
 var INBOX_CATEGORIES_ = { course_error: 1, tech_issue: 1, shipping: 1 };

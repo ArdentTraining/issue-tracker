@@ -5349,7 +5349,7 @@ function canEditCourseFix() { return !!(state.perms && (state.perms.manage || st
 function canEditCourseLesson() { return !!(state.perms && state.perms.manage); }
 function courseFixEditHtml(issue) {
   var id = esc(issue.issue_id);
-  // r269: the primary code, then any the same slide or video is shared with.
+  // r271: the primary code, then any the same slide or video is shared with.
   var ref = [String(issue.lesson || issue.lesson_code || "")].concat(alsoLessonsOf(issue)).filter(String).join(", ");
   var was = String(issue.media_kind || "").toLowerCase();
   var hint = (!needsOf(issue).length && (was === "rework" || was === "other"))
@@ -5364,7 +5364,7 @@ function courseFixEditHtml(issue) {
         '<button class="ghost small" style="padding:4px 10px;" onclick="courseSetLesson(\'' + id + '\')">Save</button></div>' +
         '<div class="small muted" style="grid-column:2;margin-top:-2px;">Shared slide or video? Add each code, separated by commas. The first is the main one.</div>'
       : '') +
-    // r269 (Edd): a wish-list idea stays live but out of the backlog.
+    // r271 (Edd): a wish-list idea stays live but out of the backlog.
     '<span class="muted">Dream world</span>' +
     '<label style="display:inline-flex;align-items:center;gap:6px;font-weight:normal;cursor:pointer;">' +
       '<input type="checkbox" id="cfxDream" style="width:auto;margin:0;flex:none;"' + (isDreamWorld(issue) ? " checked" : "") +
@@ -5372,7 +5372,7 @@ function courseFixEditHtml(issue) {
     courseClipHtml(issue) +
   '</div>';
 }
-// r269 (Edd): video and voiceover fixes need a presenter to record before
+// r271 (Edd): video and voiceover fixes need a presenter to record before
 // Lauren can edit, and the presenter is asked in a batch. Ticking Video edit,
 // Refilm or Audio shows this block; so does a clip already in play.
 function clipWanted(issue) {
@@ -5475,7 +5475,7 @@ function courseSetNeeds(id) {
   optimistic(id, { media_kind: v }, { action: "updateIssue", issue_id: id, media_kind: v },
     { failMsg: "That didn't save", noRefresh: true, done: function () {
       toast(v ? "Saved: " + mediaLabel(v) + "." : "Saved: nothing ticked.");
-      // r269: ticking a recording need brings up the presenter and clip block.
+      // r271: ticking a recording need brings up the presenter and clip block.
       var cur = (state.issues || []).filter(function (x) { return x.issue_id === id; })[0];
       if (cur && state.detailId === id && !!$("cfxPresenter") !== clipWanted(cur) && typeof openDevDetail === "function") openDevDetail(id);
     } });
@@ -5499,7 +5499,7 @@ function courseSetLesson(id) {
     // The saved module wins over the one worked out from the code, so it has
     // to move with the code or the drawer goes on showing the old one.
     module: (MODULE_TITLES[pfx] || {})[mod] || "",
-    // r269: the codes this slide or video is shared with.
+    // r271: the codes this slide or video is shared with.
     also_lessons: extras.join(", ")
   };
   optimistic(id, fields, Object.assign({ action: "updateIssue", issue_id: id }, fields),
@@ -16988,7 +16988,7 @@ function subRailSpecOwn_() {
   if (v === "course") return {
     head: "Course fixes", cur: state.courseFilter, go: setCourseFilter,
     items: [{ key: "todo", label: "To do" }, { key: "fixed", label: "Fixed / done" }, { key: "all", label: "All" },
-      // r269 (Edd): the wish list, and the clip run for the presenters.
+      // r271 (Edd): the wish list, and the clip run for the presenters.
       { key: "clips", label: "Clips" }, { key: "dream", label: "Dream world" }]
   };
   // The manual's contents. It is a section list, which is what this bar
@@ -20713,7 +20713,7 @@ function openDetail(issue) {
   // dropdown and not saved. Both tests have to pass, so the saved status is
   // recorded here and read by onStatusChange.
   state._detailStatus = String(issue.status || "open").toLowerCase();
-  // r269: any shared lesson counts, so a fix filed on FT and YM batches
+  // r271: any shared lesson counts, so a fix filed on FT and YM batches
   // with the issues on either.
   var myLessons = lessonCodesOf(issue);
   var sameLesson = myLessons.length
@@ -22333,12 +22333,12 @@ function courseIsTodo(status) {
   var s = (status || "").toLowerCase();
   return s === "open" || s === "with_dev";
 }
-// r269 (Edd, 1 Nov 2026): wish-list ideas. Not parked (they stay live), but
+// r271 (Edd, 1 Nov 2026): wish-list ideas. Not parked (they stay live), but
 // not part of the backlog either, so every count and the To do view leave
 // them out and they have a view of their own.
 function isDreamWorld(i) { return isTrue(i && i.dream_world); }
 function courseTodo(i) { return courseIsTodo(i.status) && !isDreamWorld(i); }
-// r269: every lesson a fix is filed against. lesson_code is the primary; FT
+// r271: every lesson a fix is filed against. lesson_code is the primary; FT
 // and YM share slides, so further codes ride in also_lessons. Compared at the
 // module.lesson level, the same as lesson_code.
 function lessonCodesOf(i) {
@@ -22392,7 +22392,7 @@ function courseCardHtml(i) {
   // way it applies to a single-category queue.
   var extra = [];
   if (part) extra.push(part);
-  // r269: a clip in play, with whose camera it is waiting on, and the wish list.
+  // r271: a clip in play, with whose camera it is waiting on, and the wish list.
   var cs = clipStatusOf(i);
   if (cs) extra.push(CLIP_LABEL[cs] + (i.presenter ? " (" + String(i.presenter).trim() + ")" : ""));
   if (isDreamWorld(i)) extra.push("Dream world");
@@ -22449,7 +22449,7 @@ function renderCourse() {
     if (state.courseFilter === "todo") return courseTodo(i);
     if (state.courseFilter === "fixed") return isDone(s);
     if (state.courseFilter === "dream") return courseIsTodo(s) && isDreamWorld(i);
-    // r269: the clip run. Everything with a clip in play, still to do.
+    // r271: the clip run. Everything with a clip in play, still to do.
     if (state.courseFilter === "clips") return courseTodo(i) && !!clipStatusOf(i);
     return true;
   });
@@ -22511,7 +22511,7 @@ function renderCourse() {
     });
   }
 
-  // r269: the clip run. Who is waiting on whom, and one button that asks
+  // r271: the clip run. Who is waiting on whom, and one button that asks
   // every presenter for all of theirs at once.
   var clipBar = "";
   if (state.courseFilter === "clips") {
