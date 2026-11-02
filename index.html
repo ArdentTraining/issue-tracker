@@ -970,6 +970,9 @@
   /* r272: shipping patterns */
   .shr-pat { padding: 8px 0; border-bottom: 1px solid var(--line); }
   .shr-pat:last-of-type { border-bottom: none; }
+  .shr-refs { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+  .shr-ref { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid #E53E3E; text-decoration: none; }
+  .shr-ref.done { border-color: var(--line); color: var(--muted); }
   .subrail-head.sub { padding-left: 26px; }
   /* The sub-rail replaces the pill strip rather than doubling it up. */
   @media (min-width: 761px) {
@@ -4133,7 +4136,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r272 · 2026-11-02";  // bump this with each round, it lands on every feedback report
+var BUILD = "r272.1 · 2026-11-02";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -11163,20 +11166,35 @@ function shipChatsCard(d, b, prev3) {
 // patterns and things we could fix to stop future issues."
 function shipPatternsCard(d) {
   var p = d.patterns, admin = !!(state.perms || {}).users;
-  var h = '<div class="card" id="shr-patterns"><h3>Patterns and what we could change</h3>';
-  if (shipr.patBusy) h += '<p class="small muted"><span class="spinner"></span> Reading this month\'s issues and the two months before…</p>';
-  else if (!p) h += '<p class="small muted">Not worked out for ' + esc(shipMonthName(d.month)) + ' yet. It runs on its own on the 1st' +
-    (admin ? ', or now:' : '.') + '</p>';
-  else if (!p.items || !p.items.length) h += '<p class="small muted">' + esc(p.note || "Nothing stood out.") + "</p>";
+  function ref(r) {
+    var done = r.status === "resolved" || r.status === "past";
+    return '<a href="#" class="shr-ref' + (done ? " done" : "") + '" title="' + esc(r.summary || "") + '" onclick="shipOpenIssue(\'' + esc(r.id) + '\');return false;">#' +
+      esc(String(r.id).slice(0, 6).toUpperCase()) + " " + esc(shipMonthName(r.month).replace(/ \d{4}$/, "").slice(0, 3)) + (done ? " · sorted" : " · open") + "</a>";
+  }
+  var h = '<div class="card" id="shr-patterns"><h3>Worth a look, and what keeps coming back</h3>';
+  if (shipr.patBusy) h += '<p class="small muted"><span class="spinner"></span> Reading this month\'s issues and the five months before…</p>';
+  else if (!p) h += '<p class="small muted">Not worked out for ' + esc(shipMonthName(d.month)) + ' yet. It runs on its own on the 1st' + (admin ? ", or now:" : ".") + "</p>";
+  else if (!(p.items || []).length && !(p.notable || []).length) h += '<p class="small muted">' + esc(p.note || "Nothing stood out.") + "</p>";
   else {
-    h += p.items.map(function (it) {
-      return '<div class="shr-pat"><div><b>' + esc(it.title) + '</b> <span class="small muted">' + (it.count || 0) + " this month" +
-        (it.count_3m && it.count_3m !== it.count ? ", " + it.count_3m + " over three months" : "") + "</span></div>" +
-        (it.cause ? '<div class="small">' + esc(it.cause) + "</div>" : "") +
-        (it.fix ? '<div class="small"><span class="muted">What to change:</span> ' + esc(it.fix) + "</div>" : "") + "</div>";
-    }).join("") +
-      '<p class="small muted" style="margin:8px 0 0;">From the ' + (p.n3 || p.n) + ' shipping issues in ' + esc(shipMonthName(d.month)) +
-      ' and the two months before, read ' + esc(new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) + ".</p>";
+    if ((p.notable || []).length) {
+      h += '<h4 style="margin:4px 0 6px;">Worth a look from ' + esc(shipMonthName(d.month)) + "</h4>" + p.notable.map(function (r) {
+        return '<div class="shr-pat"><div>' + ref(r) + " " + esc(r.summary || "") + "</div>" + (r.why ? '<div class="small muted">' + esc(r.why) + "</div>" : "") + "</div>";
+      }).join("");
+    }
+    if ((p.items || []).length) {
+      h += '<h4 style="margin:14px 0 6px;">Patterns over the last ' + (p.months_back || 6) + " months</h4>" + p.items.map(function (it) {
+        var all = it.count_all != null ? it.count_all : (it.issues || []).length;
+        return '<div class="shr-pat"><div><b>' + esc(it.title) + "</b> " + (it.recurring ? '<span class="shr-tag">recurring, ' + it.months + " months</span>" : "") +
+          (it.open ? '<span class="shr-tag">' + it.open + " open</span>" : "") +
+          ' <span class="small muted">' + all + " issue" + (all === 1 ? "" : "s") + (it.count ? ", " + it.count + " this month" : "") + "</span></div>" +
+          (it.cause ? '<div class="small">' + esc(it.cause) + "</div>" : "") +
+          (it.fix ? '<div class="small"><span class="muted">What to change:</span> ' + esc(it.fix) + "</div>" : "") +
+          ((it.issues || []).length ? '<div class="shr-refs">' + it.issues.map(ref).join("") + "</div>" : "") + "</div>";
+      }).join("");
+    }
+    h += '<p class="small muted" style="margin:8px 0 0;">From the ' + (p.n_all || p.n3 || p.n) + " shipping issues in " + esc(shipMonthName(d.month)) +
+      " and the " + ((p.months_back || 6) - 1) + " months before, read " + esc(new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) +
+      ". Open an issue to work on it, or close it if it has since been fixed.</p>";
   }
   if (admin && !shipr.patBusy) h += '<button type="button" class="ghost small" style="margin-top:8px;" onclick="shipRunPatterns()">' + (p ? "Read them again" : "Look for patterns") + "</button>";
   return h + "</div>";

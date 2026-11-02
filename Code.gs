@@ -9061,6 +9061,11 @@ function ensureTriggers_() {
   try {
     var pk272 = PropertiesService.getScriptProperties();
     if (pk272.getProperty('SHIP_AUTOLOG_KICK') !== 'r272') { pk272.setProperty('SHIP_AUTOLOG_KICK', 'r272'); shipAutoLogAgain_(2); }
+    // r272.1: October re-posted once the back catalogue is logged.
+    if (pk272.getProperty('SHIP_REPOST_KICK') !== 'r272.1') {
+      pk272.setProperty('SHIP_REPOST_KICK', 'r272.1'); pk272.setProperty('SHIP_REPOST_MONTH', '2026-10');
+      shipAutoLogAgain_(3);
+    }
   } catch (eK) {}
   // r219: 07:00, so a size is on everything before the developers' day starts.
   if (!haveAutoSize) ScriptApp.newTrigger('autoSizeQueue').timeBased().everyDays(1).atHour(7).create();
@@ -11387,7 +11392,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r272 · 2026-11-02';
+var CODE_STAMP = 'r272.1 · 2026-11-02';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -19044,10 +19049,22 @@ function shipSummaryText_(rep) {
   if (rep.open.length) lines.push('• ' + rep.open.length + ' parcel' + (rep.open.length === 1 ? '' : 's') + ' still open, the oldest ' + rep.open[0].days_open + ' days.');
   try { var costLine = shipCostLine_(rep.month); if (costLine) lines.push(costLine); } catch (eC) {}
   // r272: the patterns behind the numbers, and what to change.
-  var pat = rep.patterns;
+  // r272.1: each with its issues linked, so they can be picked up or closed.
+  var pat = rep.patterns, base = getAppUrl_() || '';
+  function ilink(r) { return base ? '<' + base + (base.indexOf('?') > -1 ? '&' : '?') + 'issue=' + r.id + '|#' + String(r.id).slice(0, 6).toUpperCase() + '>' : '#' + String(r.id).slice(0, 6).toUpperCase(); }
+  if (pat && pat.notable && pat.notable.length) {
+    lines.push('*Worth a look from this month*');
+    pat.notable.forEach(function (r) { lines.push('• ' + ilink(r) + ' ' + r.summary + (r.why ? ' _(' + r.why + ')_' : '') + (r.status === 'resolved' ? ' (sorted)' : '')); });
+  }
   if (pat && pat.items && pat.items.length) {
-    lines.push('• Patterns: ' + pat.items.slice(0, 3).map(function (it) { return it.title + (it.count ? ' (' + it.count + ')' : ''); }).join('; ') + '.');
-    if (pat.items[0].fix) lines.push('• Worth changing first: ' + pat.items[0].fix);
+    lines.push('*Patterns over the last ' + (pat.months_back || 6) + ' months*');
+    pat.items.slice(0, 5).forEach(function (it) {
+      var openRefs = it.issues.filter(function (r) { return r.status !== 'resolved' && r.status !== 'past'; });
+      lines.push('• *' + it.title + '*: ' + it.count_all + ' issue' + (it.count_all === 1 ? '' : 's') +
+        (it.recurring ? ' across ' + it.months + ' months' : '') + (it.count ? ', ' + it.count + ' this month' : '') +
+        (it.open ? ', ' + it.open + ' still open' : '') + '. ' + (it.fix ? 'To change: ' + it.fix + ' ' : '') +
+        (openRefs.length ? 'Open: ' + openRefs.slice(0, 4).map(ilink).join(' ') : 'Latest: ' + it.issues.slice(0, 2).map(ilink).join(' ')));
+    });
   }
   var url = getAppUrl_();
   if (url) lines.push('Full report: ' + url + (url.indexOf('?') > -1 ? '&' : '?') + 'view=shipreport&month=' + rep.month);
@@ -19056,14 +19073,9 @@ function shipSummaryText_(rep) {
 function shipMonthlyPost() {
   var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
   var ym = shipMonthOf_(d);
-  try { shipVolumesRefresh_({ month: ym }); } catch (e) {}
-  // r272: log anything the sweep has not got to yet, then read the patterns.
+  // r272: log anything the sweep has not got to yet, then post (patterns included).
   try { shipAutoLog_({ month: ym, budgetMs: 2 * 60 * 1000 }); } catch (e) {}
-  try { shipPatterns_({ month: ym }); } catch (e) {}
-  var text = shipSummaryText_(shipReport_({ month: ym }));
-  var chan = PropertiesService.getScriptProperties().getProperty('SLACK_SHIPPING_CHANNEL_ID');
-  var sent = chan ? slackBotPost_(chan, text) : { ok: false };
-  if (!sent.ok) slackPost_('shipping_monthly', text);
+  shipPostMonth_(ym);
 }
 function shipMonthlyPreview_(data) {
   var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
@@ -19236,7 +19248,23 @@ function shipAutoLogNightly() {
   var out;
   try { out = shipAutoLog_({}); } finally { lock.releaseLock(); }
   // Another run while there is more to do and the last one got somewhere.
-  if (out && out.left && out.filed) shipAutoLogAgain_(5);
+  if (out && out.left && out.filed) { shipAutoLogAgain_(5); return; }
+  // r272.1 (Edd): once the back catalogue is in, re-run and re-post the month he asked for.
+  var props = PropertiesService.getScriptProperties(), again = props.getProperty('SHIP_REPOST_MONTH');
+  if (again && /^\d{4}-\d{2}$/.test(again)) ScriptApp.newTrigger('shipRepostOnce').timeBased().after(60000).create();
+}
+// Its own run, so the post never shares a six-minute window with a batch of filings.
+function shipRepostOnce(e) {
+  try {
+    var id = e && e.triggerUid;
+    ScriptApp.getProjectTriggers().forEach(function (t) {
+      if (t.getHandlerFunction() === 'shipRepostOnce' && (!id || t.getUniqueId() === id)) ScriptApp.deleteTrigger(t);
+    });
+  } catch (x) {}
+  var props = PropertiesService.getScriptProperties(), again = props.getProperty('SHIP_REPOST_MONTH');
+  if (!again || !/^\d{4}-\d{2}$/.test(again)) return;
+  props.deleteProperty('SHIP_REPOST_MONTH');
+  try { shipPostMonth_(again); } catch (x) { console.warn('shipPostMonth_ ' + again + ': ' + x); }
 }
 function shipAutoLogAgain_(mins) {
   var props = PropertiesService.getScriptProperties();
@@ -19283,38 +19311,80 @@ function shipMonthIssues_(month, back) {
 function shipPatternsCached_(month) {
   try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(SHIP_PAT_PREFIX_ + month) || 'null'); } catch (e) { return null; }
 }
+// r272.1 (Edd, 2 Nov 2026): "highlight the actual issues we faced and highlight
+// any recurring ones over the 6 months or so, and link to their bug tracker
+// reports so they can be worked on or marked as resolved if someone has since
+// fixed them." Six months, a pattern is recurring when it shows up in two or
+// more of them, and every pattern carries its issues (status included) so the
+// page and the Slack post can link straight to each one.
+var SHIP_PAT_MONTHS = 6;
 function shipPatterns_(data) {
   var cur = shipMonthOf_(new Date());
   var month = /^\d{4}-\d{2}$/.test(String(data.month || '')) ? String(data.month) : cur;
-  var list = shipMonthIssues_(month, 3);
+  var list = shipMonthIssues_(month, SHIP_PAT_MONTHS);
   var mine = list.filter(function (i) { return shipMonthOf_(i.submitted_at) === month; });
-  if (!mine.length) return { ok: true, month: month, patterns: { at: new Date().toISOString(), n: 0, items: [], note: 'No shipping issues logged for this month.' } };
+  if (!mine.length) return { ok: true, month: month, patterns: { at: new Date().toISOString(), n: 0, items: [], notable: [], note: 'No shipping issues logged for this month.' } };
+  var byShort = {};
+  list.forEach(function (i) { byShort[String(i.issue_id).slice(0, 8)] = i; });
   var lines = list.map(function (i) {
-    var trail = String(i.raw_text || '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').slice(0, 500);
-    return '- [' + String(i.issue_id).slice(0, 6) + '] ' + shipMonthOf_(i.submitted_at) + ' · ' + (i.issue_type || 'other') + ' · ' +
+    var recent = shipMonthOf_(i.submitted_at) === month;
+    var trail = String(i.raw_text || '').replace(/https?:\/\/\S+/g, '').replace(/^Logged by the nightly shipping sweep[^\n]*\n/, '')
+      .replace(/\s+/g, ' ').slice(0, recent ? 500 : 250);
+    return '- [' + String(i.issue_id).slice(0, 8) + '] ' + shipMonthOf_(i.submitted_at) + ' · ' + (i.issue_type || 'other') + ' · ' +
       (shipCourier_(i.courier) || 'courier unknown') + ' · ' + (i.status || 'open') + '\n  ' + String(i.summary || '').slice(0, 300) +
-      (i.resolution_note ? '\n  Outcome: ' + String(i.resolution_note).slice(0, 200) : '') + '\n  From the chat: ' + trail;
+      (i.resolution_note ? '\n  Outcome: ' + String(i.resolution_note).slice(0, 160) : '') + (trail ? '\n  From the chat: ' + trail : '');
   });
   var prompt = 'You are helping Ardent Training, a small online RYA sailing theory school, cut down problems with the physical course packs and ' +
     'certificates it posts to students (Royal Mail in the UK, DHL Express abroad, packs ordered through the website).\n\n' +
-    'Below are the shipping issues for ' + month + ' and the two months before it. Find the PATTERNS: problems with a shared cause, ' +
-    'especially ones that came back more than once, and say what Ardent could change so they stop happening (on the website checkout, ' +
-    'the packing, the DHL waybill and customs paperwork, the courier choice, what students are told, and so on). ' +
-    'Only claim what the issues show. Count only issues listed. A one-off with an obvious fix is worth including if the fix is cheap.\n\n' +
+    'Below are the shipping issues for ' + month + ' and the five months before it. Two jobs:\n' +
+    '1. PATTERNS: problems with a shared cause, especially ones that came back across more than one month, and what Ardent could change so they ' +
+    'stop happening (the website checkout, the packing, the DHL waybill and customs paperwork, the courier choice, what students are told, and so on). ' +
+    'A one-off with a cheap, obvious fix is worth including too.\n' +
+    '2. NOTABLE: from ' + month + ' only, the issues most worth someone\'s attention: still open, cost us money or a re-send, or left a student stuck.\n' +
+    'Only claim what the issues show, and only use ids from the list.\n\n' +
     'Write for Edd, the owner: British English, plain words, contractions, no em dashes, no hype.\n\n' +
     'ISSUES:\n' + lines.join('\n') + '\n\n' +
-    'Return ONLY JSON: {"items":[{"title":"short plain heading","count":<issues in ' + month + ' this covers>,"count_3m":<issues across all three months>,' +
-    '"ids":["first 6 chars of each issue id"],"cause":"one or two sentences on what keeps going wrong","fix":"one or two sentences on what to change, and who would do it"}],' +
-    '"summary":"one sentence for a Slack post"}. Most important first, at most 6 items. No prose, no fences.';
-  var out = anthropicRaw_(SHIP_TAG_MODEL, prompt, 2000);
+    'Return ONLY JSON: {"items":[{"title":"short plain heading","ids":["the 8-character id of every issue this covers, any month"],' +
+    '"cause":"one or two sentences on what keeps going wrong","fix":"one or two sentences on what to change, and who would do it"}],' +
+    '"notable":[{"id":"8-character id","why":"a few words on why it needs a look"}],"summary":"one sentence for a Slack post"}. ' +
+    'Most important first, at most 6 patterns and 5 notable. No prose, no fences.';
+  var out = anthropicRaw_(SHIP_TAG_MODEL, prompt, 3000);
   if (!out.json || !out.json.items) return { ok: false, error: 'Could not work out the patterns: ' + String(out.why || 'no answer').slice(0, 160) };
+  function issueRef(i) {
+    return { id: i.issue_id, month: shipMonthOf_(i.submitted_at), status: String(i.status || 'open').toLowerCase(),
+             summary: String(i.summary || '').slice(0, 160), kind: i.issue_type || 'other' };
+  }
   var items = out.json.items.slice(0, 6).map(function (x) {
-    return { title: String(x.title || '').slice(0, 120), count: Number(x.count) || 0, count_3m: Number(x.count_3m) || 0,
-             ids: (x.ids || []).slice(0, 30).map(String), cause: String(x.cause || '').slice(0, 500), fix: String(x.fix || '').slice(0, 500) };
-  });
-  var saved = { at: new Date().toISOString(), n: mine.length, n3: list.length, items: items, summary: String(out.json.summary || '').slice(0, 300) };
+    var seen = {}, refs = [];
+    (x.ids || []).forEach(function (sid) {
+      var i = byShort[String(sid).trim().slice(0, 8)];
+      if (i && !seen[i.issue_id]) { seen[i.issue_id] = 1; refs.push(issueRef(i)); }
+    });
+    refs.sort(function (a, b) { return a.month < b.month ? 1 : -1; });
+    var months = {}; refs.forEach(function (r) { months[r.month] = 1; });
+    var open = refs.filter(function (r) { return r.status !== 'resolved' && r.status !== 'past'; }).length;
+    return { title: String(x.title || '').slice(0, 120), cause: String(x.cause || '').slice(0, 500), fix: String(x.fix || '').slice(0, 500),
+             count: refs.filter(function (r) { return r.month === month; }).length, count_all: refs.length,
+             months: Object.keys(months).length, recurring: Object.keys(months).length >= 2, open: open, issues: refs.slice(0, 40) };
+  }).filter(function (it) { return it.issues.length; });
+  var notable = (out.json.notable || []).slice(0, 5).map(function (n) {
+    var i = byShort[String(n.id || '').trim().slice(0, 8)];
+    return i && shipMonthOf_(i.submitted_at) === month ? Object.assign(issueRef(i), { why: String(n.why || '').slice(0, 160) }) : null;
+  }).filter(Boolean);
+  var saved = { at: new Date().toISOString(), n: mine.length, n_all: list.length, months_back: SHIP_PAT_MONTHS,
+                items: items, notable: notable, summary: String(out.json.summary || '').slice(0, 300) };
   PropertiesService.getScriptProperties().setProperty(SHIP_PAT_PREFIX_ + month, JSON.stringify(saved));
   return { ok: true, month: month, patterns: saved };
+}
+// Post a month's report to #shipping-issues now (the same post as the 1st).
+function shipPostMonth_(ym) {
+  try { shipVolumesRefresh_({ month: ym }); } catch (e) {}
+  try { shipPatterns_({ month: ym }); } catch (e) {}
+  var text = shipSummaryText_(shipReport_({ month: ym }));
+  var chan = PropertiesService.getScriptProperties().getProperty('SLACK_SHIPPING_CHANNEL_ID');
+  var sent = chan ? slackBotPost_(chan, text) : { ok: false };
+  if (!sent.ok) slackPost_('shipping_monthly', text);
+  return text;
 }
 
 function shipBackfillAction_(data) {
