@@ -967,6 +967,9 @@
   .subrail-item.active .sn { color: var(--text); }
   /* FB-0486: a page's own sections, tucked under it in a rail group. */
   .subrail-item.sub { padding-left: 26px; font-size: 13px; }
+  /* r272: shipping patterns */
+  .shr-pat { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .shr-pat:last-of-type { border-bottom: none; }
   .subrail-head.sub { padding-left: 26px; }
   /* The sub-rail replaces the pill strip rather than doubling it up. */
   @media (min-width: 761px) {
@@ -4130,7 +4133,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r266 · 2026-10-31";  // bump this with each round, it lands on every feedback report
+var BUILD = "r272 · 2026-11-02";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -10635,6 +10638,10 @@ function drawShipReport() {
   var notes = shipStandOut(d, b, prev3, last12, fair);
   if (notes.length) h += '<div class="card"><h3>What stands out</h3><ul class="shr-stand" id="shr_stand">' + notes.map(function (n) { return "<li>" + n + "</li>"; }).join("") + "</ul></div>";
 
+  // ---- r272: the patterns, then every issue this month
+  h += shipPatternsCard(d);
+  h += shipMonthIssuesCard(d);
+
   // ---- trend
   h += shipTrendCard(d, last12);
 
@@ -11137,6 +11144,9 @@ function shipChatsCard(d, b, prev3) {
     b.price + " postage question" + (b.price === 1 ? "" : "s") + " (cost, times, do we ship there)" +
     (prev3.every(function (p) { return p.chats_counted; }) ? ", against an average of " + shipR1(shipAvg(prev3, function (p) { return p.price; })) : "") + ".</p>";
   if (d.unlogged.length) {
+    // r272: the nightly sweep logs these itself now; this is the same thing on demand.
+    if ((state.perms || {}).users) h += '<p class="small">These get logged automatically each night. ' +
+      (shipr.logBusy ? '<span class="spinner"></span> Logging…' : '<a href="#" onclick="shipLogAllChats();return false;">Log them all now</a>') + "</p>";
     h += d.unlogged.map(function (u) {
       return '<div class="shr-row"><div class="small">' + esc(new Date(u.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })) + "</div><div>" +
         u.kinds.map(function (k) { return '<span class="shr-tag">' + esc(SHIP_KIND_LABEL[k] || k) + "</span>"; }).join("") +
@@ -11148,6 +11158,70 @@ function shipChatsCard(d, b, prev3) {
   }
   return h + "</div>";
 }
+// r272 (Edd, 2 Nov 2026): "We need all shipping issues logged so this monthly
+// report can show us what issues we had, not just how many. And spot any
+// patterns and things we could fix to stop future issues."
+function shipPatternsCard(d) {
+  var p = d.patterns, admin = !!(state.perms || {}).users;
+  var h = '<div class="card" id="shr-patterns"><h3>Patterns and what we could change</h3>';
+  if (shipr.patBusy) h += '<p class="small muted"><span class="spinner"></span> Reading this month\'s issues and the two months before…</p>';
+  else if (!p) h += '<p class="small muted">Not worked out for ' + esc(shipMonthName(d.month)) + ' yet. It runs on its own on the 1st' +
+    (admin ? ', or now:' : '.') + '</p>';
+  else if (!p.items || !p.items.length) h += '<p class="small muted">' + esc(p.note || "Nothing stood out.") + "</p>";
+  else {
+    h += p.items.map(function (it) {
+      return '<div class="shr-pat"><div><b>' + esc(it.title) + '</b> <span class="small muted">' + (it.count || 0) + " this month" +
+        (it.count_3m && it.count_3m !== it.count ? ", " + it.count_3m + " over three months" : "") + "</span></div>" +
+        (it.cause ? '<div class="small">' + esc(it.cause) + "</div>" : "") +
+        (it.fix ? '<div class="small"><span class="muted">What to change:</span> ' + esc(it.fix) + "</div>" : "") + "</div>";
+    }).join("") +
+      '<p class="small muted" style="margin:8px 0 0;">From the ' + (p.n3 || p.n) + ' shipping issues in ' + esc(shipMonthName(d.month)) +
+      ' and the two months before, read ' + esc(new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) + ".</p>";
+  }
+  if (admin && !shipr.patBusy) h += '<button type="button" class="ghost small" style="margin-top:8px;" onclick="shipRunPatterns()">' + (p ? "Read them again" : "Look for patterns") + "</button>";
+  return h + "</div>";
+}
+function shipRunPatterns() {
+  if (shipr.patBusy) return;
+  shipr.patBusy = true; drawShipReport();
+  apiPost({ action: "shipPatterns", month: shipr.month }).then(function (r) {
+    shipr.patBusy = false;
+    if (!r || !r.ok) { toast((r && r.error) || "Could not read the patterns."); drawShipReport(); return; }
+    if (shipr.data) shipr.data.patterns = r.patterns;
+    drawShipReport();
+  }).catch(function () { shipr.patBusy = false; toast("Could not read the patterns just now."); drawShipReport(); });
+}
+function shipMonthIssuesCard(d) {
+  var list = d.month_issues || [];
+  var h = '<div class="card" id="shr-issues"><h3>What went wrong in ' + esc(shipMonthName(d.month)) + " (" + list.length + ")</h3>";
+  if (!list.length) return h + '<p class="small muted">No shipping issues logged for this month.</p></div>';
+  var shown = shipr.showAllIssues ? list : list.slice(0, 15);
+  h += shown.map(function (o) {
+    var done = o.status === "resolved" || o.status === "past";
+    return '<div class="shr-row"><div class="small">' + esc(new Date(o.submitted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })) + "</div><div>" +
+      '<span class="shr-tag">' + esc(SHIP_KIND_LABEL[o.kind] || o.kind) + "</span>" + (o.courier ? '<span class="shr-tag">' + esc(o.courier) + "</span>" : "") +
+      (o.tracking ? '<span class="shr-tag">' + esc(o.tracking) + "</span>" : "") +
+      '<span class="shr-tag">' + (done ? "sorted" : esc(o.status.replace(/_/g, " "))) + "</span>" +
+      (o.swept ? '<span class="shr-tag" title="Found in a chat by the nightly sweep and logged automatically">from a chat</span>' : "") +
+      "<div>" + esc(o.summary || "") + (o.reports > 1 ? ' <span class="small muted">(' + o.reports + " reports)</span>" : "") + "</div>" +
+      (done && o.resolution_note ? '<div class="small muted">' + esc(o.resolution_note) + "</div>" : "") + "</div>" +
+      '<div style="white-space:nowrap;" class="small"><a href="#" onclick="shipOpenIssue(\'' + esc(o.issue_id) + '\');return false;">Open</a></div></div>';
+  }).join("");
+  if (list.length > shown.length) h += '<a href="#" class="small" onclick="shipr.showAllIssues=true;drawShipReport();return false;">Show all ' + list.length + "</a>";
+  return h + "</div>";
+}
+function shipLogAllChats() {
+  if (shipr.logBusy) return;
+  shipr.logBusy = true; drawShipReport();
+  apiPost({ action: "shipLogChats" }).then(function (r) {
+    shipr.logBusy = false;
+    if (!r || !r.ok) { toast((r && r.error) || "Could not log them."); drawShipReport(); return; }
+    var x = r.run || {};
+    toast("Logged " + (x.filed || 0) + (x.left ? ", " + x.left + " still to go (press again)" : "") + (x.failed ? ", " + x.failed + " failed" : "") + ".");
+    loadShipReport(true);
+  }).catch(function () { shipr.logBusy = false; toast("That took too long to answer. It may still have logged some; refresh in a minute."); drawShipReport(); });
+}
+
 function shipLogChat(id) {
   railGo("instructor");
   if ($("cwInput")) { $("cwInput").value = id; chatwootImport(); }
