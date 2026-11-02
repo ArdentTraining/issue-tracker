@@ -9006,7 +9006,6 @@ function ensureTriggers_() {
   var haveTell = false;       // r207
   var haveStoreCompare = false; // r208.3
   var haveShipTag = false, haveShipMonthly = false;   // r188
-  var haveShipAutoLog = false;   // r272
   var haveAutoSize = false;   // r219
   var haveFileAfter = false;  // r222
   var haveParked = false;     // r271
@@ -9029,7 +9028,6 @@ function ensureTriggers_() {
     if (t.getHandlerFunction() === 'storeShadowCompareNightly') haveStoreCompare = true;
     if (t.getHandlerFunction() === 'shipTagNightly') haveShipTag = true;
     if (t.getHandlerFunction() === 'shipMonthlyPost') haveShipMonthly = true;
-    if (t.getHandlerFunction() === 'shipAutoLogNightly') haveShipAutoLog = true;
     if (t.getHandlerFunction() === 'autoSizeQueue') haveAutoSize = true;
     if (t.getHandlerFunction() === 'fileAfterSweep') haveFileAfter = true;
     if (t.getHandlerFunction() === 'parkedAutoClose') haveParked = true;
@@ -9055,18 +9053,6 @@ function ensureTriggers_() {
   // month's shipping report at 09:00 on the 1st.
   if (!haveShipTag) ScriptApp.newTrigger('shipTagNightly').timeBased().everyDays(1).atHour(4).create();
   if (!haveShipMonthly) ScriptApp.newTrigger('shipMonthlyPost').timeBased().onMonthDay(1).atHour(9).create();
-  // r272: log what the 04:00 sort found, once it has had time to finish.
-  if (!haveShipAutoLog) ScriptApp.newTrigger('shipAutoLogNightly').timeBased().everyDays(1).atHour(5).nearMinute(15).create();
-  // ...and work through the back catalogue straight after this deploy, once.
-  try {
-    var pk272 = PropertiesService.getScriptProperties();
-    if (pk272.getProperty('SHIP_AUTOLOG_KICK') !== 'r272') { pk272.setProperty('SHIP_AUTOLOG_KICK', 'r272'); shipAutoLogAgain_(2); }
-    // r272.1: October re-posted once the back catalogue is logged.
-    if (pk272.getProperty('SHIP_REPOST_KICK') !== 'r272.1') {
-      pk272.setProperty('SHIP_REPOST_KICK', 'r272.1'); pk272.setProperty('SHIP_REPOST_MONTH', '2026-10');
-      shipAutoLogAgain_(3);
-    }
-  } catch (eK) {}
   // r219: 07:00, so a size is on everything before the developers' day starts.
   if (!haveAutoSize) ScriptApp.newTrigger('autoSizeQueue').timeBased().everyDays(1).atHour(7).create();
   if (!haveWaiting) ScriptApp.newTrigger('waitingOnStudentSweep').timeBased().everyDays(1).atHour(8).create();
@@ -11392,7 +11378,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r272.1 · 2026-11-02';
+var CODE_STAMP = 'r272.2 · 2026-11-02';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -17293,7 +17279,16 @@ function inboxBatch_(data) {
     : { ok: true, issue_id: '', batch: results.length };
 }
 
+// r272.2: the shipping sweep rides on this five-minute trigger rather than
+// adding triggers of its own. r272's setup never managed to create its
+// one-off triggers (nothing was filed after the deploy), and a project only
+// gets so many. Same lock rules as before; a quiet no-op when nothing is due.
 function claudeInbox() {
+  var r = claudeInboxCore_();
+  try { shipAutoLogTick_(); } catch (e) { Logger.log('shipAutoLogTick_: ' + e); }
+  return r;
+}
+function claudeInboxCore_() {
   var t = mintPortalTicket_({
     email: 'inbox@ardent-training.com',
     name: 'Claude inbox',
@@ -18147,6 +18142,7 @@ function shipTagNightly() {
   st.at = new Date(started).toISOString();
   st.ai = SHIP_TALLY_;
   props.setProperty('SHIP_TAG_RUN', JSON.stringify(st));
+  props.setProperty('SHIP_AUTOLOG_DUE', '1');   // r272.2: the inbox tick logs what this found
   return st;
 }
 
@@ -19240,51 +19236,36 @@ function shipAutoLog_(opts) {
   PropertiesService.getScriptProperties().setProperty('SHIP_AUTOLOG_RUN', JSON.stringify(out));
   return out;
 }
-// The trigger: after the 04:00 sort, and again a few minutes later while
-// anything is left (the first run after r272 has the whole back catalogue).
-function shipAutoLogNightly() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(20000)) { shipAutoLogAgain_(10); return; }
-  var out;
-  try { out = shipAutoLog_({}); } finally { lock.releaseLock(); }
-  // Another run while there is more to do and the last one got somewhere.
-  if (out && out.left && out.filed) { shipAutoLogAgain_(5); return; }
-  // r272.1 (Edd): once the back catalogue is in, re-run and re-post the month he asked for.
-  var props = PropertiesService.getScriptProperties(), again = props.getProperty('SHIP_REPOST_MONTH');
-  if (again && /^\d{4}-\d{2}$/.test(again)) ScriptApp.newTrigger('shipRepostOnce').timeBased().after(60000).create();
-}
-// Its own run, so the post never shares a six-minute window with a batch of filings.
-function shipRepostOnce(e) {
-  try {
-    var id = e && e.triggerUid;
-    ScriptApp.getProjectTriggers().forEach(function (t) {
-      if (t.getHandlerFunction() === 'shipRepostOnce' && (!id || t.getUniqueId() === id)) ScriptApp.deleteTrigger(t);
-    });
-  } catch (x) {}
-  var props = PropertiesService.getScriptProperties(), again = props.getProperty('SHIP_REPOST_MONTH');
-  if (!again || !/^\d{4}-\d{2}$/.test(again)) return;
-  props.deleteProperty('SHIP_REPOST_MONTH');
-  try { shipPostMonth_(again); } catch (x) { console.warn('shipPostMonth_ ' + again + ': ' + x); }
-}
-function shipAutoLogAgain_(mins) {
+// When to run: SHIP_AUTOLOG_DUE is set by the 04:00 sort, and kept set while a
+// run leaves work over (the first one after this round has the whole back
+// catalogue). Each five-minute tick does one batch with a two-minute budget,
+// so the inbox it shares a trigger with is never kept waiting long.
+function shipAutoLogTick_() {
   var props = PropertiesService.getScriptProperties();
-  var today = Utilities.formatDate(new Date(), 'Europe/London', 'yyyy-MM-dd');
-  var n = props.getProperty('SHIP_AUTOLOG_RERUNS') || '';
-  var count = n.indexOf(today + ':') === 0 ? Number(n.split(':')[1]) || 0 : 0;
-  if (count >= 30) return;    // a day's ceiling, so a fault can never loop all day
-  props.setProperty('SHIP_AUTOLOG_RERUNS', today + ':' + (count + 1));
-  ScriptApp.newTrigger('shipAutoLogOnce').timeBased().after(mins * 60000).create();
+  // First tick after r272.2: work through the back catalogue, then re-post
+  // October (Edd, 2 Nov), once.
+  if (props.getProperty('SHIP_AUTOLOG_KICK') !== 'r272.2') {
+    props.setProperty('SHIP_AUTOLOG_KICK', 'r272.2');
+    props.setProperty('SHIP_AUTOLOG_DUE', '1');
+    props.setProperty('SHIP_REPOST_MONTH', '2026-10');
+  }
+  if (props.getProperty('SHIP_AUTOLOG_DUE') !== '1') return;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;            // busy: the next tick tries again
+  var out;
+  try { out = shipAutoLog_({ max: 12, budgetMs: 2 * 60 * 1000 }); } finally { lock.releaseLock(); }
+  if (out && out.left && out.filed) return;   // more to do, next tick
+  props.deleteProperty('SHIP_AUTOLOG_DUE');
+  var again = props.getProperty('SHIP_REPOST_MONTH');
+  if (again && /^\d{4}-\d{2}$/.test(again)) {
+    props.deleteProperty('SHIP_REPOST_MONTH');
+    try { shipPostMonth_(again); } catch (e) { Logger.log('shipPostMonth_ ' + again + ': ' + e); }
+  }
 }
-// One-off runs delete their own trigger, so they never pile up.
-function shipAutoLogOnce(e) {
-  try {
-    var id = e && e.triggerUid;
-    ScriptApp.getProjectTriggers().forEach(function (t) {
-      if (t.getHandlerFunction() === 'shipAutoLogOnce' && (!id || t.getUniqueId() === id)) ScriptApp.deleteTrigger(t);
-    });
-  } catch (x) {}
-  shipAutoLogNightly();
-}
+// r272 shipped these as trigger handlers; any trigger it did manage to make
+// lands here harmlessly.
+function shipAutoLogNightly() { PropertiesService.getScriptProperties().setProperty('SHIP_AUTOLOG_DUE', '1'); }
+function shipAutoLogOnce() { shipAutoLogNightly(); }
 // Admin button on the report: run a batch now.
 function shipLogChats_(data) {
   var lock = LockService.getScriptLock();
