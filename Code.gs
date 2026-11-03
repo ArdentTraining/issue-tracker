@@ -579,7 +579,11 @@ var HEADERS = [
   'clip_status',               // BJ '' | needed | requested | sent
   'clip_note',                 // BK what to record, in a line
   'clip_link',                 // BL where the recorded clip is
-  'clip_requested_at'          // BM ISO time the batch request went out
+  'clip_requested_at',         // BM ISO time the batch request went out
+  // r273 (Edd, 2-3 Nov 2026): a shipping issue is a parcel CASE (getting this
+  // student their parcel) or a CAUSE (why parcels go wrong), linked.
+  'ship_role',                 // BN '' = parcel case | 'cause'
+  'cause_id'                   // BO on a case: the issue_id of its cause
 ];
 
 // The fixed pre-developer troubleshooting checklist for tech issues. Each item
@@ -851,6 +855,9 @@ function doPost(e) {
     // r272: log every shipping problem found in the chats, and look for patterns
     if (action === 'shipLogChats') return jsonOut(shipLogChats_(body));
     if (action === 'shipPatterns') return jsonOut(shipPatterns_(body));
+    // r273: parcel cases and causes
+    if (action === 'shipCauseCreate') return jsonOut(shipCauseCreate_(body));
+    if (action === 'shipCauseLink') return jsonOut(shipCauseLink_(body));
     if (action === 'shipBackfill') return jsonOut(shipBackfillAction_(body));
     if (action === 'setShipConfig') return jsonOut(setShipConfig_(body));
     if (action === 'courseRepair') return jsonOut(courseRepair_(body));
@@ -1354,6 +1361,7 @@ function reqPerm_(action) {
     // ShipStation stores a key, so both of those are the admins' too.
     case 'shipReport': case 'shipVolumesRefresh': case 'shipMonthlyPreview': return 'users';
     case 'shipLogChats': case 'shipPatterns': return 'users';   // r272: both can spend AI credit
+    case 'shipCauseCreate': case 'shipCauseLink': return 'manage';   // r273: the same people who triage issues
     // r191: the changes we make to how we ship, drawn on the report's chart.
     // Whoever reads the report can note one; only its author or an admin can
     // take one off (checked in shipChangeDelete_).
@@ -7392,6 +7400,7 @@ function chaseShipping() {
     var when = dayStr_(values[r][idx.chase_at]);
     if (!when || when > today) continue;
     var st = String(values[r][idx.status] || '').toLowerCase();
+    if (idx.ship_role != null && String(values[r][idx.ship_role] || '').toLowerCase() === 'cause') { setIssueFields_(values[r][idx.issue_id], { chase_at: '' }); continue; }   // r273
     // r208.4: by id through the helpers, so the store sees it too.
     if (st === 'resolved' || st === 'past' || st === 'parked') { setIssueFields_(values[r][idx.issue_id], { chase_at: '' }); continue; }
     var rec = {}; HEADERS.forEach(function (h) { rec[h] = idx[h] != null ? values[r][idx[h]] : ''; });
@@ -11378,7 +11387,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r272.2 · 2026-11-02';
+var CODE_STAMP = 'r273 · 2026-11-03';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -18829,7 +18838,10 @@ function shipReport_(data) {
   });
 
   // ---- tracker issues
-  var issues = getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping'; });
+  // r273: parcel cases only. A cause is not a parcel problem; it is the reason for some.
+  var allShip = getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping'; });
+  var issues = allShip.filter(function (i) { return !isShipCause_(i); });
+  var causeById = {}; allShip.filter(isShipCause_).forEach(function (c) { causeById[c.issue_id] = c; });
   var convToIssue = {}, trackToIssue = {}, emailIssues = {};
   issues.forEach(function (i) {
     var cid = String(i.chatwoot_conversation_id || '').replace(/\D/g, '');
@@ -18949,8 +18961,10 @@ function shipReport_(data) {
         return { issue_id: i.issue_id, submitted_at: i.submitted_at, kind: kind, courier: shipCourier_(i.courier) || '',
           tracking: normaliseTracking_(i.tracking_number), status: String(i.status || 'open').toLowerCase(),
           summary: String(i.summary || '').slice(0, 260), resolution_note: String(i.resolution_note || '').slice(0, 200),
-          reports: Number(i.report_count) || 1, swept: /Logged by the nightly shipping sweep/.test(String(i.raw_text || '')) };
+          reports: Number(i.report_count) || 1, swept: /Logged by the nightly shipping sweep/.test(String(i.raw_text || '')),
+          cause_id: String(i.cause_id || ''), cause_title: causeById[i.cause_id] ? String(causeById[i.cause_id].summary || '').slice(0, 120) : '' };
       }),
+    causes: shipCauseSummaries_(issues, Object.keys(causeById).map(function (k) { return causeById[k]; })),
     patterns: shipPatternsCached_(month),
     autolog: (function () { try { return JSON.parse(props.getProperty('SHIP_AUTOLOG_RUN') || 'null'); } catch (e) { return null; } })(),
     sources: {
@@ -19045,6 +19059,11 @@ function shipSummaryText_(rep) {
   if (rep.open.length) lines.push('• ' + rep.open.length + ' parcel' + (rep.open.length === 1 ? '' : 's') + ' still open, the oldest ' + rep.open[0].days_open + ' days.');
   try { var costLine = shipCostLine_(rep.month); if (costLine) lines.push(costLine); } catch (eC) {}
   // r272: the patterns behind the numbers, and what to change.
+  // r273: the causes being fixed, and any that have come back.
+  var cs = (rep.causes || []).filter(function (c) { return c.status !== 'resolved' && c.status !== 'past'; });
+  var back = (rep.causes || []).filter(function (c) { return (c.status === 'resolved' || c.status === 'past') && c.since_fix; });
+  if (cs.length || back.length) lines.push('• Causes being fixed: ' + cs.length + (cs.length ? ' (' + cs.slice(0, 3).map(function (c) { return c.title + ', ' + c.cases + ' case' + (c.cases === 1 ? '' : 's'); }).join('; ') + ')' : '') +
+    (back.length ? '. Came back after a fix: ' + back.map(function (c) { return c.title; }).join('; ') : '') + '.');
   // r272.1: each with its issues linked, so they can be picked up or closed.
   var pat = rep.patterns, base = getAppUrl_() || '';
   function ilink(r) { return base ? '<' + base + (base.indexOf('?') > -1 ? '&' : '?') + 'issue=' + r.id + '|#' + String(r.id).slice(0, 6).toUpperCase() + '>' : '#' + String(r.id).slice(0, 6).toUpperCase(); }
@@ -19109,7 +19128,7 @@ var SHIP_KIND_ORDER_ = ['returned', 'customs', 'not_arrived', 'not_dispatched', 
 // uses (conversation id anywhere on the issue, tracking number, or the same
 // student within three weeks), so the report and this can never disagree.
 function shipLoggedIndex_() {
-  var issues = getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping'; });
+  var issues = shipCaseIssues_();
   var idx = { conv: {}, track: {}, email: {} };
   issues.forEach(function (i) { shipIndexIssue_(idx, i); });
   return idx;
@@ -19286,7 +19305,7 @@ var SHIP_PAT_PREFIX_ = 'SHIP_PAT_';
 function shipMonthIssues_(month, back) {
   var months = shipMonthsBack_(month, back || 1), inWin = {};
   months.forEach(function (m) { inWin[m] = 1; });
-  return getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping' && inWin[shipMonthOf_(i.submitted_at)]; })
+  return getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping' && !isShipCause_(i) && inWin[shipMonthOf_(i.submitted_at)]; })
     .sort(function (a, b) { return String(a.submitted_at) < String(b.submitted_at) ? -1 : 1; });
 }
 function shipPatternsCached_(month) {
@@ -19329,11 +19348,16 @@ function shipPatterns_(data) {
     '"cause":"one or two sentences on what keeps going wrong","fix":"one or two sentences on what to change, and who would do it"}],' +
     '"notable":[{"id":"8-character id","why":"a few words on why it needs a look"}],"summary":"one sentence for a Slack post"}. ' +
     'Most important first, at most 6 patterns and 5 notable. No prose, no fences.';
+  // r273: the causes already on the tracker, so a pattern that is one of them says so.
+  var causes = shipCauseList_(), causeShort = {};
+  causes.forEach(function (c) { causeShort[String(c.issue_id).slice(0, 8)] = c; });
+  if (causes.length) prompt += '\n\nCAUSES ALREADY BEING WORKED ON (if a pattern is one of these, put its 8-character id in "cause_id"):\n' +
+    causes.map(function (c) { return '- [' + String(c.issue_id).slice(0, 8) + '] ' + String(c.summary || '').slice(0, 160) + ' (' + (c.status || 'open') + ')'; }).join('\n');
   var out = anthropicRaw_(SHIP_TAG_MODEL, prompt, 3000);
   if (!out.json || !out.json.items) return { ok: false, error: 'Could not work out the patterns: ' + String(out.why || 'no answer').slice(0, 160) };
   function issueRef(i) {
     return { id: i.issue_id, month: shipMonthOf_(i.submitted_at), status: String(i.status || 'open').toLowerCase(),
-             summary: String(i.summary || '').slice(0, 160), kind: i.issue_type || 'other' };
+             summary: String(i.summary || '').slice(0, 160), kind: i.issue_type || 'other', cause_id: String(i.cause_id || '') };
   }
   var items = out.json.items.slice(0, 6).map(function (x) {
     var seen = {}, refs = [];
@@ -19346,7 +19370,8 @@ function shipPatterns_(data) {
     var open = refs.filter(function (r) { return r.status !== 'resolved' && r.status !== 'past'; }).length;
     return { title: String(x.title || '').slice(0, 120), cause: String(x.cause || '').slice(0, 500), fix: String(x.fix || '').slice(0, 500),
              count: refs.filter(function (r) { return r.month === month; }).length, count_all: refs.length,
-             months: Object.keys(months).length, recurring: Object.keys(months).length >= 2, open: open, issues: refs.slice(0, 40) };
+             months: Object.keys(months).length, recurring: Object.keys(months).length >= 2, open: open, issues: refs.slice(0, 40),
+             cause_id: causeShort[String(x.cause_id || '').slice(0, 8)] ? causeShort[String(x.cause_id).slice(0, 8)].issue_id : '' };
   }).filter(function (it) { return it.issues.length; });
   var notable = (out.json.notable || []).slice(0, 5).map(function (n) {
     var i = byShort[String(n.id || '').trim().slice(0, 8)];
@@ -19366,6 +19391,103 @@ function shipPostMonth_(ym) {
   var sent = chan ? slackBotPost_(chan, text) : { ok: false };
   if (!sent.ok) slackPost_('shipping_monthly', text);
   return text;
+}
+
+// ---------------------------------------------------------------- r273: parcel cases and their causes
+// Edd, 2 Nov 2026 (shipping only, 3 Nov): "we sort of have two things...
+// getting the student that parcel asap and as quickly as possible through any
+// workaround available, and then fixing the underlying cause so it doesn't
+// happen next time. Each one needs to be linked but almost needs a separate
+// report with a separate flow?"
+//
+// A shipping issue is now one of two things:
+//   CASE  (ship_role '')      one student's parcel. Chase, re-send or refund,
+//                             close when they have it. Today's tracking lane.
+//   CAUSE (ship_role 'cause') why parcels go wrong, e.g. "DHL waybills missing
+//                             the receiver's tax ID". Has an owner and a fix,
+//                             is never chased, and never counts as a parcel
+//                             problem in the report.
+// A case points at its cause with cause_id. A case linked to a cause that was
+// closed after a fix reopens the cause: the fix didn't hold.
+function isShipCause_(i) { return String((i && i.ship_role) || '').toLowerCase() === 'cause'; }
+function shipCaseIssues_() { return getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping' && !isShipCause_(i); }); }
+function shipCauseList_() { return getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping' && isShipCause_(i); }); }
+
+function shipCauseCreate_(data) {
+  var title = String(data.title || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (title.length < 4) return { ok: false, error: 'Give the cause a short name.' };
+  var ids = (data.case_ids || []).map(String).filter(Boolean).slice(0, 80);
+  var why = String(data.cause || '').trim().slice(0, 2000), fix = String(data.fix || '').trim().slice(0, 2000);
+  var r = addIssue_({
+    category: 'shipping', issue_type: String(data.issue_type || 'other'), summary: title,
+    raw_text: 'Cause of repeated parcel problems.' + (why ? '\n\nWhat keeps going wrong: ' + why : '') + (fix ? '\n\nWhat to change: ' + fix : ''),
+    severity: ids.length >= 3 ? 'severe' : 'moderate', request_kind: 'fix', no_merge: true, _suppress_slack: true,
+    priority_reason: 'Behind ' + ids.length + ' parcel case' + (ids.length === 1 ? '' : 's') + '.',
+    chase_at: '', _user: data._user, app_url: data.app_url
+  });
+  if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'Could not save the cause.' };
+  var id = (r.issue && r.issue.issue_id) || r.issue_id;
+  setIssueFields_(id, { ship_role: 'cause', chase_at: '', resolution_note: fix ? 'Fix to make: ' + fix : '' });
+  var linked = shipLinkCases_(ids, id, data._user);
+  // Remember it on the pattern it came from, so the report shows it as made.
+  if (/^\d{4}-\d{2}$/.test(String(data.pattern_month || '')) && data.pattern_index != null) {
+    var p = shipPatternsCached_(data.pattern_month);
+    if (p && p.items && p.items[Number(data.pattern_index)]) {
+      p.items[Number(data.pattern_index)].cause_id = id;
+      PropertiesService.getScriptProperties().setProperty(SHIP_PAT_PREFIX_ + data.pattern_month, JSON.stringify(p));
+    }
+  }
+  return { ok: true, cause_id: id, linked: linked };
+}
+// Link (or with cause_id '' unlink) cases. A case logged after its cause was
+// closed reopens the cause, with a line on its trail saying why.
+function shipLinkCases_(ids, causeId, user) {
+  var cause = causeId ? findRow_(String(causeId)) : null;
+  if (causeId && (!cause || !isShipCause_(cause.record))) return 0;
+  var n = 0, cameBack = [];
+  var closedAt = cause && /^(resolved|past)$/.test(String(cause.record.status || '').toLowerCase()) ? String(cause.record.resolved_at || '') : '';
+  ids.forEach(function (id) {
+    var f = findRow_(String(id));
+    if (!f || catOf_(f.record) !== 'shipping' || isShipCause_(f.record)) return;
+    if (setIssueFields_(id, { cause_id: causeId || '' })) n++;
+    if (closedAt && String(f.record.submitted_at || '') > closedAt) cameBack.push(id);
+  });
+  if (cameBack.length) {
+    setIssueFields_(causeId, { status: 'open', resolved_at: '' });
+    try { addUpdate_({ issue_id: causeId, keep_status: true, _user: user || INBOX_FILER,
+      raw_text: 'Reopened: ' + cameBack.length + ' parcel case' + (cameBack.length === 1 ? '' : 's') + ' from after this was closed ' +
+        (cameBack.length === 1 ? 'has' : 'have') + ' the same cause, so the fix has not held.' }); } catch (e) {}
+  }
+  return n;
+}
+function shipCauseLink_(data) {
+  var ids = (data.case_ids || (data.case_id ? [data.case_id] : [])).map(String).filter(Boolean).slice(0, 80);
+  if (!ids.length) return { ok: false, error: 'No parcel cases given.' };
+  var n = shipLinkCases_(ids, String(data.cause_id || ''), data._user);
+  return { ok: true, linked: n };
+}
+// For the report and the issue pane: each cause with how many parcels it has
+// cost, how many are still out, and whether it has come back since it closed.
+function shipCauseSummaries_(cases, causes) {
+  var by = {};
+  cases.forEach(function (c) { var k = String(c.cause_id || ''); if (k) (by[k] = by[k] || []).push(c); });
+  return causes.map(function (c) {
+    var list = (by[c.issue_id] || []).sort(function (a, b) { return String(a.submitted_at) < String(b.submitted_at) ? 1 : -1; });
+    var st = String(c.status || 'open').toLowerCase(), closed = st === 'resolved' || st === 'past';
+    var since = closed ? String(c.resolved_at || '') : '';
+    return {
+      issue_id: c.issue_id, title: String(c.summary || '').slice(0, 160), status: st, assignee: c.assignee || '',
+      fix: String(c.resolution_note || '').replace(/^Fix to make: /, '').slice(0, 300), submitted_at: c.submitted_at, resolved_at: c.resolved_at || '',
+      cases: list.length, open_cases: list.filter(function (x) { return !/^(resolved|past)$/.test(String(x.status || '').toLowerCase()); }).length,
+      last_case_at: list.length ? list[0].submitted_at : '',
+      since_fix: since ? list.filter(function (x) { return String(x.submitted_at) > since; }).length : 0,
+      recent: list.slice(0, 6).map(function (x) { return { id: x.issue_id, at: x.submitted_at, status: String(x.status || 'open').toLowerCase(), summary: String(x.summary || '').slice(0, 120) }; })
+    };
+  }).sort(function (a, b) {
+    var ao = a.status === 'resolved' || a.status === 'past', bo = b.status === 'resolved' || b.status === 'past';
+    if (ao !== bo) return ao ? 1 : -1;
+    return b.cases - a.cases;
+  });
 }
 
 function shipBackfillAction_(data) {
