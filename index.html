@@ -970,6 +970,9 @@
   /* r272: shipping patterns */
   .shr-pat { padding: 8px 0; border-bottom: 1px solid var(--line); }
   .shr-pat:last-of-type { border-bottom: none; }
+  .shr-refs { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+  .shr-ref { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid #E53E3E; text-decoration: none; }
+  .shr-ref.done { border-color: var(--line); color: var(--muted); }
   .subrail-head.sub { padding-left: 26px; }
   /* The sub-rail replaces the pill strip rather than doubling it up. */
   @media (min-width: 761px) {
@@ -4133,7 +4136,7 @@ var MAX_IMAGE_MB = 5;
 // rides along with any feedback sent, so "it didn't save" arrives with the
 // error, the failed request, and the last few things that were clicked
 // attached, instead of needing a conversation to reconstruct.
-var BUILD = "r272 · 2026-11-02";  // bump this with each round, it lands on every feedback report
+var BUILD = "r273 · 2026-11-03";  // bump this with each round, it lands on every feedback report
 var PAGE_LOADED_AT = Date.now();
 var DIAG_CAP = { errors: 20, api: 15, clicks: 10 };
 var diag = { errors: [], api: [], clicks: [], backend: null };
@@ -6658,7 +6661,7 @@ function myActionItems() {
     // arrived, otherwise Tracking on any working day it has not been looked at
     // yet. Resolved - TBC counts as still moving: "hopefully sorted" is not
     // delivered.
-    var parcelLive = catOf(i) === "shipping" && (isOpen(i) || st === "resolved_tbc");
+    var parcelLive = catOf(i) === "shipping" && !isShipCause(i) && (isOpen(i) || st === "resolved_tbc");   // r273: a cause is never chased
     var chaseDue = parcelLive && i.chase_at && String(i.chase_at).slice(0, 10) <= todayStr();
     if (chaseDue) out.chase.push(i);
     else if (parcelLive && isBusinessDay() && String(i.track_checked_at || "").slice(0, 10) !== todayStr()) out.track.push(i);
@@ -10640,6 +10643,7 @@ function drawShipReport() {
 
   // ---- r272: the patterns, then every issue this month
   h += shipPatternsCard(d);
+  h += shipCausesCard(d);   // r273
   h += shipMonthIssuesCard(d);
 
   // ---- trend
@@ -11163,23 +11167,49 @@ function shipChatsCard(d, b, prev3) {
 // patterns and things we could fix to stop future issues."
 function shipPatternsCard(d) {
   var p = d.patterns, admin = !!(state.perms || {}).users;
-  var h = '<div class="card" id="shr-patterns"><h3>Patterns and what we could change</h3>';
-  if (shipr.patBusy) h += '<p class="small muted"><span class="spinner"></span> Reading this month\'s issues and the two months before…</p>';
-  else if (!p) h += '<p class="small muted">Not worked out for ' + esc(shipMonthName(d.month)) + ' yet. It runs on its own on the 1st' +
-    (admin ? ', or now:' : '.') + '</p>';
-  else if (!p.items || !p.items.length) h += '<p class="small muted">' + esc(p.note || "Nothing stood out.") + "</p>";
+  function ref(r) {
+    var done = r.status === "resolved" || r.status === "past";
+    return '<a href="#" class="shr-ref' + (done ? " done" : "") + '" title="' + esc(r.summary || "") + '" onclick="shipOpenIssue(\'' + esc(r.id) + '\');return false;">#' +
+      esc(String(r.id).slice(0, 6).toUpperCase()) + " " + esc(shipMonthName(r.month).replace(/ \d{4}$/, "").slice(0, 3)) + (done ? " · sorted" : " · open") + "</a>";
+  }
+  var h = '<div class="card" id="shr-patterns"><h3>Worth a look, and what keeps coming back</h3>';
+  if (shipr.patBusy) h += '<p class="small muted"><span class="spinner"></span> Reading this month\'s issues and the five months before…</p>';
+  else if (!p) h += '<p class="small muted">Not worked out for ' + esc(shipMonthName(d.month)) + ' yet. It runs on its own on the 1st' + (admin ? ", or now:" : ".") + "</p>";
+  else if (!(p.items || []).length && !(p.notable || []).length) h += '<p class="small muted">' + esc(p.note || "Nothing stood out.") + "</p>";
   else {
-    h += p.items.map(function (it) {
-      return '<div class="shr-pat"><div><b>' + esc(it.title) + '</b> <span class="small muted">' + (it.count || 0) + " this month" +
-        (it.count_3m && it.count_3m !== it.count ? ", " + it.count_3m + " over three months" : "") + "</span></div>" +
-        (it.cause ? '<div class="small">' + esc(it.cause) + "</div>" : "") +
-        (it.fix ? '<div class="small"><span class="muted">What to change:</span> ' + esc(it.fix) + "</div>" : "") + "</div>";
-    }).join("") +
-      '<p class="small muted" style="margin:8px 0 0;">From the ' + (p.n3 || p.n) + ' shipping issues in ' + esc(shipMonthName(d.month)) +
-      ' and the two months before, read ' + esc(new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) + ".</p>";
+    if ((p.notable || []).length) {
+      h += '<h4 style="margin:4px 0 6px;">Worth a look from ' + esc(shipMonthName(d.month)) + "</h4>" + p.notable.map(function (r) {
+        return '<div class="shr-pat"><div>' + ref(r) + " " + esc(r.summary || "") + "</div>" + (r.why ? '<div class="small muted">' + esc(r.why) + "</div>" : "") + "</div>";
+      }).join("");
+    }
+    if ((p.items || []).length) {
+      h += '<h4 style="margin:14px 0 6px;">Patterns over the last ' + (p.months_back || 6) + " months</h4>" + p.items.map(function (it, pi) {
+        var all = it.count_all != null ? it.count_all : (it.issues || []).length;
+        return '<div class="shr-pat"><div><b>' + esc(it.title) + "</b> " + (it.recurring ? '<span class="shr-tag">recurring, ' + it.months + " months</span>" : "") +
+          (it.open ? '<span class="shr-tag">' + it.open + " open</span>" : "") +
+          ' <span class="small muted">' + all + " issue" + (all === 1 ? "" : "s") + (it.count ? ", " + it.count + " this month" : "") + "</span></div>" +
+          (it.cause ? '<div class="small">' + esc(it.cause) + "</div>" : "") +
+          (it.fix ? '<div class="small"><span class="muted">What to change:</span> ' + esc(it.fix) + "</div>" : "") +
+          ((it.issues || []).length ? '<div class="shr-refs">' + it.issues.map(ref).join("") + "</div>" : "") +
+          shipPatternCauseLine(it, pi) + "</div>";
+      }).join("");
+    }
+    h += '<p class="small muted" style="margin:8px 0 0;">From the ' + (p.n_all || p.n3 || p.n) + " shipping issues in " + esc(shipMonthName(d.month)) +
+      " and the " + ((p.months_back || 6) - 1) + " months before, read " + esc(new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) +
+      ". Open an issue to work on it, or close it if it has since been fixed.</p>";
   }
   if (admin && !shipr.patBusy) h += '<button type="button" class="ghost small" style="margin-top:8px;" onclick="shipRunPatterns()">' + (p ? "Read them again" : "Look for patterns") + "</button>";
   return h + "</div>";
+}
+// r273: a pattern becomes a cause, or is already one.
+function shipPatternCauseLine(it, pi) {
+  var canEdit = !!(state.perms || {}).manage;
+  if (it.cause_id) {
+    var unlinked = (it.issues || []).filter(function (r) { return r.cause_id !== it.cause_id; }).length;
+    return '<div class="small" style="margin-top:6px;"><a href="#" onclick="shipOpenIssue(\'' + esc(it.cause_id) + '\');return false;">Being fixed as a cause</a>' +
+      (canEdit && unlinked ? ' · <a href="#" onclick="shipLinkPattern(' + pi + ');return false;">Link the ' + unlinked + " case" + (unlinked === 1 ? "" : "s") + " not on it yet</a>" : "") + "</div>";
+  }
+  return canEdit ? '<div style="margin-top:6px;"><button type="button" class="ghost small" onclick="shipMakeCause(' + pi + ')">Make this a cause to fix</button></div>' : "";
 }
 function shipRunPatterns() {
   if (shipr.patBusy) return;
@@ -11203,6 +11233,7 @@ function shipMonthIssuesCard(d) {
       (o.tracking ? '<span class="shr-tag">' + esc(o.tracking) + "</span>" : "") +
       '<span class="shr-tag">' + (done ? "sorted" : esc(o.status.replace(/_/g, " "))) + "</span>" +
       (o.swept ? '<span class="shr-tag" title="Found in a chat by the nightly sweep and logged automatically">from a chat</span>' : "") +
+      (o.cause_id ? '<a href="#" class="shr-tag" onclick="shipOpenIssue(\'' + esc(o.cause_id) + '\');return false;" title="The cause this parcel case is linked to">cause: ' + esc((o.cause_title || "").slice(0, 40)) + "</a>" : "") +
       "<div>" + esc(o.summary || "") + (o.reports > 1 ? ' <span class="small muted">(' + o.reports + " reports)</span>" : "") + "</div>" +
       (done && o.resolution_note ? '<div class="small muted">' + esc(o.resolution_note) + "</div>" : "") + "</div>" +
       '<div style="white-space:nowrap;" class="small"><a href="#" onclick="shipOpenIssue(\'' + esc(o.issue_id) + '\');return false;">Open</a></div></div>';
@@ -11220,6 +11251,89 @@ function shipLogAllChats() {
     toast("Logged " + (x.filed || 0) + (x.left ? ", " + x.left + " still to go (press again)" : "") + (x.failed ? ", " + x.failed + " failed" : "") + ".");
     loadShipReport(true);
   }).catch(function () { shipr.logBusy = false; toast("That took too long to answer. It may still have logged some; refresh in a minute."); drawShipReport(); });
+}
+
+// ---------------------------------------------------------------- r273: parcel cases and causes
+// Edd (shipping only): getting the student their parcel, and fixing why it
+// went wrong, are two jobs with two flows, linked. A case points at its cause.
+function isShipCause(i) { return String((i && i.ship_role) || "").toLowerCase() === "cause"; }
+function shipCausesOpen() {
+  return (state.issues || []).filter(function (i) { return catOf(i) === "shipping" && isShipCause(i); });
+}
+function shipCauseDetailHtml(issue) {
+  if (catOf(issue) !== "shipping") return "";
+  var canEdit = !!(state.perms || {}).manage;
+  if (isShipCause(issue)) {
+    var cases = (state.issues || []).filter(function (c) { return String(c.cause_id || "") === issue.issue_id; })
+      .sort(function (a, b) { return String(a.submitted_at) < String(b.submitted_at) ? 1 : -1; });
+    var open = cases.filter(isOpen).length;
+    return '<div class="k">Cause of</div><div>' + cases.length + " parcel case" + (cases.length === 1 ? "" : "s") + (open ? ", " + open + " still open" : "") +
+      (cases.length ? '<div class="shr-refs">' + cases.slice(0, 30).map(function (c) {
+        return '<a href="#" class="shr-ref' + (isOpen(c) ? "" : " done") + '" title="' + esc(c.summary || "") + '" onclick="openIssueById(\'' + esc(c.issue_id) + '\');return false;">#' +
+          esc(String(c.issue_id).slice(0, 6).toUpperCase()) + " " + esc(new Date(c.submitted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })) + "</a>";
+      }).join("") + "</div>" : "") + "</div>";
+  }
+  var cause = issue.cause_id ? (state.issues || []).filter(function (c) { return c.issue_id === issue.cause_id; })[0] : null;
+  var h = '<div class="k">Cause</div><div>';
+  if (cause) h += '<a href="#" onclick="openIssueById(\'' + esc(cause.issue_id) + '\');return false;">' + esc(cause.summary || "the cause") + "</a>" +
+    (canEdit ? ' <a href="#" class="small muted" onclick="shipSetCause(\'' + esc(issue.issue_id) + '\',\'\');return false;">unlink</a>' : "");
+  else if (canEdit) {
+    var list = shipCausesOpen();
+    h += list.length ? '<select class="small" style="width:auto;" onchange="if(this.value)shipSetCause(\'' + esc(issue.issue_id) + '\',this.value)"><option value="">Link to a cause…</option>' +
+      list.map(function (c) { return '<option value="' + esc(c.issue_id) + '">' + esc(String(c.summary || "").slice(0, 70)) + (isOpen(c) ? "" : " (closed)") + "</option>"; }).join("") + "</select>"
+      : '<span class="small muted">None yet. Causes are made from the patterns on the shipping report.</span>';
+  } else h += '<span class="small muted">Not linked to a cause</span>';
+  return h + "</div>";
+}
+function shipSetCause(caseId, causeId) {
+  apiPost({ action: "shipCauseLink", case_ids: [caseId], cause_id: causeId }).then(function (r) {
+    if (!r || !r.ok) { toast((r && r.error) || "That didn't save."); return; }
+    var c = (state.issues || []).filter(function (i) { return i.issue_id === caseId; })[0];
+    if (c) c.cause_id = causeId;
+    toast(causeId ? "Linked to the cause." : "Unlinked.");
+    openIssueById(caseId);
+  }).catch(function () { toast("That didn't save."); });
+}
+// The report's "Causes" card: what we are fixing, and whether it is working.
+function shipCausesCard(d) {
+  var list = d.causes || [];
+  if (!list.length) return "";
+  return '<div class="card" id="shr-causes"><h3>Causes we are fixing (' + list.filter(function (c) { return c.status !== "resolved" && c.status !== "past"; }).length + " open)</h3>" +
+    list.map(function (c) {
+      var closed = c.status === "resolved" || c.status === "past";
+      return '<div class="shr-pat"><div><b>' + esc(c.title) + "</b> " +
+        '<span class="shr-tag">' + (closed ? "fixed" : esc(String(c.status).replace(/_/g, " "))) + "</span>" +
+        (c.assignee ? '<span class="shr-tag">' + esc(c.assignee) + "</span>" : "") +
+        (closed && c.since_fix ? '<span class="shr-tag" style="border-color:#E53E3E;">' + c.since_fix + " since the fix</span>" : "") +
+        ' <span class="small muted">' + c.cases + " parcel case" + (c.cases === 1 ? "" : "s") + (c.open_cases ? ", " + c.open_cases + " open" : "") +
+        (c.last_case_at ? ", latest " + esc(new Date(c.last_case_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })) : "") + "</span></div>" +
+        (c.fix ? '<div class="small"><span class="muted">Fix:</span> ' + esc(c.fix) + "</div>" : "") +
+        '<div class="small"><a href="#" onclick="shipOpenIssue(\'' + esc(c.issue_id) + '\');return false;">Open the cause</a></div></div>';
+    }).join("") +
+    '<p class="small muted" style="margin:8px 0 0;">A cause is closed once its fix is in. A new parcel case linked to it after that reopens it, because the fix has not held.</p></div>';
+}
+function shipMakeCause(idx) {
+  var d = shipr.data, p = d && d.patterns, it = p && p.items && p.items[idx];
+  if (!it) return;
+  var title = window.prompt("Name the cause (you can change it later):", it.title || "");
+  if (!title) return;
+  var ids = (it.issues || []).map(function (r) { return r.id; });
+  toast("Making the cause and linking " + ids.length + " parcel case" + (ids.length === 1 ? "" : "s") + "…");
+  apiPost({ action: "shipCauseCreate", title: title, cause: it.cause || "", fix: it.fix || "", case_ids: ids,
+            issue_type: (it.issues[0] || {}).kind || "other", pattern_month: d.month, pattern_index: idx }).then(function (r) {
+    if (!r || !r.ok) { toast((r && r.error) || "Could not make the cause."); return; }
+    toast("Cause made, " + r.linked + " case" + (r.linked === 1 ? "" : "s") + " linked.");
+    loadShipReport(true);
+  }).catch(function () { toast("Could not make the cause just now."); });
+}
+function shipLinkPattern(idx) {
+  var d = shipr.data, it = d && d.patterns && d.patterns.items[idx];
+  if (!it || !it.cause_id) return;
+  var ids = (it.issues || []).filter(function (r) { return r.cause_id !== it.cause_id; }).map(function (r) { return r.id; });
+  apiPost({ action: "shipCauseLink", case_ids: ids, cause_id: it.cause_id }).then(function (r) {
+    if (!r || !r.ok) { toast((r && r.error) || "Could not link them."); return; }
+    toast("Linked " + r.linked + "."); loadShipReport(true);
+  }).catch(function () { toast("Could not link them just now."); });
 }
 
 function shipLogChat(id) {
@@ -20916,7 +21030,8 @@ function openDetail(issue) {
     (catOf(issue) === "shipping" ? kv("Courier", issue.courier) : "") +
     (catOf(issue) === "shipping" ? kv("Tracking", issue.tracking_number) : "") +
     (catOf(issue) === "shipping" && (state.perms || {}).log ? '<div class="k">Customs</div><div><button class="ghost small" onclick="openCustomsFromIssue(\'' + esc(issue.issue_id) + '\')">Customs invoice</button></div>' : "") +
-    (catOf(issue) === "shipping" && issue.chase_at ? kv("Chase on", String(issue.chase_at).slice(0, 10)) : "") +
+    (catOf(issue) === "shipping" && issue.chase_at && !isShipCause(issue) ? kv("Chase on", String(issue.chase_at).slice(0, 10)) : "") +
+    shipCauseDetailHtml(issue) +
     kv("Affects", audienceOf(issue) === "internal" ? "Us (internal)" : "Students") +
     (audienceOf(issue) === "internal" ? "" : kv("Student", (issue.student_name || "-") + (issue.student_contact ? " (" + issue.student_contact + ")" : ""))) +
     kv("Priority reason", issue.priority_reason) +
