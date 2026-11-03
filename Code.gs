@@ -1000,13 +1000,21 @@ function usersSheet_() { return sheetByName_(USERS_SHEET); }
  *   Sheet is the record (now): each write is copied to the store straight
  *     after (the shadow), so the nightly comparison can prove the two agree.
  *   Store is the record (storeAdmin table_live users): reads come from a
- *     sixty-second cache of the store's 20-odd rows, which is quicker than the
+ *     ten-minute (r273) cache of the store's 20-odd rows, which is quicker than the
  *     Sheet read every request used to make; a sign-in token missing from the
  *     cache is looked for again fresh before anyone is refused, so a brand new
  *     sign-in is never turned away by a cache a few seconds old. Every write
  *     goes to the store, drops the cache and is copied to the Sheet.
  * ------------------------------------------------------------------------- */
 var USERS_CACHE_KEY_ = 'ait_users_rows';
+// r273 (Edd, 3 Nov): ten minutes, was sixty seconds. Measured r262: a hit is
+// 0.1-0.2s of the sign-in check, a miss 0.8-1.9s, and most saves were misses
+// only because nobody had used the tracker in the last minute. Every write to
+// a user (setCell_, usersAppend_, usersDeleteRow_) still drops the copy, and a
+// session not found in it is looked for again fresh, so a sign-in, a logout, a
+// permission change or a disabled account takes effect at once as before. Only
+// an edit made straight in the database, not through the tracker, waits.
+var USERS_CACHE_SECS_ = 600;
 function usersLive_() { return storeTableLive_('users'); }
 function usersCacheDrop_() { try { CacheService.getScriptCache().remove(USERS_CACHE_KEY_); } catch (e) {} }
 function usersTable_(fresh) {
@@ -1023,7 +1031,7 @@ function usersTable_(fresh) {
   if (!rows) {
     rows = JSON.parse(JSON.stringify(storeTableList_('users')));
     authNote_('users_read');
-    try { var txt = JSON.stringify(rows); if (txt.length < 90000) c.put(USERS_CACHE_KEY_, txt, 60); } catch (e) {}
+    try { var txt = JSON.stringify(rows); if (txt.length < 90000) c.put(USERS_CACHE_KEY_, txt, USERS_CACHE_SECS_); } catch (e) {}
   }
   var head = USER_HEADERS.slice(), ix = {};
   head.forEach(function (h, i) { ix[h] = i; });
@@ -11387,7 +11395,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r272 · 2026-11-02';
+var CODE_STAMP = 'r273 · 2026-11-03';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
