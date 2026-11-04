@@ -11395,7 +11395,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r273 · 2026-11-03';
+var CODE_STAMP = 'r274.1 · 2026-11-04';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -13577,6 +13577,15 @@ function backendInfo_() {
     version: p.getProperty('BACKEND_VERSION') || '',
     deployed_at: p.getProperty('BACKEND_DEPLOYED_AT') || '',
     note: p.getProperty('BACKEND_NOTE') || '',
+    // r274.1: the shipping sweep's state, counts only (no chat content).
+    shipping: (function () {
+      var j = function (k) { try { return JSON.parse(p.getProperty(k) || 'null'); } catch (e) { return null; } };
+      var run = j('SHIP_AUTOLOG_RUN');
+      if (run && run.errors) run.errors = run.errors.slice(0, 3).map(function (x) { return String(x).slice(0, 160); });
+      return { kick: p.getProperty('SHIP_AUTOLOG_KICK') || '', due: p.getProperty('SHIP_AUTOLOG_DUE') === '1',
+               repost_pending: p.getProperty('SHIP_REPOST_MONTH') || '', fails: Number(p.getProperty('SHIP_AUTOLOG_FAILS')) || 0,
+               last_run: run, last_post: j('SHIP_LAST_POST') };
+    })(),
     // r180: the early briefs' last week - built, used, gone stale, tokens.
     prebrief: (function () { try { return prebriefSummary_(); } catch (e) { return { error: String(e) }; } })(),
     // What is allowed to reach Slack and where it goes, so it can be checked
@@ -19269,19 +19278,38 @@ function shipAutoLog_(opts) {
 // so the inbox it shares a trigger with is never kept waiting long.
 function shipAutoLogTick_() {
   var props = PropertiesService.getScriptProperties();
-  // First tick after r272.2: work through the back catalogue, then re-post
-  // October (Edd, 2 Nov), once.
-  if (props.getProperty('SHIP_AUTOLOG_KICK') !== 'r272.2') {
-    props.setProperty('SHIP_AUTOLOG_KICK', 'r272.2');
+  // First tick after r274.1: work through the back catalogue, then re-post
+  // October (Edd, 2 Nov), once. r272.2's kick never got the back catalogue
+  // logged (nothing was filed and nothing was posted), so this re-arms it.
+  if (props.getProperty('SHIP_AUTOLOG_KICK') !== 'r274.1') {
+    props.setProperty('SHIP_AUTOLOG_KICK', 'r274.1');
     props.setProperty('SHIP_AUTOLOG_DUE', '1');
     props.setProperty('SHIP_REPOST_MONTH', '2026-10');
+    props.deleteProperty('SHIP_AUTOLOG_FAILS');
   }
   if (props.getProperty('SHIP_AUTOLOG_DUE') !== '1') return;
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;            // busy: the next tick tries again
   var out;
-  try { out = shipAutoLog_({ max: 12, budgetMs: 2 * 60 * 1000 }); } finally { lock.releaseLock(); }
-  if (out && out.left && out.filed) return;   // more to do, next tick
+  try { out = shipAutoLog_({ max: 12, budgetMs: 2 * 60 * 1000 }); }
+  catch (e) {
+    // r274.1: a thrown run is recorded where the ping can show it, not only in Logger.
+    out = { at: new Date().toISOString(), groups: 0, filed: 0, failed: 1, left: 1, errors: [String(e && e.message || e).slice(0, 300)] };
+    props.setProperty('SHIP_AUTOLOG_RUN', JSON.stringify(out));
+  }
+  finally { lock.releaseLock(); }
+  // r274.1: a run that filed nothing and failed something is not "finished".
+  // r272.2 treated it as finished, cleared the flag and re-posted the month as
+  // if the back catalogue were in. Retry on the next tick, up to an hour of
+  // ticks, then stop and leave it showing on the ping for a person.
+  if (out.failed && !out.filed) {
+    var fails = (Number(props.getProperty('SHIP_AUTOLOG_FAILS')) || 0) + 1;
+    props.setProperty('SHIP_AUTOLOG_FAILS', String(fails));
+    if (fails >= 12) props.deleteProperty('SHIP_AUTOLOG_DUE');
+    return;
+  }
+  props.deleteProperty('SHIP_AUTOLOG_FAILS');
+  if (out.left) return;                       // more to do, next tick
   props.deleteProperty('SHIP_AUTOLOG_DUE');
   var again = props.getProperty('SHIP_REPOST_MONTH');
   if (again && /^\d{4}-\d{2}$/.test(again)) {
@@ -19397,7 +19425,10 @@ function shipPostMonth_(ym) {
   var text = shipSummaryText_(shipReport_({ month: ym }));
   var chan = PropertiesService.getScriptProperties().getProperty('SLACK_SHIPPING_CHANNEL_ID');
   var sent = chan ? slackBotPost_(chan, text) : { ok: false };
-  if (!sent.ok) slackPost_('shipping_monthly', text);
+  var via = sent.ok ? 'bot' : 'webhook';
+  if (!sent.ok) { var w = slackPost_('shipping_monthly', text); if (w && w.ok === false) via = 'failed'; }
+  // r274.1: so the ping can say whether and when a month was posted
+  PropertiesService.getScriptProperties().setProperty('SHIP_LAST_POST', JSON.stringify({ month: ym, at: new Date().toISOString(), via: via }));
   return text;
 }
 
