@@ -19432,7 +19432,7 @@ function shipPatterns_(data) {
     'Only claim what the issues show, and only use ids from the list.\n\n' +
     'Write for Edd, the owner: British English, plain words, contractions, no em dashes, no hype.\n\n' +
     'ISSUES:\n' + lines.join('\n') + '\n\n' +
-    'Return ONLY JSON: {"items":[{"title":"short plain heading","ids":["the 8-character id of every issue this covers, any month"],' +
+    'Return ONLY JSON: {"items":[{"title":"a heading of at most 6 words and 45 characters, like DHL duty charged to students or Waybills missing phone numbers","ids":["the 8-character id of every issue this covers, any month"],' +
     '"cause":"one or two sentences on what keeps going wrong","fix":"one or two sentences on what to change, and who would do it"}],' +
     '"notable":[{"id":"8-character id","why":"a few words on why it needs a look"}],"summary":"one sentence for a Slack post"}. ' +
     'Most important first, at most 6 patterns and 5 notable. No prose, no fences.';
