@@ -11395,7 +11395,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r274.1 · 2026-11-04';
+var CODE_STAMP = 'r274.2 · 2026-11-04';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -13584,7 +13584,7 @@ function backendInfo_() {
       if (run && run.errors) run.errors = run.errors.slice(0, 3).map(function (x) { return String(x).slice(0, 160); });
       return { kick: p.getProperty('SHIP_AUTOLOG_KICK') || '', due: p.getProperty('SHIP_AUTOLOG_DUE') === '1',
                repost_pending: p.getProperty('SHIP_REPOST_MONTH') || '', fails: Number(p.getProperty('SHIP_AUTOLOG_FAILS')) || 0,
-               last_run: run, last_post: j('SHIP_LAST_POST') };
+               last_run: run, last_post: j('SHIP_LAST_POST'), patterns: j('SHIP_PAT_LAST') };
     })(),
     // r180: the early briefs' last week - built, used, gone stale, tokens.
     prebrief: (function () { try { return prebriefSummary_(); } catch (e) { return { error: String(e) }; } })(),
@@ -19281,8 +19281,8 @@ function shipAutoLogTick_() {
   // First tick after r274.1: work through the back catalogue, then re-post
   // October (Edd, 2 Nov), once. r272.2's kick never got the back catalogue
   // logged (nothing was filed and nothing was posted), so this re-arms it.
-  if (props.getProperty('SHIP_AUTOLOG_KICK') !== 'r274.1') {
-    props.setProperty('SHIP_AUTOLOG_KICK', 'r274.1');
+  if (props.getProperty('SHIP_AUTOLOG_KICK') !== 'r274.2') {   // r274.2: once more, for the patterns
+    props.setProperty('SHIP_AUTOLOG_KICK', 'r274.2');
     props.setProperty('SHIP_AUTOLOG_DUE', '1');
     props.setProperty('SHIP_REPOST_MONTH', '2026-10');
     props.deleteProperty('SHIP_AUTOLOG_FAILS');
@@ -19344,8 +19344,31 @@ function shipMonthIssues_(month, back) {
   return getIssues_().issues.filter(function (i) { return catOf_(i) === 'shipping' && !isShipCause_(i) && inWin[shipMonthOf_(i.submitted_at)]; })
     .sort(function (a, b) { return String(a.submitted_at) < String(b.submitted_at) ? -1 : 1; });
 }
+// r274.2: a month's patterns carry every linked issue, which runs well past the
+// 9 KB a single script property can hold, so setProperty threw and the 4 Nov
+// repost of October went out with no patterns and no "worth a look" at all.
+// Stored in 8,000-character pieces now: SHIP_PAT_<month> holds the piece count,
+// SHIP_PAT_<month>_<n> the pieces. An old single-value entry still reads.
 function shipPatternsCached_(month) {
-  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(SHIP_PAT_PREFIX_ + month) || 'null'); } catch (e) { return null; }
+  var p = PropertiesService.getScriptProperties(), head = p.getProperty(SHIP_PAT_PREFIX_ + month);
+  if (!head) return null;
+  try {
+    if (/^chunks:\d+$/.test(head)) {
+      var n = Number(head.split(':')[1]), parts = [];
+      for (var k = 0; k < n; k++) parts.push(p.getProperty(SHIP_PAT_PREFIX_ + month + '_' + k) || '');
+      return JSON.parse(parts.join(''));
+    }
+    return JSON.parse(head);
+  } catch (e) { return null; }
+}
+function shipPatternsSave_(month, obj) {
+  var p = PropertiesService.getScriptProperties(), txt = JSON.stringify(obj), size = 8000, n = Math.ceil(txt.length / size) || 1;
+  var old = p.getProperty(SHIP_PAT_PREFIX_ + month), oldN = /^chunks:\d+$/.test(old || '') ? Number(old.split(':')[1]) : 0;
+  var put = {};
+  for (var k = 0; k < n; k++) put[SHIP_PAT_PREFIX_ + month + '_' + k] = txt.slice(k * size, (k + 1) * size);
+  put[SHIP_PAT_PREFIX_ + month] = 'chunks:' + n;
+  p.setProperties(put);
+  for (var j = n; j < oldN; j++) p.deleteProperty(SHIP_PAT_PREFIX_ + month + '_' + j);
 }
 // r272.1 (Edd, 2 Nov 2026): "highlight the actual issues we faced and highlight
 // any recurring ones over the 6 months or so, and link to their bug tracker
@@ -19389,7 +19412,7 @@ function shipPatterns_(data) {
   causes.forEach(function (c) { causeShort[String(c.issue_id).slice(0, 8)] = c; });
   if (causes.length) prompt += '\n\nCAUSES ALREADY BEING WORKED ON (if a pattern is one of these, put its 8-character id in "cause_id"):\n' +
     causes.map(function (c) { return '- [' + String(c.issue_id).slice(0, 8) + '] ' + String(c.summary || '').slice(0, 160) + ' (' + (c.status || 'open') + ')'; }).join('\n');
-  var out = anthropicRaw_(SHIP_TAG_MODEL, prompt, 3000);
+  var out = anthropicRaw_(SHIP_TAG_MODEL, prompt, 5000);   // r274.2: 3000 could cut the JSON off with six months of issues
   if (!out.json || !out.json.items) return { ok: false, error: 'Could not work out the patterns: ' + String(out.why || 'no answer').slice(0, 160) };
   function issueRef(i) {
     return { id: i.issue_id, month: shipMonthOf_(i.submitted_at), status: String(i.status || 'open').toLowerCase(),
@@ -19415,13 +19438,18 @@ function shipPatterns_(data) {
   }).filter(Boolean);
   var saved = { at: new Date().toISOString(), n: mine.length, n_all: list.length, months_back: SHIP_PAT_MONTHS,
                 items: items, notable: notable, summary: String(out.json.summary || '').slice(0, 300) };
-  PropertiesService.getScriptProperties().setProperty(SHIP_PAT_PREFIX_ + month, JSON.stringify(saved));
+  shipPatternsSave_(month, saved);
   return { ok: true, month: month, patterns: saved };
 }
 // Post a month's report to #shipping-issues now (the same post as the 1st).
 function shipPostMonth_(ym) {
   try { shipVolumesRefresh_({ month: ym }); } catch (e) {}
-  try { shipPatterns_({ month: ym }); } catch (e) {}
+  // r274.2: a failed patterns step is recorded (the ping shows it), not swallowed.
+  var pat;
+  try { pat = shipPatterns_({ month: ym }); } catch (e) { pat = { ok: false, error: String(e && e.message || e) }; }
+  PropertiesService.getScriptProperties().setProperty('SHIP_PAT_LAST', JSON.stringify({ month: ym, at: new Date().toISOString(),
+    ok: !!(pat && pat.ok), error: pat && !pat.ok ? String(pat.error || '').slice(0, 200) : '',
+    items: pat && pat.patterns ? (pat.patterns.items || []).length : 0, notable: pat && pat.patterns ? (pat.patterns.notable || []).length : 0 }));
   var text = shipSummaryText_(shipReport_({ month: ym }));
   var chan = PropertiesService.getScriptProperties().getProperty('SLACK_SHIPPING_CHANNEL_ID');
   var sent = chan ? slackBotPost_(chan, text) : { ok: false };
@@ -19473,7 +19501,7 @@ function shipCauseCreate_(data) {
     var p = shipPatternsCached_(data.pattern_month);
     if (p && p.items && p.items[Number(data.pattern_index)]) {
       p.items[Number(data.pattern_index)].cause_id = id;
-      PropertiesService.getScriptProperties().setProperty(SHIP_PAT_PREFIX_ + data.pattern_month, JSON.stringify(p));
+      shipPatternsSave_(data.pattern_month, p);
     }
   }
   return { ok: true, cause_id: id, linked: linked };
