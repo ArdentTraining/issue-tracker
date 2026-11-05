@@ -11395,7 +11395,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r274.2 · 2026-11-04';
+var CODE_STAMP = 'r274.3 · 2026-11-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -19287,6 +19287,13 @@ function shipAutoLogTick_() {
     props.setProperty('SHIP_REPOST_MONTH', '2026-10');
     props.deleteProperty('SHIP_AUTOLOG_FAILS');
   }
+  // r274.3: work October's patterns out once more, without posting. Two posts
+  // have gone to the channel already; Edd decides whether a third does.
+  if (props.getProperty('SHIP_PAT_KICK') !== 'r274.3') {
+    props.setProperty('SHIP_PAT_KICK', 'r274.3');
+    shipPatternsRecorded_('2026-10');
+    return;
+  }
   if (props.getProperty('SHIP_AUTOLOG_DUE') !== '1') return;
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;            // busy: the next tick tries again
@@ -19412,7 +19419,9 @@ function shipPatterns_(data) {
   causes.forEach(function (c) { causeShort[String(c.issue_id).slice(0, 8)] = c; });
   if (causes.length) prompt += '\n\nCAUSES ALREADY BEING WORKED ON (if a pattern is one of these, put its 8-character id in "cause_id"):\n' +
     causes.map(function (c) { return '- [' + String(c.issue_id).slice(0, 8) + '] ' + String(c.summary || '').slice(0, 160) + ' (' + (c.status || 'open') + ')'; }).join('\n');
-  var out = anthropicRaw_(SHIP_TAG_MODEL, prompt, 5000);   // r274.2: 3000 could cut the JSON off with six months of issues
+  // r274.3: 5000 still ran out (out 5000 tokens, 1,836 characters of text: the model spends most of the
+  // budget reasoning before it writes), so give it room. A few pence a month.
+  var out = anthropicRaw_(SHIP_TAG_MODEL, prompt, 16000);
   if (!out.json || !out.json.items) return { ok: false, error: 'Could not work out the patterns: ' + String(out.why || 'no answer').slice(0, 160) };
   function issueRef(i) {
     return { id: i.issue_id, month: shipMonthOf_(i.submitted_at), status: String(i.status || 'open').toLowerCase(),
@@ -19442,14 +19451,18 @@ function shipPatterns_(data) {
   return { ok: true, month: month, patterns: saved };
 }
 // Post a month's report to #shipping-issues now (the same post as the 1st).
-function shipPostMonth_(ym) {
-  try { shipVolumesRefresh_({ month: ym }); } catch (e) {}
-  // r274.2: a failed patterns step is recorded (the ping shows it), not swallowed.
+// r274.2: a failed patterns step is recorded (the ping shows it), not swallowed.
+function shipPatternsRecorded_(ym) {
   var pat;
   try { pat = shipPatterns_({ month: ym }); } catch (e) { pat = { ok: false, error: String(e && e.message || e) }; }
   PropertiesService.getScriptProperties().setProperty('SHIP_PAT_LAST', JSON.stringify({ month: ym, at: new Date().toISOString(),
     ok: !!(pat && pat.ok), error: pat && !pat.ok ? String(pat.error || '').slice(0, 200) : '',
     items: pat && pat.patterns ? (pat.patterns.items || []).length : 0, notable: pat && pat.patterns ? (pat.patterns.notable || []).length : 0 }));
+  return pat;
+}
+function shipPostMonth_(ym) {
+  try { shipVolumesRefresh_({ month: ym }); } catch (e) {}
+  shipPatternsRecorded_(ym);
   var text = shipSummaryText_(shipReport_({ month: ym }));
   var chan = PropertiesService.getScriptProperties().getProperty('SLACK_SHIPPING_CHANNEL_ID');
   var sent = chan ? slackBotPost_(chan, text) : { ok: false };
