@@ -11395,7 +11395,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r274.3 · 2026-11-05';
+var CODE_STAMP = 'r274.4 · 2026-11-05';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -19281,8 +19281,8 @@ function shipAutoLogTick_() {
   // First tick after r274.1: work through the back catalogue, then re-post
   // October (Edd, 2 Nov), once. r272.2's kick never got the back catalogue
   // logged (nothing was filed and nothing was posted), so this re-arms it.
-  if (props.getProperty('SHIP_AUTOLOG_KICK') !== 'r274.2') {   // r274.2: once more, for the patterns
-    props.setProperty('SHIP_AUTOLOG_KICK', 'r274.2');
+  if (props.getProperty('SHIP_AUTOLOG_KICK') !== 'r274.4') {   // r274.4: Edd, 5 Nov: repost October, now with its patterns
+    props.setProperty('SHIP_AUTOLOG_KICK', 'r274.4');
     props.setProperty('SHIP_AUTOLOG_DUE', '1');
     props.setProperty('SHIP_REPOST_MONTH', '2026-10');
     props.deleteProperty('SHIP_AUTOLOG_FAILS');
@@ -19462,7 +19462,9 @@ function shipPatternsRecorded_(ym) {
 }
 function shipPostMonth_(ym) {
   try { shipVolumesRefresh_({ month: ym }); } catch (e) {}
-  shipPatternsRecorded_(ym);
+  // r274.4: patterns worked out in the last day are used as they are, not paid for again.
+  var have = shipPatternsCached_(ym);
+  if (!(have && have.at && Date.now() - new Date(have.at).getTime() < 86400000 && (have.items || []).length)) shipPatternsRecorded_(ym);
   var text = shipSummaryText_(shipReport_({ month: ym }));
   var chan = PropertiesService.getScriptProperties().getProperty('SLACK_SHIPPING_CHANNEL_ID');
   var sent = chan ? slackBotPost_(chan, text) : { ok: false };
