@@ -1139,7 +1139,8 @@ function userForToken_(token, action) {
     // using (see startSession_). And slide the expiry as before.
     var nearEnd = Number(f.entry.e) - Date.now() < SESSION_REFRESH_DAYS * 24 * 3600 * 1000;
     var stale = !isFinite(Number(f.entry.u)) || Date.now() - Number(f.entry.u) > SESSION_USED_EVERY_MS;
-    if (nearEnd || stale) { authNote_('touch_start'); touchSession_(f, token, nearEnd); authNote_(nearEnd ? 'touch_extend' : 'touch_daily'); }
+    if ((nearEnd || stale) && claimSessionTouch_(token)) { authNote_('touch_start'); touchSession_(f, token, nearEnd); authNote_(nearEnd ? 'touch_extend' : 'touch_daily'); }
+    else if (nearEnd || stale) authNote_('touch_skipped');
   }
   return f.user;
 }
@@ -1198,6 +1199,23 @@ function sessionMatch_(stored, token, h) {
 function sessionStored_(v) { return isSessionHash_(v) ? String(v) : sessionHash_(v); }
 // The log fingerprint. Taken from the hash, so a raw token and its stored form
 // print the same and one log line can still be matched to another.
+// r275 (Edd, 6 Nov): a device's first open of the day fires six or seven
+// requests at once, and every one of them saw the session as not touched
+// today, so each took the session lock and wrote the same note in turn:
+// 1.5-2s apiece, queued, the last answering 12s after the first (measured
+// r262, 6 Nov 08:37 / 09:06 / 13:44). The first request claims the touch here
+// and the rest skip it. Best-effort, like the touch itself: if the claim
+// misses a race, two writes happen, which is what happened every time before.
+// The claim lasts an hour; by then the write has landed and the session no
+// longer reads as stale.
+function claimSessionTouch_(token) {
+  try {
+    var c = CacheService.getScriptCache(), k = 'ait_touch_' + tokenPrint_(token);
+    if (c.get(k)) return false;
+    c.put(k, '1', 3600);
+    return true;
+  } catch (e) { return true; }   // no cache: touch as before
+}
 function tokenPrint_(token) {
   if (!token) return '';
   try { return sessionStored_(token).slice(SESSION_HASH_PREFIX_.length, SESSION_HASH_PREFIX_.length + 10); }
@@ -11395,7 +11413,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r274.4 · 2026-11-05';
+var CODE_STAMP = 'r275 · 2026-11-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
