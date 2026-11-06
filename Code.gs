@@ -11413,7 +11413,7 @@ function getAppUrl_() {
 // number below is more precise but only appears from the first deploy made BY
 // this code onwards (the deploy that ships a version is run by the previous
 // one), so this stamp is what answers "which round is live" in the meantime.
-var CODE_STAMP = 'r275 · 2026-11-06';
+var CODE_STAMP = 'r275.1 · 2026-11-06';
 
 // ---- draft a message to the student (Edd, FB-0161) -------------------------
 // The Actions "next action" line offers a draft whenever the action is any
@@ -18750,7 +18750,7 @@ function shipCostBand_(p, tol) {
   return gap > 0 ? 'over' : 'under';
 }
 // One line for the Slack post on the 1st.
-function shipCostLine_(ym) {
+function shipCostLine_(ym, brief) {   // r274.5: brief = the Slack line, only what's off
   var tol = shipCostTol_(), row = shipRows_(SHIP_VOL_SHEET, SHIP_VOL_HEADERS).rows.filter(function (r) { return String(r.month) === ym; })[0];
   var c = null; try { c = row && row.cost_json ? JSON.parse(row.cost_json) : null; } catch (e) {}
   if (!c || !c.pairs || !c.pairs.length) return '';
@@ -18763,6 +18763,12 @@ function shipCostLine_(ym) {
   var cmp = n.in + n.over + n.under;
   if (!cmp) return '';
   function gbp(x) { return '£' + (Math.round(x * 100) / 100).toFixed(2); }
+  if (brief) {
+    var bits = [];
+    if (n.under) bits.push(n.under + ' undercharged (' + gbp(underGbp) + ' short)');
+    if (n.over) bits.push(n.over + ' overcharged (' + gbp(overGbp) + ')');
+    return bits.length ? 'Postage: ' + bits.join(', ') + '.' : '';
+  }
   return '• Postage charged against label cost: ' + Math.round(n.in / cmp * 100) + '% of ' + cmp + ' orders within ' + gbp(tol.gbp) +
     ' or ' + tol.pct + '% of the label. ' + n.over + ' overcharged (' + gbp(overGbp) + ' more than the labels), ' +
     n.under + ' undercharged (' + gbp(underGbp) + ' short).' + (n.free ? ' UK postage is free, so the ' + n.free + ' UK order' + (n.free === 1 ? ' is' : 's are') + ' not counted.' : '');
@@ -19061,63 +19067,61 @@ function shipChangeDelete_(data) {
 // ---------------------------------------------------------------- Slack on the 1st
 // Last month in a handful of lines, and a link to the page. Written from the
 // same report the page draws, so the two never disagree.
+// r274.5 (Edd, 5 Nov 2026, on the October post: "This is too long"). The Slack
+// post is the headline and the three things that keep happening, each with one
+// link; the detail (fixes, every issue, the cost breakdown) is on the report
+// page it links to.
 function shipSummaryText_(rep) {
   var bs = rep.buckets, i = bs.length - 1, b = bs[i];
-  var LABEL = { not_arrived: 'delayed or not arrived', damaged: 'damaged', wrong_item: 'wrong or missing contents',
-    not_dispatched: 'not dispatched', customs: 'customs and import charges', returned: 'failed delivery or returned',
-    wrong_address: 'address or label', other: 'other' };
+  var LABEL = { not_arrived: 'not arrived', damaged: 'damaged', wrong_item: 'wrong contents',
+    not_dispatched: 'not sent', customs: 'customs', returned: 'returned', wrong_address: 'address', other: 'other' };
   function total(x) { return x.issues.n + (x.chats_counted ? x.chats.n : 0); }
   function parcels(x) { var v = x.volumes || {}; return (v.shipstation && v.shipstation.n) || (v.stripe && v.stripe.n) || 0; }
-  var prev3 = bs.slice(i - 3, i), avg = prev3.reduce(function (s, x) { return s + total(x); }, 0) / 3;
+  var prev3 = bs.slice(i - 3, i), avg = prev3.reduce(function (s2, x) { return s2 + total(x); }, 0) / 3;
   var tot = total(b), p = parcels(b);
-  // Like with like. Before the chats were being read, a month only has its
-  // logged issues, so comparing a month that counts chats against one that
-  // cannot would make any month look worse than the last.
-  var fair = b.chats_counted && prev3.every(function (x) { return x.chats_counted; });
-  var avgIssues = prev3.reduce(function (s, x) { return s + x.issues.n; }, 0) / 3;
-  var dt = new Date(rep.month + '-15T12:00:00Z');
-  var name = Utilities.formatDate(dt, 'Europe/London', 'MMMM yyyy');
-  var lines = [':package: *Shipping report, ' + name + '*'];
-  var head = '• ' + tot + ' shipping problem' + (tot === 1 ? '' : 's');
-  if (b.chats_counted && b.chats.n) head += ' (' + b.issues.n + ' logged, ' + b.chats.n + ' only in chats)';
-  if (p) head += ', ' + (Math.round(tot / p * 1000) / 10) + ' per 100 of the ' + p + ' parcels sent';
-  head += fair ? '. The three months before averaged ' + (Math.round(avg * 10) / 10) + '.'
-              : '. Logged issues: ' + b.issues.n + ', against an average of ' + (Math.round(avgIssues * 10) / 10) + ' over the three months before.';
-  lines.push(head);
+  // Like with like: only compare when the months before also counted chats.
+  var fair = b.chats_counted && prev3.length === 3 && prev3.every(function (x) { return x.chats_counted; });
+  var name = Utilities.formatDate(new Date(rep.month + '-15T12:00:00Z'), 'Europe/London', 'MMMM yyyy');
+  var base = getAppUrl_() || '';
+  function ilink(r) { return base ? '<' + base + (base.indexOf('?') > -1 ? '&' : '?') + 'issue=' + r.id + '|#' + String(r.id).slice(0, 6).toUpperCase() + '>' : '#' + String(r.id).slice(0, 6).toUpperCase(); }
+  function clip(t, n) { t = String(t || '').trim(); if (t.length <= n) return t; t = t.slice(0, n); return t.slice(0, Math.max(t.lastIndexOf(' '), n - 15)).replace(/[,;:.\s]+$/, '') + '…'; }
+  function isOpen(r) { return r.status !== 'resolved' && r.status !== 'past'; }
+
+  var lines = [':package: *Shipping, ' + name + '*'];
+  var head = tot + ' problem' + (tot === 1 ? '' : 's');
+  if (p) head += ' from ' + p + ' parcels (' + (Math.round(tot / p * 1000) / 10) + ' per 100)';
+  if (fair) head += ', ' + (tot <= avg ? 'below' : 'above') + ' the 3-month average of ' + (Math.round(avg * 10) / 10);
+  head += '.';
   var kinds = {};
   [b.issues.kinds, b.chats_counted ? b.chats.kinds : {}].forEach(function (k) { Object.keys(k).forEach(function (x) { kinds[x] = (kinds[x] || 0) + k[x]; }); });
   var top = Object.keys(kinds).sort(function (x, y) { return kinds[y] - kinds[x]; }).slice(0, 3);
-  if (top.length) lines.push('• Most common: ' + top.map(function (k) { return LABEL[k] + ' ' + kinds[k]; }).join(', ') + '.');
-  if (b.resolved_median_days != null) lines.push('• Issues from this month that are sorted took ' + b.resolved_median_days + ' days (median).');
-  var x = b.volumes && b.volumes.xref;
-  if (x && x.median_days != null) lines.push('• Paid to posted: ' + x.median_days + ' working days (median).' + (x.unmatched_n ? ' ' + x.unmatched_n + ' paid pack' + (x.unmatched_n === 1 ? '' : 's') + ' with no shipment found yet.' : ''));
-  if (rep.open.length) lines.push('• ' + rep.open.length + ' parcel' + (rep.open.length === 1 ? '' : 's') + ' still open, the oldest ' + rep.open[0].days_open + ' days.');
-  try { var costLine = shipCostLine_(rep.month); if (costLine) lines.push(costLine); } catch (eC) {}
-  // r272: the patterns behind the numbers, and what to change.
-  // r273: the causes being fixed, and any that have come back.
+  if (top.length) head += ' Mostly ' + top.map(function (k) { return LABEL[k] + ' ' + kinds[k]; }).join(', ') + '.';
+  if (rep.open.length) head += ' ' + rep.open.length + ' still open.';
+  var xr = b.volumes && b.volumes.xref;
+  if (xr && xr.unmatched_n) head += ' ' + xr.unmatched_n + ' paid pack' + (xr.unmatched_n === 1 ? '' : 's') + ' not shipped yet.';
+  lines.push(head);
+  try { var costLine = shipCostLine_(rep.month, true); if (costLine) lines.push(costLine); } catch (eC) {}
+
   var cs = (rep.causes || []).filter(function (c) { return c.status !== 'resolved' && c.status !== 'past'; });
   var back = (rep.causes || []).filter(function (c) { return (c.status === 'resolved' || c.status === 'past') && c.since_fix; });
-  if (cs.length || back.length) lines.push('• Causes being fixed: ' + cs.length + (cs.length ? ' (' + cs.slice(0, 3).map(function (c) { return c.title + ', ' + c.cases + ' case' + (c.cases === 1 ? '' : 's'); }).join('; ') + ')' : '') +
-    (back.length ? '. Came back after a fix: ' + back.map(function (c) { return c.title; }).join('; ') : '') + '.');
-  // r272.1: each with its issues linked, so they can be picked up or closed.
-  var pat = rep.patterns, base = getAppUrl_() || '';
-  function ilink(r) { return base ? '<' + base + (base.indexOf('?') > -1 ? '&' : '?') + 'issue=' + r.id + '|#' + String(r.id).slice(0, 6).toUpperCase() + '>' : '#' + String(r.id).slice(0, 6).toUpperCase(); }
-  if (pat && pat.notable && pat.notable.length) {
-    lines.push('*Worth a look from this month*');
-    pat.notable.forEach(function (r) { lines.push('• ' + ilink(r) + ' ' + r.summary + (r.why ? ' _(' + r.why + ')_' : '') + (r.status === 'resolved' ? ' (sorted)' : '')); });
-  }
-  if (pat && pat.items && pat.items.length) {
-    lines.push('*Patterns over the last ' + (pat.months_back || 6) + ' months*');
-    pat.items.slice(0, 5).forEach(function (it) {
-      var openRefs = it.issues.filter(function (r) { return r.status !== 'resolved' && r.status !== 'past'; });
-      lines.push('• *' + it.title + '*: ' + it.count_all + ' issue' + (it.count_all === 1 ? '' : 's') +
-        (it.recurring ? ' across ' + it.months + ' months' : '') + (it.count ? ', ' + it.count + ' this month' : '') +
-        (it.open ? ', ' + it.open + ' still open' : '') + '. ' + (it.fix ? 'To change: ' + it.fix + ' ' : '') +
-        (openRefs.length ? 'Open: ' + openRefs.slice(0, 4).map(ilink).join(' ') : 'Latest: ' + it.issues.slice(0, 2).map(ilink).join(' ')));
+  if (back.length) lines.push('Came back after a fix: ' + back.map(function (c) { return c.title; }).join('; ') + '.');
+
+  var pat = rep.patterns;
+  var items = (pat && pat.items || []).filter(function (it) { return it.recurring; });
+  if (!items.length && pat && pat.items) items = pat.items;
+  if (items.length) {
+    lines.push('*Keeps happening*' + (cs.length ? ' (' + cs.length + ' being fixed)' : ''));
+    items.slice(0, 3).forEach(function (it) {
+      var ref = it.issues.filter(isOpen)[0] || it.issues[0];
+      lines.push('• ' + clip(it.title, 60) + ': ' + it.count_all + (it.count ? ', ' + it.count + ' this month' : '') + (ref ? ' ' + ilink(ref) : ''));
     });
   }
-  var url = getAppUrl_();
-  if (url) lines.push('Full report: ' + url + (url.indexOf('?') > -1 ? '&' : '?') + 'view=shipreport&month=' + rep.month);
+  var needs = (pat && pat.notable || []).filter(isOpen).slice(0, 3);
+  if (needs.length) {
+    lines.push('*Needs a look*');
+    needs.forEach(function (r) { lines.push('• ' + ilink(r) + ' ' + clip(r.why || r.summary, 70)); });
+  }
+  if (base) lines.push('<' + base + (base.indexOf('?') > -1 ? '&' : '?') + 'view=shipreport&month=' + rep.month + '|Full report, with the fixes>');
   return lines.join('\n');
 }
 function shipMonthlyPost() {
@@ -19428,7 +19432,7 @@ function shipPatterns_(data) {
     'Only claim what the issues show, and only use ids from the list.\n\n' +
     'Write for Edd, the owner: British English, plain words, contractions, no em dashes, no hype.\n\n' +
     'ISSUES:\n' + lines.join('\n') + '\n\n' +
-    'Return ONLY JSON: {"items":[{"title":"short plain heading","ids":["the 8-character id of every issue this covers, any month"],' +
+    'Return ONLY JSON: {"items":[{"title":"a heading of at most 6 words and 45 characters, like DHL duty charged to students or Waybills missing phone numbers","ids":["the 8-character id of every issue this covers, any month"],' +
     '"cause":"one or two sentences on what keeps going wrong","fix":"one or two sentences on what to change, and who would do it"}],' +
     '"notable":[{"id":"8-character id","why":"a few words on why it needs a look"}],"summary":"one sentence for a Slack post"}. ' +
     'Most important first, at most 6 patterns and 5 notable. No prose, no fences.';
