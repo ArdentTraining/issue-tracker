@@ -1222,6 +1222,7 @@
   }
 
 </style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 <div id="bootLoader" style="position:fixed;inset:0;z-index:10000;background:#163a70;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#ffffff;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;">
@@ -1447,7 +1448,6 @@
         </div>
         <button class="ghost small" id="themeBtn" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="event.stopPropagation();cycleTheme()">Theme</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();openPrefs()">Preferences</button>
-        <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();openChangePassword()">Change password</button>
         <button class="ghost small" style="display:block;width:100%;text-align:left;padding:7px 12px;border:none;" onclick="closeUserMenu();doLogout()">Log out</button>
       </div>
     </div>
@@ -2627,7 +2627,8 @@
 
   <div id="usec_people" class="hidden">
   <div class="card">
-    <h2>Invite a person</h2>
+    <h2>Add a person</h2>
+    <p class="small muted">They sign in with Google using this email, so use the one their Google account is on (their work address). Nothing to send them but the link.</p>
     <div class="row">
       <div class="field"><label>Email</label><input id="invEmail" placeholder="name@ardent-training.com"></div>
       <div class="field"><label>Name</label><input id="invName" placeholder="First name"></div>
@@ -2646,11 +2647,7 @@
            needs no hand-written box here any more (the r161 trap is gone). -->
       <div id="invPerms"></div>
     </div>
-    <button class="primary" onclick="doInvite()">Send invite</button>
-    <div id="inviteResult" class="hidden" style="margin-top:10px;">
-      <div class="small muted">Invite link (also emailed if APP_URL is set). Copy it if you need to send it manually:</div>
-      <input id="inviteLink" readonly style="margin-top:4px;">
-    </div>
+    <button class="primary" onclick="doInvite()">Add and email them</button>
   </div>
 
   <h3 style="margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;font-size:13px;">People</h3>
@@ -2950,14 +2947,10 @@
 <section id="man-signin" data-perm="" data-title="Signing in">
   <h3>Signing in</h3>
   <p>The app lives at <code>ardenttraining.github.io/issue-tracker</code>. Worth a bookmark, and it works on a phone as well as a laptop.</p>
-  <h4>The first time</h4>
-  <p>An invite email arrives with the subject <span class="ui">Your Bugs invite</span>. Open the link, choose a password of at least eight characters, type it again to confirm, and press <span class="ui">Create account</span>. That drops you straight in, so there is no second sign-in to do.</p>
-  <p>If the link says it is not valid, it has already been used or it has run out. They last a limited time on purpose, so a forwarded email cannot let somebody in months later. Ask Edd for a fresh one.</p>
-  <h4>Every time after that</h4>
-  <figure class="man-shot" data-img="manual/01-signin.jpg" data-cap="The sign-in box. Same email the invite came to."></figure>
-  <p>Email and password, then <span class="ui">Sign in</span>. Pressing Enter in either box does the same thing.</p>
-  <p>Get it wrong and it says <em>Wrong email or password</em> without saying which. That is deliberate, because a box that told you the email was right would let anyone work out who has an account here. Eight wrong goes in a row locks that address for ten minutes.</p>
-  <p>Forgotten it, press <span class="ui">Forgot your password?</span> and put your email in. A link comes through that lasts an hour. The message you get back reads the same whether or not the address is registered, for the same reason as above, so check the spam folder before assuming it never sent.</p>
+  <h4>Signing in</h4>
+  <p>Press <span class="ui">Sign in with Google</span> and pick your work Google account. That is the whole thing: there is no password for the tracker, so there is nothing to forget or reset.</p>
+  <p>When you are added you get an email with the subject <span class="ui">You've been added to Bugs</span>. It just carries the link. Use the Google account for the address it came to; if Google offers a different account, choose <span class="ui">Use another account</span>.</p>
+  <p>If it says your address isn't on the tracker, you are signed in to Google with an account Edd hasn't added. Ask him to add the one you use.</p>
   <h4>Staying signed in</h4>
   <p>Twelve devices at once, and a session lasts thirty days from when it was last used, not from when you signed in - so a device in regular use renews itself and stays signed in indefinitely. Signing in on a thirteenth pushes off whichever session was closest to expiring, which in practice is one you had stopped using anyway.</p>
   <p>It used to be one device, and that meant every phone login quietly knocked the desktop out, which is where "I seem to be asked to log in three times a day" came from. <span class="ui">Log out</span> signs out the device you are on and leaves the others alone, so logging out of a shared computer costs you nothing on your own phone.</p>
@@ -2966,7 +2959,7 @@
   <h4>The bell</h4>
   <p>Just above Help. It lights up with a number when there is something of yours to read: a reply to a question you asked on an issue, or a piece of feedback you sent through the Feedback button that has since been built or acted on. Press it to see them, <span class="ui">Open</span> takes you to the issue, and <span class="ui">Got it</span> clears one. Nothing in there is for anyone else, so an empty bell means nobody is waiting on you.</p>
   <h4>Your name at the bottom of the rail</h4>
-  <p>Press it and there are four things in there. <span class="ui">Theme</span> cycles through auto, light, and dark, with auto following whatever the device is set to. The menu stays open as you go so you can see each one land. <span class="ui">Preferences</span> holds the small how-it-behaves-for-me settings, and they follow your login rather than the device. The first one is "after logging an issue, open it so I can check it over": off, you land back on the list; on, the issue you just logged opens straight away so you can read it back or add to it while it is fresh. <span class="ui">Change password</span> asks for the current one and then the new one twice. <span class="ui">Log out</span> does what it says.</p>
+  <p>Press it and there are three things in there. <span class="ui">Theme</span> cycles through auto, light, and dark, with auto following whatever the device is set to. The menu stays open as you go so you can see each one land. <span class="ui">Preferences</span> holds the small how-it-behaves-for-me settings, and they follow your login rather than the device. The first one is "after logging an issue, open it so I can check it over": off, you land back on the list; on, the issue you just logged opens straight away so you can read it back or add to it while it is fresh. <span class="ui">Log out</span> does what it says. There is no password to change: you sign in with your Google account.</p>
 </section>
 
 <section id="man-around" data-perm="" data-title="Finding your way around">
@@ -3654,45 +3647,15 @@
   <div class="drawer" id="drawer"></div>
 </div>
 
-<!-- AUTH SCREEN: login + set-password (invite) -->
+<!-- AUTH SCREEN (r276): Sign in with Google is the only way in. -->
 <div class="modal-bg" id="authScreen">
   <div class="modal">
     <div id="authLogin">
       <h3>Bugs</h3>
-      <p class="small muted">Sign in with your email and password.</p>
-      <div class="field"><label>Email</label><input id="loginEmail" type="email" placeholder="you@ardent-training.com" onkeydown="if(event.key==='Enter')doLogin()"></div>
-      <div class="field"><label>Password</label><input id="loginPass" type="password" onkeydown="if(event.key==='Enter')doLogin()"></div>
-      <div class="btns"><button class="primary" onclick="doLogin()">Sign in</button></div>
+      <p class="small muted">Sign in with your work Google account.</p>
+      <div id="gsiBtn" style="margin:14px 0 4px;min-height:44px;"></div>
       <div id="loginMsg" class="small muted" style="margin-top:6px;"></div>
-      <div class="small" style="margin-top:10px;"><a href="#" onclick="setAuthMode('reset');setTimeout(function(){if($('resetEmail'))$('resetEmail').focus();},50);return false;" style="color:var(--accent);text-decoration:none;">Forgot your password?</a></div>
     </div>
-    <div id="authReset" class="hidden">
-      <h3>Reset your password</h3>
-      <p class="small muted">Enter your email and we'll send you a link to set a new password. The link expires in an hour.</p>
-      <div class="field"><label>Email</label><input id="resetEmail" type="email" placeholder="you@ardent-training.com" onkeydown="if(event.key==='Enter')doRequestReset()"></div>
-      <div class="btns"><button class="primary" onclick="doRequestReset()">Send reset link</button><button class="ghost" onclick="setAuthMode('login')">Back to sign in</button></div>
-      <div id="resetMsg" class="small muted" style="margin-top:6px;"></div>
-    </div>
-    <div id="authInvite" class="hidden">
-      <h3>Set up your account</h3>
-      <p class="small muted">Choose a password for <strong id="inviteWho"></strong>.</p>
-      <div class="field"><label>New password (8+ characters)</label><input id="invitePass" type="password"></div>
-      <div class="field"><label>Confirm password</label><input id="invitePass2" type="password" onkeydown="if(event.key==='Enter')doAcceptInvite()"></div>
-      <div class="btns"><button class="primary" onclick="doAcceptInvite()">Create account</button></div>
-      <div id="inviteMsg" class="small muted" style="margin-top:6px;"></div>
-    </div>
-  </div>
-</div>
-
-<!-- CHANGE PASSWORD -->
-<div class="modal-bg" id="changePwModal">
-  <div class="modal">
-    <h3>Change password</h3>
-    <div class="field"><label>Current password</label><input id="cpCurrent" type="password"></div>
-    <div class="field"><label>New password (8+ characters)</label><input id="cpNew" type="password"></div>
-    <div class="field"><label>Confirm new password</label><input id="cpNew2" type="password" onkeydown="if(event.key==='Enter')doChangePassword()"></div>
-    <div class="btns"><button class="primary" onclick="doChangePassword()">Update password</button><button class="ghost" onclick="closeChangePassword()">Cancel</button></div>
-    <div id="cpMsg" class="small muted" style="margin-top:6px;"></div>
   </div>
 </div>
 
@@ -5211,7 +5174,8 @@ function init() {
   }
   var params = new URLSearchParams(window.location.search);
   var invite = params.get("invite");
-  if (invite) { startInvite(invite); return; }
+  // r276: invite links are retired. An old one lands on the normal sign-in.
+  if (invite && window.history && window.history.replaceState) window.history.replaceState({}, "", window.location.pathname);
   if (getToken()) {
     startSession();
   } else {
@@ -11767,17 +11731,13 @@ function railGroupBadges() {
 // arrives from the API at run time. Notes and answers are rendered by notesMd(),
 // which escapes everything first and only then adds headings, bullets and bold.
 var NOTES_API = "https://ardent-notes.vercel.app/api/tracker";
-// r270 (security sweep, 1 Nov 2026): the ticket proves someone is logged in
-// to the tracker as this email, and tracker admins can create accounts with
-// any email, so Ardent Notes also asks for a key only the real person can make
-// (Ardent Notes, Settings, "Bug tracker access"). Kept per browser, sent as
-// x-notes-key. A 403 with needs_key means "ask for it", not "ticket expired".
-var NOTES_KEY_STORE = "ait_notes_key";
-function notesKey() { return (localGet(NOTES_KEY_STORE) || "").trim(); }
-function notesSetKey(v) { v = (v || "").trim(); if (v) localSet(NOTES_KEY_STORE, v); else { try { localStorage.removeItem(NOTES_KEY_STORE); } catch (e) {} } }
+// r276: the Notes ticket now says the person signed in with Google, which is
+// all Ardent Notes needs. The access key r270 asked for is gone; forget any
+// copy this browser kept.
+try { localStorage.removeItem("ait_notes_key"); } catch (e) {}
 
 var notes = {
-  ticket: "", exp: 0, needsKey: false,
+  ticket: "", exp: 0,
   list: null, account: null, apps: null, folders: [], listLoading: false, listError: "",
   q: "", qTimer: 0, folder: "", open: {},
   openId: "", item: null, itemLoading: false, itemError: "", filing: false,
@@ -11807,7 +11767,6 @@ function notesApi(path, opts, retried) {
   opts = opts || {};
   return notesTicket(!!retried).then(function (t) {
     var init = { method: opts.body ? "POST" : "GET", cache: "no-store", headers: { authorization: "Bearer " + t } };
-    var k = notesKey(); if (k) init.headers["x-notes-key"] = k;
     if (opts.body) { init.headers["content-type"] = "application/json"; init.body = JSON.stringify(opts.body); }
     return fetch(NOTES_API + path + (opts.query ? "?" + opts.query : ""), init);
   }).then(function (r) {
@@ -11815,8 +11774,6 @@ function notesApi(path, opts, retried) {
       var j = null;
       try { j = JSON.parse(txt); } catch (e) {}
       if (r.status === 401 && !retried && !(j && /different NOTES_TICKET_SECRET|doesn't have NOTES/.test(j.error || ""))) { notes.ticket = ""; notes.exp = 0; return notesApi(path, opts, true); }
-      if (r.status === 403 && j && j.needs_key) { notes.needsKey = true; var ke = new Error(j.error || "Ardent Notes needs your access key."); ke.needsKey = true; throw ke; }
-      notes.needsKey = false;
       if (!r.ok) throw new Error((j && j.error) || ("Notes returned " + r.status + "."));
       return j || {};
     });
@@ -11934,26 +11891,6 @@ function notesFolderOptions(cur, withAll) {
     (withAll ? opt("@none", "Not filed") : opt("@new", "New folder..."));
 }
 
-// The key never leaves this browser except as the x-notes-key header to Ardent Notes.
-function notesKeyPromptHtml(msg) {
-  var had = !!notesKey();
-  return '<div style="padding:10px;">' +
-    '<p style="margin:0 0 6px;"><strong>' + (had ? 'Ardent Notes didn\'t accept your key' : 'Connect Ardent Notes') + '</strong></p>' +
-    '<p class="small muted" style="margin:0 0 10px;">' + esc(msg || "") + '</p>' +
-    '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">' +
-      '<input type="password" id="notesKeyIn" placeholder="nk_…" autocomplete="off" spellcheck="false" style="flex:1 1 260px;min-width:0;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();notesSaveKey();}" />' +
-      '<button type="button" class="primary" style="flex:0 0 auto;width:auto;padding:8px 18px;" onclick="notesSaveKey()">Connect</button>' +
-      '<a class="small" href="https://ardent-notes.vercel.app/settings" target="_blank" rel="noopener">Open Ardent Notes settings</a>' +
-    '</div></div>';
-}
-function notesSaveKey() {
-  var el = $("notesKeyIn");
-  var v = ((el && el.value) || "").trim();
-  if (!/^nk_[A-Za-z0-9_-]{40,}$/.test(v)) { if (el) { el.style.borderColor = "var(--coral)"; el.focus(); } return; }
-  notesSetKey(v);
-  notes.needsKey = false; notes.listError = ""; notes.list = null;
-  notesLoadList();
-}
 
 function notesRenderHead() {
   var host = $("notesHead");
@@ -12115,7 +12052,6 @@ function notesRenderList() {
   if (notes.account === false) { host.innerHTML = ""; host.style.display = "none"; return; }
   host.style.display = "";
   if (notes.listLoading && !notes.list) { host.innerHTML = '<p class="small muted" style="padding:10px;">Loading your meetings...</p>'; return; }
-  if (notes.listError && notes.needsKey) { host.innerHTML = notesKeyPromptHtml(notes.listError); return; }
   if (notes.listError) { host.innerHTML = '<p class="small" style="padding:10px;color:var(--coral);">' + esc(notes.listError) + '</p>'; return; }
   var rows = notesFiltered();
   if (!rows.length) {
@@ -23778,95 +23714,34 @@ function answerDevQuery(id) {
 // ============================ AUTH ============================
 function showLogin() {
   hideBoot();
-  setAuthMode("login");
   $("authScreen").classList.add("show");
   $("fbBtn").style.display = "none";
-  setTimeout(function () { if ($("loginEmail")) $("loginEmail").focus(); }, 50);
+  renderGoogleButton();
 }
-function setAuthMode(mode) {
-  $("authLogin").classList.toggle("hidden", mode !== "login");
-  $("authInvite").classList.toggle("hidden", mode !== "invite");
-  if ($("authReset")) $("authReset").classList.toggle("hidden", mode !== "reset");
+// r276: the Google library loads async, so wait for it rather than race it.
+var GOOGLE_CLIENT_ID = "726224752827-uifsq7b5pep1hvmt7p592it97841bcpi.apps.googleusercontent.com";
+function renderGoogleButton(tries) {
+  var host = $("gsiBtn");
+  if (!host) return;
+  if (!(window.google && google.accounts && google.accounts.id)) {
+    tries = (tries || 0) + 1;
+    if (tries > 50) { $("loginMsg").textContent = "Google sign-in didn't load. Check your connection, or turn off any blocker for accounts.google.com, then reload."; return; }
+    setTimeout(function () { renderGoogleButton(tries); }, 200);
+    return;
+  }
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential, auto_select: true, cancel_on_tap_outside: false });
+  host.innerHTML = "";
+  google.accounts.id.renderButton(host, { theme: "filled_blue", size: "large", text: "signin_with", shape: "pill", width: 280 });
 }
-function doRequestReset() {
-  var email = $("resetEmail").value.trim();
-  if (!email) { $("resetMsg").textContent = "Enter your email first."; return; }
-  $("resetMsg").textContent = "Sending…";
-  // Neutral message either way so we never reveal which emails have accounts.
-  var done = function () { $("resetMsg").textContent = "If that email is registered, we've sent a reset link. Check your inbox (and your spam folder)."; };
-  apiPost({ action: "requestPasswordReset", email: email }).then(done).catch(done);
-}
-function openChangePassword() {
-  ["cpCurrent","cpNew","cpNew2"].forEach(function (id) { if ($(id)) $(id).value = ""; });
-  $("cpMsg").textContent = "";
-  $("changePwModal").classList.add("show");
-  setTimeout(function () { if ($("cpCurrent")) $("cpCurrent").focus(); }, 50);
-}
-function closeChangePassword() { $("changePwModal").classList.remove("show"); }
-function doChangePassword() {
-  var cur = $("cpCurrent").value, nw = $("cpNew").value, nw2 = $("cpNew2").value;
-  if (!cur || !nw) { $("cpMsg").textContent = "Fill in your current and new password."; return; }
-  if (nw.length < 8) { $("cpMsg").textContent = "New password must be at least 8 characters."; return; }
-  if (nw !== nw2) { $("cpMsg").textContent = "The new passwords don't match."; return; }
-  $("cpMsg").textContent = "Saving…";
-  apiPost({ action: "changePassword", current_password: cur, new_password: nw }).then(function (res) {
-    if (!res || !res.ok) { $("cpMsg").textContent = (res && res.error) || "Couldn't change the password."; return; }
-    $("cpMsg").textContent = "Password updated.";
-    setTimeout(closeChangePassword, 900);
-  }).catch(function () { $("cpMsg").textContent = "Error. See console."; });
-}
-function doLogin() {
-  var email = $("loginEmail").value.trim();
-  var pw = $("loginPass").value;
-  if (!email || !pw) { $("loginMsg").textContent = "Enter your email and password."; return; }
+function onGoogleCredential(resp) {
+  if (!resp || !resp.credential) { $("loginMsg").textContent = "Google didn't send a sign-in. Try again."; return; }
   $("loginMsg").textContent = "Signing in…";
-  apiPost({ action: "login", email: email, password: pw }).then(function (res) {
-    if (!res || !res.ok) { $("loginMsg").textContent = (res && res.error) || "Login failed."; return; }
+  apiPost({ action: "googleLogin", credential: resp.credential }).then(function (res) {
+    if (!res || !res.ok) { $("loginMsg").textContent = (res && res.error) || "Sign-in failed."; return; }
     setToken(res.token);
     $("loginMsg").textContent = "";
     onAuthed(res.user);
-  }).catch(function (e) { $("loginMsg").textContent = "Login error. See console."; console.error(e); });
-}
-function startInvite(token) {
-  hideBoot();
-  state._inviteToken = token;
-  fetch(APPS_SCRIPT_URL + "?action=getInvite&token=" + encodeURIComponent(token))
-    .then(function (r) { return r.json(); })
-    .then(function (res) {
-      if (!res || !res.ok) {
-        // A used or expired invite (often a bookmarked invite link). Clean the
-        // URL so the next load goes through the normal login path, and if this
-        // browser already has a live session, just carry on into the app.
-        if (window.history && window.history.replaceState) window.history.replaceState({}, "", window.location.pathname);
-        if (getToken()) {
-          apiGet("me").then(function (me) {
-            if (me && me.ok && me.user) onAuthed(me.user);
-            else { showLogin(); $("loginMsg").textContent = (res && res.error) || "That invite link is not valid."; }
-          }).catch(function () { showLogin(); });
-          return;
-        }
-        showLogin();
-        $("loginMsg").textContent = (res && res.error) || "That invite link is not valid.";
-        return;
-      }
-      $("inviteWho").textContent = res.email;
-      setAuthMode("invite");
-      $("authScreen").classList.add("show");
-      setTimeout(function () { if ($("invitePass")) $("invitePass").focus(); }, 50);
-    })
-    .catch(function () { showLogin(); });
-}
-function doAcceptInvite() {
-  var pw = $("invitePass").value, pw2 = $("invitePass2").value;
-  if (pw.length < 8) { $("inviteMsg").textContent = "Password must be at least 8 characters."; return; }
-  if (pw !== pw2) { $("inviteMsg").textContent = "Passwords do not match."; return; }
-  $("inviteMsg").textContent = "Setting up…";
-  apiPost({ action: "acceptInvite", invite: state._inviteToken, password: pw }).then(function (res) {
-    if (!res || !res.ok) { $("inviteMsg").textContent = (res && res.error) || "Could not set up the account."; return; }
-    setToken(res.token);
-    if (window.history && window.history.replaceState) window.history.replaceState({}, "", window.location.pathname);
-    onAuthed(res.user);
-  }).catch(function (e) { $("inviteMsg").textContent = "Setup error. See console."; console.error(e); });
+  }).catch(function (e) { $("loginMsg").textContent = "Sign-in error. See console."; console.error(e); });
 }
 // The little menu under the username (Edd, FB-0174). Click the name to open,
 // click anywhere else to close.
@@ -23986,6 +23861,8 @@ document.addEventListener("click", function () {
 
 function doLogout() {
   apiPost({ action: "logout" }).catch(function () {});
+  // r276: or Google signs them straight back in on the sign-in screen.
+  try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch (e) {}
   clearToken();
   clearBootCache();   // never show one person's board to the next on a shared machine
   clearDraft();       // r167: and never their half-written report either
@@ -24045,16 +23922,11 @@ function doInvite() {
   var lv = collectPermLevels("invite");
   apiPost({ action: "inviteUser", email: email, name: name, perms: lv.perms, perms_ro: lv.perms_ro }).then(function (res) {
     if (!res || !res.ok) { toast("Invite failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Invited " + email + ".");
+    toast("Added " + email + ". They've been emailed to sign in with Google.");
     $("invEmail").value = ""; $("invName").value = "";
     renderInvitePerms({});
-    if (res.invite_url) showInviteLink(res.invite_url);
     renderUsers();
   }).catch(function (e) { toast("Invite error."); console.error(e); });
-}
-function showInviteLink(url) {
-  $("inviteResult").classList.remove("hidden");
-  $("inviteLink").value = url;
 }
 function renderUsers() {
   if ($("invPerms") && !$("invPerms").firstChild) renderInvitePerms({});
@@ -24620,17 +24492,14 @@ function userRowHtml(u) {
       '<strong>' + esc(u.name || "(no name)") + '</strong>' +
       '<span class="muted small">' + esc(u.email) + '</span>' +
       '<span class="badge st">' + esc(u.status || "") + '</span>' +
-      // FB-0328: has this person actually finished setting up, or is the invite
-      // still sitting in their inbox? A password is the only proof.
-      (u.accepted ? '<span class="badge" style="border-color:var(--low);color:var(--low);">signed up</span>'
-        : (u.invite_pending ? '<span class="badge" style="border-color:var(--medium);color:var(--medium);" title="They have an invite but have not set a password yet.">invite not accepted</span>'
-        : '<span class="badge" style="border-color:var(--muted);color:var(--muted);" title="No password and no outstanding invite - send one.">no invite sent</span>')) +
+      // FB-0328, r276: have they signed in with Google yet?
+      (u.accepted ? '<span class="badge" style="border-color:var(--low);color:var(--low);">signed in with Google</span>'
+        : '<span class="badge" style="border-color:var(--medium);color:var(--medium);" title="Added, but not signed in with Google since the switch.">not signed in yet</span>') +
     '</div>' +
     permControlsHtml(u.email, u.perms || {}, u.perms_ro || {}) +
     '<div class="row" style="margin-top:8px;">' +
       '<button class="ghost small" onclick="saveUserPerms(\'' + esc(u.email) + '\')">Save access</button>' +
-      '<button class="ghost small" onclick="resendInvite(\'' + esc(u.email) + '\')">Resend invite</button>' +
-      '<button class="ghost small" onclick="resetUserLink(\'' + esc(u.email) + '\')">Reset password</button>' +
+      '<button class="ghost small" onclick="resendInvite(\'' + esc(u.email) + '\')">Email sign-in details</button>' +
       (String(u.status).toLowerCase() === "disabled"
         ? '<button class="ghost small" onclick="setUserDisabled(\'' + esc(u.email) + '\', false)">Enable</button>'
         : '<button class="ghost small" onclick="setUserDisabled(\'' + esc(u.email) + '\', true)">Disable</button>') +
@@ -24702,19 +24571,8 @@ function saveUserPerms(email) {
 function resendInvite(email) {
   apiPost({ action: "updateUser", email: email, resend: true }).then(function (res) {
     if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Invite re-sent.");
-    if (res.invite_url) showInviteLink(res.invite_url);
+    toast("Emailed " + email + " the sign-in details.");
     renderUsers();
-  }).catch(function (e) { toast("Error."); console.error(e); });
-}
-// Admin fallback for someone who forgot their password and can't use the
-// self-service email: generate a fresh reset link (also emailed) and show it so
-// the admin can pass it on directly.
-function resetUserLink(email) {
-  apiPost({ action: "adminResetLink", email: email }).then(function (res) {
-    if (!res || !res.ok) { toast("Failed: " + ((res && res.error) || "unknown")); return; }
-    toast("Reset link generated and emailed.");
-    if (res.link) showInviteLink(res.link);
   }).catch(function (e) { toast("Error."); console.error(e); });
 }
 // The launch line was drawn on 22 Aug 2026 (512 issues stamped) and the

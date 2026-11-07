@@ -741,9 +741,11 @@ function doPost(e) {
     // (KnownFixes, BacktestLog), never to Issues.
     if (action === 'backtest') return jsonOut(backtest_(body));
 
-    if (action === 'login') return jsonOut(login_(body));
-    if (action === 'acceptInvite') return jsonOut(acceptInvite_(body));
-    if (action === 'requestPasswordReset') return jsonOut(requestPasswordReset_(body));
+    // r276 (Edd, 6 Nov): Sign in with Google is the only way in. A password
+    // proved nothing about who typed it, because an admin's invite or reset
+    // link could set anyone's password, and every portal ticket trusted it.
+    if (action === 'googleLogin') return jsonOut(googleLogin_(body));
+    if (action === 'login' || action === 'acceptInvite' || action === 'requestPasswordReset' || action === 'resetPassword') return jsonOut({ ok: false, error: GOOGLE_ONLY_MSG_ });
 
     // r206: a POST that reaches us with no body at all (so no action and no
     // token) is Google's front end having dropped it under load, not somebody
@@ -928,9 +930,9 @@ function doPost(e) {
     if (action === 'matchUpdate') return jsonOut(matchUpdate_(body));
     if (action === 'inviteUser') return jsonOut(inviteUser_(body));
     if (action === 'updateUser') return jsonOut(updateUser_(body));
-    if (action === 'changePassword') return jsonOut(changePassword_(body));
+    if (action === 'changePassword') return jsonOut({ ok: false, error: GOOGLE_ONLY_MSG_ });
     if (action === 'setPrefs') return jsonOut(setPrefs_(body));
-    if (action === 'adminResetLink') return jsonOut(adminResetLink_(body));
+    if (action === 'adminResetLink') return jsonOut({ ok: false, error: GOOGLE_ONLY_MSG_ });
     if (action === 'savePlaybook') return jsonOut(savePlaybook_(body));
     if (action === 'resolvePlaybookSuggestion') return jsonOut(resolvePlaybookSuggestion_(body));
     if (action === 'suggestPlaybook') return jsonOut(suggestPlaybook_(body));
@@ -1120,6 +1122,7 @@ var UNAUTH_WHY_ = '';   // r121: why the last userForToken_ said no
 
 function userForToken_(token, action) {
   UNAUTH_WHY_ = '';
+  CURRENT_SESSION_VIA_ = '';
   if (!token) { UNAUTH_WHY_ = 'no token sent'; return null; }
   var f = findUserBySession_(token);
   if (!f) { UNAUTH_WHY_ = 'token not found on any account'; sessionLog_('refused', '', token, UNAUTH_WHY_, action); return null; }
@@ -1134,6 +1137,11 @@ function userForToken_(token, action) {
     if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) { UNAUTH_WHY_ = 'legacy session expired'; sessionLog_('refused', f.user.email, token, UNAUTH_WHY_, action); return null; }
   } else {
     if (!f.entry || !isFinite(Number(f.entry.e)) || Number(f.entry.e) < Date.now()) { UNAUTH_WHY_ = 'session expired'; sessionLog_('refused', f.user.email, token, UNAUTH_WHY_, action); return null; }
+    // r276: a session from a password sign-in is over. Everyone signs in again
+    // once, with Google, and from then on every ticket we sign means Google
+    // vouched for the address.
+    if (f.entry.v !== 'google') { UNAUTH_WHY_ = 'password session, Google sign-in needed'; sessionLog_('refused', f.user.email, token, UNAUTH_WHY_, action); return null; }
+    CURRENT_SESSION_VIA_ = 'google';
     // r206: note when this device was last used, at most once a day, so that
     // when a thirteenth device signs in the one dropped is the one nobody is
     // using (see startSession_). And slide the expiry as before.
@@ -1794,7 +1802,8 @@ function hashSessionsNow_() {
   }
   return { ok: true, accounts_changed: users, sessions_hashed: hashed, already_hashed: already };
 }
-function startSession_(f) {
+function startSession_(f, opts) {
+  var via = opts && opts.via;
   var token = newToken_();
   var stored = sessionHash_(token);   // r245: what is kept; the raw token goes only to the browser
   var expiry = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
@@ -1811,7 +1820,9 @@ function startSession_(f) {
       entries = [{ t: sessionStored_(cell), e: isFinite(legacyExp) ? legacyExp : expiry }];
     } else if (!entries) entries = [];
     var now = Date.now();
-    entries.unshift({ t: stored, e: expiry, u: now });
+    var entry = { t: stored, e: expiry, u: now };
+    if (via) entry.v = via;   // r276: only Google sessions are let in (see userForToken_)
+    entries.unshift(entry);
     entries = entries.filter(function (x) { return x && x.t && isFinite(Number(x.e)) && Number(x.e) > now; });
     // r206: a device nobody has used for a fortnight goes, and past the cap
     // the one used longest ago goes. Before this the cap dropped the entry
@@ -1868,6 +1879,51 @@ function startSession_(f) {
 // used to probe which emails have accounts (the reset flow is already neutral).
 var LOGIN_MAX_FAILS = 8;
 var LOGIN_LOCK_MINUTES = 10;
+
+// ---- r276: Sign in with Google ---------------------------------------------
+// The page gets an ID token from Google Identity Services and posts it here.
+// Google has checked the person owns the address; we check the token is for
+// this app, current and verified, then the Users table decides who gets in and
+// what they can see, exactly as before. Works for any Google account, so the
+// Aureus team (aureusventures.com is on Google Workspace) sign in the same way.
+var GOOGLE_CLIENT_ID_ = '726224752827-uifsq7b5pep1hvmt7p592it97841bcpi.apps.googleusercontent.com';
+var GOOGLE_ONLY_MSG_ = 'The tracker uses Sign in with Google now. Reload the page and press Sign in with Google.';
+var CURRENT_SESSION_VIA_ = '';   // 'google' once userForToken_ has matched a Google session
+
+/** Checks a Google ID token. Returns { email, name } or { error }. Never trusts the page. */
+function verifyGoogleIdToken_(credential) {
+  if (!credential || String(credential).split('.').length !== 3) return { error: 'No Google sign-in came through. Try again.' };
+  var res;
+  try {
+    res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(credential), { muteHttpExceptions: true });
+  } catch (e) { return { error: "Couldn't reach Google to check the sign-in. Try again." }; }
+  if (res.getResponseCode() !== 200) return { error: 'Google did not accept that sign-in. Try again.' };
+  var t;
+  try { t = JSON.parse(res.getContentText()); } catch (e) { return { error: 'Google sent back something unreadable. Try again.' }; }
+  if (t.aud !== GOOGLE_CLIENT_ID_) return { error: 'That sign-in was for a different app.' };
+  if (t.iss !== 'accounts.google.com' && t.iss !== 'https://accounts.google.com') return { error: 'That sign-in did not come from Google.' };
+  if (!(Number(t.exp) * 1000 > Date.now())) return { error: 'That sign-in has expired. Try again.' };
+  if (String(t.email_verified) !== 'true') return { error: 'Google has not verified that email address.' };
+  var email = String(t.email || '').trim().toLowerCase();
+  if (!email || email.indexOf('@') < 0) return { error: 'Google did not send an email address.' };
+  return { email: email, name: t.name ? String(t.name) : '' };
+}
+
+function googleLogin_(body) {
+  var g = verifyGoogleIdToken_(body.credential);
+  if (g.error) return { ok: false, error: g.error };
+  var f = findUserByEmail_(g.email);
+  if (!f) return { ok: false, error: g.email + " isn't on the tracker. Ask an admin to add you, then sign in again." };
+  var status = String(f.user.status || '').toLowerCase();
+  if (status === 'disabled') return { ok: false, error: 'This account has been disabled.' };
+  if (status !== 'active') setCell_(f, 'status', 'active');   // first sign-in after being added
+  if (String(f.user.invite_token || '')) setCell_(f, 'invite_token', '');
+  if (!String(f.user.name || '').trim() && g.name) setCell_(f, 'name', g.name);
+  var token = startSession_(f, { via: 'google' });
+  sessionLog_('signed in with Google', g.email, token, '', 'googleLogin');
+  var fresh = findUserByEmail_(g.email);
+  return { ok: true, token: token, user: publicUser_(fresh.user) };
+}
 
 function login_(body) {
   var email = String(body.email || '').trim().toLowerCase();
@@ -1940,16 +1996,14 @@ function logout_(token) {
   return { ok: true };
 }
 
-function sendInviteEmail_(email, name, token) {
+function sendInviteEmail_(email, name) {
   var url = getAppUrl_();
-  var link = (url || '(set APP_URL)') + (url && url.indexOf('?') > -1 ? '&' : '?') + 'invite=' + token;
-  if (url) {
-    var bodyText = 'Hi ' + (name || '') + ',\n\n' +
-      'You have been invited to Bugs, the Ardent Training issue log. Open the link below to set your password and get started:\n\n' +
-      link + '\n\nThanks,\nArdent Training';
-    try { MailApp.sendEmail(email, 'Your Bugs invite', bodyText); } catch (e) {}
-  }
-  return link;
+  if (!url) return '';
+  var bodyText = 'Hi ' + (name || '') + ',\n\n' +
+    'You have been added to Bugs, the Ardent Training issue log. Open the link below and press Sign in with Google, using ' + email + ':\n\n' +
+    url + '\n\nThanks,\nArdent Training';
+  try { MailApp.sendEmail(email, "You've been added to Bugs", bodyText); } catch (e) {}
+  return url;
 }
 
 // ---- Password reset and change ------------------------------------------
@@ -2021,28 +2075,28 @@ function adminResetLink_(body) {
 }
 
 function inviteUser_(body) {
+  // r276: adding someone puts their email on the list and tells them to sign in
+  // with Google. There is no link to hand round any more, so nothing an admin
+  // can open to become them, and adding an existing person changes only their
+  // name and access, never their sign-in.
   var email = String(body.email || '').trim().toLowerCase();
   if (!email || email.indexOf('@') < 0) return { ok: false, error: 'Enter a valid email.' };
   var permsJson = permsJsonFrom_(body.perms, body.perms_ro);   // r248
-  var token = newInviteToken_();
   var existing = findUserByEmail_(email);
   if (existing) {
     setCell_(existing, 'name', body.name || existing.user.name || '');
     setCell_(existing, 'perms_json', permsJson);
-    setCell_(existing, 'status', 'invited');
-    setCell_(existing, 'invite_token', token);
-    setCell_(existing, 'pass_hash', '');
-    setCell_(existing, 'session_token', '');
+    if (String(existing.user.status || '').toLowerCase() !== 'active' && String(existing.user.status || '').toLowerCase() !== 'disabled') setCell_(existing, 'status', 'invited');
   } else {
-    var u = {
+    usersAppend_({
       email: email, name: body.name || '', status: 'invited',
       perms_json: permsJson, pass_hash: '', pass_salt: '',
-      invite_token: token, session_token: '', session_expires: '',
+      invite_token: '', session_token: '', session_expires: '',
       created_at: new Date().toISOString()
-    };
-    usersAppend_(u);
+    });
   }
-  return { ok: true, invite_url: sendInviteEmail_(email, body.name || '', token) };
+  sendInviteEmail_(email, body.name || '');
+  return { ok: true, emailed: true };
 }
 
 function listUsers_() {
@@ -2057,8 +2111,10 @@ function listUsers_() {
     // invite and made a password." A password hash is the only proof they
     // finished; an outstanding invite token means the email is still sitting
     // unopened somewhere.
-    var accepted = !!String(values[r][idx['pass_hash']] || '').trim();
-    var invitePending = !accepted && !!String(values[r][idx['invite_token']] || '').trim();
+    // r276: "signed up" now means they have signed in with Google at least once
+    // (a live Google session on the row). Their old password doesn't count.
+    var accepted = String(values[r][idx['session_token']] || '').indexOf('"v":"google"') > -1;
+    var invitePending = !accepted && String(u.status || '').toLowerCase() === 'invited';
     out.push({ email: u.email, name: u.name, status: u.status, perms: permsOf_(u), perms_ro: roOf_(u),
                accepted: accepted, invite_pending: invitePending,
                created_at: String(values[r][idx['created_at']] || '') });
@@ -2165,15 +2221,11 @@ function updateUser_(body) {
     setCell_(f, 'session_token', '');
     setCell_(f, 'invite_token', '');
   }
-  if (body.enable === true) setCell_(f, 'status', f.user.pass_hash ? 'active' : 'invited');
-  if (body.resend === true) {
-    var token = newInviteToken_();
-    setCell_(f, 'invite_token', token);
-    setCell_(f, 'status', 'invited');
-    setCell_(f, 'pass_hash', '');
-    setCell_(f, 'session_token', '');
-    return { ok: true, invite_url: sendInviteEmail_(f.user.email, f.user.name, token) };
-  }
+  // r276: Google sign-in moves an invited person to active, so enabling just puts them back.
+  if (body.enable === true) setCell_(f, 'status', 'active');
+  // r276: "resend" is the you've-been-added email again. It no longer resets
+  // anything, because there is no password or link to reset.
+  if (body.resend === true) { sendInviteEmail_(f.user.email, f.user.name); return { ok: true, emailed: true }; }
   return { ok: true };
 }
 
@@ -15654,6 +15706,10 @@ function mintPortalTicket_(user, requiredPerm, minutes, opts) {
     // r235: what the ticket is for. A person's ticket is for the portal
     // functions; a machine ticket names the one function that may accept it.
     aud: opts.aud || TICKET_AUD_PORTAL_,
+    // r276: 'google' when this person signed in with Google, which Ardent Notes
+    // requires (the key it used to ask for existed only because a password
+    // sign-in proved nothing). Absent on machine and service-account tickets.
+    via: CURRENT_SESSION_VIA_ === 'google' && !opts.machine ? 'google' : undefined,
     iat: now,
     exp: now + (minutes || REPORTS_TICKET_MINUTES) * 60
   };
